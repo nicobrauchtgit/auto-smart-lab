@@ -1,0 +1,29 @@
+# macOS / FUSE-T sidecar files
+._*
+.DS_Store
+
+# Secrets / sessions
+lab-cookies.txt
+*.cookies
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local environments
+.venv/
+env/
+
+# Downloaded/generated SmartLab artifacts
+data/
+downloaded_task_page/
+submissions/
+reports/
+
+# Temporary archives/output files
+source.zip
+output.csv
+*.tmp
