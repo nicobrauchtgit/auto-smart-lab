@@ -105,9 +105,30 @@ async function main() {
 			process.exit(1);
 		}
 		const index = JSON.parse(readFileSync(indexPath, "utf8")) as Record<string, string>;
-		console.log("Available task IDs:");
-		for (const [id, url] of Object.entries(index)) {
-			console.log(`  ${id.padEnd(16)} ${url}`);
+		// Collect titles from meta.json
+		const meta: Record<string, { unit: string; task: string }> = {};
+		if (existsSync(UNITS_DIR)) {
+			for (const unit of readdirSync(UNITS_DIR)) {
+				const unitDir = join(UNITS_DIR, unit);
+				if (!statSync(unitDir).isDirectory()) continue;
+				for (const task of readdirSync(unitDir)) {
+					const mp = join(unitDir, task, "meta.json");
+					if (!existsSync(mp)) continue;
+					try {
+						const m = JSON.parse(readFileSync(mp, "utf8")) as { short_id?: string; unit?: string; task?: string };
+						if (m.short_id) meta[m.short_id] = { unit: m.unit ?? "", task: m.task ?? "" };
+					} catch { /* skip */ }
+				}
+			}
+		}
+		console.log("Available tasks:\n");
+		console.log("  ID              Unit                           Task");
+		console.log("  " + "-".repeat(80));
+		for (const [id] of Object.entries(index)) {
+			const m = meta[id];
+			const unit = (m?.unit ?? "").slice(0, 30).padEnd(30);
+			const task = (m?.task ?? "").slice(0, 50);
+			console.log(`  ${id.padEnd(16)} ${unit}  ${task}`);
 		}
 		process.exit(0);
 	}
