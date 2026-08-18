@@ -32,29 +32,40 @@ import { getTaskMemory } from "./memory_utils.js";
 const MAX_SUBMISSIONS = 3;
 
 function usage(): never {
-	console.error("Usage: npx tsx agent/run/orchestrate.ts <task_id> [--model <model_id>]");
-	console.error("Required env: LAB_USER, LAB_PASS, LAB_INSECURE_TLS, SMARTLAB_TASK_URL");
+	console.error("Usage: npx tsx agent/run/orchestrate.ts <task_id> [--model <id>] [--task-url <url>] [--insecure]");
+	console.error("Required env: LAB_USER, LAB_PASS, SMARTLAB_TASK_URL");
 	console.error("Examples:");
-	console.error("  npx tsx agent/run/orchestrate.ts spam1");
-	console.error("  npx tsx agent/run/orchestrate.ts spam1 --model gwdg/devstral-2-123b-instruct-2512");
+	console.error("  npm run solve spam1 -- --insecure --task-url https://lab-test.../units/.../tasks/.../");
+	console.error("  npm run solve spam1 -- --model gwdg/devstral-2-123b-instruct-2512 --insecure");
 	process.exit(1);
 }
 
 async function main() {
 	const args = process.argv.slice(2);
-	const modelIdx = args.indexOf("--model");
-	let model: string | undefined;
-	if (modelIdx !== -1) {
-		model = args[modelIdx + 1];
-		args.splice(modelIdx, 2);
+
+	function takeArg(flag: string): string | undefined {
+		const idx = args.indexOf(flag);
+		if (idx === -1) return undefined;
+		const val = args[idx + 1];
+		args.splice(idx, 2);
+		return val;
 	}
+	function takeFlag(flag: string): boolean {
+		const idx = args.indexOf(flag);
+		if (idx === -1) return false;
+		args.splice(idx, 1);
+		return true;
+	}
+
+	const model = takeArg("--model");
+	const taskUrl = takeArg("--task-url");
+	const insecure = takeFlag("--insecure");
 	const taskId = args[0];
 	if (!taskId) usage();
 
-	if (model) {
-		process.env.PI_MODEL = model;
-		console.log(`[orchestrate] Using model: ${model}`);
-	}
+	if (model) { process.env.PI_MODEL = model; console.log(`[orchestrate] Using model: ${model}`); }
+	if (taskUrl) { process.env.SMARTLAB_TASK_URL = taskUrl; }
+	if (insecure) { process.env.LAB_INSECURE_TLS = "1"; }
 
 	// Validate required env
 	const missing = ["LAB_USER", "LAB_PASS", "SMARTLAB_TASK_URL"].filter((k) => !process.env[k]);
