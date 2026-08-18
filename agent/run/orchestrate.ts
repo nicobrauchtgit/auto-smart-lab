@@ -92,6 +92,11 @@ async function main() {
 		if (found) {
 			process.env.SMARTLAB_TASK_URL = found;
 			console.log(`[orchestrate] Resolved task URL from meta.json: ${found}`);
+		} else {
+			console.error(`[orchestrate] Could not resolve task URL for '${taskId}'.`);
+			console.error(`  Either set SMARTLAB_TASK_URL in the environment, pass --task-url <url>,`);
+			console.error(`  or run: python3 agent/setup/fetch_units.py --insecure`);
+			process.exit(1);
 		}
 	}
 
