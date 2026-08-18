@@ -6,7 +6,8 @@
  */
 
 import { readFileSync } from "node:fs";
-import { dirname, fileURLToPath, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
 	createAgentSession,
