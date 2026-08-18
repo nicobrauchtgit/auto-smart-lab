@@ -277,6 +277,32 @@ def fetch_all(refresh: bool = False, insecure: bool = False, fetch_data: bool = 
 
             total_tasks += 1
 
+    # Write units/index.json: maps short task IDs to URLs
+    # Short ID: last meaningful word(s) of unit slug + sequential task number
+    # e.g. "introduction-with-spam" unit, task 1 -> "spam1"
+    index: dict[str, str] = {}
+    if UNITS_DIR.exists():
+        for unit_dir in sorted(UNITS_DIR.iterdir()):
+            if not unit_dir.is_dir():
+                continue
+            # Extract keyword from unit slug: last non-stopword segment
+            slug_parts = [p for p in unit_dir.name.split("-") if p not in {"introduction", "with", "the", "a", "an", "and", "or", "in", "of", "to"}]
+            keyword = slug_parts[-1] if slug_parts else unit_dir.name.split("-")[-1]
+            task_dirs = sorted(t for t in unit_dir.iterdir() if t.is_dir() and (t / "meta.json").exists())
+            for i, task_dir in enumerate(task_dirs, 1):
+                try:
+                    meta = json.loads((task_dir / "meta.json").read_text(encoding="utf-8"))
+                    short_id = f"{keyword}{i}"
+                    index[short_id] = meta["url"]
+                    # Also store short_id in meta.json for reference
+                    meta["short_id"] = short_id
+                    (task_dir / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+                except Exception:
+                    pass
+    index_path = UNITS_DIR / "index.json"
+    index_path.write_text(json.dumps(index, indent=2), encoding="utf-8")
+    print(f"[fetch_units] Index: {index_path.relative_to(REPO_ROOT)} — {list(index.keys())}")
+
     print(f"\n[fetch_units] Done. {total_tasks} task(s) written to {UNITS_DIR.relative_to(REPO_ROOT)}/")
     return 0
 
