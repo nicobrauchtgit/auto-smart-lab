@@ -65,11 +65,12 @@ import { getTaskMemory } from "./memory_utils.js";
 const MAX_SUBMISSIONS = 3;
 
 function usage(): never {
-	console.error("Usage: npx tsx agent/run/orchestrate.ts <task_id> [--model <id>] [--task-url <url>] [--insecure]");
-	console.error("Required env: LAB_USER, LAB_PASS, SMARTLAB_TASK_URL");
+	console.error("Usage: npx tsx agent/run/orchestrate.ts <task_id|list> [--model <id>] [--task-url <url>] [--insecure]");
+	console.error("Required env: LAB_USER, LAB_PASS");
 	console.error("Examples:");
-	console.error("  npm run solve spam1 -- --insecure --task-url https://lab-test.../units/.../tasks/.../");
-	console.error("  npm run solve spam1 -- --model gwdg/devstral-2-123b-instruct-2512 --insecure");
+	console.error("  npm run solve list                    # show all available task IDs");
+	console.error("  npm run solve spam3 -- --insecure     # solve task spam3");
+	console.error("  npm run solve spam3 -- --insecure --model gwdg/devstral-2-123b-instruct-2512");
 	process.exit(1);
 }
 
@@ -96,6 +97,21 @@ async function main() {
 	const taskId = args[0];
 	if (!taskId) usage();
 
+	// List available tasks
+	if (taskId === "list") {
+		const indexPath = join(UNITS_DIR, "index.json");
+		if (!existsSync(indexPath)) {
+			console.error("No units/index.json found. Run: python3 agent/setup/fetch_units.py --insecure");
+			process.exit(1);
+		}
+		const index = JSON.parse(readFileSync(indexPath, "utf8")) as Record<string, string>;
+		console.log("Available task IDs:");
+		for (const [id, url] of Object.entries(index)) {
+			console.log(`  ${id.padEnd(16)} ${url}`);
+		}
+		process.exit(0);
+	}
+
 	if (model) { process.env.PI_MODEL = model; console.log(`[orchestrate] Using model: ${model}`); }
 	if (taskUrl) { process.env.SMARTLAB_TASK_URL = taskUrl; }
 	if (insecure) { process.env.LAB_INSECURE_TLS = "1"; }
@@ -115,7 +131,7 @@ async function main() {
 	}
 
 	// Validate required env
-	const missing = ["LAB_USER", "LAB_PASS", "SMARTLAB_TASK_URL"].filter((k) => !process.env[k]);
+	const missing = ["LAB_USER", "LAB_PASS"].filter((k) => !process.env[k]);
 	if (missing.length > 0) {
 		console.error(`Missing required environment variables: ${missing.join(", ")}`);
 		process.exit(1);
