@@ -84,7 +84,7 @@ Create or refresh a logged-in session cookie file:
 export LAB_USER='your_username'
 export LAB_PASS='your_password'
 export LAB_INSECURE_TLS=1   # needed for the lab's self-signed cert
-./refresh_lab_session.sh
+python3 fetch_lab.py --insecure login
 ```
 
 The default cookie jar is:
@@ -161,12 +161,60 @@ plain `file` fields returned `File upload error.` during testing. The upload
 endpoint itself only returns `File successfully uploaded.`; the score is only
 available after fetching the rendered task page again.
 
-## Existing helper
+## Mirroring a task page
 
-`fetch_task_page.sh` is a wget-based helper for mirroring the task page HTML and
-page requisites. It uses `lab-cookies.txt` automatically when present, or you can
-pass another Netscape-format cookie file:
+To mirror an authenticated task page, fetch it through `fetch_lab.py`, which
+reuses `lab-cookies.txt` and re-logs in if the session expired:
 
 ```bash
-LAB_INSECURE_TLS=1 COOKIE_FILE=/path/to/cookies.txt ./fetch_task_page.sh
+python3 fetch_lab.py --insecure get 'TASK_URL' -o downloaded_task_page/task.html
 ```
+
+## pi agent tool
+
+The agent-facing surface is intentionally minimal: a single, self-contained pi
+tool that submits a finished prediction CSV and returns the score. Task
+solving/listing is handled earlier in the pipeline (see the sections above), and
+login / CSRF / session handling happens automatically inside the tool — it is
+not exposed.
+
+`tools/smartlab.ts` is a native TypeScript extension (no Python, no
+subprocess). It ports the SmartLab auth + upload + Attempts-table parsing logic
+and registers one tool via `pi.registerTool()`. It is wired into
+`.pi/settings.json`, so every pi session started in this repo loads it
+automatically once the project is trusted (no `-e` flag needed).
+
+For a one-off test without the project settings you can still run:
+
+```bash
+pi -e tools/smartlab.ts
+```
+
+### Tool: `smartlab_submit`
+
+Uploads the CSV as `output.csv` plus an in-memory `source.zip`, polls the task's
+Attempts table, and returns a compact score signal.
+
+Parameters:
+
+| Param | Required | Description |
+| --- | --- | --- |
+| `csv` | yes | Path to the prediction CSV to upload |
+| `task_url` | no | Full task URL (defaults to `SMARTLAB_TASK_URL`) |
+| `comment` | no | Attempt comment |
+| `source_dir` | no | Directory archived as `source.zip` (default: project root) |
+| `poll_timeout` | no | Seconds to poll for the result (default 180) |
+| `poll_interval` | no | Seconds between polls (default 10) |
+
+Required environment (used behind the scenes, never passed as tool args):
+
+```bash
+export LAB_USER='your_username'
+export LAB_PASS='your_password'
+export LAB_INSECURE_TLS=1        # the lab uses a self-signed certificate
+export SMARTLAB_TASK_URL='https://lab-test.smartlab.mlsec.tu-berlin.de/units/.../tasks/.../'
+```
+
+The tool returns the same compact JSON as documented under "Upload and score
+fetching" above (`ok`, `upload_ok`, `current_score`, `previous_scores`,
+`improved`, `format_error`, try counts, ...).
