@@ -17,8 +17,8 @@ class ZipTextItem:
 
 
 def project_root() -> Path:
-    """Return the auto_agent project root."""
-    return Path(__file__).resolve().parents[1]
+    """Return the repo root (parent of agent/)."""
+    return Path(__file__).resolve().parents[2]
 
 
 def download_file(url: str, destination: Path, force: bool = False) -> Path:
