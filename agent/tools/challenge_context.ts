@@ -5,7 +5,7 @@
  *   list_challenges  – enumerate all available challenges from the challenge store
  *   read_challenge   – read the full prompt and unit intro for a specific task
  *
- * Reads directly from challenges/ — never touches environment/.
+ * Reads directly from units/ — never touches environment/.
  */
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -17,7 +17,7 @@ import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(HERE, "..", ".."); // agent/tools/ → agent/ → <root>
-const CHALLENGES_DIR = join(PROJECT_ROOT, "challenges");
+const CHALLENGES_DIR = join(PROJECT_ROOT, "units");
 const REPORTS_DIR = join(PROJECT_ROOT, "reports");
 
 // --------------------------------------------------------------------------

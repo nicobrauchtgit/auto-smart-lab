@@ -10,9 +10,9 @@ but the **test data is only injected on explicit request** (week two) so the two
 sets are never leaked into each other.
 
 Layout in the store:
-  challenges/<unit>/<task>/prompt.md   -> environment/README.md
-  challenges/<unit>/<task>/data/       -> training inputs (loaded by default)
-  challenges/<unit>/<task>/test/       -> test inputs (loaded only on request)
+  units/<unit>/<task>/prompt.md   -> environment/README.md
+  units/<unit>/<task>/data/       -> training inputs (loaded by default)
+  units/<unit>/<task>/test/       -> test inputs (loaded only on request)
 
 Zips are extracted at the environment root because SmartLab archives already
 carry their own top-level paths (e.g. `data/spam1-train/...`), which must be
@@ -37,7 +37,7 @@ import sys
 import zipfile
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-STORE_DIR = REPO_ROOT / "challenges"
+STORE_DIR = REPO_ROOT / "units"
 ENV_DIR = REPO_ROOT / "environment"
 
 
@@ -110,7 +110,7 @@ def main() -> None:
     parser.add_argument(
         "task",
         nargs="?",
-        help="Task path relative to challenges/, e.g. 01-spam/task1-spam-detection",
+        help="Task path relative to units/, e.g. 01-spam/task1-spam-detection",
     )
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
