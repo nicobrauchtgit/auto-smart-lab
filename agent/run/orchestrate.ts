@@ -16,12 +16,31 @@
  *   TAVILY_API_KEY   — enables web search in the solver
  */
 
-import { dirname, isAbsolute, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(HERE, "..", "..");
+const UNITS_DIR = join(PROJECT_ROOT, "units");
+
+/** Find task URL from units/<unit>/<task>/meta.json by matching task_slug or task name */
+function findTaskUrl(taskId: string): string | undefined {
+	if (!existsSync(UNITS_DIR)) return undefined;
+	for (const unit of readdirSync(UNITS_DIR)) {
+		const unitDir = join(UNITS_DIR, unit);
+		if (!statSync(unitDir).isDirectory()) continue;
+		for (const task of readdirSync(unitDir)) {
+			const metaPath = join(unitDir, task, "meta.json");
+			if (!existsSync(metaPath)) continue;
+			try {
+				const meta = JSON.parse(readFileSync(metaPath, "utf8")) as { task_slug?: string; url?: string };
+				if (meta.task_slug === taskId || task === taskId) return meta.url;
+			} catch { /* skip */ }
+		}
+	}
+	return undefined;
+}
 
 import { ensureSolverScaffold } from "./scaffold.js";
 import { runSolverSession } from "./solver_session.js";
@@ -66,6 +85,15 @@ async function main() {
 	if (model) { process.env.PI_MODEL = model; console.log(`[orchestrate] Using model: ${model}`); }
 	if (taskUrl) { process.env.SMARTLAB_TASK_URL = taskUrl; }
 	if (insecure) { process.env.LAB_INSECURE_TLS = "1"; }
+
+	// Auto-resolve task URL from units/<unit>/<task>/meta.json if not set
+	if (!process.env.SMARTLAB_TASK_URL) {
+		const found = findTaskUrl(taskId);
+		if (found) {
+			process.env.SMARTLAB_TASK_URL = found;
+			console.log(`[orchestrate] Resolved task URL from meta.json: ${found}`);
+		}
+	}
 
 	// Validate required env
 	const missing = ["LAB_USER", "LAB_PASS", "SMARTLAB_TASK_URL"].filter((k) => !process.env[k]);
