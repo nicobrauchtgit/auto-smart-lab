@@ -1,0 +1,16 @@
+{
+  "name": "auto-smart-lab",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "solve": "tsx agent/run/orchestrate.ts"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-ai": "*"
+  },
+  "devDependencies": {
+    "tsx": "^4.0.0"
+  }
+}
