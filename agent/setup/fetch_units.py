@@ -208,18 +208,13 @@ def fetch_all(refresh: bool = False, insecure: bool = False, fetch_data: bool = 
 
         print(f"\n[unit] {unit_title or unit_id} -> units/{unit_slug}/")
 
-        # Write unit intro if there's a description page
-        unit_detail_url = urljoin(BASE_URL, f"/units/{unit_id}/")
-        try:
-            unit_detail = _cached_get(client, unit_detail_url, CACHE_DIR / "units" / f"{unit_id}_detail.html", refresh)
-            intro_content = _html_to_md(_main_content(unit_detail))
-            if intro_content:
-                intro_path = UNITS_DIR / unit_slug / "unit-intro.md"
-                intro_path.parent.mkdir(parents=True, exist_ok=True)
-                intro_path.write_text(f"# {unit_title}\n\n{intro_content}\n", encoding="utf-8")
-                print(f"  [intro] -> {intro_path.relative_to(REPO_ROOT)}")
-        except Exception as exc:
-            print(f"  [warn] Could not fetch unit intro: {exc}")
+        # Extract unit intro from the tasks-list page (no separate detail page exists)
+        intro_content = _html_to_md(_main_content(unit_page))
+        if intro_content:
+            intro_path = UNITS_DIR / unit_slug / "unit-intro.md"
+            intro_path.parent.mkdir(parents=True, exist_ok=True)
+            intro_path.write_text(f"# {unit_title}\n\n{intro_content}\n", encoding="utf-8")
+            print(f"  [intro] -> {intro_path.relative_to(REPO_ROOT)}")
 
         # Find task links: /units/<uuid>/tasks/<uuid>/
         task_links = list(dict.fromkeys(
