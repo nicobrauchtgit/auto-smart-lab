@@ -278,23 +278,33 @@ def fetch_all(refresh: bool = False, insecure: bool = False, fetch_data: bool = 
             total_tasks += 1
 
     # Write units/index.json: maps short task IDs to URLs
-    # Short ID: last meaningful word(s) of unit slug + sequential task number
-    # e.g. "introduction-with-spam" unit, task 1 -> "spam1"
+    # Short ID: keyword from unit slug + task number extracted from title prefix ("1. Task name" -> 1)
     index: dict[str, str] = {}
     if UNITS_DIR.exists():
         for unit_dir in sorted(UNITS_DIR.iterdir()):
-            if not unit_dir.is_dir():
+            if not unit_dir.is_dir() or unit_dir.name == "index.json":
                 continue
             # Extract keyword from unit slug: last non-stopword segment
             slug_parts = [p for p in unit_dir.name.split("-") if p not in {"introduction", "with", "the", "a", "an", "and", "or", "in", "of", "to"}]
             keyword = slug_parts[-1] if slug_parts else unit_dir.name.split("-")[-1]
-            task_dirs = sorted(t for t in unit_dir.iterdir() if t.is_dir() and (t / "meta.json").exists())
-            for i, task_dir in enumerate(task_dirs, 1):
+            task_dirs = [t for t in unit_dir.iterdir() if t.is_dir() and (t / "meta.json").exists()]
+            # Sort by the leading number in the task title ("1. Task name" -> 1), fallback to dir name
+            def task_sort_key(t: Path) -> tuple[int, str]:
+                try:
+                    meta = json.loads((t / "meta.json").read_text(encoding="utf-8"))
+                    m = re.match(r"^(\d+)\.", meta.get("task", ""))
+                    return (int(m.group(1)) if m else 999, t.name)
+                except Exception:
+                    return (999, t.name)
+            task_dirs.sort(key=task_sort_key)
+            for task_dir in task_dirs:
                 try:
                     meta = json.loads((task_dir / "meta.json").read_text(encoding="utf-8"))
-                    short_id = f"{keyword}{i}"
+                    # Use number from title prefix; fallback to sequential
+                    m = re.match(r"^(\d+)\.", meta.get("task", ""))
+                    task_num = int(m.group(1)) if m else (list(task_dirs).index(task_dir) + 1)
+                    short_id = f"{keyword}{task_num}"
                     index[short_id] = meta["url"]
-                    # Also store short_id in meta.json for reference
                     meta["short_id"] = short_id
                     (task_dir / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
                 except Exception:
