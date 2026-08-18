@@ -24,8 +24,18 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(HERE, "..", "..");
 const UNITS_DIR = join(PROJECT_ROOT, "units");
 
-/** Find task URL from units/<unit>/<task>/meta.json by matching task_slug, task dir name, or substring */
+/** Find task URL from units/index.json or units/<unit>/<task>/meta.json */
 function findTaskUrl(taskId: string): string | undefined {
+	// 1. Check units/index.json (short IDs like "spam1", "spam2")
+	const indexPath = join(UNITS_DIR, "index.json");
+	if (existsSync(indexPath)) {
+		try {
+			const index = JSON.parse(readFileSync(indexPath, "utf8")) as Record<string, string>;
+			if (index[taskId]) return index[taskId];
+		} catch { /* skip */ }
+	}
+
+	// 2. Fall back: scan meta.json files for slug/title substring match
 	if (!existsSync(UNITS_DIR)) return undefined;
 	const id = taskId.toLowerCase();
 	for (const unit of readdirSync(UNITS_DIR)) {
@@ -35,11 +45,11 @@ function findTaskUrl(taskId: string): string | undefined {
 			const metaPath = join(unitDir, task, "meta.json");
 			if (!existsSync(metaPath)) continue;
 			try {
-				const meta = JSON.parse(readFileSync(metaPath, "utf8")) as { task_slug?: string; url?: string; task?: string };
+				const meta = JSON.parse(readFileSync(metaPath, "utf8")) as { task_slug?: string; url?: string; task?: string; short_id?: string };
 				const slug = (meta.task_slug ?? "").toLowerCase();
 				const title = (meta.task ?? "").toLowerCase();
-				// exact match on slug or dir name, or taskId is a substring of slug/title
-				if (slug === id || task === id || slug.includes(id) || title.includes(id)) return meta.url;
+				const shortId = (meta.short_id ?? "").toLowerCase();
+				if (shortId === id || slug === id || task === id || slug.includes(id) || title.includes(id)) return meta.url;
 			} catch { /* skip */ }
 		}
 	}
