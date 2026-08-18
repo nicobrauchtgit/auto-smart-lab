@@ -32,14 +32,29 @@ import { getTaskMemory } from "./memory_utils.js";
 const MAX_SUBMISSIONS = 3;
 
 function usage(): never {
-	console.error("Usage: npx tsx agent/run/orchestrate.ts <task_id>");
+	console.error("Usage: npx tsx agent/run/orchestrate.ts <task_id> [--model <model_id>]");
 	console.error("Required env: LAB_USER, LAB_PASS, LAB_INSECURE_TLS, SMARTLAB_TASK_URL");
+	console.error("Examples:");
+	console.error("  npx tsx agent/run/orchestrate.ts spam1");
+	console.error("  npx tsx agent/run/orchestrate.ts spam1 --model gwdg/devstral-2-123b-instruct-2512");
 	process.exit(1);
 }
 
 async function main() {
-	const taskId = process.argv[2];
+	const args = process.argv.slice(2);
+	const modelIdx = args.indexOf("--model");
+	let model: string | undefined;
+	if (modelIdx !== -1) {
+		model = args[modelIdx + 1];
+		args.splice(modelIdx, 2);
+	}
+	const taskId = args[0];
 	if (!taskId) usage();
+
+	if (model) {
+		process.env.PI_MODEL = model;
+		console.log(`[orchestrate] Using model: ${model}`);
+	}
 
 	// Validate required env
 	const missing = ["LAB_USER", "LAB_PASS", "SMARTLAB_TASK_URL"].filter((k) => !process.env[k]);
