@@ -178,7 +178,7 @@ def _download_data(client: LabClient, download_urls: list[str], dest_dir: Path) 
     return written
 
 
-def fetch_all(refresh: bool = False, insecure: bool = False, fetch_data: bool = True) -> int:
+def fetch_all(refresh: bool = False, insecure: bool = False, fetch_data: bool = True, unit_filter: str | None = None) -> int:
     client = LabClient(insecure_tls=insecure)
     units_url = urljoin(BASE_URL, "/units/")
     print(f"[fetch_units] Loading units index: {units_url}")
@@ -205,6 +205,9 @@ def fetch_all(refresh: bool = False, insecure: bool = False, fetch_data: bool = 
         bc = _breadcrumb(unit_page)
         unit_title = bc[1] if len(bc) > 1 else ""
         unit_slug = _unit_slug_from_url(unit_tasks_url, unit_title)
+
+        if unit_filter and unit_filter.lower() not in (unit_slug.lower(), unit_title.lower(), unit_id.lower()):
+            continue
 
         print(f"\n[unit] {unit_title or unit_id} -> units/{unit_slug}/")
 
@@ -283,8 +286,9 @@ def main() -> int:
     parser.add_argument("--refresh", action="store_true", help="re-fetch pages (ignore cache)")
     parser.add_argument("--insecure", action="store_true", help="skip TLS certificate verification")
     parser.add_argument("--no-data", action="store_true", help="skip downloading data files")
+    parser.add_argument("--unit", metavar="SLUG_OR_TITLE", help="only fetch this unit (slug, title, or UUID prefix)")
     args = parser.parse_args()
-    return fetch_all(refresh=args.refresh, insecure=args.insecure, fetch_data=not args.no_data)
+    return fetch_all(refresh=args.refresh, insecure=args.insecure, fetch_data=not args.no_data, unit_filter=args.unit)
 
 
 if __name__ == "__main__":
