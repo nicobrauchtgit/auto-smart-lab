@@ -42,15 +42,16 @@ export function readMemory(): MemoryStore {
 
 export function getTaskMemory(taskId: string): TaskMemory {
 	const store = readMemory();
-	return store.tasks[taskId] ?? {
-		best_score: null,
-		best_approach: "",
-		last_val_score: null,
-		last_submission_csv: "",
-		tries_used: 0,
-		tries_left: 3,
-		failed_approaches: [],
-		eval_decision: null,
-		eval_notes: "",
+	const saved = store.tasks[taskId] ?? {};
+	return {
+		best_score: (saved as TaskMemory).best_score ?? null,
+		best_approach: (saved as TaskMemory).best_approach ?? "",
+		last_val_score: (saved as TaskMemory).last_val_score ?? null,
+		last_submission_csv: (saved as TaskMemory).last_submission_csv ?? "",
+		tries_used: (saved as TaskMemory).tries_used ?? 0,
+		tries_left: (saved as TaskMemory).tries_left ?? 3,
+		failed_approaches: (saved as TaskMemory).failed_approaches ?? [],
+		eval_decision: (saved as TaskMemory).eval_decision ?? null,
+		eval_notes: (saved as TaskMemory).eval_notes ?? "",
 	};
 }

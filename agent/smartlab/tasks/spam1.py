@@ -30,8 +30,10 @@ from smartlab.common import (
 
 TRAIN_URL = "https://download.smartlab.mlsec.tu-berlin.de/01-spam/train/spam1-train.zip"
 TEST_URL = "https://download.smartlab.mlsec.tu-berlin.de/01-spam/test/spam1-test.zip"
-TRAIN_ZIP = project_root() / "data" / "raw" / "spam1-train.zip"
-TEST_ZIP = project_root() / "data" / "raw" / "spam1-test.zip"
+_UNITS_DATA = project_root() / "units" / "01-spam" / "task1-spam-detection" / "data"
+_LEGACY_DATA = project_root() / "agent" / "data" / "raw"
+TRAIN_ZIP = _UNITS_DATA / "spam1-train.zip" if (_UNITS_DATA / "spam1-train.zip").exists() else _LEGACY_DATA / "spam1-train.zip"
+TEST_ZIP = _UNITS_DATA / "spam1-test.zip" if (_UNITS_DATA / "spam1-test.zip").exists() else _LEGACY_DATA / "spam1-test.zip"
 DEFAULT_SUBMISSION = project_root() / "submissions" / "spam1_predictions.csv"
 LABELS_MEMBER = "spam1-train.labels"
 TEST_PREFIX = "data/spam1-test/"
