@@ -23,7 +23,7 @@ import argparse
 import json
 
 from fetch_lab import LabClient
-from smartlab.submit import Attempt, SubmissionResult, get_task_info, submit_and_score
+from submit import Attempt, SubmissionResult, get_task_info, submit_and_score
 
 
 def format_attempt(attempt: Attempt) -> str:
