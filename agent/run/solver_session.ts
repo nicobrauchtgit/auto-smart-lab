@@ -39,6 +39,13 @@ export async function runSolverSession(taskId: string, feedback?: string): Promi
 	// Parse SOLVER_DONE sentinel
 	const match = output.match(/SOLVER_DONE\s+val_score=([\d.]+)\s+csv=(\S+)\s+approach=(.+)/);
 	if (!match) {
+		// Fallback: try to extract val_score and csv path from output even without the sentinel
+		const scoreMatch = output.match(/(?:balanced.accuracy|val.score|validation.score)[^\d]*([\d.]{4,})/i);
+		const csvMatch = output.match(/submissions\/\S+\.csv/);
+		if (scoreMatch && csvMatch) {
+			console.warn(`[solver] WARNING: SOLVER_DONE sentinel missing — reconstructing from output.`);
+			return { valScore: parseFloat(scoreMatch[1]), csvPath: csvMatch[0], approach: "(reconstructed)" };
+		}
 		console.warn(`[solver] WARNING: SOLVER_DONE sentinel not found in output. Last 500 chars:\n${output.slice(-500)}`);
 		return { valScore: 0, csvPath: "", approach: "" };
 	}
