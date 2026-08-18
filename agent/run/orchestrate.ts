@@ -16,9 +16,12 @@
  *   TAVILY_API_KEY   — enables web search in the solver
  */
 
-import { dirname, resolve } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT = resolve(HERE, "..", "..");
 
 import { ensureSolverScaffold } from "./scaffold.js";
 import { runSolverSession } from "./solver_session.js";
@@ -77,10 +80,14 @@ async function main() {
 		const solverResult = await runSolverSession(taskId, feedback);
 		console.log(`[orchestrate] Solver done: val_score=${solverResult.valScore}, csv=${solverResult.csvPath}`);
 
-		if (!solverResult.csvPath || !existsSync(solverResult.csvPath)) {
-			console.error(`[orchestrate] Solver did not produce a valid CSV at '${solverResult.csvPath}'. Stopping.`);
+		const csvAbsPath = solverResult.csvPath
+			? isAbsolute(solverResult.csvPath) ? solverResult.csvPath : resolve(PROJECT_ROOT, solverResult.csvPath)
+			: "";
+		if (!csvAbsPath || !existsSync(csvAbsPath)) {
+			console.error(`[orchestrate] Solver did not produce a valid CSV at '${csvAbsPath}'. Stopping.`);
 			process.exit(2);
 		}
+		solverResult.csvPath = csvAbsPath;
 
 		// Step 2: Eval
 		const evalResult = await runEvalSession(taskId);
