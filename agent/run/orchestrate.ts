@@ -16,7 +16,8 @@
  *   TAVILY_API_KEY   — enables web search in the solver
  */
 
-import { dirname, fileURLToPath, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
 
 import { ensureSolverScaffold } from "./scaffold.js";

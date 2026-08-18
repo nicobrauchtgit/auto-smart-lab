@@ -4,7 +4,8 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, fileURLToPath, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(HERE, ".."); // agent/run/ → agent/

@@ -9,7 +9,8 @@
  */
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, fileURLToPath, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const AGENT_DIR = resolve(HERE, ".."); // agent/run/ → agent/

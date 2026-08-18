@@ -4,7 +4,8 @@
  * waits for completion, and parses the SOLVER_DONE sentinel.
  */
 
-import { dirname, fileURLToPath, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { runSession } from "./session_runner.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
