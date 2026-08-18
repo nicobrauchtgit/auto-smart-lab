@@ -1,10 +1,22 @@
 # SmartLab Auto Agent
 
-A small, reproducible pipeline for SmartLab adversarial-AI exercises.
+A small, reproducible setup for SmartLab adversarial-AI exercises.
 
-The pipeline is task-plugin based: each exercise gets one solver module under
-`smartlab/tasks/`, while `smartlab_agent.py` provides the common CLI for
-fetching data, validating locally, and producing submission files.
+The repo has **two sections**:
+
+- `agent/` — the **agent runtime**: the pipeline that solves challenges, the pi
+  tools, and the pi setup.
+  - `agent/smartlab_agent.py` + `agent/smartlab/` — task-plugin pipeline (one
+    solver module per exercise under `agent/smartlab/tasks/`).
+  - `agent/tools/smartlab.ts` — the pi submission tool (wired via `.pi/settings.json`).
+  - `agent/setup/` — **isolated** challenge-setup infra (login, data fetch,
+    inventory, upload). Not accessible to the pipeline or the environment.
+- `environment/` — the **sandbox** the agent works in: it receives the challenge
+  prompt + data and uses Python to produce a submission. See
+  `environment/README.md`.
+
+Run the pipeline commands from inside `agent/`, and the setup scripts from inside
+`agent/setup/`.
 
 ## Implemented tasks
 
@@ -19,7 +31,7 @@ fetching data, validating locally, and producing submission files.
 From this directory:
 
 ```bash
-cd ~/auto_agent  # or /path/to/stud02/auto_agent
+cd agent
 python3 smartlab_agent.py list
 python3 smartlab_agent.py download spam1
 python3 smartlab_agent.py validate spam1
@@ -46,8 +58,8 @@ data/spam1-test/examplefilename.x;0
 
 ## Pipeline shape
 
-For every new SmartLab task, add a new module in `smartlab/tasks/<task>.py` with
-this minimal interface:
+For every new SmartLab task, add a new module in
+`agent/smartlab/tasks/<task>.py` with this minimal interface:
 
 ```python
 def download(force: bool = False) -> None: ...
@@ -55,7 +67,7 @@ def validate(...) -> float: ...
 def solve(output_path: Path) -> Path: ...
 ```
 
-Then register it in `smartlab_agent.py`'s `TASKS` dictionary.
+Then register it in `agent/smartlab_agent.py`'s `TASKS` dictionary.
 
 Recommended workflow per exercise:
 
@@ -68,9 +80,13 @@ Recommended workflow per exercise:
 
 ## Auth/session fetching for the lab website
 
-`fetch_lab.py` automates the normal CSRF + login-cookie flow for the SmartLab
-web UI. It is stdlib-only and writes a Netscape-format cookie jar that both
-Python and `wget` can reuse.
+`agent/setup/fetch_lab.py` automates the normal CSRF + login-cookie flow for the
+SmartLab web UI. It is stdlib-only and writes a Netscape-format cookie jar that
+both Python and `wget` can reuse. Run it from inside `agent/setup/`:
+
+```bash
+cd agent/setup
+```
 
 Fetch only a fresh CSRF token/cookie from the login page:
 
@@ -106,9 +122,11 @@ ever needed, put it into `lab-cookies.txt` locally instead.
 
 ## Upload and score fetching
 
-`smartlab_submit.py` is the one-stop abstraction the agent should call for
-submissions. It uploads `output.csv` plus a source archive, then re-fetches the
-task page and returns a compact score signal.
+`agent/setup/smartlab_submit.py` is the one-stop Python CLI for challenge
+setup/testing of submissions. It uploads `output.csv` plus a source archive,
+then re-fetches the task page and returns a compact score signal. (At runtime
+the agent submits via the pi tool `agent/tools/smartlab.ts`, not this script.)
+Run it from inside `agent/setup/`.
 
 Check current attempts without uploading:
 
@@ -163,7 +181,8 @@ available after fetching the rendered task page again.
 
 ## Mirroring a task page
 
-To mirror an authenticated task page, fetch it through `fetch_lab.py`, which
+To mirror an authenticated task page, fetch it through `agent/setup/fetch_lab.py`,
+which
 reuses `lab-cookies.txt` and re-logs in if the session expired:
 
 ```bash
@@ -178,7 +197,7 @@ solving/listing is handled earlier in the pipeline (see the sections above), and
 login / CSRF / session handling happens automatically inside the tool — it is
 not exposed.
 
-`tools/smartlab.ts` is a native TypeScript extension (no Python, no
+`agent/tools/smartlab.ts` is a native TypeScript extension (no Python, no
 subprocess). It ports the SmartLab auth + upload + Attempts-table parsing logic
 and registers one tool via `pi.registerTool()`. It is wired into
 `.pi/settings.json`, so every pi session started in this repo loads it
@@ -187,7 +206,7 @@ automatically once the project is trusted (no `-e` flag needed).
 For a one-off test without the project settings you can still run:
 
 ```bash
-pi -e tools/smartlab.ts
+pi -e agent/tools/smartlab.ts
 ```
 
 ### Tool: `smartlab_submit`

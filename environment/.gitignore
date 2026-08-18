@@ -1,0 +1,5 @@
+# The environment is a transient sandbox: agent/setup/load_challenge.py
+# regenerates README.md + data here for whichever task is loaded. Keep the
+# directory in git, but never commit the loaded prompt/data.
+*
+!.gitignore
