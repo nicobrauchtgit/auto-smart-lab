@@ -34,3 +34,9 @@ environment/*
 source.zip
 output.csv
 *.tmp
+
+# Agent memory (runtime state, not committed)
+agent/memory/memory.json
+
+# Session logs
+logs/

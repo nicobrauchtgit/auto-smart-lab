@@ -1,0 +1,55 @@
+/**
+ * Thin wrapper around agent/memory/memory.json for use by the orchestrator.
+ * Not exposed as a pi tool — used directly by TypeScript runner code.
+ */
+
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, fileURLToPath, join, resolve } from "node:path";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT = resolve(HERE, ".."); // agent/run/ → agent/
+const MEMORY_FILE = join(PROJECT_ROOT, "memory", "memory.json");
+
+export interface TaskMemory {
+	best_score: number | null;
+	best_approach: string;
+	last_val_score: number | null;
+	last_submission_csv: string;
+	tries_used: number;
+	tries_left: number;
+	failed_approaches: string[];
+	eval_decision: string | null;
+	eval_notes: string;
+}
+
+export interface MemoryStore {
+	tasks: Record<string, TaskMemory>;
+	sessions: unknown[];
+	global_notes: string;
+}
+
+export function readMemory(): MemoryStore {
+	if (!existsSync(MEMORY_FILE)) {
+		return { tasks: {}, sessions: [], global_notes: "" };
+	}
+	try {
+		return JSON.parse(readFileSync(MEMORY_FILE, "utf8")) as MemoryStore;
+	} catch {
+		return { tasks: {}, sessions: [], global_notes: "" };
+	}
+}
+
+export function getTaskMemory(taskId: string): TaskMemory {
+	const store = readMemory();
+	return store.tasks[taskId] ?? {
+		best_score: null,
+		best_approach: "",
+		last_val_score: null,
+		last_submission_csv: "",
+		tries_used: 0,
+		tries_left: 3,
+		failed_approaches: [],
+		eval_decision: null,
+		eval_notes: "",
+	};
+}
