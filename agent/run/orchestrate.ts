@@ -133,7 +133,7 @@ async function main() {
 		process.exit(0);
 	}
 
-	if (model) { process.env.PI_MODEL = model; console.log(`[orchestrate] Using model: ${model}`); }
+	if (model) console.log(`[orchestrate] Using model: ${model}`);
 	if (taskUrl) { process.env.SMARTLAB_TASK_URL = taskUrl; }
 	if (insecure) { process.env.LAB_INSECURE_TLS = "1"; }
 
@@ -187,7 +187,7 @@ async function main() {
 		console.log(`[orchestrate] Submissions: ${mem.tries_used}/${MAX_SUBMISSIONS} used, ${mem.tries_left ?? MAX_SUBMISSIONS - mem.tries_used} remaining`);
 
 		// Step 1: Solver
-		const solverResult = await runSolverSession(taskId, feedback);
+		const solverResult = await runSolverSession(taskId, feedback, model);
 		console.log(`[orchestrate] Solver done: val_score=${solverResult.valScore}, csv=${solverResult.csvPath}`);
 
 		const csvAbsPath = solverResult.csvPath
@@ -200,7 +200,7 @@ async function main() {
 		solverResult.csvPath = csvAbsPath;
 
 		// Step 2: Eval
-		const evalResult = await runEvalSession(taskId);
+		const evalResult = await runEvalSession(taskId, model);
 		console.log(`[orchestrate] Eval decision: ${evalResult.decision}`);
 
 		if (evalResult.decision === "APPROVE") {

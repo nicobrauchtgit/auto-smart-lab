@@ -24,7 +24,7 @@ export interface EvalResult {
  * Run the eval agent for a given task.
  * @param taskId Task identifier, e.g. "spam1"
  */
-export async function runEvalSession(taskId: string): Promise<EvalResult> {
+export async function runEvalSession(taskId: string, model?: string): Promise<EvalResult> {
 	const prompt = `Evaluate the solver output for task: ${taskId}. Follow the eval workflow from Step 1.`;
 
 	console.log(`[eval] Starting eval session for task ${taskId}`);
@@ -33,6 +33,7 @@ export async function runEvalSession(taskId: string): Promise<EvalResult> {
 		instructionsPath: INSTRUCTIONS,
 		prompt,
 		env: { EVAL_TASK_ID: taskId },
+		model,
 	});
 
 	// Parse EVAL_DECISION sentinel

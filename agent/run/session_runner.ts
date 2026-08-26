@@ -2,7 +2,7 @@
  * Shared helper: run a pi agent session with a given system prompt and initial user message.
  * Returns the collected assistant text from the completed run.
  *
- * Uses the PI SDK: createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager.
+ * Uses the PI SDK with the project pipeline configuration.
  */
 
 import { readFileSync } from "node:fs";
@@ -12,15 +12,14 @@ import { fileURLToPath } from "node:url";
 import {
 	createAgentSession,
 	DefaultResourceLoader,
-	ModelRuntime,
 	SessionManager,
-	getAgentDir,
 } from "@earendil-works/pi-coding-agent";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import { initializeModel } from "../model_provider.js";
+import { loadPipelineConfig } from "../pipeline_config.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const AGENT_DIR = resolve(HERE, ".."); // agent/run/ → agent/
-const PROJECT_ROOT = resolve(AGENT_DIR, ".."); // agent/ → <root>
 const TOOLS_DIR = join(AGENT_DIR, "tools");
 
 const EXTENSION_PATHS = [
@@ -37,6 +36,8 @@ export interface RunSessionOptions {
 	prompt: string;
 	/** Optional env vars to inject into process.env for this session */
 	env?: Record<string, string>;
+	/** Optional provider/model reference from pipeline.config.json */
+	model?: string;
 }
 
 export interface RunSessionResult {
@@ -48,7 +49,7 @@ export interface RunSessionResult {
  * Run a PI agent session, wait for it to settle, and return the collected output.
  */
 export async function runSession(options: RunSessionOptions): Promise<RunSessionResult> {
-	const { instructionsPath, prompt, env } = options;
+	const { instructionsPath, prompt, env, model: requestedModel } = options;
 
 	// Inject env vars before session starts (tools read from process.env)
 	const envBackup: Record<string, string | undefined> = {};
@@ -61,10 +62,11 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 
 	try {
 		const systemPrompt = readFileSync(instructionsPath, "utf8");
-		const agentDir = getAgentDir();
+		const pipeline = await loadPipelineConfig();
+		const { cwd, agentDir } = pipeline;
 
 		const resourceLoader = new DefaultResourceLoader({
-			cwd: PROJECT_ROOT,
+			cwd,
 			agentDir,
 			additionalExtensionPaths: EXTENSION_PATHS,
 			systemPrompt,
@@ -74,11 +76,15 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 
 		await resourceLoader.reload();
 
-		const modelRuntime = await ModelRuntime.create({ agentDir });
+		const { modelRuntime, model } = await initializeModel({
+			config: pipeline.config,
+			model: requestedModel,
+		});
 		const { session } = await createAgentSession({
-			cwd: PROJECT_ROOT,
+			cwd,
 			agentDir,
 			modelRuntime,
+			model,
 			resourceLoader,
 			sessionManager: SessionManager.inMemory(),
 		});
