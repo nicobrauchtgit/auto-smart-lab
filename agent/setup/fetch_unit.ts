@@ -282,14 +282,15 @@ function rebuildTaskIndex(): void {
 	console.log(`[fetch_unit] Index contains: ${Object.keys(index).join(", ")}`);
 }
 
-export async function fetchUnit(unit: string, options: FetchUnitOptions = {}): Promise<FetchUnitResult> {
+export async function fetchUnit(unit: string, _options: FetchUnitOptions = {}): Promise<FetchUnitResult> {
 	const cached = await findCachedUnit(unit);
 	if (cached?.valid) {
 		console.log(`[fetch_unit] ${cached.record.unitSlug} unit data hash matches; skipping fetch.`);
 		return { unitSlug: cached.record.unitSlug, taskPaths: cached.record.taskPaths };
 	}
 	const refetchUnit = cached !== undefined;
-	const client = new LabClient({ insecure: options.insecure });
+	// SmartLab uses a permanently self-signed certificate on its lab/download hosts.
+	const client = new LabClient({ insecure: true });
 	const unitsUrl = new URL("/units/", client.baseUrl).toString();
 	const unitsPage = await cachedGet(client, unitsUrl, join(CACHE_DIR, "units.html"));
 	const discovered = new Map<string, string>();
