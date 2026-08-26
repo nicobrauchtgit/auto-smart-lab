@@ -3,6 +3,7 @@
 .DS_Store
 
 # Secrets / sessions
+.env
 lab-cookies.txt
 *.cookies
 
@@ -38,9 +39,20 @@ output.csv
 # Node
 node_modules/
 package-lock.json
+**/.next/
 
 # Agent memory (runtime state, not committed)
 agent/memory/memory.json
 
 # Session logs
 logs/
+
+# Project-local PI runtime state. The provider/model definition in
+# .pi/agent/models.json is deliberately tracked; credentials stay in the shell.
+.pi/agent/auth.json
+.pi/agent/bin/
+.pi/agent/models-store.json
+.pi/agent/sessions/
+.pi/agent/tmp/
+.pi/agent/*.lock
+.pi/agent/*.sqlite*

@@ -23,7 +23,7 @@ export interface SolverResult {
  * @param taskId   Task identifier, e.g. "spam1"
  * @param feedback Optional feedback from a previous eval rejection (for re-solve)
  */
-export async function runSolverSession(taskId: string, feedback?: string): Promise<SolverResult> {
+export async function runSolverSession(taskId: string, feedback?: string, model?: string): Promise<SolverResult> {
 	const prompt = feedback
 		? `Task: ${taskId}. Previous eval feedback: ${feedback}. Build on your previous solver implementation — do not start from scratch unless the current approach is fundamentally broken. Resume from Step 4 of the solver workflow.`
 		: `Solve task: ${taskId}. Follow the complete solver workflow from Step 1.`;
@@ -34,6 +34,7 @@ export async function runSolverSession(taskId: string, feedback?: string): Promi
 		instructionsPath: INSTRUCTIONS,
 		prompt,
 		env: { EVAL_TASK_ID: taskId },
+		model,
 	});
 
 	// Parse SOLVER_DONE sentinel

@@ -4,13 +4,20 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "solve": "tsx agent/run/orchestrate.ts"
+    "solve": "bun agent/run/orchestrate.ts",
+    "pi:hi": "bun agent/pi_sdk.ts",
+    "traces": "next dev agent/dashboard -p 3001"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "*",
-    "@earendil-works/pi-ai": "*"
+    "@earendil-works/pi-ai": "0.84.1",
+    "@earendil-works/pi-coding-agent": "0.84.1",
+    "next": "^16.3.2",
+    "postgres": "^3.4.9",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
   },
   "devDependencies": {
-    "tsx": "^4.0.0"
+    "@tailwindcss/postcss": "^4.3.3",
+    "tailwindcss": "^4.3.3"
   }
 }

@@ -1,11 +1,37 @@
 {
   "$schema":  "https://raw.githubusercontent.com/jetify-com/devbox/0.17.5/.schema/devbox.schema.json",
-  "packages": ["python-full@3.13.5"],
+  "packages": [
+    "python-full@3.13.5",
+    "bun@latest",
+    "postgresql@17",
+    "pi-coding-agent@0.84.1",
+    "ripgrep@latest",
+    "fd@latest",
+    "unzip@latest"
+  ],
+  "env_from": ".env",
+  "env": {
+    "AGENT_DATABASE_PORT": "55433",
+    "PGDATABASE": "postgres",
+    "PGPORT": "55433"
+  },
   "shell": {
     "init_hook": [
-      "echo 'Welcome to devbox!' > /dev/null"
+      "export PI_CODING_AGENT_DIR=\"$DEVBOX_PROJECT_ROOT/.pi/agent\""
     ],
     "scripts": {
+      "pi": [
+        "set -a; . \"$DEVBOX_PROJECT_ROOT/.env\"; set +a; PI_CODING_AGENT_DIR=\"$DEVBOX_PROJECT_ROOT/.pi/agent\" pi"
+      ],
+      "analyze-unit01-task01": [
+        "set -a; . \"$DEVBOX_PROJECT_ROOT/.env\"; set +a; PI_CODING_AGENT_DIR=\"$DEVBOX_PROJECT_ROOT/.pi/agent\" pi --approve --tools read,grep,find,ls,write --print 'Given Unit 1 Task 1, analyze the task prompt and training data. Write factual findings to runs/unit01-task01/data-analysis/report.md. Do not implement, train, tune, or inspect any existing solver code. Cover the data inventory, class balance, text statistics, label/data integrity, and facts that could guide a later modelling stage.'"
+      ],
+      "analyze-unit01-task01-deep": [
+        "set -a; . \"$DEVBOX_PROJECT_ROOT/.env\"; set +a; PI_CODING_AGENT_DIR=\"$DEVBOX_PROJECT_ROOT/.pi/agent\" pi --approve --tools read,grep,find,ls,bash,write,web_search --print 'You are the independent deep data-analysis stage for Unit 1 Task 1 (spam versus ham email classification). Do not inspect, reuse, implement, train, or tune any existing solver code or prior analysis report. Inspect the task prompt and the complete training ZIP directly. First, use exactly one bash call to run a Python-stdlib script over the ZIP. It must calculate exact class counts; class-stratified quantiles for bytes, characters, words, lines, URLs, email addresses, HTML markers, non-ASCII/control characters, uppercase ratio, digit ratio, punctuation ratio; top class-specific tokens; and concise samples from at least three emails per class. Do not read individual emails one at a time. Then use at most one web_search call for spam-versus-ham feature families and dataset identification. If it is unavailable, record that fact and do not fabricate sources. Use your remaining calls only to write runs/unit01-task01/data-analysis/deep-report.md. Mark every conclusion as measured, sampled, or hypothesis, include the reproducible script/command, a measurement table, data-quality/leakage risks, and a prioritized feature-hypothesis handoff. Do not write outside that data-analysis directory.'"
+      ],
+      "pi-sdk": [
+        "bun agent/pi_sdk.ts"
+      ],
       "test": [
         "echo \"Error: no test specified\" && exit 1"
       ]

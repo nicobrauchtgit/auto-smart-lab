@@ -1,0 +1,20 @@
+{
+  "providers": {
+    "saia": {
+      "name": "SAIA / GWDG Chat AI",
+      "baseUrl": "https://chat-ai.academiccloud.de/v1",
+      "api": "openai-completions",
+      "apiKey": "${SAIA_API_KEY}",
+      "models": [
+        {
+          "id": "mistral-medium-3.5-128b",
+          "name": "Mistral Medium 3.5 128B (SAIA)",
+          "reasoning": false,
+          "input": ["text", "image"],
+          "contextWindow": 256000,
+          "maxTokens": 16384
+        }
+      ]
+    }
+  }
+}
