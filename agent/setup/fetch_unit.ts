@@ -292,29 +292,71 @@ export async function fetchUnit(unit: string, options: FetchUnitOptions = {}): P
 	const client = new LabClient({ insecure: options.insecure });
 	const unitsUrl = new URL("/units/", client.baseUrl).toString();
 	const unitsPage = await cachedGet(client, unitsUrl, join(CACHE_DIR, "units.html"));
-	const discovered = unique(parseLinks(unitsPage)
-		.filter((link) => /\/units\/[0-9a-f-]+\/tasks\/?$/i.test(link.href))
-		.map((link) => new URL(link.href, client.baseUrl).toString()));
+	const discovered = new Map<string, string>();
+	for (const link of parseLinks(unitsPage)) {
+		if (!/\/units\/[0-9a-f-]+\/tasks\/?$/i.test(link.href)) continue;
+		const url = new URL(link.href, client.baseUrl).toString();
+		if (!discovered.has(url)) discovered.set(url, link.text);
+	}
 	const directUrl = /^https?:\/\//i.test(unit) ? new URL(unit).toString() : undefined;
-	const candidates = directUrl ? [directUrl] : discovered;
+	const candidates = directUrl
+		? [{ url: directUrl, listingTitle: "" }]
+		: [...discovered].map(([url, listingTitle]) => ({ url, listingTitle }));
 	if (candidates.length === 0) throw new Error("No SmartLab unit links found; check login and LAB_BASE_URL");
 
-	let selected: { url: string; id: string; page: string; title: string; slug: string } | undefined;
-	const query = unit.toLowerCase();
-	for (const url of candidates) {
+	type UnitCandidate = {
+		url: string;
+		id: string;
+		page: string;
+		title: string;
+		slug: string;
+		position: number;
+		listingTitle: string;
+	};
+	const loaded: UnitCandidate[] = [];
+	for (const [position, candidate] of candidates.entries()) {
+		const { url, listingTitle } = candidate;
 		const segments = new URL(url).pathname.split("/").filter(Boolean);
 		const id = segments.at(-1) === "tasks" ? segments.at(-2) ?? "unit" : segments.at(-1) ?? "unit";
 		const page = await cachedGet(client, url, join(CACHE_DIR, "units", `${id}.html`));
 		const crumbs = breadcrumb(page);
-		const title = crumbs[1] ?? "";
+		const title = crumbs[1] || listingTitle;
 		const slug = (title ? slugify(title) : "") || id;
-		if (directUrl || [id.toLowerCase(), title.toLowerCase(), slug.toLowerCase()].includes(query) ||
-			id.toLowerCase().startsWith(query)) {
-			selected = { url, id, page, title, slug };
-			break;
-		}
+		loaded.push({ url, id, page, title, slug, position, listingTitle });
 	}
-	if (!selected) throw new Error(`Unit not found: ${unit}`);
+
+	const query = unit.toLowerCase().replace(/\/$/, "");
+	const querySlug = slugify(query);
+	const numberedQuery = querySlug.match(/^0*(\d+)(?:-(.+))?$/);
+	const unitNumber = numberedQuery ? Number(numberedQuery[1]) : undefined;
+	const queryHint = numberedQuery?.[2] ?? querySlug;
+	const exact = loaded.find((candidate) =>
+		[candidate.id.toLowerCase(), candidate.title.toLowerCase(), candidate.slug.toLowerCase()].includes(query) ||
+		candidate.id.toLowerCase().startsWith(query));
+	const hintTerms = queryHint.split("-").filter(Boolean);
+	const fuzzy = hintTerms.length === 0 ? [] : loaded.filter((candidate) => {
+		const terms = new Set(slugify(`${candidate.title} ${candidate.listingTitle} ${candidate.slug}`).split("-"));
+		return hintTerms.every((term) => terms.has(term));
+	});
+	const matched = directUrl
+		? loaded[0]
+		: exact ?? (fuzzy.length === 1 ? fuzzy[0] : undefined) ??
+			(unitNumber ? fuzzy.find((candidate) => candidate.position === unitNumber - 1) : undefined) ??
+			(unitNumber && hintTerms.length === 0 ? loaded[unitNumber - 1] : undefined);
+	if (!matched) {
+		const available = loaded
+			.map((candidate) => `${String(candidate.position + 1).padStart(2, "0")}: ${candidate.title || candidate.slug}`)
+			.join("; ");
+		throw new Error(`Unit not found: ${unit}. Discovered units: ${available}`);
+	}
+
+	const numberedAlias = numberedQuery?.[2]
+		? `${String(Number(numberedQuery[1])).padStart(2, "0")}-${numberedQuery[2]}`
+		: undefined;
+	const localNames = existsSync(UNITS_DIR) ? readdirSync(UNITS_DIR) : [];
+	const existingName = localNames.find((name) =>
+		[name.toLowerCase(), slugify(name)].includes(querySlug) || name.toLowerCase() === numberedAlias);
+	const selected = { ...matched, slug: existingName ?? numberedAlias ?? matched.slug };
 
 	const unitDir = join(UNITS_DIR, selected.slug);
 	mkdirSync(unitDir, { recursive: true });
