@@ -1,0 +1,20 @@
+{
+  "unitId": "8a84a7b83020423085b3595403848ffb",
+  "unitSlug": "01-spam",
+  "unitTitle": "Introduction with Spam ;)",
+  "unitUrl": "https://lab-test.smartlab.mlsec.tu-berlin.de/units/8a84a7b83020423085b3595403848ffb/tasks/",
+  "taskPaths": [
+    "units/01-spam/spam-detection-with-machine-learning-50-points",
+    "units/01-spam/spam-detection-in-practice-50-points",
+    "units/01-spam/bonus-webspam-detection-30-points"
+  ],
+  "dataFiles": [
+    "bonus-webspam-detection-30-points/data/webspam-test.zip",
+    "bonus-webspam-detection-30-points/data/webspam-train.zip",
+    "spam-detection-in-practice-50-points/data/spam2-test.zip",
+    "spam-detection-in-practice-50-points/data/spam2-train.zip",
+    "spam-detection-with-machine-learning-50-points/data/spam1-test.zip",
+    "spam-detection-with-machine-learning-50-points/data/spam1-train.zip"
+  ],
+  "dataHash": "dbea6a281e2928d246a706cd450fab178ca87f5d48663cd598f1a4987d12d4e1"
+}
