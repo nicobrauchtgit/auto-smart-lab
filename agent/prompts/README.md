@@ -39,6 +39,12 @@ until those modules join the executor.
 Development `AGENTS.md` and `CLAUDE.md` files are excluded by the shared resource
 loader. This is automatic-context exclusion, not a filesystem sandbox.
 
+The optional [subagent module](../subagents/README.md) uses `subagents.*` prompts
+for parent/child guidance, assigned tasks, follow-ups, and tool descriptions.
+These tool descriptions use the same per-run Markdown snapshot. Delegation is
+not enabled in the pipeline. Its caller explicitly chooses the shared runtime
+prompts supplied to children.
+
 ## Compatibility during the active research run
 
 The old `agent/instructions/` files are retained unchanged for a research process

@@ -1,5 +1,17 @@
 /** Stable prompt IDs and their required string inputs. Prose belongs in files. */
 export const PROMPTS = {
+	"subagents.parent": { file: "subagents/parent.md", variables: [] },
+	"subagents.smoke-start": { file: "subagents/smoke-start.md", variables: ["workspace"] },
+	"subagents.smoke-task": { file: "subagents/smoke-task.md", variables: ["python"] },
+	"subagents.child": { file: "subagents/child.md", variables: [] },
+	"subagents.start": { file: "subagents/start.md", variables: ["task"] },
+	"subagents.followup": { file: "subagents/followup.md", variables: ["message"] },
+	"subagents.spawn-tool": { file: "subagents/spawn-tool.md", variables: [] },
+	"subagents.check-tool": { file: "subagents/check-tool.md", variables: [] },
+	"subagents.wait-tool": { file: "subagents/wait-tool.md", variables: [] },
+	"subagents.followup-tool": { file: "subagents/followup-tool.md", variables: [] },
+	"subagents.cancel-tool": { file: "subagents/cancel-tool.md", variables: [] },
+	"subagents.list-tool": { file: "subagents/list-tool.md", variables: [] },
 	"shared.python-environment": { file: "shared/python-environment.md", variables: ["pythonExecutable", "declaredDependencies", "totalDistributions", "environmentHash", "projectPath", "lockPath", "notesPath", "pythonCommand", "managerCommand"] },
 	"research.system": { file: "research/system.md", variables: [] },
 	"research.start": { file: "research/start.md", variables: ["taskId", "contextHash", "startupContext"] },
