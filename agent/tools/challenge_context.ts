@@ -1,3 +1,5 @@
+import { TOOL_PROMPTS } from "../prompts/tools.js";
+
 /**
  * Challenge context tools for the SmartLab ML agent.
  *
@@ -96,12 +98,9 @@ export default function challengeContextExtension(pi: ExtensionAPI) {
 		defineTool({
 			name: "list_challenges",
 			label: "Challenges: list",
-			description:
-				"List all available ML challenges from the challenge store. Returns unit, task path, and a brief prompt preview for each task.",
-			promptSnippet: "List available SmartLab challenges",
-			promptGuidelines: [
-				"Use list_challenges to discover what tasks are available before starting work.",
-			],
+			description: TOOL_PROMPTS.list_challenges.description,
+			promptSnippet: TOOL_PROMPTS.list_challenges.promptSnippet,
+			promptGuidelines: TOOL_PROMPTS.list_challenges.promptGuidelines,
 			parameters: Type.Object({}),
 			async execute(_toolCallId, _params, _signal) {
 				const challenges = collectChallenges();
@@ -128,15 +127,12 @@ export default function challengeContextExtension(pi: ExtensionAPI) {
 		defineTool({
 			name: "read_challenge",
 			label: "Challenges: read",
-			description:
-				"Read the full task prompt and unit introduction for a specific challenge. Pass the task_path returned by list_challenges.",
-			promptSnippet: "Read a SmartLab challenge prompt",
-			promptGuidelines: [
-				"Use read_challenge at the start of a solve session to understand the task requirements, input format, and evaluation metric.",
-			],
+			description: TOOL_PROMPTS.read_challenge.description,
+			promptSnippet: TOOL_PROMPTS.read_challenge.promptSnippet,
+			promptGuidelines: TOOL_PROMPTS.read_challenge.promptGuidelines,
 			parameters: Type.Object({
 				task_path: Type.String({
-					description: "Task path, e.g. '01-spam/task1-spam-detection' (as returned by list_challenges)",
+					description: TOOL_PROMPTS.read_challenge.parameters.task_path,
 				}),
 			}),
 			async execute(_toolCallId, params, _signal) {

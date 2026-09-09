@@ -1,5 +1,5 @@
 {
-  "$schema":  "https://raw.githubusercontent.com/jetify-com/devbox/0.17.5/.schema/devbox.schema.json",
+  "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/0.17.5/.schema/devbox.schema.json",
   "packages": [
     "python-full@3.13.5",
     "bun@latest",
@@ -7,19 +7,27 @@
     "pi-coding-agent@0.84.1",
     "ripgrep@latest",
     "fd@latest",
-    "unzip@latest"
+    "unzip@latest",
+    "uv@latest"
   ],
   "env_from": ".env",
   "env": {
     "AGENT_DATABASE_PORT": "55433",
-    "PGDATABASE": "postgres",
-    "PGPORT": "55433"
+    "PGDATABASE":          "postgres",
+    "PGPORT":              "55433",
+    "UV_PROJECT_ENVIRONMENT": "$DEVBOX_PROJECT_ROOT/.venv",
+    "UV_PYTHON_DOWNLOADS":    "never"
   },
   "shell": {
     "init_hook": [
-      "export PI_CODING_AGENT_DIR=\"$DEVBOX_PROJECT_ROOT/.pi/agent\""
+      "export PI_CODING_AGENT_DIR=\"$DEVBOX_PROJECT_ROOT/.pi/agent\"",
+      ". \"$VENV_DIR/bin/activate\"",
+      "\"$VENV_DIR/bin/python\" -I \"$DEVBOX_PROJECT_ROOT/agent/setup/python_environment.py\" ensure || echo '[python-environment] Readiness check failed; run devbox run python-setup when no runs are using the environment.' >&2"
     ],
     "scripts": {
+      "python-setup": [
+        "\"$VENV_DIR/bin/python\" -I \"$DEVBOX_PROJECT_ROOT/agent/setup/python_environment.py\" setup"
+      ],
       "pi": [
         "set -a; . \"$DEVBOX_PROJECT_ROOT/.env\"; set +a; PI_CODING_AGENT_DIR=\"$DEVBOX_PROJECT_ROOT/.pi/agent\" pi"
       ],

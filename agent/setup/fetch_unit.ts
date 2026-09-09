@@ -4,6 +4,7 @@ import {
 	mkdirSync,
 	readFileSync,
 	readdirSync,
+	renameSync,
 	statSync,
 	writeFileSync,
 } from "node:fs";
@@ -20,6 +21,8 @@ const CACHE_DIR = join(HERE, "downloaded_task_page");
 
 export interface FetchUnitOptions {
 	insecure?: boolean;
+	refreshMetadata?: boolean;
+	refreshData?: boolean;
 }
 
 export interface FetchUnitResult {
@@ -38,6 +41,7 @@ interface TaskMetadata {
 	task: string;
 	task_slug: string;
 	url: string;
+	task_number?: number;
 	short_id?: string;
 }
 
@@ -133,22 +137,86 @@ function breadcrumb(page: string): string[] {
 		.map((match) => stripTags(match[1]));
 }
 
-function mainContent(page: string): string {
-	const match = page.match(
-		/<(?:div|main|article)[^>]*(?:id|class)=(?:"[^"]*(?:content|main|task|description)[^"]*"|'[^']*(?:content|main|task|description)[^']*')[^>]*>([\s\S]*?)<\/(?:div|main|article)>/i,
-	);
-	return match?.[1] ?? page;
+interface ElementRange {
+	openStart: number;
+	openEnd: number;
+	closeStart: number;
+	closeEnd: number;
 }
 
-function htmlToMarkdown(fragment: string): string {
+function balancedElementRange(page: string, tagName: string, openStart: number): ElementRange | undefined {
+	const openingEnd = page.indexOf(">", openStart);
+	if (openingEnd === -1) return undefined;
+	const tags = new RegExp(`<${tagName}\\b[^>]*>|<\\/${tagName}\\s*>`, "gi");
+	tags.lastIndex = openStart;
+	let depth = 0;
+	for (let match = tags.exec(page); match; match = tags.exec(page)) {
+		if (match.index === openStart || !match[0].startsWith("</")) depth++;
+		else depth--;
+		if (depth === 0) {
+			return {
+				openStart,
+				openEnd: openingEnd + 1,
+				closeStart: match.index,
+				closeEnd: match.index + match[0].length,
+			};
+		}
+	}
+	return undefined;
+}
+
+function descriptionColumn(page: string, columnClass: string): string | undefined {
+	const heading = /<h1\b[^>]*class=(?:"[^"]*\bbd-title\b[^"]*"|'[^']*\bbd-title\b[^']*')[^>]*>[\s\S]*?<\/h1\s*>/i.exec(page);
+	if (!heading || heading.index === undefined) return undefined;
+	const candidates = [...page.slice(0, heading.index).matchAll(/<div\b[^>]*>/gi)]
+		.filter((candidate) => {
+			const classes = attribute(candidate[0], "class")?.split(/\s+/) ?? [];
+			return classes.includes(columnClass);
+		});
+	const container = candidates.at(-1);
+	if (!container || container.index === undefined) return undefined;
+	const range = balancedElementRange(page, "div", container.index);
+	if (!range || range.closeStart <= heading.index + heading[0].length) return undefined;
+	return page.slice(heading.index + heading[0].length, range.closeStart).trim();
+}
+
+export function extractTaskDescription(page: string): string {
+	const description = descriptionColumn(page, "col-md-8");
+	if (!description) throw new Error("Could not locate the primary task description in the SmartLab page");
+	return description;
+}
+
+export function extractUnitDescription(page: string): string {
+	let fragment = descriptionColumn(page, "col-md-12");
+	if (!fragment) throw new Error("Could not locate the primary unit description in the SmartLab page");
+	const confidential = /<div\b[^>]*class=(?:"[^"]*\bcards-columns\b[^"]*"|'[^']*\bcards-columns\b[^']*')[^>]*>/i.exec(fragment);
+	if (confidential?.index !== undefined) {
+		const range = balancedElementRange(fragment, "div", confidential.index);
+		if (range && /Confidential Unit Information|\bid=["']user_info["']|Please login with/i.test(
+			fragment.slice(range.openStart, range.closeEnd),
+		)) {
+			fragment = fragment.slice(0, range.openStart) + fragment.slice(range.closeEnd);
+		}
+	}
+	const tasksHeading = /<h2\b[^>]*>\s*Tasks\s*<\/h2\s*>/i.exec(fragment);
+	if (tasksHeading?.index !== undefined) fragment = fragment.slice(0, tasksHeading.index);
+	return fragment.trim();
+}
+
+export function htmlToMarkdown(fragment: string): string {
 	let text = fragment;
+	const codeBlock = (_match: string, content: string) =>
+		`\n\`\`\`\n${decodeHtml(content.replace(/<[^>]+>/g, "")).trim()}\n\`\`\`\n`;
+	text = text.replace(
+		/<div\b[^>]*class=(?:"[^"]*\bcodehilite\b[^"]*"|'[^']*\bcodehilite\b[^']*')[^>]*>[\s\S]*?<pre[^>]*>([\s\S]*?)<\/pre>[\s\S]*?<\/div>/gi,
+		codeBlock,
+	);
+	text = text.replace(/<pre[^>]*>([\s\S]*?)<\/pre>/gi, codeBlock);
 	for (let level = 6; level >= 1; level--) {
 		text = text.replace(new RegExp(`<h${level}[^>]*>([\\s\\S]*?)<\\/h${level}>`, "gi"),
 			(_match, content) => `\n${"#".repeat(level)} ${stripTags(content)}\n`);
 	}
 	text = text.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (_match, content) => `- ${stripTags(content)}\n`);
-	text = text.replace(/<pre[^>]*><code[^>]*>([\s\S]*?)<\/code><\/pre>/gi,
-		(_match, content) => `\n\`\`\`\n${decodeHtml(content.replace(/<[^>]+>/g, ""))}\n\`\`\`\n`);
 	text = text.replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, (_match, content) => `\`${stripTags(content)}\``);
 	text = text.replace(/<(?:strong|b)[^>]*>([\s\S]*?)<\/(?:strong|b)>/gi,
 		(_match, content) => `**${stripTags(content)}**`);
@@ -158,7 +226,11 @@ function htmlToMarkdown(fragment: string): string {
 		(_match, tag, content) => `[${stripTags(content)}](${attribute(tag, "href") ?? ""})`);
 	text = text.replace(/<br\s*\/?>/gi, "\n");
 	text = text.replace(/<p[^>]*>([\s\S]*?)<\/p>/gi, (_match, content) => `\n${stripTags(content)}\n`);
-	return decodeHtml(text.replace(/<[^>]+>/g, " ").replace(/\n{3,}/g, "\n\n")).trim();
+	return decodeHtml(text.replace(/<[^>]+>/g, " ").replace(/\n{3,}/g, "\n\n"))
+		.split("\n")
+		.map((line) => line.trimEnd())
+		.join("\n")
+		.trim();
 }
 
 function slugify(value: string): string {
@@ -170,9 +242,9 @@ function unique(values: string[]): string[] {
 	return [...new Set(values)];
 }
 
-async function cachedGet(client: LabClient, url: string, path: string): Promise<string> {
+async function cachedGet(client: LabClient, url: string, path: string, refresh = false): Promise<string> {
 	mkdirSync(dirname(path), { recursive: true });
-	if (existsSync(path) && statSync(path).size > 0) return readFileSync(path, "utf8");
+	if (!refresh && existsSync(path) && statSync(path).size > 0) return readFileSync(path, "utf8");
 	const response = await client.get(url);
 	writeFileSync(path, response.body);
 	return response.text;
@@ -212,7 +284,7 @@ async function downloadData(
 	client: LabClient,
 	urls: string[],
 	destination: string,
-	refetchUnit: boolean,
+	refreshData: boolean,
 ): Promise<string[]> {
 	mkdirSync(destination, { recursive: true });
 	const packages: string[] = [];
@@ -220,10 +292,22 @@ async function downloadData(
 		const urlPath = new URL(url).pathname;
 		const filename = decodeURIComponent(basename(urlPath)) || "data.zip";
 		const localPath = join(destination, filename);
-		if (!existsSync(localPath) || refetchUnit) {
+		if (!existsSync(localPath) || refreshData) {
 			console.log(`    [download] ${url}`);
 			const response = await client.get(url);
-			writeFileSync(localPath, response.body);
+			const expectedLength = Number(response.headers["content-length"] ?? 0);
+			if (expectedLength > 0 && response.body.length !== expectedLength) {
+				throw new Error(`Incomplete download for ${url}: expected ${expectedLength} bytes, got ${response.body.length}`);
+			}
+			if (filename.toLowerCase().endsWith(".zip")) {
+				const signature = response.body.subarray(0, 4).toString("hex");
+				if (!["504b0304", "504b0506", "504b0708"].includes(signature)) {
+					throw new Error(`Downloaded response is not a ZIP archive: ${url}`);
+				}
+			}
+			const temporaryPath = `${localPath}.tmp`;
+			writeFileSync(temporaryPath, response.body);
+			renameSync(temporaryPath, localPath);
 		} else {
 			console.log(`    [skip] ${filename} (already downloaded)`);
 		}
@@ -249,30 +333,65 @@ function readMetadata(path: string): TaskMetadata | undefined {
 	}
 }
 
+function unitKeyword(unitName: string): string {
+	const stopwords = new Set(["introduction", "with", "the", "a", "an", "and", "or", "in", "of", "to"]);
+	const parts = unitName.split("-").filter((part) => !stopwords.has(part));
+	return parts.at(-1) ?? unitName;
+}
+
+function metadataCacheValid(record: UnitDataHash): boolean {
+	const introPath = join(PROJECT_ROOT, record.unitSlug.startsWith("units/") ? record.unitSlug : `units/${record.unitSlug}`, "unit-intro.md");
+	if (!existsSync(introPath)) return false;
+	const intro = readFileSync(introPath, "utf8");
+	if (/Confidential Unit Information|Please login with[\s\S]{0,300}password/i.test(intro)) return false;
+	const indexPath = join(UNITS_DIR, "index.json");
+	if (!existsSync(indexPath)) return false;
+	let index: Record<string, string>;
+	try {
+		index = JSON.parse(readFileSync(indexPath, "utf8")) as Record<string, string>;
+	} catch {
+		return false;
+	}
+	const keyword = unitKeyword(record.unitSlug);
+	for (const [position, taskPath] of record.taskPaths.entries()) {
+		const taskDir = resolve(PROJECT_ROOT, taskPath);
+		const promptPath = join(taskDir, "prompt.md");
+		const metadataPath = join(taskDir, "meta.json");
+		if (!existsSync(promptPath) || !existsSync(metadataPath)) return false;
+		const prompt = readFileSync(promptPath, "utf8");
+		if (prompt.length < 300 || /Submit New Attempt/i.test(prompt)) return false;
+		const metadata = readMetadata(metadataPath);
+		const taskNumber = position + 1;
+		const shortId = `${keyword}${taskNumber}`;
+		if (!metadata || metadata.task_number !== taskNumber || metadata.short_id !== shortId) return false;
+		if (index[shortId] !== metadata.url) return false;
+	}
+	return true;
+}
+
 function rebuildTaskIndex(): void {
 	mkdirSync(UNITS_DIR, { recursive: true });
 	const index: Record<string, string> = {};
-	const stopwords = new Set(["introduction", "with", "the", "a", "an", "and", "or", "in", "of", "to"]);
 	for (const unitName of readdirSync(UNITS_DIR).sort()) {
 		const unitDir = join(UNITS_DIR, unitName);
 		if (!statSync(unitDir).isDirectory()) continue;
-		const parts = unitName.split("-").filter((part) => !stopwords.has(part));
-		const keyword = parts.at(-1) ?? unitName;
+		const keyword = unitKeyword(unitName);
 		const tasks = readdirSync(unitDir)
 			.map((name) => join(unitDir, name))
 			.filter((path) => statSync(path).isDirectory() && existsSync(join(path, "meta.json")))
 			.sort((left, right) => {
 				const leftMeta = readMetadata(join(left, "meta.json"));
 				const rightMeta = readMetadata(join(right, "meta.json"));
-				const leftNumber = Number(leftMeta?.task.match(/^(\d+)\./)?.[1] ?? 999);
-				const rightNumber = Number(rightMeta?.task.match(/^(\d+)\./)?.[1] ?? 999);
+				const leftNumber = leftMeta?.task_number ?? Number(leftMeta?.task.match(/^(\d+)\./)?.[1] ?? 999);
+				const rightNumber = rightMeta?.task_number ?? Number(rightMeta?.task.match(/^(\d+)\./)?.[1] ?? 999);
 				return leftNumber - rightNumber || left.localeCompare(right);
 			});
 		tasks.forEach((taskDir, indexWithinUnit) => {
 			const metadataPath = join(taskDir, "meta.json");
 			const metadata = readMetadata(metadataPath);
 			if (!metadata) return;
-			const taskNumber = Number(metadata.task.match(/^(\d+)\./)?.[1] ?? indexWithinUnit + 1);
+			const taskNumber = metadata.task_number ?? Number(metadata.task.match(/^(\d+)\./)?.[1] ?? indexWithinUnit + 1);
+			metadata.task_number = taskNumber;
 			metadata.short_id = `${keyword}${taskNumber}`;
 			index[metadata.short_id] = metadata.url;
 			writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
@@ -282,17 +401,16 @@ function rebuildTaskIndex(): void {
 	console.log(`[fetch_unit] Index contains: ${Object.keys(index).join(", ")}`);
 }
 
-export async function fetchUnit(unit: string, _options: FetchUnitOptions = {}): Promise<FetchUnitResult> {
+export async function fetchUnit(unit: string, options: FetchUnitOptions = {}): Promise<FetchUnitResult> {
 	const cached = await findCachedUnit(unit);
-	if (cached?.valid) {
+	if (cached?.valid && metadataCacheValid(cached.record) && !options.refreshMetadata && !options.refreshData) {
 		console.log(`[fetch_unit] ${cached.record.unitSlug} unit data hash matches; skipping fetch.`);
 		return { unitSlug: cached.record.unitSlug, taskPaths: cached.record.taskPaths };
 	}
-	const refetchUnit = cached !== undefined;
 	// SmartLab uses a permanently self-signed certificate on its lab/download hosts.
-	const client = new LabClient({ insecure: true });
+	const client = new LabClient({ insecure: options.insecure ?? true });
 	const unitsUrl = new URL("/units/", client.baseUrl).toString();
-	const unitsPage = await cachedGet(client, unitsUrl, join(CACHE_DIR, "units.html"));
+	const unitsPage = await cachedGet(client, unitsUrl, join(CACHE_DIR, "units.html"), options.refreshMetadata);
 	const discovered = new Map<string, string>();
 	for (const link of parseLinks(unitsPage)) {
 		if (!/\/units\/[0-9a-f-]+\/tasks\/?$/i.test(link.href)) continue;
@@ -319,7 +437,7 @@ export async function fetchUnit(unit: string, _options: FetchUnitOptions = {}): 
 		const { url, listingTitle } = candidate;
 		const segments = new URL(url).pathname.split("/").filter(Boolean);
 		const id = segments.at(-1) === "tasks" ? segments.at(-2) ?? "unit" : segments.at(-1) ?? "unit";
-		const page = await cachedGet(client, url, join(CACHE_DIR, "units", `${id}.html`));
+		const page = await cachedGet(client, url, join(CACHE_DIR, "units", `${id}.html`), options.refreshMetadata);
 		const crumbs = breadcrumb(page);
 		const title = crumbs[1] || listingTitle;
 		const slug = (title ? slugify(title) : "") || id;
@@ -362,7 +480,7 @@ export async function fetchUnit(unit: string, _options: FetchUnitOptions = {}): 
 	const unitDir = join(UNITS_DIR, selected.slug);
 	mkdirSync(unitDir, { recursive: true });
 	console.log(`[unit] ${selected.title || selected.id} -> ${relative(PROJECT_ROOT, unitDir)}/`);
-	const intro = htmlToMarkdown(mainContent(selected.page));
+	const intro = htmlToMarkdown(extractUnitDescription(selected.page));
 	if (intro) writeFileSync(join(unitDir, "unit-intro.md"), `# ${selected.title}\n\n${intro}\n`);
 
 	const taskUrls = unique(parseLinks(selected.page)
@@ -371,10 +489,10 @@ export async function fetchUnit(unit: string, _options: FetchUnitOptions = {}): 
 	if (taskUrls.length === 0) throw new Error(`No tasks found for unit ${selected.title || selected.id}`);
 	const taskPaths: string[] = [];
 	const dataPackages: string[] = [];
-	for (const taskUrl of taskUrls) {
+	for (const [taskIndex, taskUrl] of taskUrls.entries()) {
 		const taskId = new URL(taskUrl).pathname.split("/").filter(Boolean).at(-1) ?? "task";
 		const taskPage = await cachedGet(client, taskUrl,
-			join(CACHE_DIR, "tasks", `${selected.id}__${taskId}.html`));
+			join(CACHE_DIR, "tasks", `${selected.id}__${taskId}.html`), options.refreshMetadata);
 		const crumbs = breadcrumb(taskPage);
 		const taskTitle = crumbs[2] ?? "";
 		const taskSlug = (taskTitle ? slugify(taskTitle) : "") || taskId;
@@ -382,13 +500,14 @@ export async function fetchUnit(unit: string, _options: FetchUnitOptions = {}): 
 		mkdirSync(taskDir, { recursive: true });
 		console.log(`  [task] ${taskTitle || taskId} -> ${relative(PROJECT_ROOT, taskDir)}/`);
 		writeFileSync(join(taskDir, "prompt.md"),
-			`# ${taskTitle}\n\nSource: ${taskUrl}\n\n${htmlToMarkdown(mainContent(taskPage))}\n`);
+			`# ${taskTitle}\n\nSource: ${taskUrl}\n\n${htmlToMarkdown(extractTaskDescription(taskPage))}\n`);
 		const metadata: TaskMetadata = {
 			unit: selected.title,
 			unit_slug: selected.slug,
 			task: taskTitle,
 			task_slug: taskSlug,
 			url: taskUrl,
+			task_number: taskIndex + 1,
 		};
 		writeFileSync(join(taskDir, "meta.json"), `${JSON.stringify(metadata, null, 2)}\n`);
 
@@ -400,7 +519,7 @@ export async function fetchUnit(unit: string, _options: FetchUnitOptions = {}): 
 				client,
 				downloads.sort(),
 				join(taskDir, "data"),
-				refetchUnit,
+				options.refreshData ?? false,
 			));
 		}
 		else console.log("    [data] no download links found on task page");
@@ -411,6 +530,15 @@ export async function fetchUnit(unit: string, _options: FetchUnitOptions = {}): 
 	const dataFiles = dataPackages.map((packagePath) => relative(unitDir, packagePath)).sort();
 	const dataHash = await hashUnitData(unitDir, dataFiles);
 	if (!dataHash) throw new Error(`Could not hash complete unit corpus for ${selected.slug}`);
+	if (
+		cached && !options.refreshData &&
+		JSON.stringify([...cached.record.dataFiles].sort()) === JSON.stringify(dataFiles) &&
+		cached.record.dataHash !== dataHash
+	) {
+		throw new Error(
+			`Unit data differs from the saved hash for ${selected.slug}; rerun with { refreshData: true } to replace existing archives`,
+		);
+	}
 	const hashRecord: UnitDataHash = {
 		unitId: selected.id,
 		unitSlug: selected.slug,

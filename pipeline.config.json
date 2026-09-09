@@ -1,4 +1,32 @@
 {
+  "pipeline": {
+    "version": 1,
+    "entryStage": "research",
+    "scheduling": "configured",
+    "stages": {
+      "research": {
+        "enabled": true,
+        "options": {
+          "injectStartupContext": true
+        }
+      },
+      "solve": {
+        "enabled": true,
+        "options": {
+          "maxIterations": 6,
+          "sealedFraction": 0.1,
+          "seed": 13,
+          "foldPolicy": "auto"
+        }
+      },
+      "evaluate": {
+        "enabled": false
+      },
+      "submit": {
+        "enabled": false
+      }
+    }
+  },
   "agent": {
     "cwd": ".",
     "agentDir": ".pi/agent",
@@ -16,7 +44,10 @@
           "id": "mistral-medium-3.5-128b",
           "name": "Mistral Medium 3.5 128B",
           "reasoning": false,
-          "input": ["text", "image"],
+          "input": [
+            "text",
+            "image"
+          ],
           "contextWindow": 256000,
           "maxTokens": 16384
         }

@@ -34,16 +34,38 @@ export async function listRuns() {
 			max(step_type) step_type,
 			(array_agg(data ORDER BY sequence)
 				FILTER (WHERE event_type = 'agent_run_start'))[1] start_payload,
-			CASE WHEN count(*) FILTER (WHERE event_type = 'runner_error'
+			(array_agg(data ORDER BY sequence)
+				FILTER (WHERE event_type = 'pipeline_run_start'))[1] pipeline_payload,
+			(array_agg(data ORDER BY sequence)
+				FILTER (WHERE event_type = 'pipeline_run_end'))[1] pipeline_end_payload,
+			CASE WHEN count(*) FILTER (WHERE event_type = 'pipeline_run_start') > 0 THEN 'pipeline'
+				ELSE 'agent' END kind,
+			CASE
+				-- A pipeline run reports the outcome the executor recorded, which is
+				-- not the same as an agent session finishing.
+				WHEN count(*) FILTER (WHERE event_type = 'pipeline_run_end'
+					AND data->>'outcome' = 'success') > 0 THEN 'settled'
+				WHEN count(*) FILTER (WHERE event_type = 'pipeline_run_end') > 0 THEN 'failed'
+				WHEN count(*) FILTER (WHERE event_type = 'runner_error'
 				OR (event_type = 'auto_retry_end' AND data->>'success' = 'false')) > 0 THEN 'failed'
 				WHEN count(*) FILTER (WHERE event_type = 'agent_settled') > 0 THEN 'settled'
 				ELSE 'running' END status
 		FROM events GROUP BY agent_run_id ORDER BY updated_at DESC
 	`;
-	return rows.map(({ start_payload, ...run }) => ({
-		...run,
-		model: parsePayload(start_payload)?.model,
-	}));
+	return rows.map(({ start_payload, pipeline_payload, pipeline_end_payload, ...run }) => {
+		const start = parsePayload(start_payload);
+		const pipeline = parsePayload(pipeline_payload);
+		const pipelineEnd = parsePayload(pipeline_end_payload);
+		return {
+			...run,
+			model: start?.model ?? pipeline?.model,
+			task_id: start?.taskId ?? pipeline?.taskId,
+			pipeline_run_id: start?.pipelineRunId ?? pipeline?.pipelineRunId,
+			stage: start?.stage,
+			attempt: start?.attempt,
+			stopped_because: pipelineEnd?.stopped_because,
+		};
+	});
 }
 
 export async function getRunEvents(runId, after = -1) {

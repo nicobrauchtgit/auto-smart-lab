@@ -22,13 +22,17 @@ export default function RunList({ runs, selectedId, onSelect }) {
 						key={run.agent_run_id}
 						onClick={() => onSelect(run.agent_run_id)}
 					>
-						<strong className="block truncate text-sm font-medium text-zinc-900">{run.model || "Agent run"}</strong>
+						<strong className="block truncate text-sm font-medium text-zinc-900">
+							{run.kind === "pipeline" ? `Pipeline · ${run.task_id ?? "task"}` : run.model || "Agent run"}
+						</strong>
 						<span className="mt-1 block truncate font-mono text-[10px] text-zinc-400">{run.agent_run_id}</span>
 						<span className="mt-1 block text-[11px] text-zinc-500">{new Date(run.started_at).toLocaleString()}</span>
 						<span className="mt-2 flex flex-wrap gap-1.5">
 							<Badge className={statusStyles[run.status]}>{run.status}</Badge>
 							<Badge>{run.event_count} events</Badge>
 							{run.step_type && <Badge>{run.step_type}</Badge>}
+							{run.attempt != null && <Badge>attempt {run.attempt}</Badge>}
+							{run.kind !== "pipeline" && run.task_id && <Badge>{run.task_id}</Badge>}
 						</span>
 					</button>
 				))}

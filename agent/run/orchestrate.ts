@@ -7,7 +7,7 @@
  * Re-solving after a REJECT is free.
  *
  * Usage:
- *   npx tsx agent/run/orchestrate.ts <task_id>
+ *   npx tsx agent/run/orchestrate.ts <task_id> [--research|--research-only]
  *
  * Required environment:
  *   LAB_USER, LAB_PASS, LAB_INSECURE_TLS, SMARTLAB_TASK_URL
@@ -60,16 +60,19 @@ import { ensureSolverScaffold } from "./scaffold.js";
 import { runSolverSession } from "./solver_session.js";
 import { runEvalSession } from "./eval_session.js";
 import { runSubmitSession } from "./submit_session.js";
+import { runResearchStage } from "../pipeline/run_research.js";
 import { getTaskMemory } from "./memory_utils.js";
 
 const MAX_SUBMISSIONS = 3;
 
 function usage(): never {
-	console.error("Usage: npx tsx agent/run/orchestrate.ts <task_id|list> [--model <id>] [--task-url <url>] [--insecure]");
+	console.error("Usage: npx tsx agent/run/orchestrate.ts <task_id|list> [--research|--research-only] [--model <id>] [--task-url <url>] [--insecure]");
 	console.error("Required env: LAB_USER, LAB_PASS");
 	console.error("Examples:");
 	console.error("  npm run solve list                    # show all available task IDs");
 	console.error("  npm run solve spam3 -- --insecure     # solve task spam3");
+	console.error("  npm run solve spam1 -- --research-only # update the living research document only");
+	console.error("  npm run solve spam1 -- --research      # research, then solve/eval/submit");
 	console.error("  npm run solve spam3 -- --insecure --model gwdg/devstral-2-123b-instruct-2512");
 	process.exit(1);
 }
@@ -94,8 +97,10 @@ async function main() {
 	const model = takeArg("--model");
 	const taskUrl = takeArg("--task-url");
 	const insecure = takeFlag("--insecure");
+	const researchOnly = takeFlag("--research-only");
+	const withResearch = takeFlag("--research") || researchOnly;
 	const taskId = args[0];
-	if (!taskId) usage();
+	if (!taskId || args.length !== 1) usage();
 
 	// List available tasks
 	if (taskId === "list") {
@@ -134,6 +139,12 @@ async function main() {
 	}
 
 	if (model) console.log(`[orchestrate] Using model: ${model}`);
+	if (researchOnly) {
+		const result = await runResearchStage({ taskId, model, invokedBy: { kind: "cli", command: "solve --research-only" } });
+		if (result.outcome !== "success") process.exit(1);
+		console.log(`[orchestrate] Research complete: ${result.documentPath}`);
+		return;
+	}
 	if (taskUrl) { process.env.SMARTLAB_TASK_URL = taskUrl; }
 	if (insecure) { process.env.LAB_INSECURE_TLS = "1"; }
 
@@ -170,6 +181,14 @@ async function main() {
 
 	// Step 0: Ensure a solver module exists (scaffold if needed)
 	await ensureSolverScaffold(taskId);
+	if (withResearch) {
+		const result = await runResearchStage({ taskId, model, invokedBy: { kind: "cli", command: "solve --research" } });
+		if (result.outcome !== "success") {
+			console.error(`[orchestrate] Research failed: ${result.error ?? result.stoppedBecause}`);
+			process.exit(1);
+		}
+		console.log(`[orchestrate] Grounded research ready: ${result.documentPath}`);
+	}
 
 	let feedback: string | undefined;
 	let iteration = 0;

@@ -1,3 +1,5 @@
+import { TOOL_PROMPTS } from "../prompts/tools.js";
+
 /**
  * SmartLab submit tool (native TypeScript, no Python, no subprocess).
  *
@@ -750,23 +752,20 @@ export default function smartlabExtension(pi: ExtensionAPI) {
 		defineTool({
 			name: "smartlab_submit",
 			label: "SmartLab: submit",
-			description:
-				"Submit a SmartLab solution: upload a prediction CSV and return the resulting score plus attempt info. Login and CSRF/session handling happen automatically using LAB_USER/LAB_PASS.",
-			promptSnippet: "Submit a SmartLab prediction CSV and read back the score",
-			promptGuidelines: [
-				"Use smartlab_submit to upload a finished prediction CSV to SmartLab and get the score; do not try to log in or fetch tokens separately.",
-			],
+			description: TOOL_PROMPTS.smartlab_submit.description,
+			promptSnippet: TOOL_PROMPTS.smartlab_submit.promptSnippet,
+			promptGuidelines: TOOL_PROMPTS.smartlab_submit.promptGuidelines,
 			parameters: Type.Object({
-				csv: Type.String({ description: "Path to the prediction CSV to upload (as output.csv)" }),
+				csv: Type.String({ description: TOOL_PROMPTS.smartlab_submit.parameters.csv }),
 				task_url: Type.Optional(
-					Type.String({ description: "Full task URL (defaults to SMARTLAB_TASK_URL env)" }),
+					Type.String({ description: TOOL_PROMPTS.smartlab_submit.parameters.task_url }),
 				),
-				comment: Type.Optional(Type.String({ description: "Attempt comment", default: "auto-agent submission" })),
+				comment: Type.Optional(Type.String({ description: TOOL_PROMPTS.smartlab_submit.parameters.comment, default: "auto-agent submission" })),
 				source_dir: Type.Optional(
-					Type.String({ description: "Directory to archive as source.zip (default: project root)" }),
+					Type.String({ description: TOOL_PROMPTS.smartlab_submit.parameters.source_dir }),
 				),
-				poll_timeout: Type.Optional(Type.Integer({ description: "Seconds to poll for the result", default: 180 })),
-				poll_interval: Type.Optional(Type.Integer({ description: "Seconds between polls", default: 10 })),
+				poll_timeout: Type.Optional(Type.Integer({ description: TOOL_PROMPTS.smartlab_submit.parameters.poll_timeout, default: 180 })),
+				poll_interval: Type.Optional(Type.Integer({ description: TOOL_PROMPTS.smartlab_submit.parameters.poll_interval, default: 10 })),
 			}),
 			async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 				if (signal?.aborted) {

@@ -1,3 +1,5 @@
+import { TOOL_PROMPTS } from "../prompts/tools.js";
+
 /**
  * Persistent memory tools for the SmartLab ML agent.
  *
@@ -106,11 +108,9 @@ export default function memoryExtension(pi: ExtensionAPI) {
 		defineTool({
 			name: "memory_read",
 			label: "Memory: read",
-			description: "Read the full persistent memory store for this project. Returns task histories, session logs, and global notes.",
-			promptSnippet: "Read the agent memory store",
-			promptGuidelines: [
-				"Call memory_read at the start of every session to review past scores, failed approaches, and global notes before starting work.",
-			],
+			description: TOOL_PROMPTS.memory_read.description,
+			promptSnippet: TOOL_PROMPTS.memory_read.promptSnippet,
+			promptGuidelines: TOOL_PROMPTS.memory_read.promptGuidelines,
 			parameters: Type.Object({}),
 			async execute(_toolCallId, _params, _signal) {
 				const store = readStore();
@@ -126,18 +126,14 @@ export default function memoryExtension(pi: ExtensionAPI) {
 		defineTool({
 			name: "memory_write",
 			label: "Memory: write",
-			description:
-				"Deep-merge a patch object into the persistent memory store. Use this to record scores, approaches, failed strategies, and submission results.",
-			promptSnippet: "Write to the agent memory store",
-			promptGuidelines: [
-				"After completing validation or solving, call memory_write to record last_val_score, last_submission_csv, approach used, and any failed_approaches.",
-				"To update a nested key such as tasks.spam1.last_val_score, pass { tasks: { spam1: { last_val_score: 0.99 } } }.",
-			],
+			description: TOOL_PROMPTS.memory_write.description,
+			promptSnippet: TOOL_PROMPTS.memory_write.promptSnippet,
+			promptGuidelines: TOOL_PROMPTS.memory_write.promptGuidelines,
 			parameters: Type.Object({
 				patch: Type.Record(
 					Type.String(),
 					Type.Unknown(),
-					{ description: "Partial memory object to deep-merge into the store" },
+					{ description: TOOL_PROMPTS.memory_write.parameters.patch },
 				),
 			}),
 			async execute(_toolCallId, params, _signal) {
@@ -156,17 +152,15 @@ export default function memoryExtension(pi: ExtensionAPI) {
 		defineTool({
 			name: "memory_append_session",
 			label: "Memory: append session",
-			description: "Append a session log entry to the sessions history array.",
-			promptSnippet: "Append a session entry to memory",
-			promptGuidelines: [
-				"Call memory_append_session at the end of a solve or eval session to log what was done.",
-			],
+			description: TOOL_PROMPTS.memory_append_session.description,
+			promptSnippet: TOOL_PROMPTS.memory_append_session.promptSnippet,
+			promptGuidelines: TOOL_PROMPTS.memory_append_session.promptGuidelines,
 			parameters: Type.Object({
-				task_id: Type.String({ description: "Task identifier, e.g. spam1" }),
-				phase: Type.Union([Type.Literal("solve"), Type.Literal("eval")], { description: "Session phase" }),
-				approach: Type.Optional(Type.String({ description: "Brief description of the approach used" })),
-				val_score: Type.Optional(Type.Number({ description: "Local validation balanced accuracy" })),
-				notes: Type.Optional(Type.String({ description: "Any additional notes or observations" })),
+				task_id: Type.String({ description: TOOL_PROMPTS.memory_append_session.parameters.task_id }),
+				phase: Type.Union([Type.Literal("solve"), Type.Literal("eval")], { description: TOOL_PROMPTS.memory_append_session.parameters.phase }),
+				approach: Type.Optional(Type.String({ description: TOOL_PROMPTS.memory_append_session.parameters.approach })),
+				val_score: Type.Optional(Type.Number({ description: TOOL_PROMPTS.memory_append_session.parameters.val_score })),
+				notes: Type.Optional(Type.String({ description: TOOL_PROMPTS.memory_append_session.parameters.notes })),
 			}),
 			async execute(_toolCallId, params, _signal) {
 				const store = readStore();

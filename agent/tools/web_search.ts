@@ -1,3 +1,5 @@
+import { TOOL_PROMPTS } from "../prompts/tools.js";
+
 /**
  * Web search tool for the SmartLab ML agent.
  *
@@ -53,22 +55,30 @@ function post(url: string, body: string, headers: Record<string, string>): Promi
 }
 
 export default function webSearchExtension(pi: ExtensionAPI) {
+	let calls = 0;
 	pi.registerTool(
 		defineTool({
 			name: "web_search",
 			label: "Web: search",
-			description:
-				"Search the web for information relevant to the current ML challenge. Use this to research approaches, find Python stdlib implementations, or look up adversarial ML techniques.",
-			promptSnippet: "Search the web for ML approaches",
-			promptGuidelines: [
-				"Use web_search when the task type is unfamiliar, when past validation scores are below 0.95, or when you need to find a stdlib-compatible implementation of a specific algorithm.",
-				"Good queries: 'spam detection python stdlib naive bayes', 'network traffic classification no sklearn', 'adversarial feature robustness text classification'.",
-			],
+			description: TOOL_PROMPTS.web_search.description,
+			promptSnippet: TOOL_PROMPTS.web_search.promptSnippet,
+			promptGuidelines: TOOL_PROMPTS.web_search.promptGuidelines,
 			parameters: Type.Object({
-				query: Type.String({ description: "Search query" }),
-				max_results: Type.Optional(Type.Integer({ description: "Maximum number of results to return (default: 5)", default: 5 })),
+				query: Type.String({ description: TOOL_PROMPTS.web_search.parameters.query }),
+				max_results: Type.Optional(Type.Integer({ description: TOOL_PROMPTS.web_search.parameters.max_results, default: 5 })),
 			}),
 			async execute(_toolCallId, params, signal) {
+				const configuredLimit = Number.parseInt(process.env.WEB_SEARCH_MAX_CALLS ?? "", 10);
+				const callLimit = Number.isFinite(configuredLimit) && configuredLimit >= 0
+					? configuredLimit
+					: undefined;
+				if (callLimit !== undefined && calls >= callLimit) {
+					return {
+						content: [{ type: "text", text: JSON.stringify({ error: `Web search call limit reached (${callLimit})` }) }],
+						details: {},
+					};
+				}
+				calls++;
 				const apiKey = process.env.TAVILY_API_KEY;
 				if (!apiKey) {
 					return {
@@ -88,7 +98,11 @@ export default function webSearchExtension(pi: ExtensionAPI) {
 					return { content: [{ type: "text", text: "Cancelled" }], details: {} };
 				}
 
-				const maxResults = params.max_results ?? 5;
+				const configuredResults = Number.parseInt(process.env.WEB_SEARCH_MAX_RESULTS ?? "", 10);
+				const resultLimit = Number.isFinite(configuredResults) && configuredResults > 0
+					? configuredResults
+					: 5;
+				const maxResults = Math.min(params.max_results ?? 5, resultLimit);
 				const body = JSON.stringify({
 					query: params.query,
 					max_results: maxResults,

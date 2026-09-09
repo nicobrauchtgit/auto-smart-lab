@@ -4,13 +4,15 @@
  * waits for completion, and parses the SOLVER_DONE sentinel.
  */
 
-import { dirname, join, resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runSession } from "./session_runner.js";
+import { loadPromptSnapshot } from "../prompts/loader.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const AGENT_DIR = resolve(HERE, "..");
-const INSTRUCTIONS = join(AGENT_DIR, "instructions", "solver.md");
+const PROJECT_ROOT = resolve(AGENT_DIR, "..");
 
 export interface SolverResult {
 	valScore: number;
@@ -24,15 +26,21 @@ export interface SolverResult {
  * @param feedback Optional feedback from a previous eval rejection (for re-solve)
  */
 export async function runSolverSession(taskId: string, feedback?: string, model?: string): Promise<SolverResult> {
-	const prompt = feedback
-		? `Task: ${taskId}. Previous eval feedback: ${feedback}. Build on your previous solver implementation — do not start from scratch unless the current approach is fundamentally broken. Resume from Step 4 of the solver workflow.`
-		: `Solve task: ${taskId}. Follow the complete solver workflow from Step 1.`;
+	const researchPath = join(PROJECT_ROOT, "runs", taskId, "research", "research.md");
+	const prompts = loadPromptSnapshot();
+	const system = prompts.render("solver.system", {});
+	const inputs = { taskId, researchState: JSON.stringify({ path: relative(PROJECT_ROOT, researchPath), exists: existsSync(researchPath) }) };
+	const start = feedback
+		? prompts.render("solver.retry", { ...inputs, feedback })
+		: prompts.render("solver.start", inputs);
 
 	console.log(`[solver] Starting session for task ${taskId}${feedback ? " (re-solve)" : ""}`);
 
 	const { output } = await runSession({
-		instructionsPath: INSTRUCTIONS,
-		prompt,
+		prompts,
+		system,
+		prompt: start.text,
+		promptReferences: [system.reference, start.reference],
 		env: { EVAL_TASK_ID: taskId },
 		model,
 	});

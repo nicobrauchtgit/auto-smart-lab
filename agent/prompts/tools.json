@@ -1,0 +1,80 @@
+{
+  "web_search": {
+    "description": "Search the web for information relevant to the current ML challenge. Use this to research approaches, find Python stdlib implementations, or look up adversarial ML techniques.",
+    "promptSnippet": "Search the web for ML approaches",
+    "promptGuidelines": [
+      "Use web_search when the task type is unfamiliar, when past validation scores are below 0.95, or when you need to find a stdlib-compatible implementation of a specific algorithm.",
+      "Good queries: 'spam detection python stdlib naive bayes', 'network traffic classification no sklearn', 'adversarial feature robustness text classification'."
+    ],
+    "parameters": {
+      "query": "Search query",
+      "max_results": "Maximum number of results to return (default: 5)"
+    }
+  },
+  "memory_read": {
+    "description": "Read the full persistent memory store for this project. Returns task histories, session logs, and global notes.",
+    "promptSnippet": "Read the agent memory store",
+    "promptGuidelines": [
+      "Call memory_read at the start of every session to review past scores, failed approaches, and global notes before starting work."
+    ],
+    "parameters": {}
+  },
+  "memory_write": {
+    "description": "Deep-merge a patch object into the persistent memory store. Use this to record scores, approaches, failed strategies, and submission results.",
+    "promptSnippet": "Write to the agent memory store",
+    "promptGuidelines": [
+      "After completing validation or solving, call memory_write to record last_val_score, last_submission_csv, approach used, and any failed_approaches.",
+      "To update a nested key such as tasks.spam1.last_val_score, pass { tasks: { spam1: { last_val_score: 0.99 } } }."
+    ],
+    "parameters": {
+      "patch": "Partial memory object to deep-merge into the store"
+    }
+  },
+  "memory_append_session": {
+    "description": "Append a session log entry to the sessions history array.",
+    "promptSnippet": "Append a session entry to memory",
+    "promptGuidelines": [
+      "Call memory_append_session at the end of a solve or eval session to log what was done."
+    ],
+    "parameters": {
+      "task_id": "Task identifier, e.g. spam1",
+      "phase": "Session phase",
+      "approach": "Brief description of the approach used",
+      "val_score": "Local validation balanced accuracy",
+      "notes": "Any additional notes or observations"
+    }
+  },
+  "list_challenges": {
+    "description": "List all available ML challenges from the challenge store. Returns unit, task path, and a brief prompt preview for each task.",
+    "promptSnippet": "List available SmartLab challenges",
+    "promptGuidelines": [
+      "Use list_challenges to discover what tasks are available before starting work."
+    ],
+    "parameters": {}
+  },
+  "read_challenge": {
+    "description": "Read the full task prompt and unit introduction for a specific challenge. Pass the task_path returned by list_challenges.",
+    "promptSnippet": "Read a SmartLab challenge prompt",
+    "promptGuidelines": [
+      "Use read_challenge at the start of a solve session to understand the task requirements, input format, and evaluation metric."
+    ],
+    "parameters": {
+      "task_path": "Task path, e.g. '01-spam/task1-spam-detection' (as returned by list_challenges)"
+    }
+  },
+  "smartlab_submit": {
+    "description": "Submit a SmartLab solution: upload a prediction CSV and return the resulting score plus attempt info. Login and CSRF/session handling happen automatically using LAB_USER/LAB_PASS.",
+    "promptSnippet": "Submit a SmartLab prediction CSV and read back the score",
+    "promptGuidelines": [
+      "Use smartlab_submit to upload a finished prediction CSV to SmartLab and get the score; do not try to log in or fetch tokens separately."
+    ],
+    "parameters": {
+      "csv": "Path to the prediction CSV to upload (as output.csv)",
+      "task_url": "Full task URL (defaults to SMARTLAB_TASK_URL env)",
+      "comment": "Attempt comment",
+      "source_dir": "Directory to archive as source.zip (default: project root)",
+      "poll_timeout": "Seconds to poll for the result",
+      "poll_interval": "Seconds between polls"
+    }
+  }
+}

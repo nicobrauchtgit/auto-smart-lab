@@ -16,6 +16,15 @@ interface RequestOptions {
 	body?: Buffer;
 }
 
+interface StoredCookie {
+	name: string;
+	value: string;
+	domain: string;
+	hostOnly: boolean;
+	path: string;
+	secure: boolean;
+}
+
 function truthy(value: string | undefined): boolean {
 	return ["1", "true", "yes", "y", "on"].includes(String(value ?? "").toLowerCase());
 }
@@ -47,13 +56,14 @@ function parseForms(page: string): HtmlForm[] {
 export class LabClient {
 	readonly baseUrl: string;
 	readonly loginUrl: string;
-	private readonly cookies = new Map<string, string>();
+	private readonly cookies = new Map<string, StoredCookie>();
 	private readonly httpsAgent?: HttpsAgent;
 
 	constructor(options: { insecure?: boolean; baseUrl?: string; loginUrl?: string } = {}) {
 		this.baseUrl = options.baseUrl ?? process.env.LAB_BASE_URL ??
 			"https://lab-test.smartlab.mlsec.tu-berlin.de/";
-		this.loginUrl = options.loginUrl ?? process.env.LAB_LOGIN_URL ?? this.baseUrl;
+		this.loginUrl = options.loginUrl ?? process.env.LAB_LOGIN_URL ??
+			new URL("/accounts/login/", this.baseUrl).toString();
 		const caBundle = process.env.LAB_CA_BUNDLE;
 		if (caBundle) this.httpsAgent = new HttpsAgent({ ca: readFileSync(caBundle) });
 		else if (options.insecure || truthy(process.env.LAB_INSECURE_TLS)) {
@@ -61,17 +71,63 @@ export class LabClient {
 		}
 	}
 
-	private storeCookies(header: string | string[] | undefined): void {
+	private storeCookies(header: string | string[] | undefined, requestUrl: URL): void {
 		if (!header) return;
 		for (const value of Array.isArray(header) ? header : [header]) {
-			const pair = value.split(";", 1)[0];
+			const parts = value.split(";").map((part) => part.trim());
+			const pair = parts.shift() ?? "";
 			const separator = pair.indexOf("=");
-			if (separator > 0) this.cookies.set(pair.slice(0, separator).trim(), pair.slice(separator + 1).trim());
+			if (separator <= 0) continue;
+			const name = pair.slice(0, separator).trim();
+			const cookieValue = pair.slice(separator + 1).trim();
+			const attributes = new Map<string, string>();
+			for (const part of parts) {
+				const split = part.indexOf("=");
+				attributes.set(
+					(split === -1 ? part : part.slice(0, split)).toLowerCase(),
+					split === -1 ? "" : part.slice(split + 1),
+				);
+			}
+			const explicitDomain = attributes.get("domain")?.toLowerCase().replace(/^\./, "");
+			const domain = explicitDomain || requestUrl.hostname.toLowerCase();
+			const requestHostname = requestUrl.hostname.toLowerCase();
+			if (explicitDomain && requestHostname !== domain && !requestHostname.endsWith(`.${domain}`)) continue;
+			const defaultPath = requestUrl.pathname.includes("/")
+				? requestUrl.pathname.slice(0, requestUrl.pathname.lastIndexOf("/") + 1) || "/"
+				: "/";
+			const path = attributes.get("path") || defaultPath;
+			const key = `${domain}\0${path}\0${name}`;
+			const maxAge = attributes.get("max-age");
+			const expires = attributes.get("expires");
+			if (cookieValue === "" || maxAge === "0" || (expires && Date.parse(expires) <= Date.now())) {
+				this.cookies.delete(key);
+				continue;
+			}
+			this.cookies.set(key, {
+				name,
+				value: cookieValue,
+				domain,
+				hostOnly: !explicitDomain,
+				path,
+				secure: attributes.has("secure"),
+			});
 		}
 	}
 
-	private cookieHeader(): string {
-		return [...this.cookies].map(([name, value]) => `${name}=${value}`).join("; ");
+	private cookieHeader(url: URL): string {
+		const hostname = url.hostname.toLowerCase();
+		return [...this.cookies.values()]
+			.filter((cookie) => {
+				const domainMatches = cookie.hostOnly
+					? hostname === cookie.domain
+					: hostname === cookie.domain || hostname.endsWith(`.${cookie.domain}`);
+				const pathMatches = url.pathname === cookie.path || url.pathname.startsWith(
+					cookie.path.endsWith("/") ? cookie.path : `${cookie.path}/`,
+				);
+				return domainMatches && pathMatches && (!cookie.secure || url.protocol === "https:");
+			})
+			.map((cookie) => `${cookie.name}=${cookie.value}`)
+			.join("; ");
 	}
 
 	private rawRequest(url: string, options: RequestOptions): Promise<LabResponse> {
@@ -84,7 +140,7 @@ export class LabClient {
 			"Accept-Language": "en-US,en;q=0.9",
 			...(options.headers ?? {}),
 		};
-		const cookie = this.cookieHeader();
+		const cookie = this.cookieHeader(parsed);
 		if (cookie) headers.Cookie = cookie;
 		if (options.body) headers["Content-Length"] = String(options.body.length);
 
@@ -98,17 +154,19 @@ export class LabClient {
 				headers,
 				...(isHttps && this.httpsAgent ? { agent: this.httpsAgent } : {}),
 			}, (response) => {
-				this.storeCookies(response.headers["set-cookie"]);
+				this.storeCookies(response.headers["set-cookie"], parsed);
 				const chunks: Buffer[] = [];
 				response.on("data", (chunk) => chunks.push(chunk as Buffer));
 				response.on("end", () => {
 					const body = Buffer.concat(chunks);
+					const contentType = String(response.headers["content-type"] ?? "").toLowerCase();
+					const textual = /text|html|json|xml|javascript|x-www-form-urlencoded/.test(contentType);
 					resolvePromise({
 						url,
 						status: response.statusCode ?? 0,
 						headers: response.headers,
 						body,
-						text: body.toString("utf8"),
+						text: textual ? body.toString("utf8") : "",
 					});
 				});
 			});
@@ -145,6 +203,10 @@ export class LabClient {
 		);
 	}
 
+	private isLabOrigin(url: string): boolean {
+		return new URL(url).origin === new URL(this.baseUrl).origin;
+	}
+
 	async login(): Promise<void> {
 		const username = process.env.LAB_USER;
 		const password = process.env.LAB_PASS;
@@ -155,8 +217,11 @@ export class LabClient {
 		const forms = parseForms(loginPage.text);
 		const form = forms.find((candidate) =>
 			candidate.inputs.some((input) => (input.type ?? "text").toLowerCase() === "password"),
-		) ?? forms[0];
-		if (!form) throw new Error("Could not find a login form");
+		);
+		if (!form) {
+			if (!this.isLoginPage(loginPage.text) && this.isLabOrigin(loginPage.url)) return;
+			throw new Error("Could not find a login form");
+		}
 
 		const data: Record<string, string> = {};
 		let usernameField = "username";
@@ -188,10 +253,13 @@ export class LabClient {
 	async get(pathOrUrl: string): Promise<LabResponse> {
 		const url = new URL(pathOrUrl, this.baseUrl).toString();
 		let response = await this.request(url);
-		if ([401, 403].includes(response.status) || this.isLoginPage(response.text)) {
+		const loginPage = this.isLoginPage(response.text);
+		const labAuthorizationFailure = [401, 403].includes(response.status) && this.isLabOrigin(response.url);
+		if (loginPage || labAuthorizationFailure) {
 			await this.login();
 			response = await this.request(url);
 		}
+		if (this.isLoginPage(response.text)) throw new Error(`Authentication failed while fetching ${url}`);
 		if (response.status >= 400) throw new Error(`Fetch failed: HTTP ${response.status} for ${url}`);
 		return response;
 	}

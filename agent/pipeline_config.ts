@@ -4,6 +4,13 @@ import { dirname, resolve } from "node:path";
 import type { Api } from "@earendil-works/pi-ai";
 
 export interface PipelineConfig {
+	/** Stage availability and options. Validated by agent/pipeline/config.ts. */
+	pipeline?: {
+		version?: number;
+		entryStage?: string;
+		scheduling?: string;
+		stages?: Record<string, { enabled?: boolean; options?: unknown }>;
+	};
 	agent: {
 		cwd: string;
 		agentDir: string;

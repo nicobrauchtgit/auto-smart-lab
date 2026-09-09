@@ -30,10 +30,28 @@ from smartlab.common import (
 
 TRAIN_URL = "https://download.smartlab.mlsec.tu-berlin.de/01-spam/train/spam1-train.zip"
 TEST_URL = "https://download.smartlab.mlsec.tu-berlin.de/01-spam/test/spam1-test.zip"
-_UNITS_DATA = project_root() / "units" / "01-spam" / "task1-spam-detection" / "data"
+_CANONICAL_UNITS_DATA = (
+    project_root()
+    / "units"
+    / "01-spam"
+    / "spam-detection-with-machine-learning-50-points"
+    / "data"
+)
+_LEGACY_UNITS_DATA = project_root() / "units" / "01-spam" / "task1-spam-detection" / "data"
 _LEGACY_DATA = project_root() / "agent" / "data" / "raw"
-TRAIN_ZIP = _UNITS_DATA / "spam1-train.zip" if (_UNITS_DATA / "spam1-train.zip").exists() else _LEGACY_DATA / "spam1-train.zip"
-TEST_ZIP = _UNITS_DATA / "spam1-test.zip" if (_UNITS_DATA / "spam1-test.zip").exists() else _LEGACY_DATA / "spam1-test.zip"
+
+
+def _data_file(filename: str) -> Path:
+    candidates = [
+        _CANONICAL_UNITS_DATA / filename,
+        _LEGACY_UNITS_DATA / filename,
+        _LEGACY_DATA / filename,
+    ]
+    return next((candidate for candidate in candidates if candidate.exists()), candidates[0])
+
+
+TRAIN_ZIP = _data_file("spam1-train.zip")
+TEST_ZIP = _data_file("spam1-test.zip")
 DEFAULT_SUBMISSION = project_root() / "submissions" / "spam1_predictions.csv"
 LABELS_MEMBER = "spam1-train.labels"
 TEST_PREFIX = "data/spam1-test/"

@@ -4,9 +4,15 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "fetch-unit": "bun agent/setup/fetch_unit_cli.ts",
+    "pipeline": "bun agent/pipeline_cli.ts",
+    "research": "bun agent/research_cli.ts",
+    "test:py": "\"${VENV_DIR:-$PWD/.venv}/bin/python\" -m unittest discover -s agent/solve/tests -t agent && \"${VENV_DIR:-$PWD/.venv}/bin/python\" -m unittest discover -s agent/setup/tests",
     "solve": "bun agent/run/orchestrate.ts",
     "pi:hi": "bun agent/pi_sdk.ts",
-    "traces": "next dev agent/dashboard -p 3001"
+    "traces": "next dev agent/dashboard -p 3001",
+    "test": "bun test",
+    "solve-stage": "bun agent/solve_cli.ts"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "0.84.1",

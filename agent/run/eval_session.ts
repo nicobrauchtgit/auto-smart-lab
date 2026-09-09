@@ -4,13 +4,8 @@
  * waits for completion, and parses the EVAL_DECISION sentinel.
  */
 
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { runSession } from "./session_runner.js";
-
-const HERE = dirname(fileURLToPath(import.meta.url));
-const AGENT_DIR = resolve(HERE, "..");
-const INSTRUCTIONS = join(AGENT_DIR, "instructions", "eval.md");
+import { loadPromptSnapshot } from "../prompts/loader.js";
 
 export type EvalDecision = "APPROVE" | "REJECT";
 
@@ -25,13 +20,17 @@ export interface EvalResult {
  * @param taskId Task identifier, e.g. "spam1"
  */
 export async function runEvalSession(taskId: string, model?: string): Promise<EvalResult> {
-	const prompt = `Evaluate the solver output for task: ${taskId}. Follow the eval workflow from Step 1.`;
+	const prompts = loadPromptSnapshot();
+	const system = prompts.render("evaluation.system", {});
+	const start = prompts.render("evaluation.start", { taskId });
 
 	console.log(`[eval] Starting eval session for task ${taskId}`);
 
 	const { output } = await runSession({
-		instructionsPath: INSTRUCTIONS,
-		prompt,
+		prompts,
+		system,
+		prompt: start.text,
+		promptReferences: [system.reference, start.reference],
 		env: { EVAL_TASK_ID: taskId },
 		model,
 	});

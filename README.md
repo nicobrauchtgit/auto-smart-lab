@@ -4,6 +4,17 @@ Autonomous ML challenge solver for the [SmartLab](https://lab-test.smartlab.mlse
 
 The agent loops: **solve → eval → submit**, with up to 3 submissions per task. Re-solving after a rejection is free; only actual submissions count toward the limit.
 
+Stages run through one instrumented executor. Today only research is enabled:
+
+```bash
+npm run pipeline -- unit 1 task 1        # research task 1 of unit 1 until it validates
+npm run pipeline -- --list               # show locally available units and tasks
+```
+
+New modules follow the [pipeline integration and observability
+contract](docs/pipeline-integration.md). `agent/pi_sdk.ts` is the standalone
+observability experiment.
+
 ---
 
 ## Quick start
@@ -14,12 +25,14 @@ The agent loops: **solve → eval → submit**, with up to 3 submissions per tas
 npm install          # install PI SDK + tsx
 ```
 
-Required environment variables (add to `~/.bashrc` or `.envrc`):
+Copy `.env.example` to the ignored `.env` file and configure the SmartLab web login:
 
 ```bash
-export LAB_USER='your_username'
-export LAB_PASS='your_password'
+LAB_USER='your_username'
+LAB_PASS='your_password'
 ```
+
+Quote values containing spaces or shell-special characters.
 
 Optional — enables web search in the solver:
 
@@ -27,15 +40,23 @@ Optional — enables web search in the solver:
 export TAVILY_API_KEY='...'
 ```
 
-### 2. Fetch units from the lab
+### 2. Fetch a unit from the lab
 
-Populates `units/` with task prompts, metadata, and training data:
+Populates `units/` with task prompts, metadata, and datasets:
 
 ```bash
-python3 agent/setup/fetch_units.py --insecure
+npm run fetch-unit -- 01-spam
 ```
 
-This also writes `units/index.json` — a short-ID → URL mapping used by the orchestrator.
+The fetcher verifies a per-unit data hash, resumes missing archives, and skips
+dataset downloads once the local corpus matches. It also writes
+`units/index.json` — a short-ID → URL mapping used by the orchestrator.
+
+Refresh page-derived prompts and metadata without replacing matching datasets:
+
+```bash
+npm run fetch-unit -- 01-spam --refresh-metadata
+```
 
 ### 3. List available tasks
 
@@ -56,7 +77,57 @@ Available tasks:
   ...
 ```
 
-### 4. Solve a task
+### 4. Run grounded research when useful
+
+Research is an optional module, not a mandatory pre-step. It gives the
+configured model a compact task/data manifest, filesystem access to analyze the
+local corpus, and bounded web search. The model improves a living document in
+`runs/<task_id>/research/research.md`:
+
+```bash
+npm run research -- spam1
+```
+
+Research sessions now receive a compact startup summary of the training-label
+count and class counts and percentages for the fetched spam tasks. It includes
+balanced accuracy only when explicitly named in the task prompt; otherwise it
+marks the metric unknown. The summary also distinguishes the majority-class
+ordinary-accuracy baseline from constant-prediction balanced accuracy. It reads
+only the known training labels file and records its hash in
+`context.json` under `startup_profile`. Missing or malformed labels produce an
+explicit unavailable result, never partial counts. Other task formats need an
+explicit adapter.
+
+Preview the injected context without starting a model or changing run files:
+
+```bash
+npm run research -- spam1 --preview-context
+# Without Bun:
+./node_modules/.bin/tsx agent/research_cli.ts spam1 --preview-context
+```
+
+For a comparison run, use `--no-startup-context`. The same profile remains
+available in `context.json`; only its inclusion in the opening message changes.
+`runs.jsonl` records `startup_context_injected` and the profile status. Research
+still reproduces any cited measurements in its own analysis artifacts.
+Compare fresh research workspaces, the same model and budgets, and repeated runs;
+reusing an already improved `research.md` would confound a quality comparison.
+
+The workspace also contains `task.md`, `context.json`, reproducible scripts and
+measurements under `analysis/`, and an append-only `runs.jsonl` revision trace.
+Research output is not cached: every invocation refreshes the input manifest,
+performs dataset and internet research, and revises the existing document. The
+model has filesystem and shell tools for analysis, no submission tools, at most
+three web searches, and a validation/repair pass for citations and document
+size.
+
+The same module can be invoked through the orchestrator without solving:
+
+```bash
+npm run solve spam1 -- --research-only
+```
+
+### 5. Solve a task
 
 ```bash
 npm run solve <task_id> -- --insecure [--model <model_id>]
@@ -68,6 +139,9 @@ Examples:
 # Use default model
 npm run solve spam1 -- --insecure
 
+# Refresh grounded research first, then enter the solve/eval/submit loop
+npm run solve spam1 -- --insecure --research
+
 # Choose a specific model
 npm run solve spam1 -- --insecure --model gwdg/devstral-2-123b-instruct-2512
 
@@ -76,26 +150,28 @@ npm run solve spam1 -- --insecure --task-url 'https://lab-test.../units/.../task
 ```
 
 The orchestrator will:
-1. Scaffold a solver at `agent/smartlab/tasks/<task_id>.py` if missing
-2. Run the **solver agent** (researches, implements, validates locally)
-3. Run the **eval agent** (reviews quality, decides approve/reject)
-4. On approval: **submit directly** (HTTP upload + poll for score)
-5. On rejection: re-solve with feedback (free, no submission consumed)
+1. Optionally update grounded research when `--research` is present
+2. Scaffold a solver at `agent/smartlab/tasks/<task_id>.py` if missing
+3. Run the **solver agent** (implements and validates locally)
+4. Run the **eval agent** (reviews quality, decides approve/reject)
+5. On approval: **submit directly** (HTTP upload + poll for score)
+6. On rejection: re-solve with feedback (free, no submission consumed)
 
 ---
 
 ## Models
 
-Models are configured in `~/.pi/agent/models.json`. The GWDG Chat-AI provider is pre-configured. Available model IDs:
+Pipeline models are configured in `pipeline.config.json`; the project-local PI
+CLI mirror is `.pi/agent/models.json`. Both currently define the SAIA/GWDG
+OpenAI-compatible endpoint. The default model is:
 
 | ID | Description |
 |----|-------------|
-| `gwdg/devstral-2-123b-instruct-2512` | Devstral 2 123B — coding-focused |
-| `gwdg/qwen3-coder-next` | Qwen3 Coder Next |
-| `gwdg/qwen3.5-397b-a17b` | Qwen3.5 397B — large reasoning model (default) |
-| `gwdg/deepseek-v4-flash-0731` | DeepSeek V4 Flash — fast |
+| `saia/mistral-medium-3.5-128b` | Mistral Medium 3.5 128B |
 
-Pass `--model gwdg/<id>` to select one.
+Set `SAIA_API_KEY` in the ignored `.env` file. Pass `--model
+<provider>/<model>` to select another model after adding it to
+`pipeline.config.json`.
 
 ---
 
@@ -103,7 +179,9 @@ Pass `--model gwdg/<id>` to select one.
 
 ```
 agent/
-├── instructions/        System prompts for solver, eval, and submit agents
+├── prompts/             Versioned module prompts, tool text, and typed snapshot loader
+├── instructions/        Legacy copies retained for pre-migration running processes
+├── research/            Research context builder and report validator
 ├── memory/              Persistent memory across sessions (gitignored)
 ├── run/                 Orchestrator and session runners (TypeScript)
 │   ├── orchestrate.ts   Main entry point
@@ -171,7 +249,10 @@ def solve(output_path: Path = DEFAULT_SUBMISSION) -> Path: ...
 
 Then register it in `agent/smartlab_agent.py`'s `TASKS` dict.
 
-**Constraint:** stdlib Python only — no scikit-learn, numpy, or pandas. The SmartLab VM has none of these.
+Local research and modeling use Devbox Python with dependencies declared in
+`pyproject.toml` and resolved in `uv.lock`. Check the task's actual
+dependency restrictions for code that will execute on a submission server.
+See [Python environment management](agent/runtime/python/README.md).
 
 ---
 

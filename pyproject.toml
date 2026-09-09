@@ -1,0 +1,42 @@
+# Python dependencies for the pipeline's local ML environment.
+#
+# This file is the source of truth for declared dependencies. `uv.lock` records
+# the resolved graph with hashes and platform markers. The environment manager
+# checks the installed environment against both files.
+#
+# Devbox owns the interpreter and the virtualenv. `UV_PROJECT_ENVIRONMENT` points
+# uv at that same `.venv`, so there is still exactly one environment.
+#
+# Add packages through `agent/setup/python_environment.py add`, which records the
+# reason and the pipeline run that asked for it in `changes.jsonl`.
+[project]
+name = "auto-smart-lab-runtime"
+version = "0.1.0"
+description = "Local ML environment for the SmartLab pipeline agents"
+requires-python = "==3.13.*"
+dependencies = [
+    "joblib>=1.6.0",
+    "matplotlib>=3.11.1",
+    "numpy>=2.5.3",
+    "pandas>=3.0.5",
+    "scikit-learn>=1.9.0",
+    "scipy>=1.18.1",
+    # The solve agent's own library, kept in this repo. Declared here rather
+    # than injected on PYTHONPATH so the stage stops handing the agent a path
+    # into the harness tree.
+    "smartlab-eval",
+]
+
+[tool.uv.sources]
+# Editable: an edit to the library takes effect immediately. A copied install
+# would let the harness and the agent diverge whenever a reinstall was missed.
+smartlab-eval = { path = "libs/smartlab-eval", editable = true }
+
+[tool.uv]
+# The interpreter comes from Devbox's python-full package. uv resolves and
+# installs against it and must never download one of its own, or there would be
+# two Pythons and the lock would describe the wrong one.
+python-preference = "only-system"
+# This file declares an environment; it does not ship a distribution. Without
+# this uv would try to build and install the project itself.
+package = false
