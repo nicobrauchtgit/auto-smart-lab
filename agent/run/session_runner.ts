@@ -235,6 +235,7 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 							// A successful assistant message means we recovered
 							if (transientErrors > 0) {
 								process.stderr.write(`${tag} ✓ recovered after ${transientErrors} transient error(s)\n`);
+								transientErrors = 0;
 							}
 							madeProgress = true;
 						}
