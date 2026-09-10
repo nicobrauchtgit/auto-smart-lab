@@ -170,14 +170,16 @@ class LabClient:
                 return str(cookie.value)
         raise RuntimeError("Could not find CSRF token in HTML or cookies")
 
-    def find_login_form(self, html: str) -> dict[str, Any]:
-        forms = self.parse_forms(html)
-        for form in forms:
+    def find_login_form(self, html: str) -> dict[str, Any] | None:
+        """Return the form containing a password field, or None if the page has none.
+
+        Never fall back to an arbitrary form: on an already-authenticated page the
+        first form is typically the logout form, and posting to it ends the session.
+        """
+        for form in self.parse_forms(html):
             if any(field.get("type", "text").lower() == "password" for field in form["inputs"]):
                 return form
-        if forms:
-            return forms[0]
-        raise RuntimeError("Could not find a login form")
+        return None
 
     def login(self) -> Response:
         username = os.environ.get("LAB_USER")
@@ -190,6 +192,12 @@ class LabClient:
             raise RuntimeError(f"Could not load login page: HTTP {login_page.status}")
 
         form = self.find_login_form(login_page.text)
+        if form is None:
+            if self.is_login_page(login_page.text):
+                raise RuntimeError("Could not find a login form")
+            # No password form: the saved cookies are still valid, we are already logged in.
+            self.save_cookies()
+            return login_page
         action = form.get("action") or login_page.url
         action_url = urljoin(login_page.url, action)
 

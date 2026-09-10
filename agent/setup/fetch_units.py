@@ -63,7 +63,18 @@ def _breadcrumb(page: str) -> list[str]:
 
 
 def _main_content(page: str) -> str:
-    """Extract the main content div if present, otherwise return whole page."""
+    """Extract the page's main content, otherwise return the whole page.
+
+    SmartLab task pages render the description in a ``<div class="col-md-8">`` that
+    starts with ``<h1 class="bd-title">`` and is followed by a ``col-md-4`` sidebar.
+    Slice from the title to that sidebar; a plain div regex would stop at the first
+    nested ``</div>`` (or match the upload modal's ``modal-content``).
+    """
+    h1 = re.search(r'<h1[^>]*class="[^"]*bd-title[^"]*"[^>]*>', page, re.I)
+    if h1:
+        rest = page[h1.start():]
+        end = re.search(r'<div[^>]*class="[^"]*col-md-4[^"]*"', rest, re.I)
+        return rest[: end.start()] if end else rest
     m = re.search(r'<(?:div|main|article)[^>]*(?:id|class)="[^"]*(?:content|main|task|description)[^"]*"[^>]*>(.*?)</(?:div|main|article)>', page, re.I | re.S)
     return m.group(1) if m else page
 
@@ -226,7 +237,7 @@ def fetch_all(refresh: bool = False, insecure: bool = False, fetch_data: bool = 
             if re.search(r"/units/[0-9a-f-]+/tasks/[0-9a-f-]+/?$", href)
         ))
 
-        for task_url in task_links:
+        for task_order, task_url in enumerate(task_links, start=1):
             parts = task_url.rstrip("/").split("/")
             task_id = parts[-1]
             task_page = _cached_get(
@@ -259,6 +270,8 @@ def fetch_all(refresh: bool = False, insecure: bool = False, fetch_data: bool = 
                 "task": task_title,
                 "task_slug": task_slug,
                 "url": task_url,
+                # 1-based position of the task on the unit page (the lab lists tasks in order)
+                "task_order": task_order,
             }
             (task_dir / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
@@ -289,20 +302,25 @@ def fetch_all(refresh: bool = False, insecure: bool = False, fetch_data: bool = 
             keyword = slug_parts[-1] if slug_parts else unit_dir.name.split("-")[-1]
             task_dirs = [t for t in unit_dir.iterdir() if t.is_dir() and (t / "meta.json").exists()]
             # Sort by the leading number in the task title ("1. Task name" -> 1), fallback to dir name
+            def task_number(meta: dict) -> int | None:
+                # Prefer an explicit "N." title prefix, then the position on the unit page.
+                m = re.match(r"^(\d+)\.", meta.get("task", ""))
+                if m:
+                    return int(m.group(1))
+                order = meta.get("task_order")
+                return int(order) if isinstance(order, int) else None
+
             def task_sort_key(t: Path) -> tuple[int, str]:
                 try:
                     meta = json.loads((t / "meta.json").read_text(encoding="utf-8"))
-                    m = re.match(r"^(\d+)\.", meta.get("task", ""))
-                    return (int(m.group(1)) if m else 999, t.name)
+                    return (task_number(meta) or 999, t.name)
                 except Exception:
                     return (999, t.name)
             task_dirs.sort(key=task_sort_key)
             for task_dir in task_dirs:
                 try:
                     meta = json.loads((task_dir / "meta.json").read_text(encoding="utf-8"))
-                    # Use number from title prefix; fallback to sequential
-                    m = re.match(r"^(\d+)\.", meta.get("task", ""))
-                    task_num = int(m.group(1)) if m else (list(task_dirs).index(task_dir) + 1)
+                    task_num = task_number(meta) or (list(task_dirs).index(task_dir) + 1)
                     short_id = f"{keyword}{task_num}"
                     index[short_id] = meta["url"]
                     meta["short_id"] = short_id

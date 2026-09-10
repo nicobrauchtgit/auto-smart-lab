@@ -27,7 +27,30 @@ const REPORTS_DIR = join(PROJECT_ROOT, "reports");
 interface ChallengeEntry {
 	unit: string;
 	task_path: string;
+	/** Short task id from meta.json (e.g. "spam1"), as used by the orchestrator. */
+	short_id?: string;
 	prompt_preview: string;
+}
+
+function readMeta(taskDir: string): { short_id?: string } {
+	try {
+		return JSON.parse(readFileSync(join(taskDir, "meta.json"), "utf8")) as { short_id?: string };
+	} catch {
+		return {};
+	}
+}
+
+/**
+ * Resolve a task reference to a directory under units/.
+ * Accepts either a short id ("spam1") or a "<unit>/<task>" path.
+ */
+function resolveTaskDir(ref: string): string | undefined {
+	const direct = join(CHALLENGES_DIR, ref);
+	if (existsSync(join(direct, "prompt.md"))) return direct;
+	for (const c of collectChallenges()) {
+		if (c.short_id === ref) return join(CHALLENGES_DIR, c.task_path);
+	}
+	return undefined;
 }
 
 interface LabInventoryTask {
@@ -66,9 +89,11 @@ function collectChallenges(): ChallengeEntry[] {
 			if (!existsSync(promptPath)) continue;
 			const promptText = safeRead(promptPath);
 			const preview = promptText.slice(0, 200).replace(/\n+/g, " ").trim();
+			const meta = readMeta(join(unitDir, task));
 			entries.push({
 				unit,
 				task_path: `${unit}/${task}`,
+				...(meta.short_id ? { short_id: meta.short_id } : {}),
 				prompt_preview: preview,
 			});
 		}
@@ -97,7 +122,7 @@ export default function challengeContextExtension(pi: ExtensionAPI) {
 			name: "list_challenges",
 			label: "Challenges: list",
 			description:
-				"List all available ML challenges from the challenge store. Returns unit, task path, and a brief prompt preview for each task.",
+				"List all available ML challenges from the challenge store. Returns unit, task path, short_id (e.g. 'spam1'), and a brief prompt preview for each task.",
 			promptSnippet: "List available SmartLab challenges",
 			promptGuidelines: [
 				"Use list_challenges to discover what tasks are available before starting work.",
@@ -129,33 +154,37 @@ export default function challengeContextExtension(pi: ExtensionAPI) {
 			name: "read_challenge",
 			label: "Challenges: read",
 			description:
-				"Read the full task prompt and unit introduction for a specific challenge. Pass the task_path returned by list_challenges.",
+				"Read the full task prompt and unit introduction for a specific challenge. Pass the short task id (e.g. 'spam1') or the task_path returned by list_challenges.",
 			promptSnippet: "Read a SmartLab challenge prompt",
 			promptGuidelines: [
 				"Use read_challenge at the start of a solve session to understand the task requirements, input format, and evaluation metric.",
 			],
 			parameters: Type.Object({
 				task_path: Type.String({
-					description: "Task path, e.g. '01-spam/task1-spam-detection' (as returned by list_challenges)",
+					description: "Short task id (e.g. 'spam1') or task path (e.g. 'introduction-with-spam/spam-detection-with-machine-learning-50-points') as returned by list_challenges",
 				}),
 			}),
 			async execute(_toolCallId, params, _signal) {
-				const taskDir = join(CHALLENGES_DIR, params.task_path);
-				if (!existsSync(taskDir)) {
+				const taskDir = resolveTaskDir(params.task_path);
+				if (!taskDir) {
 					return {
-						content: [{ type: "text", text: `Challenge not found: ${params.task_path}` }],
+						content: [{ type: "text", text: `Challenge not found: ${params.task_path}. Call list_challenges to see valid ids.` }],
 						details: {},
 					};
 				}
 
 				const promptText = safeRead(join(taskDir, "prompt.md"));
-				const parts = params.task_path.split("/");
-				const unitIntroText = parts.length > 0
-					? safeRead(join(CHALLENGES_DIR, parts[0], "unit-intro.md"))
-					: "";
+				const unitIntroText = safeRead(join(dirname(taskDir), "unit-intro.md"));
+				const dataDir = join(taskDir, "data");
+				const dataFiles = existsSync(dataDir)
+					? readdirSync(dataDir).filter((f) => !f.startsWith(".")).map((f) => join(dataDir, f))
+					: [];
 
 				const result = {
-					task_path: params.task_path,
+					task_path: taskDir.slice(CHALLENGES_DIR.length + 1),
+					short_id: readMeta(taskDir).short_id ?? null,
+					data_dir: existsSync(dataDir) ? dataDir : null,
+					data_files: dataFiles,
 					unit_intro: unitIntroText || null,
 					prompt: promptText || null,
 				};
