@@ -15,6 +15,7 @@ import {
 	ModelRuntime,
 	SessionManager,
 	getAgentDir,
+	resolveCliModel,
 } from "@earendil-works/pi-coding-agent";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
@@ -93,12 +94,33 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 		const modelRuntime = await ModelRuntime.create({ agentDir });
 		console.log(`${tag} model runtime ready (${elapsed(sessionStart)})`);
 
+		// Resolve model from PI_MODEL env var (format: "provider/model-id" or bare "model-id")
+		let selectedModel: unknown = undefined;
+		const piModel = process.env.PI_MODEL;
+		if (piModel) {
+			const slash = piModel.indexOf("/");
+			const cliProvider = slash > 0 ? piModel.slice(0, slash) : undefined;
+			const cliModel = slash > 0 ? piModel.slice(slash + 1) : piModel;
+			const resolved = resolveCliModel({ cliProvider, cliModel, modelRuntime });
+			if (resolved.error) {
+				throw new Error(`Could not resolve model "${piModel}": ${resolved.error}`);
+			}
+			if (resolved.model) {
+				selectedModel = resolved.model;
+				console.log(`${tag} model resolved: ${(resolved.model as { provider: string; id: string }).provider}/${(resolved.model as { provider: string; id: string }).id}`);
+			} else {
+				console.warn(`${tag} WARNING: model "${piModel}" not found in runtime, using default`);
+			}
+		}
+
 		const { session } = await createAgentSession({
 			cwd: PROJECT_ROOT,
 			agentDir,
 			modelRuntime,
 			resourceLoader,
 			sessionManager: SessionManager.inMemory(),
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			...(selectedModel ? { model: selectedModel as any } : {}),
 		});
 		console.log(`${tag} session created, sending prompt (${elapsed(sessionStart)})`);
 
@@ -114,9 +136,16 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 			process.stdout.write(`${tag} ⏳ still running (${elapsed(sessionStart)}, ${toolCallCount} tool calls, ${status})\n`);
 		}, 30_000);
 
+		const debugEvents = process.env.PI_DEBUG_EVENTS === "1";
+
 		const settled = new Promise<void>((resolve, reject) => {
 			const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
 				const ev = event as Record<string, unknown>;
+
+				if (debugEvents) {
+					const keys = Object.keys(ev).join(", ");
+					process.stdout.write(`${tag} [EVENT] type=${event.type} keys=${keys}\n`);
+				}
 
 				if (event.type === "agent_settled") {
 					clearInterval(heartbeat);
