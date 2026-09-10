@@ -170,7 +170,10 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 		let currentToolName: string | undefined;
 		let toolStart = 0;
 		let promptSent = false; // guard: ignore agent_settled fired before prompt is sent
-		let modelError: Error | undefined; // set if the model returns a stopReason=error
+		let modelError: Error | undefined; // set only on a TERMINAL model error
+		let transientErrors = 0; // count of stopReason=error the SDK retried
+		let lastErrorMessage = ""; // most recent transient error message
+		let madeProgress = false; // true once any successful assistant message arrives
 
 		// Heartbeat: log every 30s so we know the session is alive
 		const heartbeat = setInterval(() => {
@@ -214,22 +217,35 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 					return;
 				}
 
-				// Detect model/API errors surfaced as an errored assistant message.
-				// Record it and let the run settle normally; the caller checks modelError
-				// after settling. Do NOT reject here — throwing inside the SDK's synchronous
-				// event emit crashes the process with an unhandled rejection.
+				// Track transient vs. terminal model/API errors.
+				// GWDG's vLLM intermittently returns HTTP 500; the SDK retries and
+				// usually recovers. Only a terminal error (agent_end willRetry=false
+				// with no further progress) should fail the session. Do NOT reject
+				// here — throwing inside the SDK's synchronous event emit crashes
+				// the process with an unhandled rejection.
 				if (event.type === "message_end") {
 					const msg = ev.message as { role?: string; content?: unknown; stopReason?: string; finishReason?: string; errorMessage?: string } | undefined;
 					if (msg?.role === "assistant") {
-						const contentLen = Array.isArray(msg.content) ? msg.content.length : 0;
 						const stop = msg.stopReason ?? msg.finishReason ?? "?";
-						if (debugEvents) {
-							process.stdout.write(`${tag} [assistant msg] content_blocks=${contentLen} stopReason=${stop}\n`);
+						if (stop === "error") {
+							transientErrors++;
+							lastErrorMessage = msg.errorMessage?.trim() ?? "unknown error";
+							process.stderr.write(`${tag} ⚠ transient model error (#${transientErrors}): ${lastErrorMessage} — retrying\n`);
+						} else {
+							// A successful assistant message means we recovered
+							if (transientErrors > 0) {
+								process.stderr.write(`${tag} ✓ recovered after ${transientErrors} transient error(s)\n`);
+							}
+							madeProgress = true;
 						}
-						if (stop === "error" && !modelError) {
-							modelError = new Error(`model API error: ${msg.errorMessage?.trim() ?? "unknown error"}`);
-							process.stderr.write(`${tag} ⚠ ${modelError.message}\n`);
-						}
+					}
+				}
+
+				// Terminal error: agent gave up (willRetry=false) and never made progress
+				if (event.type === "agent_end") {
+					const willRetry = ev.willRetry === true;
+					if (!willRetry && !madeProgress && transientErrors > 0 && !modelError) {
+						modelError = new Error(`model API error after ${transientErrors} attempt(s): ${lastErrorMessage}`);
 					}
 				}
 
