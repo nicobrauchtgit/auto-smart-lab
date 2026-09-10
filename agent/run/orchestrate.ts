@@ -210,10 +210,9 @@ async function main() {
 		try {
 			await checkModel(model);
 		} catch (err) {
-			console.error(`[orchestrate] Model check failed: ${err}`);
-			console.error(`  The model may be unavailable or the ID is wrong.`);
-			console.error(`  Available models: cat ~/.pi/agent/models.json | grep '"id"'`);
-			process.exit(1);
+			// Health check failed — warn but continue; the PI SDK uses its own auth flow
+			console.warn(`[orchestrate] Model pre-check warning: ${err}`);
+			console.warn(`  Continuing anyway — the SDK may still be able to use this model.`);
 		}
 	}
 	if (taskUrl) { process.env.SMARTLAB_TASK_URL = taskUrl; }
