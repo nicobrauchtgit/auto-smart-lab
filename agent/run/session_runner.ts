@@ -31,6 +31,14 @@ const EXTENSION_PATHS = [
 	join(TOOLS_DIR, "challenge_context.ts"),
 ];
 
+/** Hard cap on one runSession call, including SDK retries and continue re-prompts. Override with PI_SESSION_TIMEOUT_MS. */
+const SESSION_TIMEOUT_MS = Number(process.env.PI_SESSION_TIMEOUT_MS) || 30 * 60 * 1000;
+/** How many times to re-prompt the same session after the SDK gives up on a model error. */
+const MAX_CONTINUES = 2;
+const CONTINUE_PROMPT =
+	"The previous model call failed with a transient API error. Your session state and files are intact. " +
+	"Continue from exactly where you left off — do not restart the workflow.";
+
 export interface RunSessionOptions {
 	/** Path to the markdown instruction file used as system prompt */
 	instructionsPath: string;
@@ -50,6 +58,16 @@ export interface RunSessionResult {
 function elapsed(startMs: number): string {
 	const s = Math.floor((Date.now() - startMs) / 1000);
 	return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m${s % 60}s`;
+}
+
+/** Extract the concatenated text blocks of an assistant message's content. */
+function assistantText(content: unknown): string {
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	return content
+		.filter((b) => b && typeof b === "object" && (b as { type?: string }).type === "text" && "text" in b)
+		.map((b) => String((b as { text: unknown }).text))
+		.join("");
 }
 
 function truncate(s: string, n = 120): string {
@@ -170,10 +188,13 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 		let currentToolName: string | undefined;
 		let toolStart = 0;
 		let promptSent = false; // guard: ignore agent_settled fired before prompt is sent
-		let modelError: Error | undefined; // set only on a TERMINAL model error
-		let transientErrors = 0; // count of stopReason=error the SDK retried
-		let lastErrorMessage = ""; // most recent transient error message
-		let madeProgress = false; // true once any successful assistant message arrives
+		// Per-run error tracking. The SDK retries transient errors itself
+		// (settings.retry, default 3 consecutive attempts) and emits
+		// auto_retry_start / auto_retry_end. We only need to know whether the
+		// run ENDED on an error: that covers both retry exhaustion and
+		// non-retryable errors (which never produce auto_retry_* events).
+		let lastAssistantWasError = false;
+		let lastErrorMessage = "";
 
 		// Heartbeat: log every 30s so we know the session is alive
 		const heartbeat = setInterval(() => {
@@ -189,154 +210,164 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 			const authStatus = modelRuntime.getProviderAuthStatus(m.provider);
 			console.log(`${tag} provider auth: ${m.provider} → configured=${authStatus.configured} source=${authStatus.source ?? "none"}`);
 			if (!authStatus.configured) {
+				clearInterval(heartbeat);
 				throw new Error(`Provider "${m.provider}" has no configured auth. Check ~/.pi/agent/models.json`);
 			}
 		}
 
-		const settled = new Promise<void>((resolve, reject) => {
-			const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
-				const ev = event as Record<string, unknown>;
+		// NOTE: never throw/reject from inside this callback — the SDK emits
+		// synchronously and an exception here becomes an unhandled rejection.
+		const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
+			const ev = event as Record<string, unknown>;
 
-				if (debugEvents) {
-					const safeVal = (v: unknown) => {
-						if (typeof v === "string") return v.slice(0, 60);
-						if (typeof v === "object" && v !== null) return JSON.stringify(v).slice(0, 80);
-						return String(v);
-					};
-					const pairs = Object.entries(ev).map(([k, v]) => `${k}=${safeVal(v)}`).join(" ");
-					process.stdout.write(`${tag} [EVENT] ${pairs}\n`);
+			if (debugEvents) {
+				const safeVal = (v: unknown) => {
+					if (typeof v === "string") return v.slice(0, 60);
+					if (typeof v === "object" && v !== null) return JSON.stringify(v).slice(0, 80);
+					return String(v);
+				};
+				const pairs = Object.entries(ev).map(([k, v]) => `${k}=${safeVal(v)}`).join(" ");
+				process.stdout.write(`${tag} [EVENT] ${pairs}\n`);
+			}
+
+			if (event.type === "agent_settled") {
+				if (!promptSent) return; // spurious settle on the idle session before prompt()
+				console.log(`${tag} ✓ settled in ${elapsed(sessionStart)} (${toolCallCount} tool calls)`);
+				return;
+			}
+
+			// The SDK decided to retry a transient error (this is the only
+			// place we can truthfully say "retrying").
+			if (event.type === "auto_retry_start") {
+				const attempt = ev.attempt as number;
+				const max = ev.maxAttempts as number;
+				const delay = Math.round((ev.delayMs as number) / 1000);
+				process.stderr.write(`${tag} ⚠ transient model error, SDK retrying (attempt ${attempt}/${max}, in ${delay}s): ${truncate(String(ev.errorMessage ?? ""), 160)}\n`);
+				return;
+			}
+
+			if (event.type === "auto_retry_end") {
+				if (ev.success === true) {
+					process.stderr.write(`${tag} ✓ recovered after ${ev.attempt} retry attempt(s)\n`);
+				} else {
+					process.stderr.write(`${tag} ✗ SDK gave up after ${ev.attempt} retry attempt(s): ${truncate(String(ev.finalError ?? "unknown error"), 160)}\n`);
 				}
+				return;
+			}
 
-				if (event.type === "agent_settled") {
-					// Ignore spurious settled events fired before the prompt is sent
-					if (!promptSent) return;
-					clearInterval(heartbeat);
-					unsubscribe();
-					console.log(`${tag} ✓ settled in ${elapsed(sessionStart)} (${toolCallCount} tool calls)`);
-					resolve();
-					return;
-				}
-
-				// Track transient vs. terminal model/API errors.
-				// GWDG's vLLM intermittently returns HTTP 500; the SDK retries and
-				// usually recovers. Only a terminal error (agent_end willRetry=false
-				// with no further progress) should fail the session. Do NOT reject
-				// here — throwing inside the SDK's synchronous event emit crashes
-				// the process with an unhandled rejection.
-				if (event.type === "message_end") {
-					const msg = ev.message as { role?: string; content?: unknown; stopReason?: string; finishReason?: string; errorMessage?: string } | undefined;
-					if (msg?.role === "assistant") {
-						const stop = msg.stopReason ?? msg.finishReason ?? "?";
-						if (stop === "error") {
-							transientErrors++;
-							lastErrorMessage = msg.errorMessage?.trim() ?? "unknown error";
-							process.stderr.write(`${tag} ⚠ transient model error (#${transientErrors}): ${lastErrorMessage} — retrying\n`);
-						} else {
-							// A successful assistant message means we recovered
-							if (transientErrors > 0) {
-								process.stderr.write(`${tag} ✓ recovered after ${transientErrors} transient error(s)\n`);
-								transientErrors = 0;
-							}
-							madeProgress = true;
-						}
+			if (event.type === "message_end") {
+				const msg = ev.message as { role?: string; content?: unknown; stopReason?: string; errorMessage?: string } | undefined;
+				if (msg?.role === "assistant") {
+					if (msg.stopReason === "error") {
+						lastAssistantWasError = true;
+						lastErrorMessage = msg.errorMessage?.trim() || "unknown error";
+					} else {
+						lastAssistantWasError = false;
+						const text = assistantText(msg.content);
+						if (text) process.stdout.write(`${tag} 💬 ${truncate(text)}\n`);
 					}
 				}
+				return;
+			}
 
-				// Terminal error: agent gave up (willRetry=false) and never made progress
-				if (event.type === "agent_end") {
-					const willRetry = ev.willRetry === true;
-					if (!willRetry && !madeProgress && transientErrors > 0 && !modelError) {
-						modelError = new Error(`model API error after ${transientErrors} attempt(s): ${lastErrorMessage}`);
-					}
+			// Tool call started
+			if (event.type === "tool_execution_start") {
+				toolCallCount++;
+				currentToolName = (ev.toolName ?? "tool") as string;
+				toolStart = Date.now();
+				const input = ev.args ?? {};
+				const inputStr = typeof input === "object"
+					? truncate(JSON.stringify(input).replace(/^{|}$/g, "").replace(/"([^"]+)":/g, "$1:"), 100)
+					: truncate(String(input), 100);
+				process.stdout.write(`${tag} → ${currentToolName}(${inputStr})\n`);
+				return;
+			}
+
+			// Tool call finished
+			if (event.type === "tool_execution_end") {
+				const name = (ev.toolName ?? currentToolName ?? "tool") as string;
+				const took = toolStart ? ` ${elapsed(toolStart)}` : "";
+				const isError = ev.isError === true;
+				const result = ev.result ?? "";
+				const resultStr = typeof result === "string"
+					? truncate(result.trim().split("\n")[0], 80)
+					: typeof result === "object"
+						? truncate(JSON.stringify(result), 80)
+						: "";
+				const suffix = resultStr ? ` → ${isError ? "ERROR: " : ""}${resultStr}` : "";
+				process.stdout.write(`${tag} ← ${name}${took}${suffix}\n`);
+				currentToolName = undefined;
+				toolStart = 0;
+				return;
+			}
+
+			// Assistant text streaming. Shape: { type: "message_update", message,
+			// assistantMessageEvent: { type: "text_delta", delta, ... } }
+			if (event.type === "message_update") {
+				const ame = ev.assistantMessageEvent as { type?: string; delta?: unknown } | undefined;
+				if (ame?.type === "text_delta" && typeof ame.delta === "string" && ame.delta) {
+					textParts.push(ame.delta);
 				}
-
-				// Tool call started
-				if (event.type === "tool_execution_start") {
-					toolCallCount++;
-					currentToolName = (ev.toolName ?? "tool") as string;
-					toolStart = Date.now();
-					const input = ev.args ?? {};
-					const inputStr = typeof input === "object"
-						? truncate(JSON.stringify(input).replace(/^{|}$/g, "").replace(/"([^"]+)":/g, "$1:"), 100)
-						: truncate(String(input), 100);
-					process.stdout.write(`${tag} → ${currentToolName}(${inputStr})\n`);
-					return;
-				}
-
-				// Tool call finished
-				if (event.type === "tool_execution_end") {
-					const name = (ev.toolName ?? currentToolName ?? "tool") as string;
-					const took = toolStart ? ` ${elapsed(toolStart)}` : "";
-					const isError = ev.isError === true;
-					const result = ev.result ?? "";
-					const resultStr = typeof result === "string"
-						? truncate(result.trim().split("\n")[0], 80)
-						: typeof result === "object"
-							? truncate(JSON.stringify(result), 80)
-							: "";
-					const suffix = resultStr ? ` → ${isError ? "ERROR: " : ""}${resultStr}` : "";
-					process.stdout.write(`${tag} ← ${name}${took}${suffix}\n`);
-					currentToolName = undefined;
-					toolStart = 0;
-					return;
-				}
-
-				// Assistant text streaming — show first chunk of each new message
-				if (event.type === "message_update" && "delta" in ev) {
-					const delta = ev.delta;
-					let text = "";
-					if (typeof delta === "string") text = delta;
-					else if (delta && typeof delta === "object" && (delta as Record<string,unknown>).type === "text")
-						text = String((delta as Record<string,unknown>).text ?? "");
-					if (text) {
-						textParts.push(text);
-						// Print first delta of each assistant turn as a preview
-						if (textParts.join("").length === text.length || text.startsWith("SOLVER_DONE") || text.startsWith("EVAL_DECISION")) {
-							process.stdout.write(`${tag} 💬 ${truncate(text)}\n`);
-						}
-					}
-				}
-			});
-
-			// Safety timeout: 30 minutes
-			setTimeout(() => {
-				clearInterval(heartbeat);
-				unsubscribe();
-				reject(new Error("Session timed out after 30 minutes"));
-			}, 30 * 60 * 1000);
+			}
 		});
 
-		promptSent = true;
-		try {
-			await session.prompt(prompt);
-		} catch (promptErr) {
-			clearInterval(heartbeat);
-			throw new Error(`session.prompt() failed: ${promptErr}`);
-		}
-		await settled;
-
-		// If the model returned an errored response, fail with a clear message
-		if (modelError) {
-			throw modelError;
-		}
-
-		// Fallback: if we didn't capture text via events, extract from session messages
-		if (textParts.length === 0) {
-			const messages = session.messages;
-			for (let i = messages.length - 1; i >= 0; i--) {
-				const msg = messages[i];
-				if (msg && typeof msg === "object" && "role" in msg && (msg as { role: string }).role === "assistant") {
-					const content = (msg as { content: unknown }).content;
-					if (typeof content === "string") { textParts.push(content); break; }
-					if (Array.isArray(content)) {
-						for (const block of content) {
-							if (block && typeof block === "object" && "type" in block &&
-								(block as { type: string }).type === "text" && "text" in block)
-								textParts.push(String((block as { text: unknown }).text));
-						}
-						if (textParts.length > 0) break;
-					}
+		// Run one prompt to completion. session.prompt() resolves only after the
+		// agent has fully settled (including the SDK's own retries), so a timeout
+		// must race it AND abort the session — otherwise the run keeps going.
+		const deadline = sessionStart + SESSION_TIMEOUT_MS;
+		const runPrompt = async (text: string): Promise<void> => {
+			lastAssistantWasError = false;
+			const remaining = deadline - Date.now();
+			if (remaining <= 0) throw new Error(`Session timed out after ${elapsed(sessionStart)}`);
+			let timer: NodeJS.Timeout | undefined;
+			const timeout = new Promise<never>((_, reject) => {
+				timer = setTimeout(() => reject(new Error("__timeout__")), remaining);
+			});
+			const run = session.prompt(text);
+			try {
+				await Promise.race([run, timeout]);
+			} catch (err) {
+				if (err instanceof Error && err.message === "__timeout__") {
+					process.stderr.write(`${tag} ✗ timed out after ${elapsed(sessionStart)}, aborting session\n`);
+					run.catch(() => undefined); // the abandoned run must not become an unhandled rejection
+					await session.abort().catch(() => undefined);
+					throw new Error(`Session timed out after ${elapsed(sessionStart)} (limit ${Math.round(SESSION_TIMEOUT_MS / 1000)}s)`);
 				}
+				throw new Error(`session.prompt() failed: ${err}`);
+			} finally {
+				if (timer) clearTimeout(timer);
+			}
+		};
+
+		try {
+			promptSent = true;
+			await runPrompt(prompt);
+
+			// The run ended on a model error (retry budget exhausted, or a
+			// non-retryable error). The session state is intact, so try to
+			// resume it a bounded number of times before giving up.
+			let continues = 0;
+			while (lastAssistantWasError && continues < MAX_CONTINUES) {
+				continues++;
+				process.stderr.write(`${tag} ⚠ run ended on model error: ${truncate(lastErrorMessage, 160)}\n`);
+				process.stderr.write(`${tag} ↻ re-prompting session to continue (${continues}/${MAX_CONTINUES})\n`);
+				await runPrompt(CONTINUE_PROMPT);
+			}
+			if (lastAssistantWasError) {
+				throw new Error(`model API error (after ${continues} continue attempt(s)): ${lastErrorMessage}`);
+			}
+		} finally {
+			clearInterval(heartbeat);
+			unsubscribe();
+		}
+
+		// Fallback: if streaming capture yielded nothing, collect text from ALL
+		// assistant messages (the sentinel may not be in the last one).
+		if (textParts.length === 0) {
+			for (const msg of session.messages) {
+				if (!msg || typeof msg !== "object" || (msg as { role?: string }).role !== "assistant") continue;
+				const text = assistantText((msg as { content?: unknown }).content);
+				if (text) textParts.push(text);
 			}
 		}
 
