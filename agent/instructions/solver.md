@@ -9,6 +9,8 @@ The `environment/` directory (at the project root) contains the task prompt as `
 > SOLVER_DONE val_score=<X> csv=<path> approach=<one-liner>
 > ```
 
+> **Start immediately by calling `memory_read` — do not write any text before your first tool call.**
+
 ---
 
 ## Available tools
