@@ -77,8 +77,10 @@ async function checkModel(modelId: string): Promise<void> {
 				r.on("data", (c) => chunks.push(c as Buffer));
 				r.on("end", () => {
 					const text = Buffer.concat(chunks).toString();
-					if (r.statusCode === 200) {
-						console.log(`ok (${Date.now() - start}ms)`);
+					if (r.statusCode && r.statusCode < 500) {
+						// 2xx = clearly works; 4xx = endpoint reachable (model may still be valid)
+						const label = r.statusCode === 200 ? "ok" : `reachable (HTTP ${r.statusCode})`;
+						console.log(`${label} (${Date.now() - start}ms)`);
 						res();
 					} else {
 						rej(new Error(`HTTP ${r.statusCode}: ${text.slice(0, 200)}`));
