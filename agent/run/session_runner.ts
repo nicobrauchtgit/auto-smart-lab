@@ -76,6 +76,7 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 	try {
 		const systemPrompt = readFileSync(instructionsPath, "utf8");
 		const agentDir = getAgentDir();
+		console.log(`${tag} loading extensions...`);
 
 		const resourceLoader = new DefaultResourceLoader({
 			cwd: PROJECT_ROOT,
@@ -86,8 +87,12 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 		});
 
 		await resourceLoader.reload();
+		console.log(`${tag} extensions loaded (${elapsed(sessionStart)})`);
 
+		console.log(`${tag} creating model runtime...`);
 		const modelRuntime = await ModelRuntime.create({ agentDir });
+		console.log(`${tag} model runtime ready (${elapsed(sessionStart)})`);
+
 		const { session } = await createAgentSession({
 			cwd: PROJECT_ROOT,
 			agentDir,
@@ -95,6 +100,7 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 			resourceLoader,
 			sessionManager: SessionManager.inMemory(),
 		});
+		console.log(`${tag} session created, sending prompt (${elapsed(sessionStart)})`);
 
 		// Collect all assistant text deltas
 		const textParts: string[] = [];
