@@ -173,6 +173,15 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 					return;
 				}
 
+				// Log full assistant message content + finish reason on message_end
+				if (event.type === "message_end") {
+					const msg = ev.message as { role?: string; content?: unknown; stopReason?: string; finishReason?: string; usage?: unknown } | undefined;
+					if (msg?.role === "assistant") {
+						const contentLen = Array.isArray(msg.content) ? msg.content.length : 0;
+						process.stdout.write(`${tag} [assistant msg] content_blocks=${contentLen} stopReason=${msg.stopReason ?? msg.finishReason ?? "?"} full=${JSON.stringify(msg).slice(0, 400)}\n`);
+					}
+				}
+
 				// Tool call started
 				if (event.type === "tool_call_start" || event.type === "tool_use_start") {
 					toolCallCount++;
