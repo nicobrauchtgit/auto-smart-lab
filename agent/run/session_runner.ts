@@ -139,6 +139,16 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 
 		const debugEvents = process.env.PI_DEBUG_EVENTS === "1";
 
+		// Verify the selected model has auth configured before sending prompt
+		if (selectedModel) {
+			const m = selectedModel as { provider: string; id: string };
+			const authStatus = modelRuntime.getProviderAuthStatus(m.provider);
+			console.log(`${tag} provider auth: ${m.provider} → configured=${authStatus.configured} source=${authStatus.source ?? "none"}`);
+			if (!authStatus.configured) {
+				throw new Error(`Provider "${m.provider}" has no configured auth. Check ~/.pi/agent/models.json`);
+			}
+		}
+
 		const settled = new Promise<void>((resolve, reject) => {
 			const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
 				const ev = event as Record<string, unknown>;
@@ -216,7 +226,12 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 		});
 
 		promptSent = true;
-		await session.prompt(prompt);
+		try {
+			await session.prompt(prompt);
+		} catch (promptErr) {
+			clearInterval(heartbeat);
+			throw new Error(`session.prompt() failed: ${promptErr}`);
+		}
 		await settled;
 
 		// Fallback: if we didn't capture text via events, extract from session messages
