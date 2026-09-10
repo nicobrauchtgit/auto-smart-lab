@@ -129,6 +129,7 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 		let toolCallCount = 0;
 		let currentToolName: string | undefined;
 		let toolStart = 0;
+		let promptSent = false; // guard: ignore agent_settled fired before prompt is sent
 
 		// Heartbeat: log every 30s so we know the session is alive
 		const heartbeat = setInterval(() => {
@@ -148,6 +149,8 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 				}
 
 				if (event.type === "agent_settled") {
+					// Ignore spurious settled events fired before the prompt is sent
+					if (!promptSent) return;
 					clearInterval(heartbeat);
 					unsubscribe();
 					console.log(`${tag} ✓ settled in ${elapsed(sessionStart)} (${toolCallCount} tool calls)`);
@@ -212,6 +215,7 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 			}, 30 * 60 * 1000);
 		});
 
+		promptSent = true;
 		await session.prompt(prompt);
 		await settled;
 
