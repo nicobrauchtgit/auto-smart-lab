@@ -137,7 +137,7 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 			process.stdout.write(`${tag} ⏳ still running (${elapsed(sessionStart)}, ${toolCallCount} tool calls, ${status})\n`);
 		}, 30_000);
 
-		const debugEvents = process.env.PI_DEBUG_EVENTS === "1";
+		const debugEvents = true; // always on until we diagnose the silent settle
 
 		// Verify the selected model has auth configured before sending prompt
 		if (selectedModel) {
@@ -154,8 +154,13 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 				const ev = event as Record<string, unknown>;
 
 				if (debugEvents) {
-					const keys = Object.keys(ev).join(", ");
-					process.stdout.write(`${tag} [EVENT] type=${event.type} keys=${keys}\n`);
+					const safeVal = (v: unknown) => {
+						if (typeof v === "string") return v.slice(0, 60);
+						if (typeof v === "object" && v !== null) return JSON.stringify(v).slice(0, 80);
+						return String(v);
+					};
+					const pairs = Object.entries(ev).map(([k, v]) => `${k}=${safeVal(v)}`).join(" ");
+					process.stdout.write(`${tag} [EVENT] ${pairs}\n`);
 				}
 
 				if (event.type === "agent_settled") {
