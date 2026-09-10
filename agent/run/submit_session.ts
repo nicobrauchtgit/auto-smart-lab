@@ -32,7 +32,7 @@ interface HttpResp { url: string; status: number; headers: Record<string, string
 
 function truthy(v: string | undefined) { return ["1","true","yes","y","on"].includes(String(v ?? "").toLowerCase()); }
 
-class SimpleClient {
+export class SimpleClient {
 	private cookies = new Map<string, string>();
 	private agent?: HttpsAgent;
 	readonly baseUrl: string;
@@ -162,21 +162,21 @@ function parseForms(html: string): ParsedForm[] {
 function decodeEntities(s: string) {
 	return s.replace(/&amp;/g,"&").replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&nbsp;/g," ").replace(/&#(\d+);/g,(_,d)=>String.fromCharCode(Number(d)));
 }
-function cleanHtml(f: string) {
+export function cleanHtml(f: string) {
 	return decodeEntities(f.replace(/<script[\s\S]*?<\/script>/gi," ").replace(/<style[\s\S]*?<\/style>/gi," ").replace(/<[^>]+>/g," ").replace(/\s+/g," ").trim());
 }
-function parseScore(v: string|undefined): number|null {
+export function parseScore(v: string|undefined): number|null {
 	if (!v) return null; const c=cleanHtml(v); if (["---","-",""].includes(c)) return null;
 	const m=c.match(/[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?/); if (!m) return null;
 	const n=Number(m[0]); return Number.isFinite(n)?n:null;
 }
-function parseTriesUsed(v: string|null): number|null {
+export function parseTriesUsed(v: string|null): number|null {
 	if (!v) return null; const m=v.match(/(\d+)\s+of\s+\d+\s+attempts\s+used/i); return m?Number(m[1]):null;
 }
 interface Attempt { number: string; date: string; comment: string; result: string; info: string; }
-interface TaskInfo { title: string; taskUrl: string; uploadUrl: string|null; csrfToken: string|null; attemptsUsed: string|null; attempts: Attempt[]; }
+export interface TaskInfo { title: string; taskUrl: string; uploadUrl: string|null; csrfToken: string|null; attemptsUsed: string|null; attempts: Attempt[]; }
 
-function parseTaskPage(taskUrl: string, page: string, baseUrl: string): TaskInfo {
+export function parseTaskPage(taskUrl: string, page: string, baseUrl: string): TaskInfo {
 	const tm=page.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
 	const title=tm?cleanHtml(tm[1]):taskUrl;
 	let uploadUrl: string|null=null, csrfToken: string|null=null;
@@ -361,4 +361,70 @@ export async function runSubmitSession(taskId: string, csvPath: string): Promise
 
 	updateMemory(taskId, triesUsed, score);
 	return {ok: score!==null, score, triesLeft};
+}
+
+// ---------------------------------------------------------------------------
+// Task status (used by solve_units.ts to decide whether a task is worth running)
+// ---------------------------------------------------------------------------
+
+export interface TaskStatus {
+	title: string;
+	attemptsUsed: number | null;
+	attemptsMax: number;
+	bestScore: number | null;
+	scores: number[];
+	startDate: Date | null;
+	deadline: Date | null;
+	/** Platform says the maximum number of attempts is reached. */
+	exhausted: boolean;
+	/** Task is not open for submissions (before start or after deadline). */
+	closed: boolean;
+	type: string | null;   // "mandatory" | "optional"
+	state: string | null;  // e.g. "testing"
+}
+
+const MONTHS: Record<string, number> = { jan:0, feb:1, mar:2, apr:3, may:4, jun:5, jul:6, aug:7, sep:8, oct:9, nov:10, dec:11 };
+
+/** Parse Django-style dates such as "Oct. 31, 2026, 9 a.m." / "Sept. 10, 2026, 7:48 p.m." / "May 1, 2026, noon". */
+export function parseLabDate(text: string | undefined): Date | null {
+	if (!text) return null;
+	const m = text.match(/([A-Za-z]+)\.?\s+(\d{1,2}),\s+(\d{4})(?:,\s+(noon|midnight|\d{1,2}(?::\d{2})?)\s*(a\.m\.|p\.m\.)?)?/);
+	if (!m) return null;
+	const mon = MONTHS[m[1].slice(0, 3).toLowerCase()];
+	if (mon === undefined) return null;
+	let h = 0, min = 0;
+	if (m[4] === "noon") h = 12;
+	else if (m[4] && m[4] !== "midnight") {
+		const [hh, mm] = m[4].split(":"); h = Number(hh) % 12; min = Number(mm ?? 0);
+		if (m[5] === "p.m.") h += 12;
+	}
+	return new Date(Number(m[3]), mon, Number(m[2]), h, min);
+}
+
+function pageText(html: string): string {
+	return html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ")
+		.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
+}
+
+/** Fetch a task page and summarise attempts, scores and open/closed state. */
+export async function fetchTaskStatus(taskUrl: string, insecure: boolean, client?: SimpleClient): Promise<TaskStatus> {
+	const c = client ?? new SimpleClient(insecure);
+	const res = await c.get(taskUrl);
+	const info = parseTaskPage(res.url, res.text, c.baseUrl);
+	const text = pageText(res.text);
+	const attemptsUsed = parseTriesUsed(info.attemptsUsed);
+	const maxMatch = (info.attemptsUsed ?? "").match(/of\s+(\d+)\s+attempts/i);
+	const attemptsMax = maxMatch ? Number(maxMatch[1]) : 3;
+	const scores = info.attempts.map(a => parseScore(a.result)).filter((x): x is number => x !== null).map(x => (x > 1 && x <= 100 ? x / 100 : x));
+	const bestScore = scores.length ? Math.max(...scores) : null;
+	const startDate = parseLabDate(text.match(/Start Date\s+(.+?)\s+Submission Deadline/i)?.[1]);
+	const deadline = parseLabDate(text.match(/Submission Deadline\s+(.+?)\s+Points/i)?.[1]);
+	const exhausted = /maximum number of attempts/i.test(text) || (attemptsUsed !== null && attemptsUsed >= attemptsMax);
+	const now = new Date();
+	const closed = (startDate !== null && startDate > now) || (deadline !== null && deadline < now);
+	return {
+		title: info.title, attemptsUsed, attemptsMax, bestScore, scores, startDate, deadline, exhausted, closed,
+		type: text.match(/\bType\s+(mandatory|optional)\b/i)?.[1]?.toLowerCase() ?? null,
+		state: text.match(/\bState\s+(\w+)\s+Type\b/i)?.[1]?.toLowerCase() ?? null,
+	};
 }

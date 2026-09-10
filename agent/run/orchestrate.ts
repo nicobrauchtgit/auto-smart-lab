@@ -186,7 +186,8 @@ function salvageSolver(taskId: string): SolverResult | null {
 }
 
 function usage(): never {
-	console.error("Usage: npx tsx agent/run/orchestrate.ts <task_id|list> [--model <id>] [--task-url <url>] [--insecure] [--no-submit] [--target <score>] [--solver-timeout <minutes>]");
+	console.error("Usage: npx tsx agent/run/orchestrate.ts <task_id|list> [--model <id>] [--task-url <url>] [--insecure] [--no-submit] [--target <score>] [--solver-timeout <minutes>] [--max-attempts <n>]");
+	console.error("Exit codes: 0 done (target reached, no attempts left, dry run or attempt cap), 1 no attempts before start, 2 solver failed, 3 submission failed, 99 fatal");
 	console.error("Required env: LAB_USER, LAB_PASS");
 	console.error("Examples:");
 	console.error("  npm run solve list                    # show all available task IDs");
@@ -224,6 +225,9 @@ async function main() {
 		if (!Number.isFinite(mins) || mins <= 0) usage();
 		process.env.PI_SESSION_TIMEOUT_MS = String(Math.round(mins * 60 * 1000));
 	}
+	const maxAttemptsArg = takeArg("--max-attempts");
+	const maxAttemptsThisRun = maxAttemptsArg !== undefined ? Number(maxAttemptsArg) : MAX_SUBMISSIONS;
+	if (!Number.isFinite(maxAttemptsThisRun) || maxAttemptsThisRun < 0) usage();
 	const targetArg = takeArg("--target");
 	const target = targetArg !== undefined ? Number(targetArg) : DEFAULT_TARGET;
 	if (!Number.isFinite(target)) usage();
@@ -317,6 +321,7 @@ async function main() {
 	let feedback: string | undefined;
 	let iteration = 0;
 	let solverFailures = 0;
+	let attemptsThisRun = 0;
 	let lastSubmittedHash: string | undefined;
 	let lastPlatformScore: number | null = null;
 	console.log(`[orchestrate] Target platform score: ${target}`);
@@ -389,6 +394,10 @@ async function main() {
 				continue;
 			}
 
+			if (attemptsThisRun >= maxAttemptsThisRun) {
+				console.log(`\n[orchestrate] DONE — attempt cap for this run reached (${attemptsThisRun}/${maxAttemptsThisRun}); eval approved ${csvPath} but not submitting.`);
+				process.exit(0);
+			}
 			console.log(`[orchestrate] Submitting: ${csvPath}`);
 
 			// Step 3: Submit (this consumes a try)
@@ -399,6 +408,7 @@ async function main() {
 				console.error(`[orchestrate] Submission failed: ${submitResult.error ?? "unknown error"}. Check logs.`);
 				process.exit(3);
 			}
+			attemptsThisRun++;
 			lastSubmittedHash = csvHash;
 			lastPlatformScore = submitResult.score;
 			const score = submitResult.score as number;

@@ -67,7 +67,31 @@ npm run reset            # everything
 npm run reset -- spam2   # only one task
 ```
 
-### 5. Solve a task
+### 5. Solve everything: `npm run solve-units`
+
+One command that fetches units if needed, resets, and works through every task of every unit
+unattended, one task at a time:
+
+```bash
+npm run solve-units -- --insecure                       # solve all open tasks, real submissions
+npm run solve-units -- --insecure --plan                # only show what would run
+npm run solve-units -- --insecure --no-submit           # solver + eval for every task, no uploads
+npm run solve-units -- --insecure --only spam1,spam3    # subset
+npm run solve-units -- --insecure --max-attempts 1      # spend at most 1 attempt per task this run
+```
+
+Before each task the driver reads the task's lab page and **skips** it when all attempts are used,
+when the best existing platform score already meets `--target` (override with `--retry-solved`),
+or when the task is not open yet / past its deadline. Otherwise it runs the per-task orchestrator
+as a subprocess and continues with the next task whatever happens. `--reset once` (default) does a
+full reset before the first task so later tasks may reuse solvers written earlier in the same run;
+`--reset each` resets before every task; `--reset none` keeps existing state.
+
+A results table is printed at the end and written, with per-task logs, to
+`logs/solve-units/<timestamp>/`. Tasks run sequentially because the GWDG API budget
+(~200 requests/hour) allows only two to three solver runs per hour anyway.
+
+### 6. Solve a single task
 
 ```bash
 npm run solve <task_id> -- --insecure [--model <model_id>]
@@ -127,7 +151,8 @@ agent/
 ├── instructions/        System prompts for solver, eval, and submit agents
 ├── memory/              Persistent memory across sessions (gitignored)
 ├── run/                 Orchestrator and session runners (TypeScript)
-│   ├── orchestrate.ts   Main entry point
+│   ├── solve_units.ts   Batch driver: fetch → reset → every open task (npm run solve-units)
+│   ├── orchestrate.ts   Per-task entry point (npm run solve <task>)
 │   ├── solver_session.ts
 │   ├── eval_session.ts
 │   └── submit_session.ts  Direct HTTP submit (no LLM)

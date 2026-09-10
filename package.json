@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "solve": "tsx agent/run/orchestrate.ts",
-    "reset": "python3 agent/setup/reset_state.py"
+    "reset": "python3 agent/setup/reset_state.py",
+    "solve-units": "tsx agent/run/solve_units.ts"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "*",
