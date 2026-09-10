@@ -35,6 +35,34 @@ const EXTENSION_PATHS = [
 const SESSION_TIMEOUT_MS = Number(process.env.PI_SESSION_TIMEOUT_MS) || 30 * 60 * 1000;
 /** How many times to re-prompt the same session after the SDK gives up on a model error. */
 const MAX_CONTINUES = 2;
+/** Longest we will sleep for a 429 retry-after before giving up. Override with PI_RATE_LIMIT_MAX_WAIT_MS. */
+const MAX_RATE_LIMIT_WAIT_MS = Number(process.env.PI_RATE_LIMIT_MAX_WAIT_MS) || 15 * 60 * 1000;
+/** Fallback wait when a 429 carried no usable retry-after header (covers the per-minute window). */
+const DEFAULT_RATE_LIMIT_WAIT_MS = 60 * 1000;
+const RATE_LIMIT_PATTERN = /\b429\b|rate.?limit|too many requests/i;
+
+/** Most recent 429 seen on the model API, recorded by the fetch wrapper below. */
+let lastRateLimit: { retryAfterMs: number; at: number } | undefined;
+
+/** Parse retry-after (seconds or HTTP date) / ratelimit-reset (seconds) into ms, or undefined. */
+function parseRetryAfterMs(headers: Headers): number | undefined {
+	const ra = headers.get("retry-after");
+	if (ra) {
+		const secs = Number.parseFloat(ra);
+		if (!Number.isNaN(secs)) return Math.max(0, secs * 1000);
+		const date = Date.parse(ra);
+		if (!Number.isNaN(date)) return Math.max(0, date - Date.now());
+	}
+	const reset = headers.get("ratelimit-reset");
+	if (reset) {
+		const secs = Number.parseFloat(reset);
+		if (!Number.isNaN(secs)) return Math.max(0, secs * 1000);
+	}
+	return undefined;
+}
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
 const CONTINUE_PROMPT =
 	"The previous model call failed with a transient API error. Your session state and files are intact. " +
 	"Continue from exactly where you left off — do not restart the workflow.";
@@ -83,14 +111,17 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 	const tag = `[${label}]`;
 	const sessionStart = Date.now();
 
-	// Optional: dump the exact HTTP request/response to the model API for debugging.
-	// Enable with PI_DEBUG_HTTP=1. Patches global fetch (the SDK uses it under the hood).
-	if (process.env.PI_DEBUG_HTTP === "1" && !(globalThis as Record<string, unknown>).__piFetchPatched) {
+	// Wrap global fetch (the SDK resolves it at call time) to record the
+	// retry-after of any 429 from the model API, so we can sleep until the
+	// rate-limit window resets before re-prompting. With PI_DEBUG_HTTP=1 it
+	// also dumps the exact request/response shapes for debugging.
+	const debugHttp = process.env.PI_DEBUG_HTTP === "1";
+	if (!(globalThis as Record<string, unknown>).__piFetchPatched) {
 		(globalThis as Record<string, unknown>).__piFetchPatched = true;
 		const origFetch = globalThis.fetch;
 		globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
 			const url = typeof input === "string" ? input : (input as Request).url ?? String(input);
-			if (/chat\/completions/.test(url) && init?.body) {
+			if (debugHttp && /chat\/completions/.test(url) && init?.body) {
 				try {
 					const parsed = JSON.parse(String(init.body));
 					const toolNames = Array.isArray(parsed.tools) ? parsed.tools.map((t: { function?: { name?: string } }) => t.function?.name) : [];
@@ -114,10 +145,19 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 				} catch { /* non-JSON body */ }
 			}
 			const res = await origFetch(input, init);
-			if (/chat\/completions/.test(url) && res.status >= 400) {
-				const clone = res.clone();
-				const text = await clone.text().catch(() => "");
-				process.stderr.write(`${tag} [HTTP←] ${res.status} ${text.slice(0, 500)}\n`);
+			if (/chat\/completions/.test(url)) {
+				if (res.status === 429) {
+					const retryAfterMs = parseRetryAfterMs(res.headers);
+					lastRateLimit = { retryAfterMs: retryAfterMs ?? DEFAULT_RATE_LIMIT_WAIT_MS, at: Date.now() };
+					const remHour = res.headers.get("x-ratelimit-remaining-hour");
+					const remMin = res.headers.get("x-ratelimit-remaining-minute");
+					process.stderr.write(`${tag} ⚠ HTTP 429 from model API: retry-after=${retryAfterMs !== undefined ? Math.round(retryAfterMs / 1000) + "s" : "n/a"}${remMin !== null ? ` remaining/min=${remMin}` : ""}${remHour !== null ? ` remaining/hour=${remHour}` : ""}\n`);
+				}
+				if (debugHttp && res.status >= 400) {
+					const clone = res.clone();
+					const text = await clone.text().catch(() => "");
+					process.stderr.write(`${tag} [HTTP←] ${res.status} ${text.slice(0, 500)}\n`);
+				}
 			}
 			return res;
 		}) as typeof fetch;
@@ -314,7 +354,7 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 		// Run one prompt to completion. session.prompt() resolves only after the
 		// agent has fully settled (including the SDK's own retries), so a timeout
 		// must race it AND abort the session — otherwise the run keeps going.
-		const deadline = sessionStart + SESSION_TIMEOUT_MS;
+		let deadline = sessionStart + SESSION_TIMEOUT_MS; // extended by rate-limit waits
 		const runPrompt = async (text: string): Promise<void> => {
 			lastAssistantWasError = false;
 			const remaining = deadline - Date.now();
@@ -350,6 +390,24 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 			while (lastAssistantWasError && continues < MAX_CONTINUES) {
 				continues++;
 				process.stderr.write(`${tag} ⚠ run ended on model error: ${truncate(lastErrorMessage, 160)}\n`);
+
+				// Rate limited: the SDK's 2/4/8s backoff cannot outlast a
+				// per-minute or per-hour window. Sleep until the window resets
+				// (per the last 429's retry-after) before re-prompting, and do
+				// not charge that wait against the session budget.
+				if (RATE_LIMIT_PATTERN.test(lastErrorMessage)) {
+					const recent = lastRateLimit && Date.now() - lastRateLimit.at < 5 * 60 * 1000 ? lastRateLimit : undefined;
+					const waitMs = recent
+						? Math.max(0, recent.retryAfterMs - (Date.now() - recent.at)) + 1000
+						: DEFAULT_RATE_LIMIT_WAIT_MS;
+					if (waitMs > MAX_RATE_LIMIT_WAIT_MS) {
+						throw new Error(`model API rate limited; reset in ${Math.round(waitMs / 1000)}s exceeds max wait of ${Math.round(MAX_RATE_LIMIT_WAIT_MS / 1000)}s: ${lastErrorMessage}`);
+					}
+					process.stderr.write(`${tag} ⏸ rate limited — sleeping ${Math.round(waitMs / 1000)}s until the window resets\n`);
+					await sleep(waitMs);
+					deadline += waitMs;
+				}
+
 				process.stderr.write(`${tag} ↻ re-prompting session to continue (${continues}/${MAX_CONTINUES})\n`);
 				await runPrompt(CONTINUE_PROMPT);
 			}
