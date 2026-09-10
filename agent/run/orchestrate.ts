@@ -19,10 +19,79 @@
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { request as httpsRequest } from "node:https";
+import { request as httpRequest } from "node:http";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(HERE, "..", "..");
 const UNITS_DIR = join(PROJECT_ROOT, "units");
+
+/** Quick smoke-test: send a minimal chat completion and verify a response comes back. */
+async function checkModel(modelId: string): Promise<void> {
+	// Read base URL + api key from ~/.pi/agent/models.json
+	const modelsPath = join(process.env.HOME ?? "~", ".pi", "agent", "models.json");
+	if (!existsSync(modelsPath)) return; // can't check without config — skip
+
+	const config = JSON.parse(readFileSync(modelsPath, "utf8")) as {
+		providers?: Record<string, { baseUrl?: string; apiKey?: string }>;
+	};
+
+	// modelId is like "gwdg/deepseek-v4-flash-0731" — split on first "/"
+	const slash = modelId.indexOf("/");
+	const providerName = slash > 0 ? modelId.slice(0, slash) : modelId;
+	const modelName = slash > 0 ? modelId.slice(slash + 1) : modelId;
+	const provider = config.providers?.[providerName];
+	if (!provider?.baseUrl) return; // unknown provider — skip
+
+	const baseUrl = provider.baseUrl.replace(/\/$/, "");
+	const apiKey = provider.apiKey ?? "";
+	const url = new URL(`${baseUrl}/chat/completions`);
+	const isHttps = url.protocol === "https:";
+	const body = Buffer.from(JSON.stringify({
+		model: modelName,
+		messages: [{ role: "user", content: "Hi" }],
+		max_tokens: 5,
+	}));
+
+	process.stdout.write(`[orchestrate] Checking model ${modelId} ... `);
+	const start = Date.now();
+
+	await new Promise<void>((res, rej) => {
+		const req = (isHttps ? httpsRequest : httpRequest)(
+			{
+				protocol: url.protocol,
+				hostname: url.hostname,
+				port: url.port || (isHttps ? 443 : 80),
+				path: url.pathname,
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					"Authorization": `Bearer ${apiKey}`,
+					"Content-Length": body.length,
+				},
+				// Accept self-signed certs (lab environment)
+				rejectUnauthorized: false,
+			},
+			(r) => {
+				const chunks: Buffer[] = [];
+				r.on("data", (c) => chunks.push(c as Buffer));
+				r.on("end", () => {
+					const text = Buffer.concat(chunks).toString();
+					if (r.statusCode === 200) {
+						console.log(`ok (${Date.now() - start}ms)`);
+						res();
+					} else {
+						rej(new Error(`HTTP ${r.statusCode}: ${text.slice(0, 200)}`));
+					}
+				});
+			}
+		);
+		req.on("error", rej);
+		req.setTimeout(15_000, () => req.destroy(new Error("timeout after 15s")));
+		req.write(body);
+		req.end();
+	});
+}
 
 /** Find task URL from units/index.json or units/<unit>/<task>/meta.json */
 function findTaskUrl(taskId: string): string | undefined {
@@ -133,7 +202,18 @@ async function main() {
 		process.exit(0);
 	}
 
-	if (model) { process.env.PI_MODEL = model; console.log(`[orchestrate] Using model: ${model}`); }
+	if (model) {
+		process.env.PI_MODEL = model;
+		console.log(`[orchestrate] Using model: ${model}`);
+		try {
+			await checkModel(model);
+		} catch (err) {
+			console.error(`[orchestrate] Model check failed: ${err}`);
+			console.error(`  The model may be unavailable or the ID is wrong.`);
+			console.error(`  Available models: cat ~/.pi/agent/models.json | grep '"id"'`);
+			process.exit(1);
+		}
+	}
 	if (taskUrl) { process.env.SMARTLAB_TASK_URL = taskUrl; }
 	if (insecure) { process.env.LAB_INSECURE_TLS = "1"; }
 
