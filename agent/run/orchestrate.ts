@@ -77,8 +77,12 @@ async function checkModel(modelId: string): Promise<void> {
 				r.on("data", (c) => chunks.push(c as Buffer));
 				r.on("end", () => {
 					const text = Buffer.concat(chunks).toString();
-					if (r.statusCode && r.statusCode < 500) {
-						// 2xx = clearly works; 4xx = endpoint reachable (model may still be valid)
+					// A 404 here means "Model Not Found" — the model ID is not served
+					// by the API even if it appears in models.json. Treat as fatal.
+					if (r.statusCode === 404 || /model not found/i.test(text)) {
+						rej(new Error(`model "${modelName}" not served by ${providerName} API (HTTP 404 Model Not Found)`));
+					} else if (r.statusCode && r.statusCode < 500) {
+						// 2xx works; other 4xx (e.g. 400 param quibble) = endpoint reachable, model valid
 						const label = r.statusCode === 200 ? "ok" : `reachable (HTTP ${r.statusCode})`;
 						console.log(`${label} (${Date.now() - start}ms)`);
 						res();
