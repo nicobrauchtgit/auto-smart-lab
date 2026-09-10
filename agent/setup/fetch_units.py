@@ -10,7 +10,7 @@ Slugs are derived from the URL path (UUID hex segments) or from the breadcrumb
 title when a human-readable name is available.
 
 Usage:
-  python3 agent/setup/fetch_units.py [--insecure] [--refresh] [--no-data]
+  python3 agent/setup/fetch_units.py [--refresh] [--no-data] [--secure]
 
 Environment:
   LAB_USER, LAB_PASS   – credentials (LAB_COOKIE_FILE used as cache)
@@ -189,7 +189,7 @@ def _download_data(client: LabClient, download_urls: list[str], dest_dir: Path) 
     return written
 
 
-def fetch_all(refresh: bool = False, insecure: bool = False, fetch_data: bool = True, unit_filter: str | None = None) -> int:
+def fetch_all(refresh: bool = False, insecure: bool | None = None, fetch_data: bool = True, unit_filter: str | None = None) -> int:
     client = LabClient(insecure_tls=insecure)
     units_url = urljoin(BASE_URL, "/units/")
     print(f"[fetch_units] Loading units index: {units_url}")
@@ -338,11 +338,12 @@ def fetch_all(refresh: bool = False, insecure: bool = False, fetch_data: bool = 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--refresh", action="store_true", help="re-fetch pages (ignore cache)")
-    parser.add_argument("--insecure", action="store_true", help="skip TLS certificate verification")
+    parser.add_argument("--insecure", action="store_true", help="(default) accept the lab's self-signed certificate")
+    parser.add_argument("--secure", action="store_true", help="verify the lab's TLS certificate; same as LAB_INSECURE_TLS=0")
     parser.add_argument("--no-data", action="store_true", help="skip downloading data files")
     parser.add_argument("--unit", metavar="SLUG_OR_TITLE", help="only fetch this unit (slug, title, or UUID prefix)")
     args = parser.parse_args()
-    return fetch_all(refresh=args.refresh, insecure=args.insecure, fetch_data=not args.no_data, unit_filter=args.unit)
+    return fetch_all(refresh=args.refresh, insecure=False if args.secure else None, fetch_data=not args.no_data, unit_filter=args.unit)
 
 
 if __name__ == "__main__":

@@ -186,15 +186,16 @@ function salvageSolver(taskId: string): SolverResult | null {
 }
 
 function usage(): never {
-	console.error("Usage: npx tsx agent/run/orchestrate.ts <task_id|list> [--model <id>] [--task-url <url>] [--insecure] [--no-submit] [--target <score>] [--solver-timeout <minutes>] [--max-attempts <n>]");
+	console.error("Usage: npx tsx agent/run/orchestrate.ts <task_id|list> [--model <id>] [--task-url <url>] [--secure] [--no-submit] [--target <score>] [--solver-timeout <minutes>] [--max-attempts <n>]");
 	console.error("Exit codes: 0 done (target reached, no attempts left, dry run or attempt cap), 1 no attempts before start, 2 solver failed, 3 submission failed, 99 fatal");
 	console.error("Required env: LAB_USER, LAB_PASS");
 	console.error("Examples:");
 	console.error("  npm run solve list                    # show all available task IDs");
-	console.error("  npm run solve spam3 -- --insecure     # solve task spam3");
-	console.error("  npm run solve spam3 -- --insecure --model gwdg/devstral-2-123b-instruct-2512");
-	console.error("  npm run solve spam1 -- --insecure --no-submit   # run solver+eval, skip the real submission");
-	console.error("  npm run solve spam2 -- --insecure --target 0.95 # keep re-solving + submitting until the platform score >= 0.95");
+	console.error("  npm run solve spam3                   # solve task spam3");
+	console.error("  npm run solve spam3 -- --model gwdg/devstral-2-123b-instruct-2512");
+	console.error("  npm run solve spam1 -- --no-submit    # run solver+eval, skip the real submission");
+	console.error("  npm run solve spam2 -- --target 0.95  # keep re-solving + submitting until the platform score >= 0.95");
+	console.error("TLS: the lab uses a self-signed certificate, so verification is OFF by default; pass --secure (or LAB_INSECURE_TLS=0) to verify.");
 	process.exit(1);
 }
 
@@ -217,7 +218,8 @@ async function main() {
 
 	const model = takeArg("--model");
 	const taskUrl = takeArg("--task-url");
-	const insecure = takeFlag("--insecure");
+	takeFlag("--insecure"); // accepted for backwards compatibility; it is the default
+	const secure = takeFlag("--secure");
 	const noSubmit = takeFlag("--no-submit");
 	const solverTimeoutArg = takeArg("--solver-timeout");
 	if (solverTimeoutArg !== undefined) {
@@ -238,7 +240,7 @@ async function main() {
 	if (taskId === "list") {
 		const indexPath = join(UNITS_DIR, "index.json");
 		if (!existsSync(indexPath)) {
-			console.error("No units/index.json found. Run: python3 agent/setup/fetch_units.py --insecure");
+			console.error("No units/index.json found. Run: python3 agent/setup/fetch_units.py");
 			process.exit(1);
 		}
 		const index = JSON.parse(readFileSync(indexPath, "utf8")) as Record<string, string>;
@@ -282,7 +284,9 @@ async function main() {
 		}
 	}
 	if (taskUrl) { process.env.SMARTLAB_TASK_URL = taskUrl; }
-	if (insecure) { process.env.LAB_INSECURE_TLS = "1"; }
+	// The lab serves a self-signed certificate: skip verification unless --secure / LAB_INSECURE_TLS=0.
+	if (secure) process.env.LAB_INSECURE_TLS = "0";
+	else if (!process.env.LAB_INSECURE_TLS) process.env.LAB_INSECURE_TLS = "1";
 
 	// Auto-resolve task URL from units/<unit>/<task>/meta.json if not set
 	if (!process.env.SMARTLAB_TASK_URL) {
@@ -293,7 +297,7 @@ async function main() {
 		} else {
 			console.error(`[orchestrate] Could not resolve task URL for '${taskId}'.`);
 			console.error(`  Either set SMARTLAB_TASK_URL in the environment, pass --task-url <url>,`);
-			console.error(`  or run: python3 agent/setup/fetch_units.py --insecure`);
+			console.error(`  or run: python3 agent/setup/fetch_units.py`);
 			process.exit(1);
 		}
 	}

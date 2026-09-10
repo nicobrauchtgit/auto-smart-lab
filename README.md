@@ -27,12 +27,16 @@ Optional — enables web search in the solver:
 export TAVILY_API_KEY='...'
 ```
 
+> **TLS:** the lab serves a self-signed certificate, so certificate verification is **off by
+> default** for lab connections (`LAB_INSECURE_TLS=1`). Pass `--secure` to any command, or set
+> `LAB_INSECURE_TLS=0`, to verify instead; the Python scripts also honour `LAB_CA_BUNDLE`.
+
 ### 2. Fetch units from the lab
 
 Populates `units/` with task prompts, metadata, and training data:
 
 ```bash
-python3 agent/setup/fetch_units.py --insecure
+python3 agent/setup/fetch_units.py
 ```
 
 This also writes `units/index.json` — a short-ID → URL mapping used by the orchestrator.
@@ -74,11 +78,11 @@ One command that fetches units if needed, resets, and works through every task o
 unattended, one task at a time:
 
 ```bash
-npm run solve-units -- --insecure                       # solve all open tasks, real submissions
-npm run solve-units -- --insecure --plan                # only show what would run
-npm run solve-units -- --insecure --no-submit           # solver + eval for every task, no uploads
-npm run solve-units -- --insecure --only spam1,spam3    # subset
-npm run solve-units -- --insecure --max-attempts 1      # spend at most 1 attempt per task this run
+npm run solve-units                                     # solve all open tasks, real submissions
+npm run solve-units -- --plan                # only show what would run
+npm run solve-units -- --no-submit           # solver + eval for every task, no uploads
+npm run solve-units -- --only spam1,spam3    # subset
+npm run solve-units -- --max-attempts 1      # spend at most 1 attempt per task this run
 ```
 
 Before each task the driver reads the task's lab page and **skips** it when all attempts are used,
@@ -95,23 +99,23 @@ A results table is printed at the end and written, with per-task logs, to
 ### 6. Solve a single task
 
 ```bash
-npm run solve <task_id> -- --insecure [--model <model_id>]
+npm run solve <task_id> [-- --model <model_id>]
 ```
 
 Examples:
 
 ```bash
 # Use default model
-npm run solve spam1 -- --insecure
+npm run solve spam1
 
 # Choose a specific model
-npm run solve spam1 -- --insecure --model gwdg/devstral-2-123b-instruct-2512
+npm run solve spam1 -- --model gwdg/devstral-2-123b-instruct-2512
 
 # Test solver + eval without spending one of the 3 submissions
-npm run solve spam1 -- --insecure --no-submit
+npm run solve spam1 -- --no-submit
 
 # Override task URL manually (bypasses index.json lookup)
-npm run solve spam1 -- --insecure --task-url 'https://lab-test.../units/.../tasks/.../'
+npm run solve spam1 -- --task-url 'https://lab-test.../units/.../tasks/.../'
 ```
 
 The orchestrator will:
@@ -229,6 +233,6 @@ def solve(output_path: Path = DEFAULT_SUBMISSION) -> Path: ...
 ```bash
 cd agent/setup
 export LAB_USER='...' LAB_PASS='...'
-python3 fetch_lab.py --insecure login     # save session cookie
-python3 fetch_lab.py --insecure get 'URL' # fetch authenticated page
+python3 fetch_lab.py login     # save session cookie
+python3 fetch_lab.py get 'URL' # fetch authenticated page
 ```

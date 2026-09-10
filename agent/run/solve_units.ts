@@ -2,7 +2,7 @@
 /**
  * Solve every task of every unit on the lab, unattended.
  *
- *   npm run solve-units -- --insecure [--model <id>] [--target <s>] [--no-submit] [...]
+ *   npm run solve-units -- [--model <id>] [--target <s>] [--no-submit] [--secure] [...]
  *
  * What it does, in order:
  *   1. Fetch units from the lab if units/index.json is missing (or --refresh).
@@ -51,7 +51,7 @@ interface TaskResult {
 }
 
 function usage(): never {
-	console.error(`Usage: npm run solve-units -- [--insecure] [--model <id>] [--target <score>] [--solver-timeout <min>]
+	console.error(`Usage: npm run solve-units -- [--model <id>] [--target <score>] [--solver-timeout <min>]
                               [--max-attempts <n>] [--no-submit] [--refresh] [--reset once|each|none]
                               [--only spam1,spam3] [--retry-solved] [--plan]
   --plan          only print what would run (fetch + status check), solve nothing
@@ -60,6 +60,7 @@ function usage(): never {
   --only          comma-separated task ids to consider
   --retry-solved  run tasks whose best platform score already meets --target
   --max-attempts  attempts one task may spend in this run (default 3)
+  --secure        verify the lab's TLS certificate (off by default: the lab is self-signed)
 Other flags are passed through to the per-task orchestrator.`);
 	process.exit(1);
 }
@@ -114,7 +115,8 @@ async function main() {
 	if (!["once", "each", "none"].includes(resetMode)) usage();
 	const only = (takeArg("--only") ?? "").split(",").map(s => s.trim()).filter(Boolean);
 	// Flags shared with / passed through to the orchestrator
-	const insecure = takeFlag("--insecure");
+	takeFlag("--insecure"); // accepted for backwards compatibility; it is the default
+	const secure = takeFlag("--secure");
 	const noSubmit = takeFlag("--no-submit");
 	const model = takeArg("--model");
 	const targetArg = takeArg("--target");
@@ -124,12 +126,14 @@ async function main() {
 	const maxAttempts = maxAttemptsArg !== undefined ? Number(maxAttemptsArg) : 3;
 	if (args.length || !Number.isFinite(target) || !Number.isFinite(maxAttempts)) usage();
 
-	if (insecure) process.env.LAB_INSECURE_TLS = "1";
+	if (secure) process.env.LAB_INSECURE_TLS = "0";
+	else if (!process.env.LAB_INSECURE_TLS) process.env.LAB_INSECURE_TLS = "1";
+	const insecure = /^(1|true|yes|on)$/i.test(process.env.LAB_INSECURE_TLS.trim());
 	const missing = ["LAB_USER", "LAB_PASS"].filter(k => !process.env[k]);
 	if (missing.length) { console.error(`Missing required environment variables: ${missing.join(", ")}`); process.exit(1); }
 
 	const passthrough: string[] = [];
-	if (insecure) passthrough.push("--insecure");
+	if (secure) passthrough.push("--secure");
 	if (noSubmit) passthrough.push("--no-submit");
 	if (model) passthrough.push("--model", model);
 	passthrough.push("--target", String(target));
@@ -138,7 +142,7 @@ async function main() {
 
 	// 1. Fetch
 	if (refresh || !existsSync(INDEX_PATH)) {
-		const fetchArgs = insecure ? ["--insecure"] : [];
+		const fetchArgs = secure ? ["--secure"] : [];
 		if (refresh) fetchArgs.push("--refresh");
 		if (!runPython(FETCH_SCRIPT, fetchArgs, "fetching units")) process.exit(1);
 	} else {

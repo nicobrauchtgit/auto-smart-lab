@@ -11,7 +11,7 @@ Environment:
   LAB_COOKIE_FILE   default: lab-cookies.txt
   LAB_USER          username for login
   LAB_PASS          password for login
-  LAB_INSECURE_TLS  set to 1/true/yes to accept the lab's self-signed cert
+  LAB_INSECURE_TLS  default 1 (the lab uses a self-signed cert); set to 0 to verify TLS
   LAB_CA_BUNDLE     optional CA bundle path, preferred over LAB_INSECURE_TLS
 """
 from __future__ import annotations
@@ -82,17 +82,23 @@ def truthy(value: str | None) -> bool:
     return str(value or "").lower() in {"1", "true", "yes", "y", "on"}
 
 
-def make_ssl_context(insecure: bool = False) -> ssl.SSLContext | None:
+def insecure_tls_default() -> bool:
+    """The lab serves a self-signed certificate, so verification is off unless LAB_INSECURE_TLS=0."""
+    value = os.environ.get("LAB_INSECURE_TLS")
+    return True if value is None or value.strip() == "" else truthy(value)
+
+
+def make_ssl_context(insecure: bool | None = None) -> ssl.SSLContext | None:
     ca_bundle = os.environ.get("LAB_CA_BUNDLE")
     if ca_bundle:
         return ssl.create_default_context(cafile=ca_bundle)
-    if insecure or truthy(os.environ.get("LAB_INSECURE_TLS")):
+    if insecure if insecure is not None else insecure_tls_default():
         return ssl._create_unverified_context()  # noqa: SLF001 - explicit lab option
     return None
 
 
 class LabClient:
-    def __init__(self, insecure_tls: bool = False) -> None:
+    def __init__(self, insecure_tls: bool | None = None) -> None:
         self.cookie_file = COOKIE_FILE
         self.cookie_file.parent.mkdir(parents=True, exist_ok=True)
         self.cookies = MozillaCookieJar(str(self.cookie_file))
@@ -267,11 +273,8 @@ def redact(value: str) -> str:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Fetch SmartLab pages with persistent login cookies")
-    parser.add_argument(
-        "--insecure",
-        action="store_true",
-        help="accept self-signed/invalid TLS certificate; same as LAB_INSECURE_TLS=1",
-    )
+    parser.add_argument("--insecure", action="store_true", help="(default) accept the lab's self-signed certificate")
+    parser.add_argument("--secure", action="store_true", help="verify the lab's TLS certificate; same as LAB_INSECURE_TLS=0")
     parser.add_argument(
         "--show-sensitive",
         action="store_true",
@@ -292,7 +295,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    client = LabClient(insecure_tls=args.insecure)
+    client = LabClient(insecure_tls=False if args.secure else None)
 
     if args.command == "csrf":
         response = client.request(LOGIN_URL)
