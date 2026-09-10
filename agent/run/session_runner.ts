@@ -130,6 +130,7 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 		let currentToolName: string | undefined;
 		let toolStart = 0;
 		let promptSent = false; // guard: ignore agent_settled fired before prompt is sent
+		let modelError: Error | undefined; // set if the model returns a stopReason=error
 
 		// Heartbeat: log every 30s so we know the session is alive
 		const heartbeat = setInterval(() => {
@@ -137,7 +138,7 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 			process.stdout.write(`${tag} ⏳ still running (${elapsed(sessionStart)}, ${toolCallCount} tool calls, ${status})\n`);
 		}, 30_000);
 
-		const debugEvents = true; // always on until we diagnose the silent settle
+		const debugEvents = process.env.PI_DEBUG_EVENTS === "1";
 
 		// Verify the selected model has auth configured before sending prompt
 		if (selectedModel) {
@@ -173,12 +174,22 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 					return;
 				}
 
-				// Log full assistant message content + finish reason on message_end
+				// Detect model/API errors surfaced as an errored assistant message
 				if (event.type === "message_end") {
-					const msg = ev.message as { role?: string; content?: unknown; stopReason?: string; finishReason?: string; usage?: unknown } | undefined;
+					const msg = ev.message as { role?: string; content?: unknown; stopReason?: string; finishReason?: string; errorMessage?: string } | undefined;
 					if (msg?.role === "assistant") {
 						const contentLen = Array.isArray(msg.content) ? msg.content.length : 0;
-						process.stdout.write(`${tag} [assistant msg] content_blocks=${contentLen} stopReason=${msg.stopReason ?? msg.finishReason ?? "?"} full=${JSON.stringify(msg).slice(0, 400)}\n`);
+						const stop = msg.stopReason ?? msg.finishReason ?? "?";
+						if (debugEvents) {
+							process.stdout.write(`${tag} [assistant msg] content_blocks=${contentLen} stopReason=${stop}\n`);
+						}
+						if (stop === "error") {
+							clearInterval(heartbeat);
+							unsubscribe();
+							modelError = new Error(`model API error: ${msg.errorMessage?.trim() ?? "unknown error"}`);
+							reject(modelError);
+							return;
+						}
 					}
 				}
 
