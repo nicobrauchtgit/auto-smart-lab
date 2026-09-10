@@ -33,6 +33,7 @@ export async function runEvalSession(taskId: string): Promise<EvalResult> {
 		instructionsPath: INSTRUCTIONS,
 		prompt,
 		env: { EVAL_TASK_ID: taskId },
+		label: `eval:${taskId}`,
 	});
 
 	// Parse EVAL_DECISION sentinel

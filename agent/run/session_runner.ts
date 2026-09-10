@@ -37,6 +37,8 @@ export interface RunSessionOptions {
 	prompt: string;
 	/** Optional env vars to inject into process.env for this session */
 	env?: Record<string, string>;
+	/** Label for log lines, e.g. "solver", "eval" */
+	label?: string;
 }
 
 export interface RunSessionResult {
@@ -44,11 +46,23 @@ export interface RunSessionResult {
 	output: string;
 }
 
+function elapsed(startMs: number): string {
+	const s = Math.floor((Date.now() - startMs) / 1000);
+	return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m${s % 60}s`;
+}
+
+function truncate(s: string, n = 120): string {
+	const oneline = s.replace(/\s+/g, " ").trim();
+	return oneline.length > n ? oneline.slice(0, n) + "…" : oneline;
+}
+
 /**
  * Run a PI agent session, wait for it to settle, and return the collected output.
  */
 export async function runSession(options: RunSessionOptions): Promise<RunSessionResult> {
-	const { instructionsPath, prompt, env } = options;
+	const { instructionsPath, prompt, env, label = "agent" } = options;
+	const tag = `[${label}]`;
+	const sessionStart = Date.now();
 
 	// Inject env vars before session starts (tools read from process.env)
 	const envBackup: Record<string, string | undefined> = {};
@@ -68,7 +82,6 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 			agentDir,
 			additionalExtensionPaths: EXTENSION_PATHS,
 			systemPrompt,
-			// Disable context files (AGENTS.md / CLAUDE.md) to keep prompts clean
 			noContextFiles: true,
 		});
 
@@ -85,34 +98,80 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 
 		// Collect all assistant text deltas
 		const textParts: string[] = [];
+		let toolCallCount = 0;
+		let currentToolName: string | undefined;
+		let toolStart = 0;
+
+		// Heartbeat: log every 30s so we know the session is alive
+		const heartbeat = setInterval(() => {
+			const status = currentToolName ? `running ${currentToolName}` : "thinking";
+			process.stdout.write(`${tag} ⏳ still running (${elapsed(sessionStart)}, ${toolCallCount} tool calls, ${status})\n`);
+		}, 30_000);
 
 		const settled = new Promise<void>((resolve, reject) => {
 			const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
+				const ev = event as Record<string, unknown>;
+
 				if (event.type === "agent_settled") {
+					clearInterval(heartbeat);
 					unsubscribe();
+					console.log(`${tag} ✓ settled in ${elapsed(sessionStart)} (${toolCallCount} tool calls)`);
 					resolve();
+					return;
 				}
-				// Collect text from message updates
-				if (event.type === "message_update" && "delta" in event) {
-					const delta = (event as { type: string; delta: unknown }).delta;
-					if (typeof delta === "string") textParts.push(delta);
-					else if (
-						delta !== null &&
-						typeof delta === "object" &&
-						"type" in delta &&
-						(delta as { type: string }).type === "text" &&
-						"text" in delta
-					) {
-						textParts.push(String((delta as { text: unknown }).text));
+
+				// Tool call started
+				if (event.type === "tool_call_start" || event.type === "tool_use_start") {
+					toolCallCount++;
+					currentToolName = (ev.name ?? ev.toolName ?? ev.tool_name ?? "tool") as string;
+					toolStart = Date.now();
+					// Show tool input truncated — most useful for bash/read/write
+					const input = ev.input ?? ev.params ?? ev.arguments ?? {};
+					const inputStr = typeof input === "object"
+						? truncate(JSON.stringify(input).replace(/^{|}$/g, "").replace(/"([^"]+)":/g, "$1:"), 100)
+						: truncate(String(input), 100);
+					process.stdout.write(`${tag} → ${currentToolName}(${inputStr})\n`);
+					return;
+				}
+
+				// Tool call finished
+				if (event.type === "tool_call_end" || event.type === "tool_use_end" || event.type === "tool_result") {
+					const name = (ev.name ?? ev.toolName ?? currentToolName ?? "tool") as string;
+					const took = toolStart ? ` ${elapsed(toolStart)}` : "";
+					// Show first line of output — useful for bash results
+					const result = ev.result ?? ev.output ?? ev.content ?? "";
+					const resultStr = typeof result === "string"
+						? truncate(result.trim().split("\n")[0], 80)
+						: typeof result === "object"
+							? truncate(JSON.stringify(result), 80)
+							: "";
+					const suffix = resultStr ? ` → ${resultStr}` : "";
+					process.stdout.write(`${tag} ← ${name}${took}${suffix}\n`);
+					currentToolName = undefined;
+					toolStart = 0;
+					return;
+				}
+
+				// Assistant text streaming — show first chunk of each new message
+				if (event.type === "message_update" && "delta" in ev) {
+					const delta = ev.delta;
+					let text = "";
+					if (typeof delta === "string") text = delta;
+					else if (delta && typeof delta === "object" && (delta as Record<string,unknown>).type === "text")
+						text = String((delta as Record<string,unknown>).text ?? "");
+					if (text) {
+						textParts.push(text);
+						// Print first delta of each assistant turn as a preview
+						if (textParts.join("").length === text.length || text.startsWith("SOLVER_DONE") || text.startsWith("EVAL_DECISION")) {
+							process.stdout.write(`${tag} 💬 ${truncate(text)}\n`);
+						}
 					}
-				}
-				if (event.type === "agent_end" && "willRetry" in event && !event.willRetry) {
-					// session will settle after this
 				}
 			});
 
 			// Safety timeout: 30 minutes
 			setTimeout(() => {
+				clearInterval(heartbeat);
 				unsubscribe();
 				reject(new Error("Session timed out after 30 minutes"));
 			}, 30 * 60 * 1000);
@@ -126,28 +185,14 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 			const messages = session.messages;
 			for (let i = messages.length - 1; i >= 0; i--) {
 				const msg = messages[i];
-				if (
-					msg &&
-					typeof msg === "object" &&
-					"role" in msg &&
-					(msg as { role: string }).role === "assistant"
-				) {
+				if (msg && typeof msg === "object" && "role" in msg && (msg as { role: string }).role === "assistant") {
 					const content = (msg as { content: unknown }).content;
-					if (typeof content === "string") {
-						textParts.push(content);
-						break;
-					}
+					if (typeof content === "string") { textParts.push(content); break; }
 					if (Array.isArray(content)) {
 						for (const block of content) {
-							if (
-								block &&
-								typeof block === "object" &&
-								"type" in block &&
-								(block as { type: string }).type === "text" &&
-								"text" in block
-							) {
+							if (block && typeof block === "object" && "type" in block &&
+								(block as { type: string }).type === "text" && "text" in block)
 								textParts.push(String((block as { text: unknown }).text));
-							}
 						}
 						if (textParts.length > 0) break;
 					}
@@ -157,15 +202,12 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 
 		return { output: textParts.join("") };
 	} finally {
-		// Restore env vars
 		if (env) {
 			for (const [key, originalValue] of Object.entries(envBackup)) {
-				if (originalValue === undefined) {
-					delete process.env[key];
-				} else {
-					process.env[key] = originalValue;
-				}
+				if (originalValue === undefined) delete process.env[key];
+				else process.env[key] = originalValue;
 			}
 		}
 	}
 }
+

@@ -34,6 +34,7 @@ export async function runSolverSession(taskId: string, feedback?: string): Promi
 		instructionsPath: INSTRUCTIONS,
 		prompt,
 		env: { EVAL_TASK_ID: taskId },
+		label: `solver:${taskId}`,
 	});
 
 	// Parse SOLVER_DONE sentinel
