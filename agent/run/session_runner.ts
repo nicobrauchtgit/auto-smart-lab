@@ -65,6 +65,32 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 	const tag = `[${label}]`;
 	const sessionStart = Date.now();
 
+	// Optional: dump the exact HTTP request/response to the model API for debugging.
+	// Enable with PI_DEBUG_HTTP=1. Patches global fetch (the SDK uses it under the hood).
+	if (process.env.PI_DEBUG_HTTP === "1" && !(globalThis as Record<string, unknown>).__piFetchPatched) {
+		(globalThis as Record<string, unknown>).__piFetchPatched = true;
+		const origFetch = globalThis.fetch;
+		globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+			const url = typeof input === "string" ? input : (input as Request).url ?? String(input);
+			if (/chat\/completions/.test(url) && init?.body) {
+				try {
+					const parsed = JSON.parse(String(init.body));
+					// Log model + tool names + a compact view of the payload
+					const toolNames = Array.isArray(parsed.tools) ? parsed.tools.map((t: { function?: { name?: string } }) => t.function?.name) : [];
+					process.stderr.write(`${tag} [HTTP→] ${url}\n${tag} [HTTP→] model=${parsed.model} msgs=${parsed.messages?.length} tools=[${toolNames.join(",")}]\n`);
+					process.stderr.write(`${tag} [HTTP→] body=${String(init.body).slice(0, 2000)}\n`);
+				} catch { /* non-JSON body */ }
+			}
+			const res = await origFetch(input, init);
+			if (/chat\/completions/.test(url) && res.status >= 400) {
+				const clone = res.clone();
+				const text = await clone.text().catch(() => "");
+				process.stderr.write(`${tag} [HTTP←] ${res.status} ${text.slice(0, 500)}\n`);
+			}
+			return res;
+		}) as typeof fetch;
+	}
+
 	// Inject env vars before session starts (tools read from process.env)
 	const envBackup: Record<string, string | undefined> = {};
 	if (env) {
