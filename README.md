@@ -60,7 +60,8 @@ Available tasks:
 
 This harness is an experiment in how far an autonomous agent gets on a unit **without prior
 solutions**. Before every test run, wipe all task-specific state (solver modules, agent memory,
-prediction CSVs). The previous state is moved to `archive/<timestamp>/`, never deleted:
+prediction CSVs, checkpoints). Solver modules under `agent/smartlab/tasks/` are run artifacts and
+are not tracked in git; what a run achieved is recorded in `logs/` and on the lab:
 
 ```bash
 npm run reset            # everything

@@ -50,5 +50,7 @@ logs/
 .env.*
 !.env.example
 
-# Archived task state from `npm run reset` (from-scratch test runs)
-archive/
+# Solver modules and checkpoints are run artifacts (written by the agent, wiped by `npm run reset`)
+agent/smartlab/tasks/*
+!agent/smartlab/tasks/__init__.py
+agent/smartlab/checkpoints/
