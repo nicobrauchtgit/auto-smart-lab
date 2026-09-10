@@ -75,10 +75,24 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 			if (/chat\/completions/.test(url) && init?.body) {
 				try {
 					const parsed = JSON.parse(String(init.body));
-					// Log model + tool names + a compact view of the payload
 					const toolNames = Array.isArray(parsed.tools) ? parsed.tools.map((t: { function?: { name?: string } }) => t.function?.name) : [];
-					process.stderr.write(`${tag} [HTTP→] ${url}\n${tag} [HTTP→] model=${parsed.model} msgs=${parsed.messages?.length} tools=[${toolNames.join(",")}]\n`);
-					process.stderr.write(`${tag} [HTTP→] body=${String(init.body).slice(0, 2000)}\n`);
+					process.stderr.write(`${tag} [HTTP→] model=${parsed.model} msgs=${parsed.messages?.length} tools=[${toolNames.join(",")}]\n`);
+					// Log each message: role + content-type/preview + tool_calls, to find what the API rejects
+					if (Array.isArray(parsed.messages)) {
+						parsed.messages.forEach((m: Record<string, unknown>, i: number) => {
+							const role = m.role;
+							const c = m.content;
+							let cDesc: string;
+							if (c === null || c === undefined) cDesc = String(c);
+							else if (typeof c === "string") cDesc = `str(${c.length})`;
+							else if (Array.isArray(c)) cDesc = `arr[${c.map((b: { type?: string }) => b.type ?? "?").join(",")}]`;
+							else cDesc = typeof c;
+							const tc = Array.isArray(m.tool_calls) ? ` tool_calls=${m.tool_calls.length}` : "";
+							const tcid = m.tool_call_id ? ` tool_call_id=${m.tool_call_id}` : "";
+							const extra = Object.keys(m).filter(k => !["role","content","tool_calls","tool_call_id","name"].includes(k));
+							process.stderr.write(`${tag} [HTTP→]   msg[${i}] role=${role} content=${cDesc}${tc}${tcid}${extra.length ? ` +[${extra.join(",")}]` : ""}\n`);
+						});
+					}
 				} catch { /* non-JSON body */ }
 			}
 			const res = await origFetch(input, init);
