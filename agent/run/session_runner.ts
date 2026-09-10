@@ -251,12 +251,11 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 				}
 
 				// Tool call started
-				if (event.type === "tool_call_start" || event.type === "tool_use_start") {
+				if (event.type === "tool_execution_start") {
 					toolCallCount++;
-					currentToolName = (ev.name ?? ev.toolName ?? ev.tool_name ?? "tool") as string;
+					currentToolName = (ev.toolName ?? "tool") as string;
 					toolStart = Date.now();
-					// Show tool input truncated — most useful for bash/read/write
-					const input = ev.input ?? ev.params ?? ev.arguments ?? {};
+					const input = ev.args ?? {};
 					const inputStr = typeof input === "object"
 						? truncate(JSON.stringify(input).replace(/^{|}$/g, "").replace(/"([^"]+)":/g, "$1:"), 100)
 						: truncate(String(input), 100);
@@ -265,17 +264,17 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 				}
 
 				// Tool call finished
-				if (event.type === "tool_call_end" || event.type === "tool_use_end" || event.type === "tool_result") {
-					const name = (ev.name ?? ev.toolName ?? currentToolName ?? "tool") as string;
+				if (event.type === "tool_execution_end") {
+					const name = (ev.toolName ?? currentToolName ?? "tool") as string;
 					const took = toolStart ? ` ${elapsed(toolStart)}` : "";
-					// Show first line of output — useful for bash results
-					const result = ev.result ?? ev.output ?? ev.content ?? "";
+					const isError = ev.isError === true;
+					const result = ev.result ?? "";
 					const resultStr = typeof result === "string"
 						? truncate(result.trim().split("\n")[0], 80)
 						: typeof result === "object"
 							? truncate(JSON.stringify(result), 80)
 							: "";
-					const suffix = resultStr ? ` → ${resultStr}` : "";
+					const suffix = resultStr ? ` → ${isError ? "ERROR: " : ""}${resultStr}` : "";
 					process.stdout.write(`${tag} ← ${name}${took}${suffix}\n`);
 					currentToolName = undefined;
 					toolStart = 0;
