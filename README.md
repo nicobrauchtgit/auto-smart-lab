@@ -56,7 +56,18 @@ Available tasks:
   ...
 ```
 
-### 4. Solve a task
+### 4. Start from scratch
+
+This harness is an experiment in how far an autonomous agent gets on a unit **without prior
+solutions**. Before every test run, wipe all task-specific state (solver modules, agent memory,
+prediction CSVs). The previous state is moved to `archive/<timestamp>/`, never deleted:
+
+```bash
+npm run reset            # everything
+npm run reset -- spam2   # only one task
+```
+
+### 5. Solve a task
 
 ```bash
 npm run solve <task_id> -- --insecure [--model <model_id>]
@@ -71,6 +82,9 @@ npm run solve spam1 -- --insecure
 # Choose a specific model
 npm run solve spam1 -- --insecure --model gwdg/devstral-2-123b-instruct-2512
 
+# Test solver + eval without spending one of the 3 submissions
+npm run solve spam1 -- --insecure --no-submit
+
 # Override task URL manually (bypasses index.json lookup)
 npm run solve spam1 -- --insecure --task-url 'https://lab-test.../units/.../tasks/.../'
 ```
@@ -81,6 +95,13 @@ The orchestrator will:
 3. Run the **eval agent** (reviews quality, decides approve/reject)
 4. On approval: **submit directly** (HTTP upload + poll for score)
 5. On rejection: re-solve with feedback (free, no submission consumed)
+6. If the **platform score is below `--target`** (default 0.97) and submissions remain, the real
+   score is fed back to the solver and the loop continues. Identical predictions are never
+   re-submitted. The run stops at the target or when all 3 submissions are spent.
+7. If a solver session hits its time cap (`--solver-timeout`, default 30 min) or ends without a CSV,
+   the orchestrator **salvages** the solver module it left behind (runs `validate` + `solve`
+   directly, no LLM) and continues; if there is nothing to salvage it re-runs the solver once
+   with finish-first instructions.
 
 ---
 
@@ -119,7 +140,7 @@ agent/
 │   ├── common.py        Shared utilities (stdlib-only)
 │   └── tasks/           One solver module per task (e.g. spam1.py)
 └── tools/               PI extension tools
-    ├── smartlab.ts      smartlab_submit tool
+    ├── smartlab.ts      smartlab_submit tool (manual use only — NOT loaded into agent sessions; the orchestrator submits)
     ├── memory.ts        memory_read / memory_write tools
     ├── web_search.ts    web_search tool (requires TAVILY_API_KEY)
     └── challenge_context.ts  list_challenges / read_challenge tools
@@ -169,7 +190,7 @@ def validate(validation_fraction: float = 0.2, seed: int = 42) -> float: ...
 def solve(output_path: Path = DEFAULT_SUBMISSION) -> Path: ...
 ```
 
-Then register it in `agent/smartlab_agent.py`'s `TASKS` dict.
+`smartlab_agent.py` discovers every module in `agent/smartlab/tasks/` automatically; no registration needed.
 
 **Constraint:** stdlib Python only — no scikit-learn, numpy, or pandas. The SmartLab VM has none of these.
 

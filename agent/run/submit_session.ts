@@ -105,8 +105,10 @@ class SimpleClient {
 		const lp = await this.request(this.loginUrl);
 		if (lp.status>=400) throw new Error("Login page failed: HTTP "+lp.status);
 		const forms = parseForms(lp.text);
-		const form = forms.find(f=>f.inputs.some(i=>(i.type??"text").toLowerCase()==="password"))??forms[0];
-		if (!form) throw new Error("No login form found");
+		const form = forms.find(f=>f.inputs.some(i=>(i.type??"text").toLowerCase()==="password"));
+		// No password form and not a login page: saved cookies are still valid (already logged in).
+		// Never fall back to an arbitrary form — on a logged-in page that is the logout form.
+		if (!form) { if (this.isLoginPage(lp.text)) throw new Error("No login form found"); return; }
 		const action = new URL(form.action||lp.url, lp.url).toString();
 		const data: Record<string,string> = {}; let pf="password", uf="username";
 		for (const i of form.inputs) {
@@ -331,7 +333,7 @@ export async function runSubmitSession(taskId: string, csvPath: string): Promise
 
 	// Poll for the result row
 	console.log("[submit] Upload ok, polling for result...");
-	const pollTimeout = Date.now() + 180_000;
+	const pollTimeout = Date.now() + 600_000; // grading can take a while; the try is spent either way
 	let after = before;
 	while (Date.now() < pollTimeout) {
 		await sleep(10_000);
@@ -349,7 +351,10 @@ export async function runSubmitSession(taskId: string, csvPath: string): Promise
 		return {ok:false, score:null, triesLeft:null, error:"Upload succeeded but no result row appeared"};
 	}
 
-	const score = parseScore(newAttempt.result);
+	let score = parseScore(newAttempt.result);
+	// The platform may render accuracy-like metrics as percentages ("99.5 %"); normalise to [0,1].
+	if (score !== null && score > 1 && score <= 100) { console.log(`[submit] Result "${cleanHtml(newAttempt.result)}" looks like a percentage; using ${score / 100}`); score = score / 100; }
+	console.log(`[submit] New attempt row: #${newAttempt.number} ${newAttempt.date} result="${cleanHtml(newAttempt.result)}" info="${newAttempt.info.slice(0,120)}"`);
 	const triesUsed = parseTriesUsed(after.attemptsUsed);
 	const triesLeft = triesUsed !== null ? 3 - triesUsed : null;
 	console.log(`[submit] Result: score=${score}, tries_used=${triesUsed}, tries_left=${triesLeft}`);

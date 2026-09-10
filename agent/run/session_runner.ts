@@ -24,15 +24,22 @@ const AGENT_DIR = resolve(HERE, ".."); // agent/run/ → agent/
 const PROJECT_ROOT = resolve(AGENT_DIR, ".."); // agent/ → <root>
 const TOOLS_DIR = join(AGENT_DIR, "tools");
 
+// NOTE: smartlab.ts (the smartlab_submit tool) is deliberately NOT loaded into any LLM session.
+// Submission is a deterministic step owned by the orchestrator (submit_session.ts) so that the
+// 3-attempt budget and the eval gate cannot be bypassed by the model. On 2026-09-10 a solver
+// session burned all three spam2 attempts by calling the tool directly.
 const EXTENSION_PATHS = [
-	join(TOOLS_DIR, "smartlab.ts"),
 	join(TOOLS_DIR, "memory.ts"),
 	join(TOOLS_DIR, "web_search.ts"),
 	join(TOOLS_DIR, "challenge_context.ts"),
 ];
 
 /** Hard cap on one runSession call, including SDK retries and continue re-prompts. Override with PI_SESSION_TIMEOUT_MS. */
-const SESSION_TIMEOUT_MS = Number(process.env.PI_SESSION_TIMEOUT_MS) || 30 * 60 * 1000;
+const DEFAULT_SESSION_TIMEOUT_MS = 30 * 60 * 1000;
+/** Resolved at call time so the orchestrator can set PI_SESSION_TIMEOUT_MS from a CLI flag. */
+export function sessionTimeoutMs(): number {
+	return Number(process.env.PI_SESSION_TIMEOUT_MS) || DEFAULT_SESSION_TIMEOUT_MS;
+}
 /** How many times to re-prompt the same session after the SDK gives up on a model error. */
 const MAX_CONTINUES = 2;
 /** Longest we will sleep for a 429 retry-after before giving up. Override with PI_RATE_LIMIT_MAX_WAIT_MS. */
@@ -354,6 +361,7 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 		// Run one prompt to completion. session.prompt() resolves only after the
 		// agent has fully settled (including the SDK's own retries), so a timeout
 		// must race it AND abort the session — otherwise the run keeps going.
+		const SESSION_TIMEOUT_MS = sessionTimeoutMs();
 		let deadline = sessionStart + SESSION_TIMEOUT_MS; // extended by rate-limit waits
 		const runPrompt = async (text: string): Promise<void> => {
 			lastAssistantWasError = false;

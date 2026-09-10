@@ -210,10 +210,13 @@ class LabClient {
 		}
 
 		const forms = parseForms(loginPage.text);
-		const form =
-			forms.find((f) => f.inputs.some((i) => (i.type ?? "text").toLowerCase() === "password")) ??
-			forms[0];
-		if (!form) throw new Error("Could not find a login form");
+		const form = forms.find((f) => f.inputs.some((i) => (i.type ?? "text").toLowerCase() === "password"));
+		if (!form) {
+			if (this.isLoginPage(loginPage.text)) throw new Error("Could not find a login form");
+			// No password form and not a login page: saved cookies are still valid, already logged in.
+			// Never fall back to an arbitrary form — on a logged-in page that is the logout form.
+			return loginPage;
+		}
 
 		const actionUrl = new URL(form.action || loginPage.url, loginPage.url).toString();
 		const data: Record<string, string> = {};
@@ -771,6 +774,14 @@ export default function smartlabExtension(pi: ExtensionAPI) {
 			async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 				if (signal?.aborted) {
 					return { content: [{ type: "text", text: "Cancelled" }], details: {} };
+				}
+				// Defense in depth: LLM sessions must never submit. The orchestrator submits via
+				// submit_session.ts after the eval gate; each upload spends one of only 3 attempts.
+				if (!truthy(process.env.SMARTLAB_ALLOW_LLM_SUBMIT)) {
+					return {
+						content: [{ type: "text", text: "REFUSED: submissions are performed by the orchestrator after eval approval, not by agent sessions. Finish your work and print SOLVER_DONE instead. (Set SMARTLAB_ALLOW_LLM_SUBMIT=1 only for manual use.)" }],
+						details: { refused: true },
+					};
 				}
 
 				const cwd = (ctx as { cwd?: string } | undefined)?.cwd ?? PROJECT_ROOT;

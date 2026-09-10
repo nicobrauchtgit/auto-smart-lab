@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "solve": "tsx agent/run/orchestrate.ts"
+    "solve": "tsx agent/run/orchestrate.ts",
+    "reset": "python3 agent/setup/reset_state.py"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "*",

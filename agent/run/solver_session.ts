@@ -6,7 +6,7 @@
 
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { runSession } from "./session_runner.js";
+import { runSession, sessionTimeoutMs } from "./session_runner.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const AGENT_DIR = resolve(HERE, "..");
@@ -24,9 +24,17 @@ export interface SolverResult {
  * @param feedback Optional feedback from a previous eval rejection (for re-solve)
  */
 export async function runSolverSession(taskId: string, feedback?: string): Promise<SolverResult> {
-	const prompt = feedback
-		? `Task: ${taskId}. Previous eval feedback: ${feedback}. Build on your previous solver implementation — do not start from scratch unless the current approach is fundamentally broken. Resume from Step 4 of the solver workflow.`
-		: `Solve task: ${taskId}. Follow the complete solver workflow from Step 1.`;
+	const capMin = Math.round(sessionTimeoutMs() / 60000);
+	const now = new Date();
+	const hardStop = new Date(now.getTime() + sessionTimeoutMs());
+	const finishBy = new Date(now.getTime() + sessionTimeoutMs() * 0.7);
+	const hhmm = (d: Date) => d.toTimeString().slice(0, 8);
+	const clock =
+		` Clock: it is now ${hhmm(now)}; this session is killed at ${hhmm(hardStop)} (${capMin} min cap) and anything unfinished is lost. ` +
+		`Check the time with \`date\` before each experiment. By ${hhmm(finishBy)} at the latest, stop improving: run solve, verify the CSV, write memory and print SOLVER_DONE.`;
+	const prompt = (feedback
+		? `Task: ${taskId}. Feedback on your previous attempt: ${feedback} Build on your previous solver implementation — do not start from scratch unless the current approach is fundamentally broken. Resume from Step 4 of the solver workflow.`
+		: `Solve task: ${taskId}. Follow the complete solver workflow from Step 1.`) + clock;
 
 	console.log(`[solver] Starting session for task ${taskId}${feedback ? " (re-solve)" : ""}`);
 

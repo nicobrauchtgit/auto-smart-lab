@@ -3,7 +3,7 @@
  * Not exposed as a pi tool — used directly by TypeScript runner code.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -54,4 +54,13 @@ export function getTaskMemory(taskId: string): TaskMemory {
 		eval_decision: (saved as TaskMemory).eval_decision ?? null,
 		eval_notes: (saved as TaskMemory).eval_notes ?? "",
 	};
+}
+
+/** Merge a partial patch into tasks.<taskId> (atomic write). Used when the orchestrator salvages a solver run. */
+export function updateTaskMemory(taskId: string, patch: Record<string, unknown>): void {
+	const store = readMemory();
+	store.tasks[taskId] = { ...(store.tasks[taskId] ?? {}), ...patch } as TaskMemory;
+	const tmp = MEMORY_FILE + ".tmp";
+	writeFileSync(tmp, JSON.stringify(store, null, 2) + "\n", "utf8");
+	renameSync(tmp, MEMORY_FILE);
 }

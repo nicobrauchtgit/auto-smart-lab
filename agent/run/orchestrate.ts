@@ -20,7 +20,9 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { request as httpsRequest } from "node:https";
+import { createHash } from "node:crypto";
 import { request as httpRequest } from "node:http";
+import { spawnSync } from "node:child_process";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(HERE, "..", "..");
@@ -135,17 +137,63 @@ import { ensureSolverScaffold } from "./scaffold.js";
 import { runSolverSession } from "./solver_session.js";
 import { runEvalSession } from "./eval_session.js";
 import { runSubmitSession } from "./submit_session.js";
-import { getTaskMemory } from "./memory_utils.js";
+import { getTaskMemory, updateTaskMemory } from "./memory_utils.js";
+import type { SolverResult } from "./solver_session.js";
 
 const MAX_SUBMISSIONS = 3;
+/** Platform score at or above which we stop iterating. Override with --target. */
+const DEFAULT_TARGET = 0.97;
+/** How many solver sessions may time out / fail to produce a CSV before we give up on the task. */
+const MAX_SOLVER_FAILURES = 2;
+const AGENT_DIR = join(PROJECT_ROOT, "agent");
+
+/** Run `smartlab_agent.py <cmd> <task>` and return stdout+stderr (or null on failure/timeout). */
+function runCli(cmd: string, taskId: string, timeoutMs: number): string | null {
+	const r = spawnSync("python3", ["smartlab_agent.py", cmd, taskId], { cwd: AGENT_DIR, encoding: "utf8", timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024 });
+	const out = `${r.stdout ?? ""}${r.stderr ?? ""}`;
+	if (r.error || r.status !== 0) {
+		console.warn(`[salvage] ${cmd} failed (${r.error ? r.error.message : `exit ${r.status}`}): ${out.trim().split("\n").slice(-3).join(" | ").slice(0, 300)}`);
+		return null;
+	}
+	return out;
+}
+
+/**
+ * The solver session died (timeout) or ended without a usable CSV, but it may have left a working
+ * solver module behind. Run validate + solve deterministically (no LLM) and, if that works, carry on
+ * to eval/submit as if the solver had finished. Returns null when there is nothing to salvage.
+ */
+function salvageSolver(taskId: string): SolverResult | null {
+	const solverPath = join(AGENT_DIR, "smartlab", "tasks", `${taskId}.py`);
+	if (!existsSync(solverPath) || readFileSync(solverPath, "utf8").includes("raise NotImplementedError")) {
+		console.warn(`[salvage] no implemented solver at ${solverPath}`);
+		return null;
+	}
+	console.log(`[salvage] solver module exists — running validate + solve directly (no LLM)`);
+	const v = runCli("validate", taskId, 15 * 60 * 1000);
+	const vm = v?.match(/VALIDATE_SCORE=([\d.]+)/);
+	if (!vm) return null;
+	const valScore = parseFloat(vm[1]);
+	const so = runCli("solve", taskId, 20 * 60 * 1000);
+	const sm = so?.match(/SOLVE_CSV=(\S+)/);
+	if (!sm) return null;
+	const csvPath = sm[1];
+	if (!existsSync(csvPath)) { console.warn(`[salvage] solve reported ${csvPath} but it does not exist`); return null; }
+	const approach = "(salvaged: solver session ended early; predictions produced by running its module directly)";
+	updateTaskMemory(taskId, { last_val_score: valScore, last_submission_csv: csvPath, approach });
+	console.log(`[salvage] ok: val_score=${valScore}, csv=${csvPath}`);
+	return { valScore, csvPath, approach };
+}
 
 function usage(): never {
-	console.error("Usage: npx tsx agent/run/orchestrate.ts <task_id|list> [--model <id>] [--task-url <url>] [--insecure]");
+	console.error("Usage: npx tsx agent/run/orchestrate.ts <task_id|list> [--model <id>] [--task-url <url>] [--insecure] [--no-submit] [--target <score>] [--solver-timeout <minutes>]");
 	console.error("Required env: LAB_USER, LAB_PASS");
 	console.error("Examples:");
 	console.error("  npm run solve list                    # show all available task IDs");
 	console.error("  npm run solve spam3 -- --insecure     # solve task spam3");
 	console.error("  npm run solve spam3 -- --insecure --model gwdg/devstral-2-123b-instruct-2512");
+	console.error("  npm run solve spam1 -- --insecure --no-submit   # run solver+eval, skip the real submission");
+	console.error("  npm run solve spam2 -- --insecure --target 0.95 # keep re-solving + submitting until the platform score >= 0.95");
 	process.exit(1);
 }
 
@@ -169,6 +217,16 @@ async function main() {
 	const model = takeArg("--model");
 	const taskUrl = takeArg("--task-url");
 	const insecure = takeFlag("--insecure");
+	const noSubmit = takeFlag("--no-submit");
+	const solverTimeoutArg = takeArg("--solver-timeout");
+	if (solverTimeoutArg !== undefined) {
+		const mins = Number(solverTimeoutArg);
+		if (!Number.isFinite(mins) || mins <= 0) usage();
+		process.env.PI_SESSION_TIMEOUT_MS = String(Math.round(mins * 60 * 1000));
+	}
+	const targetArg = takeArg("--target");
+	const target = targetArg !== undefined ? Number(targetArg) : DEFAULT_TARGET;
+	if (!Number.isFinite(target)) usage();
 	const taskId = args[0];
 	if (!taskId) usage();
 
@@ -258,6 +316,10 @@ async function main() {
 
 	let feedback: string | undefined;
 	let iteration = 0;
+	let solverFailures = 0;
+	let lastSubmittedHash: string | undefined;
+	let lastPlatformScore: number | null = null;
+	console.log(`[orchestrate] Target platform score: ${target}`);
 
 	while (true) {
 		iteration++;
@@ -272,15 +334,39 @@ async function main() {
 		console.log(`[orchestrate] Submissions: ${mem.tries_used}/${MAX_SUBMISSIONS} used, ${mem.tries_left ?? MAX_SUBMISSIONS - mem.tries_used} remaining`);
 
 		// Step 1: Solver
-		const solverResult = await runSolverSession(taskId, feedback);
-		console.log(`[orchestrate] Solver done: val_score=${solverResult.valScore}, csv=${solverResult.csvPath}`);
+		let solverResult: SolverResult;
+		let solverProblem: string | undefined;
+		try {
+			solverResult = await runSolverSession(taskId, feedback);
+			console.log(`[orchestrate] Solver done: val_score=${solverResult.valScore}, csv=${solverResult.csvPath}`);
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			if (!/timed out/i.test(msg)) throw err;
+			console.warn(`[orchestrate] Solver session timed out: ${msg}`);
+			solverProblem = "timed out";
+			solverResult = { valScore: 0, csvPath: "", approach: "" };
+		}
 
-		const csvAbsPath = solverResult.csvPath
+		let csvAbsPath = solverResult.csvPath
 			? isAbsolute(solverResult.csvPath) ? solverResult.csvPath : resolve(PROJECT_ROOT, solverResult.csvPath)
 			: "";
 		if (!csvAbsPath || !existsSync(csvAbsPath)) {
-			console.error(`[orchestrate] Solver did not produce a valid CSV at '${csvAbsPath}'. Stopping.`);
-			process.exit(2);
+			solverProblem ??= "ended without a prediction CSV";
+			const salvaged = salvageSolver(taskId);
+			if (salvaged) {
+				solverResult = salvaged;
+				csvAbsPath = isAbsolute(salvaged.csvPath) ? salvaged.csvPath : resolve(PROJECT_ROOT, salvaged.csvPath);
+			} else {
+				solverFailures++;
+				if (solverFailures >= MAX_SOLVER_FAILURES) {
+					console.error(`[orchestrate] Solver ${solverProblem} ${solverFailures} time(s) and nothing could be salvaged. Stopping.`);
+					process.exit(2);
+				}
+				feedback = `Your previous session ${solverProblem} before producing predictions. You have one more session. ` +
+					`Do not explore or tune: get a simple working model, run validate once, run solve, verify the CSV, write memory and print SOLVER_DONE — all within the first half of the session.`;
+				console.log(`[orchestrate] Nothing to salvage — re-running solver with finish-first instructions.`);
+				continue;
+			}
 		}
 		solverResult.csvPath = csvAbsPath;
 
@@ -290,19 +376,52 @@ async function main() {
 
 		if (evalResult.decision === "APPROVE") {
 			const csvPath = evalResult.csvPath || solverResult.csvPath;
+			if (noSubmit) {
+				console.log(`\n[orchestrate] DRY RUN (--no-submit) — eval approved ${csvPath}; skipping submission.`);
+				process.exit(0);
+			}
+			// Never spend a try on predictions identical to the last submission.
+			const csvHash = createHash("sha256").update(readFileSync(csvPath)).digest("hex");
+			if (lastSubmittedHash && csvHash === lastSubmittedHash) {
+				feedback = `Your new predictions are byte-identical to the last submission (platform score ${lastPlatformScore}). ` +
+					`Re-submitting them would waste a try. Change the approach materially (features, model, preprocessing) before finishing.`;
+				console.log(`[orchestrate] CSV unchanged since last submission — re-solving instead of submitting.`);
+				continue;
+			}
+
 			console.log(`[orchestrate] Submitting: ${csvPath}`);
 
 			// Step 3: Submit (this consumes a try)
 			const submitResult = await runSubmitSession(taskId, csvPath);
 			console.log(`[orchestrate] Submission result: ok=${submitResult.ok}, score=${submitResult.score}, tries_left=${submitResult.triesLeft}`);
 
-			if (submitResult.ok) {
-				console.log(`\n[orchestrate] SUCCESS — score=${submitResult.score}, tries_left=${submitResult.triesLeft}`);
-				process.exit(0);
-			} else {
-				console.error(`[orchestrate] Submission failed. Check logs.`);
+			if (!submitResult.ok) {
+				console.error(`[orchestrate] Submission failed: ${submitResult.error ?? "unknown error"}. Check logs.`);
 				process.exit(3);
 			}
+			lastSubmittedHash = csvHash;
+			lastPlatformScore = submitResult.score;
+			const score = submitResult.score as number;
+
+			if (score >= target) {
+				console.log(`\n[orchestrate] SUCCESS — platform score ${score} >= target ${target}, tries_left=${submitResult.triesLeft}`);
+				process.exit(0);
+			}
+
+			const triesLeft = submitResult.triesLeft ?? (MAX_SUBMISSIONS - getTaskMemory(taskId).tries_used);
+			if (triesLeft <= 0) {
+				console.log(`\n[orchestrate] DONE — platform score ${score} < target ${target}, but no submissions left.`);
+				process.exit(0);
+			}
+
+			// Step 4: platform score below target — feed the real result back and re-solve.
+			feedback = `Submission ${MAX_SUBMISSIONS - triesLeft} scored ${score} on the SmartLab platform (your local validation was ${solverResult.valScore}); ` +
+				`target is >= ${target}. ${triesLeft} submission(s) left. ` +
+				(solverResult.valScore - score > 0.02
+					? `The gap between local and platform score means your validation split does not reflect the test data (distribution shift, leakage, or adversarial test examples) — inspect the test inputs and make the model more robust rather than tuning to the local split.`
+					: `Improve the model materially (features, model class, preprocessing) — small hyperparameter tweaks will not move the score enough.`);
+			console.log(`[orchestrate] Platform score ${score} < target ${target}. Re-solving with feedback.`);
+			continue;
 		}
 
 		// REJECT — re-solve is free (only submissions count)
