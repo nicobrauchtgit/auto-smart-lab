@@ -174,7 +174,10 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 					return;
 				}
 
-				// Detect model/API errors surfaced as an errored assistant message
+				// Detect model/API errors surfaced as an errored assistant message.
+				// Record it and let the run settle normally; the caller checks modelError
+				// after settling. Do NOT reject here — throwing inside the SDK's synchronous
+				// event emit crashes the process with an unhandled rejection.
 				if (event.type === "message_end") {
 					const msg = ev.message as { role?: string; content?: unknown; stopReason?: string; finishReason?: string; errorMessage?: string } | undefined;
 					if (msg?.role === "assistant") {
@@ -183,12 +186,9 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 						if (debugEvents) {
 							process.stdout.write(`${tag} [assistant msg] content_blocks=${contentLen} stopReason=${stop}\n`);
 						}
-						if (stop === "error") {
-							clearInterval(heartbeat);
-							unsubscribe();
+						if (stop === "error" && !modelError) {
 							modelError = new Error(`model API error: ${msg.errorMessage?.trim() ?? "unknown error"}`);
-							reject(modelError);
-							return;
+							process.stderr.write(`${tag} ⚠ ${modelError.message}\n`);
 						}
 					}
 				}
@@ -258,6 +258,11 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 			throw new Error(`session.prompt() failed: ${promptErr}`);
 		}
 		await settled;
+
+		// If the model returned an errored response, fail with a clear message
+		if (modelError) {
+			throw modelError;
+		}
 
 		// Fallback: if we didn't capture text via events, extract from session messages
 		if (textParts.length === 0) {
