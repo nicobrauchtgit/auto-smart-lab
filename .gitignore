@@ -44,3 +44,11 @@ agent/memory/memory.json
 
 # Session logs
 logs/
+
+# Local secrets (LAB_USER/LAB_PASS/GWDG_API_KEY/TAVILY_API_KEY)
+.env
+.env.*
+!.env.example
+
+# Archived task state from `npm run reset` (from-scratch test runs)
+archive/
