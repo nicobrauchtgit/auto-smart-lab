@@ -54,3 +54,7 @@ logs/
 agent/smartlab/tasks/*
 !agent/smartlab/tasks/__init__.py
 agent/smartlab/checkpoints/
+
+# Lab course material is fetched, never committed (public repo): only units/README.md is tracked
+units/*
+!units/README.md
