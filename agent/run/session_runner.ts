@@ -233,6 +233,12 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 		const textParts: string[] = [];
 		let toolCallCount = 0;
 		let currentToolName: string | undefined;
+		// Degenerate-loop guard: models occasionally repeat the same tool call forever
+		// (seen: memory_append_session x46 after the task was done). Abort the session
+		// when the last LOOP_REPEATS calls are identical; the orchestrator salvages.
+		const LOOP_REPEATS = 6;
+		const recentCalls: string[] = [];
+		let loopAbortReason: string | undefined;
 		let toolStart = 0;
 		let promptSent = false; // guard: ignore agent_settled fired before prompt is sent
 		// Per-run error tracking. The SDK retries transient errors itself
@@ -323,6 +329,14 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 				currentToolName = (ev.toolName ?? "tool") as string;
 				toolStart = Date.now();
 				const input = ev.args ?? {};
+				const signature = `${currentToolName}:${JSON.stringify(input)}`;
+				recentCalls.push(signature);
+				if (recentCalls.length > LOOP_REPEATS) recentCalls.shift();
+				if (!loopAbortReason && recentCalls.length === LOOP_REPEATS && recentCalls.every((c) => c === signature)) {
+					loopAbortReason = `degenerate tool loop: ${currentToolName} called ${LOOP_REPEATS}x in a row with identical arguments`;
+					process.stderr.write(`${tag} ✗ ${loopAbortReason} — aborting session\n`);
+					void session.abort().catch(() => undefined);
+				}
 				const inputStr = typeof input === "object"
 					? truncate(JSON.stringify(input).replace(/^{|}$/g, "").replace(/"([^"]+)":/g, "$1:"), 100)
 					: truncate(String(input), 100);
@@ -374,7 +388,12 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 			const run = session.prompt(text);
 			try {
 				await Promise.race([run, timeout]);
+				if (loopAbortReason) throw new Error(`Session aborted after ${elapsed(sessionStart)}: ${loopAbortReason}`);
 			} catch (err) {
+				if (loopAbortReason && !(err instanceof Error && err.message === "__timeout__")) {
+					run.catch(() => undefined);
+					throw new Error(`Session aborted after ${elapsed(sessionStart)}: ${loopAbortReason}`);
+				}
 				if (err instanceof Error && err.message === "__timeout__") {
 					process.stderr.write(`${tag} ✗ timed out after ${elapsed(sessionStart)}, aborting session\n`);
 					run.catch(() => undefined); // the abandoned run must not become an unhandled rejection

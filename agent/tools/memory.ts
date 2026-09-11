@@ -178,6 +178,13 @@ export default function memoryExtension(pi: ExtensionAPI) {
 					val_score: params.val_score ?? null,
 					notes: params.notes ?? "",
 				};
+				// Ignore an entry identical (apart from timestamp) to the previous one — looping models
+				// otherwise flood the history with duplicates.
+				const strip = (e: Record<string, unknown>) => JSON.stringify({ ...e, timestamp: undefined });
+				const last = store.sessions[store.sessions.length - 1] as Record<string, unknown> | undefined;
+				if (last && strip(last) === strip(entry as unknown as Record<string, unknown>)) {
+					return { content: [{ type: "text", text: `Session entry for task ${params.task_id} (${params.phase}) already recorded — nothing to add.` }], details: {} };
+				}
 				store.sessions.push(entry);
 				writeStore(store);
 				return {

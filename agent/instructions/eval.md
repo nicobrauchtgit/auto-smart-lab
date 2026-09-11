@@ -51,10 +51,9 @@ Verify the format is `path;label` (semicolon-separated, one entry per line, labe
 
 When rejecting, provide **specific, actionable feedback** based on the task type and what approaches have already been tried. Don't suggest approaches that are in `failed_approaches`.
 
-Examples of good feedback:
-- "Validation is a single random split; use a stratified split or several seeds before trusting the score."
-- "The clip threshold of 10 is too high — try clip=2 or clip=3 to reduce noise from repeated tokens."
-- "Try a decision threshold other than 0.5 — the class imbalance may benefit from a lower threshold."
+Base the feedback on what you observe in the solver code, the validation procedure and the CSV —
+state the concrete weakness you found and what would need to change. Do not pad it with generic
+machine-learning advice.
 
 ### 4. Write your decision to memory
 

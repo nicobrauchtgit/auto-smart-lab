@@ -6,6 +6,17 @@ The agent loops: **solve → eval → submit**, with up to 3 submissions per tas
 
 ---
 
+## Design rule: barebones, no coaching
+
+This agent exists to measure how far different models get on their own. The prompts in
+`agent/instructions/` describe the **environment and protocol only** (where data is, the module
+interface, session limits, the sentinel, what memory keys the orchestrator reads). They contain
+**no advice** on how to solve tasks — no suggested models, features, search queries, time-management
+tips or iteration recipes — and the feedback the orchestrator sends after a submission states facts
+(scores, attempts left) without diagnosis. The harness itself (retries, rate-limit waits, timeout
+salvage, budget control) is expected to work perfectly; that is infrastructure, not guidance.
+A separately maintained, deliberately coached agent is used for other experiments.
+
 ## Quick start
 
 ### 1. Prerequisites

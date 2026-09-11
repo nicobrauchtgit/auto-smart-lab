@@ -350,9 +350,9 @@ async function main() {
 			console.log(`[orchestrate] Solver done: val_score=${solverResult.valScore}, csv=${solverResult.csvPath}`);
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err);
-			if (!/timed out/i.test(msg)) throw err;
-			console.warn(`[orchestrate] Solver session timed out: ${msg}`);
-			solverProblem = "timed out";
+			if (!/timed out|degenerate tool loop/i.test(msg)) throw err;
+			console.warn(`[orchestrate] Solver session ended early: ${msg}`);
+			solverProblem = /timed out/i.test(msg) ? "timed out" : "was aborted (degenerate tool loop)";
 			solverResult = { valScore: 0, csvPath: "", approach: "" };
 		}
 
@@ -371,8 +371,7 @@ async function main() {
 					console.error(`[orchestrate] Solver ${solverProblem} ${solverFailures} time(s) and nothing could be salvaged. Stopping.`);
 					process.exit(2);
 				}
-				feedback = `Your previous session ${solverProblem} before producing predictions. You have one more session. ` +
-					`Do not explore or tune: get a simple working model, run validate once, run solve, verify the CSV, write memory and print SOLVER_DONE — all within the first half of the session.`;
+				feedback = `Your previous session ${solverProblem} before producing predictions. This is the last session for this task.`;
 				console.log(`[orchestrate] Nothing to salvage — re-running solver with finish-first instructions.`);
 				continue;
 			}
@@ -392,8 +391,7 @@ async function main() {
 			// Never spend a try on predictions identical to the last submission.
 			const csvHash = createHash("sha256").update(readFileSync(csvPath)).digest("hex");
 			if (lastSubmittedHash && csvHash === lastSubmittedHash) {
-				feedback = `Your new predictions are byte-identical to the last submission (platform score ${lastPlatformScore}). ` +
-					`Re-submitting them would waste a try. Change the approach materially (features, model, preprocessing) before finishing.`;
+				feedback = `Your new predictions are byte-identical to the last submission (platform score ${lastPlatformScore}); they were not re-submitted.`;
 				console.log(`[orchestrate] CSV unchanged since last submission — re-solving instead of submitting.`);
 				continue;
 			}
@@ -429,11 +427,9 @@ async function main() {
 			}
 
 			// Step 4: platform score below target — feed the real result back and re-solve.
-			feedback = `Submission ${MAX_SUBMISSIONS - triesLeft} scored ${score} on the SmartLab platform (your local validation was ${solverResult.valScore}); ` +
-				`target is >= ${target}. ${triesLeft} submission(s) left. ` +
-				(solverResult.valScore - score > 0.02
-					? `The gap between local and platform score means your validation split does not reflect the test data (distribution shift, leakage, or adversarial test examples) — inspect the test inputs and make the model more robust rather than tuning to the local split.`
-					: `Improve the model materially (features, model class, preprocessing) — small hyperparameter tweaks will not move the score enough.`);
+			// Facts only — no advice on what to change (this agent is deliberately un-coached).
+			feedback = `Submission ${MAX_SUBMISSIONS - triesLeft} scored ${score} on the SmartLab platform; your local validation score was ${solverResult.valScore}. ` +
+				`The target is >= ${target}. ${triesLeft} submission(s) left; identical predictions will not be re-submitted.`;
 			console.log(`[orchestrate] Platform score ${score} < target ${target}. Re-solving with feedback.`);
 			continue;
 		}
