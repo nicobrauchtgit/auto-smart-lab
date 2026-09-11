@@ -6,6 +6,9 @@ The agent loops: **solve → eval → submit**, with up to 3 submissions per tas
 
 ---
 
+> **Context for humans and agents:** `docs/AGENT.md` explains what this agent is, why it exists and how it
+> works; `docs/EXPERIMENT_LOG.md` records every measured run. Read those before changing behaviour.
+
 ## Design rule: barebones, no coaching
 
 This agent exists to measure how far different models get on their own. The prompts in
