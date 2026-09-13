@@ -160,6 +160,28 @@ def _cached_get(client: LabClient, url: str, cache_path: Path, refresh: bool) ->
 # Core fetch logic
 # ---------------------------------------------------------------------------
 
+def _extract_zip(archive: Path, dest_dir: Path) -> None:
+    """Extract member by member so one corrupt entry (bad CRC) does not abort the whole archive.
+
+    zipfile.extractall() raises BadZipFile on the first CRC mismatch and leaves the rest
+    unextracted — rtf-train.zip (02-maldoc) has exactly one such member.
+    """
+    try:
+        zf = zipfile.ZipFile(archive)
+    except zipfile.BadZipFile:
+        print(f"    [warn] not a valid zip: {archive.name}")
+        return
+    bad: list[str] = []
+    with zf:
+        for info in zf.infolist():
+            try:
+                zf.extract(info, dest_dir)
+            except (zipfile.BadZipFile, OSError) as exc:
+                bad.append(f"{info.filename} ({exc})")
+    print(f"    [extract] {archive.name} -> {dest_dir.relative_to(REPO_ROOT)}/"
+          + (f" ({len(bad)} corrupt member(s) skipped: {', '.join(bad[:3])}{'…' if len(bad) > 3 else ''})" if bad else ""))
+
+
 def _download_data(client: LabClient, download_urls: list[str], dest_dir: Path) -> list[Path]:
     """Download and extract zips into dest_dir. Returns list of written files."""
     written: list[Path] = []
@@ -180,12 +202,7 @@ def _download_data(client: LabClient, download_urls: list[str], dest_dir: Path) 
         local.write_bytes(response.body)
         written.append(local)
         if filename.endswith(".zip"):
-            try:
-                with zipfile.ZipFile(local) as zf:
-                    zf.extractall(dest_dir)
-                print(f"    [extract] {filename} -> {dest_dir.relative_to(REPO_ROOT)}/")
-            except zipfile.BadZipFile:
-                print(f"    [warn] not a valid zip: {filename}")
+            _extract_zip(local, dest_dir)
     return written
 
 

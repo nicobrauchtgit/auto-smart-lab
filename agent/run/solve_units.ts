@@ -173,7 +173,7 @@ async function main() {
 		results.push(r);
 		if (!reason) toRun.push(id);
 		const s = status;
-		console.log(`  ${pad(id, 8)} ${pad(s?.title ?? "?", 44)} attempts ${s ? `${s.attemptsUsed ?? "?"}/${s.attemptsMax}` : "?"}  best ${fmtScore(s?.bestScore)}  ${reason ? "SKIP: " + reason : "RUN"}`);
+		console.log(`  ${pad(id, 11)} ${pad(s?.title ?? "?", 44)} attempts ${s ? `${s.attemptsUsed ?? "?"}/${s.attemptsMax}` : "?"}  best ${fmtScore(s?.bestScore)}  ${reason ? "SKIP: " + reason : "RUN"}`);
 	}
 	console.log(`\n[units] ${toRun.length} task(s) to run: ${toRun.join(", ") || "(none)"}`);
 	if (plan || !toRun.length) {
@@ -210,11 +210,11 @@ async function main() {
 
 function printTable(results: TaskResult[], target: number) {
 	console.log(`\n[units] Results (target ${target}):\n`);
-	console.log(`  ${pad("task", 8)} ${pad("outcome", 19)} ${pad("attempts", 9)} ${pad("best", 7)} ${pad("min", 6)} reason`);
+	console.log(`  ${pad("task", 11)} ${pad("outcome", 19)} ${pad("attempts", 9)} ${pad("best", 7)} ${pad("min", 6)} reason`);
 	console.log("  " + "-".repeat(110));
 	for (const r of results) {
 		const a = r.after;
-		console.log(`  ${pad(r.id, 8)} ${pad(r.outcome, 19)} ${pad(a ? `${a.attemptsUsed ?? "?"}/${a.attemptsMax}` : "?", 9)} ${pad(fmtScore(a?.bestScore), 7)} ${pad(r.minutes ? String(r.minutes) : "-", 6)} ${r.reason}`);
+		console.log(`  ${pad(r.id, 11)} ${pad(r.outcome, 19)} ${pad(a ? `${a.attemptsUsed ?? "?"}/${a.attemptsMax}` : "?", 9)} ${pad(fmtScore(a?.bestScore), 7)} ${pad(r.minutes ? String(r.minutes) : "-", 6)} ${r.reason}`);
 	}
 	console.log();
 }
