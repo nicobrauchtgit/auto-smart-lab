@@ -46,3 +46,29 @@ spam3 1/3 used (best 0.9906). `solve-units` skips all three until units change o
 logout-on-relogin, `--no-submit`, `--target` iteration loop, `--solver-timeout` + salvage,
 `--max-attempts`, submit tool removed from LLM sessions, `npm run reset`, `npm run solve-units`,
 TLS verification off by default, degenerate-loop guard, memory dedupe, coaching stripped.
+
+---
+
+## 2026-09-13/14 — Unit 2 "Malicious Code in Documents" (02-maldoc), barebones prompt
+
+The lab now lists 6 units / 15 tasks (defense1, offense1-2, code1-3, attacks1-2, spam1-3, documents1-4).
+Fetched ~24 GB. Two `solve-units --only documents1..4` runs, model `qwen3-coder-next`, real submissions.
+
+| Run | Task | Solver | Local | Platform | Attempts | Outcome |
+|---|---|---|---|---|---|---|
+| A | documents1 (DOCX) | 2 × 30 min cap, no module after session 1; session 2 module crashed in salvage | — | — | 0/3 | solver-failed (60.6 min) |
+| A | documents2 (PDF) | 6 min, then hourly API quota exhausted by documents1 | — | — | 0/3 | fatal: rate-limit wait > 15 min cap (**harness bug, fixed: cap now 65 min**) |
+| A | documents3, documents4 | quota still exhausted | — | — | 0/3 | fatal, same cause |
+| B | documents1 (DOCX) | 6.9 min | 0.9325 | **0.976** | 1/3 | solved, first attempt |
+| B | documents2 (PDF) | 32 min cap, no module; second session started | — | — | 0/3 | **run stopped by hand**, see below |
+
+**Run B was stopped because the dataset was being destroyed underneath the agent.** Microsoft
+Defender on the machine quarantined **1505 files** from the extracted corpus during the runs
+(docx: 9270 → 8361 files on disk; pdf: 9039 → 8852). The zips themselves were untouched. The
+documents1 CSV still had all 2969 test rows, so its 0.976 is probably valid, but any later result on
+this machine would be measured on a shrinking, non-random subset (Defender removes the *malicious*
+samples). The earlier "macOS security issue with the malicious file" the agent complained about was
+this. **Do not run the malware units on a Defender-managed Mac**; see AGENT.md §3.6.
+
+Other fixes from this day: `fetch_units` extracts archives member by member (rtf-train.zip has one
+corrupt CRC entry that aborted `extractall`); task-id column widened in the results table.
