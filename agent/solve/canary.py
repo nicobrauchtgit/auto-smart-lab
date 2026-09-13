@@ -19,6 +19,7 @@ from typing import Sequence
 
 import numpy as np
 
+from .convergence import capture_convergence_warnings, summarise
 from .corpus import load_examples, neutralize_ids
 from .entrypoint import load_factory
 
@@ -46,11 +47,16 @@ class CanaryResult:
     #: projected cross-validation cost, which is otherwise invisible until a
     #: session has already been spent on it.
     fit_seconds: float = 0.0
+    #: Configured allowance against completed work, read off the same fit. The
+    #: sample is small, so its iteration counts describe this fit and not a full
+    #: cross-validation pass; the recorded scope says so.
+    convergence: dict | None = None
 
     def as_dict(self) -> dict:
         return {
             "passed": self.passed, "reason": self.reason, "examples": self.examples,
             "kind": self.kind, "fit_seconds": self.fit_seconds,
+            "convergence": self.convergence,
         }
 
 
@@ -93,9 +99,13 @@ def run_canary(
     y = [labels[row] for row in rows]
 
     try:
-        started = time.perf_counter()
-        real_model = factory().fit(real, y)
-        fit_seconds = time.perf_counter() - started
+        with capture_convergence_warnings() as raised:
+            started = time.perf_counter()
+            real_model = factory().fit(real, y)
+            fit_seconds = time.perf_counter() - started
+        # Read after `fit` has returned. The estimator is still being mutated
+        # until then, so there is nothing safe to read while it runs.
+        convergence = summarise(real_model, "canary_sample", len(rows), raised)
         real_output, output_kind = _output(real_model, real)
         neutral_output, _ = _output(factory().fit(neutral, y), neutral)
     except Exception as error:
@@ -103,7 +113,8 @@ def run_canary(
 
     differing = int(np.sum(np.abs(real_output - neutral_output) > TOLERANCE))
     if differing == 0:
-        return CanaryResult(True, f"{output_kind} unchanged when ids are neutralized", len(rows), PASSED, fit_seconds)
+        return CanaryResult(True, f"{output_kind} unchanged when ids are neutralized", len(rows), PASSED,
+                            fit_seconds, convergence)
     return CanaryResult(
         False,
         f"{differing} of {real_output.size} {output_kind} values changed when only the filename changed; "
@@ -111,6 +122,7 @@ def run_canary(
         len(rows),
         ID_DEPENDENCE,
         fit_seconds,
+        convergence,
     )
 
 

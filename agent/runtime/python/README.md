@@ -27,6 +27,10 @@ Inside the Devbox shell the same commands work without `devbox run`. Agents
 receive the interpreter, declared dependencies, and both file paths in their
 runtime prompt.
 
+The Devbox startup hook sets `VIRTUAL_ENV` and prepends `$VENV_DIR/bin` to `PATH`
+directly, so it works in Fish, Bash, and Zsh without sourcing a shell-specific
+activation script.
+
 Shell startup runs `ensure`, a read-only readiness check. Run setup explicitly
 when the environment needs repair and no ongoing runs are using it. Setup keeps
 existing locked versions where compatible; `update` requests newer resolutions

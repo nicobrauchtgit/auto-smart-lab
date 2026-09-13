@@ -7,6 +7,7 @@ import { test } from "node:test";
 import { loadPromptSnapshot } from "./loader.js";
 import { PROMPTS, type PromptId } from "./registry.js";
 import { prepareResearchPrompts } from "./research.js";
+import { prepareSolvePrompts } from "./solve.js";
 import { summarizeTrainingLabels } from "../research/startup_context.js";
 
 test("every registered template loads and renders with its declared inputs", () => {
@@ -78,4 +79,24 @@ test("profile injection changes rendered identity without changing the task temp
 	assert.notEqual(reference(without).rendered_sha256, reference(withProfile).rendered_sha256);
 	assert.ok(withProfile.promptReferences.some(ref => ref.id === "research.startup-context"));
 	assert.ok(!without.promptReferences.some(ref => ref.id === "research.startup-context"));
+});
+
+test("the solve opening carries the fit policy as its own identified template", () => {
+	const snapshot = loadPromptSnapshot();
+	const prepared = prepareSolvePrompts(snapshot, {
+		taskId: "spam1", workspace: "/tmp/ws", datasetPaths: ["/tmp/train.zip"],
+		labelsPath: "/tmp/train.labels", rowCount: 14995, classBalance: "52/48",
+		foldRecommendation: "5-fold stratified, 1 repeat(s)", researchState: "none", maxIterations: 6,
+	});
+	// The policy is stable across tasks, so it stays a separate template rather
+	// than prose inside the run-specific opening.
+	const policy = prepared.promptReferences.find(reference => reference.id === "solve.observable-fits");
+	assert.ok(policy);
+	assert.match(prepared.prompt, /Start with a pilot/);
+	assert.match(prepared.prompt, /partial_fit/);
+	assert.match(prepared.prompt, /AutoPropagatedCallback/);
+	// The caveats are the part that gets lost if the policy is ever summarised.
+	assert.match(prepared.prompt, /does not apply to `partial_fit`/);
+	assert.match(prepared.prompt, /validation_fraction/);
+	assert.equal(snapshot.render("solve.observable-fits", {}).reference.rendered_sha256, policy.rendered_sha256);
 });

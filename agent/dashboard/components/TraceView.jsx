@@ -10,6 +10,15 @@ function formatDuration(milliseconds) {
 	return `${Math.floor(total / 1000)}s ${String(total % 1000).padStart(3, "0")}ms`;
 }
 
+const SYSTEM_EVENT_TYPES = new Set([
+	"agent_start", "agent_end", "agent_settled",
+	"pipeline_run_start", "pipeline_run_end",
+	"stage_started", "stage_finished", "stage_input",
+	"agent_attempt_start", "agent_attempt_end", "artifact_validation",
+	"subagent_scope_started", "subagent_scope_closed", "subagent_spawn",
+	"subagent_link", "subagent_settled",
+]);
+
 function buildTrace(rows) {
 	const trace = [];
 	let turn;
@@ -17,7 +26,7 @@ function buildTrace(rows) {
 		const event = row.payload;
 		const type = row.event_type;
 		if (type === "agent_run_start") trace.push({ kind: "run", row, event });
-		if (type === "agent_start" || type === "agent_end" || type === "agent_settled" || /retry|compaction|error/.test(type)) {
+		if (SYSTEM_EVENT_TYPES.has(type) || /retry|compaction|error/.test(type)) {
 			trace.push({ kind: "system", row, event });
 		}
 		if (type === "message_end" && event.message?.role === "user") trace.push({ kind: "user", row, event });
@@ -53,6 +62,15 @@ function buildTrace(rows) {
 	return trace;
 }
 
+function systemSubtitle(event) {
+	const parts = [];
+	if (event?.stage) parts.push(event.stage);
+	if (event?.attempt != null) parts.push(`attempt ${event.attempt}`);
+	if (event?.outcome) parts.push(event.outcome);
+	if (!event?.stage && event?.taskId) parts.push(event.taskId);
+	return parts.join(" · ");
+}
+
 function Pill({ children, tone = "zinc" }) {
 	const tones = { zinc: "bg-zinc-100 text-zinc-600", amber: "bg-amber-50 text-amber-700", red: "bg-red-50 text-red-700" };
 	return <span className={`rounded-md px-2 py-1 text-[11px] font-medium ${tones[tone]}`}>{children}</span>;
@@ -70,6 +88,7 @@ function ToolCall({ tool }) {
 function TraceCard({ item }) {
 	const [isOpen, setIsOpen] = useState(item.kind === "turn");
 	const title = item.kind === "turn" ? "Model turn" : item.kind === "user" ? "User message" : item.row.event_type.replaceAll("_", " ");
+	const subtitle = item.kind === "system" ? systemSubtitle(item.event) : "";
 	const body = item.kind === "user" ? messageText(item.event.message) : item.event;
 	return (
 		<details className="group relative rounded-xl border border-zinc-200 bg-white shadow-sm open:shadow-md" open={isOpen} onToggle={event => setIsOpen(event.currentTarget.open)}>
@@ -77,6 +96,7 @@ function TraceCard({ item }) {
 			<summary className="flex list-none items-center gap-3 px-4 py-3 marker:hidden">
 				<span className="text-zinc-400 transition group-open:rotate-90">›</span>
 				<strong className="text-xs font-semibold uppercase tracking-wide text-zinc-700">{title}</strong>
+				{subtitle && <Pill>{subtitle}</Pill>}
 				<time className="ml-auto text-[11px] text-zinc-400">{new Date((item.end || item.row).observed_at).toLocaleString()}</time>
 			</summary>
 			<div className="border-t border-zinc-100 px-4 py-4">
@@ -100,7 +120,7 @@ export default function TraceView({ run, events }) {
 	return (
 		<section className="min-w-0 overflow-y-auto p-6 lg:p-8">
 			<div className="mb-6 flex items-start justify-between gap-4">
-				<div className="min-w-0"><p className="mb-1 text-xs font-semibold uppercase tracking-wider text-violet-600">Agent run</p><h1 className="truncate text-xl font-semibold text-zinc-950">{run?.model || "Select a run"}</h1><p className="mt-1 truncate font-mono text-[11px] text-zinc-400">{run?.agent_run_id}</p></div>
+				<div className="min-w-0"><p className="mb-1 text-xs font-semibold uppercase tracking-wider text-violet-600">{run?.kind === "pipeline" ? "Pipeline run" : "Agent run"}</p><h1 className="truncate text-xl font-semibold text-zinc-950">{run ? (run.kind === "pipeline" ? `Pipeline · ${run.task_id ?? "task"}` : run.model || "Agent run") : "Select a run"}</h1><p className="mt-1 truncate font-mono text-[11px] text-zinc-400">{run?.agent_run_id}</p></div>
 				<div className="flex flex-wrap justify-end gap-2"><Pill>{events.length} events</Pill><Pill>{totalTokens.toLocaleString()} tokens</Pill><Pill>{duration}</Pill></div>
 			</div>
 			<div className="ml-2 space-y-3 border-l border-zinc-200 pl-5">{trace.map(item => <TraceCard key={`${item.kind}-${item.row.sequence}`} item={item} />)}{!run && <p className="py-16 text-center text-sm text-zinc-500">Select a run to inspect its trace.</p>}</div>

@@ -8,7 +8,8 @@ Pi's normal session behavior, including its default compaction, still applies.
 The parent chooses tasks and receives stable handles. Each child keeps its own
 conversation, tools, and final replies. Only an explicit wait returns a bounded
 reply to the parent. Bash output and write-tool payloads remain in the child's
-context and shared trace, so delegation reduces the parent's context usage.
+context and shared trace unless the child repeats information in its final reply.
+This bounds what the parent receives through the wait tool.
 It does not eliminate the child's token usage or reduce total cost by itself.
 
 ## API
@@ -108,8 +109,8 @@ and follow-ups, never its full transcript. Shared Python guidance must be passed
 explicitly, using the existing Devbox environment and dependency workflow.
 
 The child resource loader disables automatic AGENTS.md/CLAUDE.md, skills,
-extensions, prompt templates, and ambient system-prompt additions. A seeded
-runtime AGENTS.md can be supplied through the prompt registry as shared guidance;
+extensions, prompt templates, and ambient system-prompt additions. Shared runtime
+guidance must be selected explicitly from `agent/prompts/`;
 automatic ancestor discovery stays off. No filesystem sandbox is provided.
 
 Children have an explicit tool allowlist. By default it contains read, grep,
@@ -153,3 +154,31 @@ across follow-ups, instruction exclusion, environment separation, trace linkage,
 bounded output, failure, cancellation, startup races, and queue limits. No live
 provider credentials or remote tasks are used. A fixed-task evaluation is still
 needed before enabling delegation in solve or research.
+
+## Live smoke validation
+
+Run `devbox run -- bun agent/subagents/live_smoke.ts` only as an explicit live
+test. It makes paid calls to the configured provider and stops the parent after
+the first independently validated child implementation. It does not enable
+subagents in the registered stages.
+
+The original run on 2026-09-09 passed 7 authored tests and 9 independent checks,
+then exited nonzero on `markerExcludedFromParentMessages`. The marker appeared
+in the parent's `TASK.md` input and the child's final reply. Its presence cannot
+establish automatic transcript forwarding.
+
+`smoke_validation.ts` now checks child tool-call ownership and verifies that
+`subagent_wait` returns exactly the child's final assistant text, within the
+configured UTF-8 byte bound. Extra transcript fields or forwarded child tool
+events fail validation. `replyQuality` records reply bytes, truncation, and marker
+repetition separately. This is a transport check for the one-child fixture;
+usefulness and concision still need evaluation against fixed tasks.
+
+The original JSONL and failed summary remain untouched. An offline review of
+that trace passes the corrected transport checks; its 776-byte reply is not
+truncated but repeats the marker. No corrected live rerun has occurred. See
+[the handover](../../docs/HANDOVER.md#live-smoke-evidence) for evidence paths and
+identities, and [telemetry operations](../../docs/telemetry.md) for SQL/API checks.
+
+Automatic 100k-token handovers and session replacement remain deferred.
+Subagent sessions do not replace durable experiment state or supervision.

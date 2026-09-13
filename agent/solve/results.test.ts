@@ -229,3 +229,58 @@ describe("renderIterationSignal", () => {
 		expect(text).toContain("ImportError");
 	});
 });
+
+describe("convergence", () => {
+	const fullSize = {
+		scope: "development_rows",
+		rows: 14995,
+		estimators: [{
+			estimator: "SGDClassifier", path: "clf", step_unit: "epochs",
+			configured: { max_iter: 1000 },
+			controls: { early_stopping: false, tol: 0.001, n_iter_no_change: 5, warm_start: false },
+			completed_iterations: 7, configured_iterations: 1000, reached_limit: false,
+		}],
+		convergence_warnings: [],
+	};
+
+	test("states completed work against the configured allowance", () => {
+		const text = renderIterationSignal(signal({ convergence: fullSize }), view);
+		// Never "iterations": that word already means a whole solve session here.
+		expect(text).toContain("7 of 1000 epochs, stopped early");
+		expect(text).not.toContain("of 1000 iterations");
+		expect(text).toContain("14,995 development rows");
+		expect(text).toContain("early_stopping=false");
+	});
+
+	test("says when a fit was cut off rather than finished", () => {
+		const text = renderIterationSignal(signal({
+			convergence: {
+				...fullSize,
+				estimators: [{ ...fullSize.estimators[0], completed_iterations: 1000, reached_limit: true }],
+				convergence_warnings: ["Maximum number of iteration reached before convergence."],
+			},
+		}), view);
+		expect(text).toContain("1000 of 1000 epochs, allowance reached");
+		expect(text).toContain("ConvergenceWarning: Maximum number of iteration reached");
+	});
+
+	test("marks a canary-sample count as this fit's rather than a full pass's", () => {
+		const text = renderIterationSignal(signal({ convergence: { ...fullSize, scope: "canary_sample", rows: 400 } }), view);
+		expect(text).toContain("400-row sample");
+		expect(text).toContain("not a full pass");
+	});
+
+	test("survives an unmeasurable iteration, where it is the only fit evidence left", () => {
+		const text = renderIterationSignal(parseIterationSignal({
+			ok: false,
+			errors: ["metrics.json was not written"],
+			convergence: { ...fullSize, scope: "canary_sample", rows: 400 },
+		}), view);
+		expect(text).toContain("7 of 1000 epochs");
+	});
+
+	test("says nothing at all when no estimator reported convergence", () => {
+		const text = renderIterationSignal(signal({ convergence: { ...fullSize, estimators: [] } }), view);
+		expect(text).not.toContain("work done");
+	});
+});

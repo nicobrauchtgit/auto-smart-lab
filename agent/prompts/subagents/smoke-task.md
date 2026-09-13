@@ -9,7 +9,7 @@ packages. Add test_metrics.py with unittest coverage and run it with:
 {{python}} -m unittest -v
 
 After the checks, run a bash command that prints CHILD_BASH_ONLY_SMOKE_MARKER.
-This verifies that tool output stays in the child context. Do not quote that
-marker in your final reply. Return a short summary with file paths and actual
+This exercises child tool execution. Do not quote that marker in your final
+reply. Return a short summary with file paths and actual
 test results. Keep all file changes in the current workspace; do not install
 dependencies or change environment configuration.

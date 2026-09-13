@@ -14,6 +14,7 @@ import { createPipelineTrace } from "../pipeline/trace.js";
 import { loadPromptSnapshot } from "../prompts/loader.js";
 import { preparePythonEnvironment, readPythonEnvironment } from "../run/python_environment.js";
 import { createSubagents, loadChildResources } from "./index.js";
+import { assessSmokeContext } from "./smoke_validation.js";
 
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 
@@ -113,7 +114,7 @@ export async function runLiveSmoke() {
 		const events = readFileSync(trace.localPath, "utf8").trim().split("\n").map(line => JSON.parse(line));
 		const parentId = children?.list()[0]?.parentAgentRunId;
 		const childId = children?.list()[0]?.agentRunId;
-		const parentMessages = events.filter(event => event.agent_run_id === parentId && ["message_end", "prompt_snapshot"].includes(event.event_type));
+		const contextAssessment = assessSmokeContext(events, parentId, childId);
 		const childToolEvents = events.filter(event => event.agent_run_id === childId && event.event_type === "tool_execution_end");
 		const checks = {
 			artifactChecksPassed: verification?.valid === true,
@@ -121,12 +122,13 @@ export async function runLiveSmoke() {
 			exactlyOneChild: children?.list().length === 1,
 			childUsedBash: childToolEvents.some(event => event.payload.toolName === "bash"),
 			markerInChildToolOutput: JSON.stringify(childToolEvents).includes("CHILD_BASH_ONLY_SMOKE_MARKER"),
-			markerExcludedFromParentMessages: !JSON.stringify(parentMessages).includes("CHILD_BASH_ONLY_SMOKE_MARKER"),
+			...contextAssessment.checks,
 			developmentGuidanceExcluded: !JSON.stringify(events.filter(event => event.event_type === "prompt_snapshot")).includes("DEVELOPMENT_GUIDANCE_LIVE_SMOKE_EXCLUDED"),
 			bothSessionsClosed: events.filter(event => event.event_type === "agent_run_end").length === 2,
 			sharedInvocation: events.filter(event => event.event_type === "agent_run_start").every(event => event.stage_invocation_id === invocation.invocationId),
 		};
 		const summary = { model: model.modelId, workspace, trace: trace.localPath, invocation, checks,
+			replyQuality: contextAssessment.replyQuality,
 			verification, traceDegraded: trace.degraded(), traceFailures: trace.failures() };
 		const summaryPath = trace.localPath.replace(/\.jsonl$/, ".summary.json");
 		writeFileSync(summaryPath, JSON.stringify(summary, null, 2));

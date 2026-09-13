@@ -38,6 +38,8 @@ export async function listRuns() {
 				FILTER (WHERE event_type = 'pipeline_run_start'))[1] pipeline_payload,
 			(array_agg(data ORDER BY sequence)
 				FILTER (WHERE event_type = 'pipeline_run_end'))[1] pipeline_end_payload,
+			(array_agg(data->>'parentAgentRunId')
+				FILTER (WHERE data->>'parentAgentRunId' IS NOT NULL))[1] parent_agent_run_id,
 			CASE WHEN count(*) FILTER (WHERE event_type = 'pipeline_run_start') > 0 THEN 'pipeline'
 				ELSE 'agent' END kind,
 			CASE

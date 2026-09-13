@@ -2,9 +2,11 @@
 
 Updated: 2026-09-09
 
-This is the handover for the autonomous experimentation plan. It records what the repository does now, what is unfinished, and the order in which another developer should continue.
+This is the implementation roadmap for the autonomous experimentation plan. Start with [HANDOVER.md](HANDOVER.md) for the development baseline and decisions; use [telemetry.md](telemetry.md) for storage, dashboard, and trace diagnostics.
 
-The plan it implements is [autonomous-experimentation-plan.md](autonomous-experimentation-plan.md): the behavioral contract, role boundaries, and acceptance criteria the finished system has to meet. That document states the target and the reasoning; this one tracks what is built and what is next. The two P0 sections below are its section 3 findings, checked against the code on 2026-09-09 and still open.
+The plan it implements is [autonomous-experimentation-plan.md](autonomous-experimentation-plan.md): the behavioral contract, role boundaries, and acceptance criteria the finished system has to meet. That document states the target and the reasoning; this one tracks what is built and what is next. The two P0 sections below contain findings checked against the code on 2026-09-09 that remain open.
+
+The supplied plan includes historical findings. Tests and pipeline observability now exist, and research and solve are registered and enabled. The registered solve loop is bounded, with `maxIterations: 6` in current configuration and measured stop conditions. The unbounded evaluator-rejection loop belongs to the legacy orchestrator. CI remains absent, and `devbox run test` still invokes a stale failing placeholder. Use `devbox run -- bun test`.
 
 The observability contract lives in [pipeline-integration.md](pipeline-integration.md); solve-specific details live in [../agent/solve/README.md](../agent/solve/README.md).
 
@@ -33,15 +35,54 @@ Routine operation should not require human approval. Ambiguous evaluator output,
 - `agent/dashboard/` displays traces stored in PostgreSQL.
 - Authored runtime prompts live in `agent/prompts/`; pipeline sessions disable automatic `AGENTS.md` and `CLAUDE.md` loading.
 - The Python environment is declared in `pyproject.toml`, locked in `uv.lock`, and managed through `agent/setup/python_environment.py`.
-- The focused subagent and prompt tests pass. On this snapshot, `bun test agent/subagents agent/prompts agent/run/session_resources.test.ts` reports 22 passing tests.
+- The earlier selected subagent, prompt, session-resource, and pipeline suites passed 62 tests. Smoke validation regression tests extend that coverage; see the verification record in [HANDOVER.md](HANDOVER.md).
 
-### Optional subagent work in the current working tree
+### Optional experiment module
 
-The uncommitted work under `agent/subagents/` and `agent/prompts/subagents/` implements bounded child sessions for a parent Pi agent. The API supports spawn, follow-up, status, list, wait, and cancellation. Child sessions share pipeline trace identity and retain their own conversation across follow-ups.
+`agent/experiments/` supervises trial fits, and `agent/prompts/solve/observable-fits.md`
+is the runtime guidance that makes a fit emit anything to supervise. Both landed
+after commit `f2eeb78` on the rewritten feature-branch history.
+
+The guidance reaches the solve agent as a separately identified template appended
+to `solve.start`: start with a pilot sized to the estimator, drive `partial_fit`
+batches or a fold loop and print a labelled line per step, set `verbose`,
+`early_stopping`, `n_iter_no_change`, `tol`, and `warm_start` deliberately,
+distinguish a loss from a score, and attach callbacks as `AutoPropagatedCallback`
+rather than a plain `FitCallback`. `agent/solve/convergence.py` then records the
+other half: configured allowance against `n_iter_` actually completed, the
+controls that were set, and any `ConvergenceWarning`, read off the fit after it
+returns. It is measured on the full development fit when the iteration is
+measurable and on the canary's sample otherwise, and the recorded scope says
+which.
+
+The supervisor spawns detached in its own process group, sets
+`PYTHONUNBUFFERED=1`, drains stdout and stderr line by line to
+`runs/<task>/experiments/<id>/output.log`, samples the group through libproc, and
+signals the group on stop. Its four tools are start, status, output, and stop;
+there is no `experiment_watch`, because updates are pushed through `steer()` when
+the agent is running and `sendCustomMessage({triggerTurn: true})` when it is
+idle, never both. The stall threshold is derived from the pilot's measured gap or
+from the gaps the run itself shows, never from a constant, and silence only
+counts at idle CPU.
+
+The module is not wired into a registered stage, and the paid live check is not
+written. Deterministic tests cover the transport, the mach-tick conversion, the
+derived threshold at both measured corpus scales, the coalescer's wake rate, and
+process-group stop. They do not establish that an agent uses any of it well.
+
+### Optional subagent module
+
+Commit `f2eeb78` contains `agent/subagents/` and `agent/prompts/subagents/`, which implement bounded child sessions for a parent Pi agent. The API supports spawn, follow-up, status, list, wait, and cancellation. Follow-ups queue behind active work and reuse the child's session. The parent owns task assignment, acceptance, and cancellation.
 
 This is context partitioning, not context recovery. The parent receives a bounded result while detailed child tool traffic stays in the child trace. The module does not persist the solver's logical state, reconnect to an experiment after restart, or bypass Pi's normal compaction. It is not wired into a registered stage.
 
-The live smoke run at `runs/subagents-live-smoke/pipeline/2026-09-09-174110-518cc241.summary.json` produced valid artifacts and closed both sessions, but it did not pass every isolation assertion. `markerExcludedFromParentMessages` is `false`. Treat the module as WIP until that leak is explained, fixed, and rerun.
+The live smoke run at `runs/subagents-live-smoke/pipeline/2026-09-09-174110-518cc241.summary.json` produced valid artifacts and closed both sessions, but exited nonzero because `markerExcludedFromParentMessages` was false. The assertion was flawed: the parent read the marker in `TASK.md`, and the child repeated it in its final reply. This does not establish automatic transcript forwarding. Preserve that failed summary and its JSONL trace.
+
+The corrected validator checks child tool-call ownership and exact bounded final replies. It records marker repetition and reply size separately as quality evidence. No corrected live rerun has occurred. Keep the module disabled in research and solve until a fixed-task comparison establishes useful context/cost behavior.
+
+An offline reassessment of the preserved trace passes the corrected transport checks. The reply is 776 bytes and untruncated but repeats the marker. The adjacent `.context-review.json` records these results and source hashes; it does not replace the failed summary or count as a live rerun.
+
+The module never mutates `process.env`. Shared runtime prompts are explicitly selected from `agent/prompts/`, with automatic development-context loading disabled. Automatic 100k-token handovers and session replacement are explicitly deferred. Experiment supervision and durable recovery remain separate work.
 
 The smoke script also has a six-minute test deadline and child requests default to a 30-minute timeout. Those test/runtime limits are not the target experiment policy. Long-running experiment processes need independent supervision and recovery.
 
@@ -77,24 +118,25 @@ Acceptance checks:
 - [ ] Stop exposing `LAB_USER`, `LAB_PASS`, cookies, and unrelated credentials to model-controlled shell processes.
 - [ ] Replace process-wide environment mutation with immutable per-process environment snapshots.
 - [ ] Add tests that enumerate the tools and selected environment keys for every role.
-- [ ] Add trace redaction tests for secrets and credential-bearing environment values.
 
 Acceptance checks:
 
 - solver and evaluator sessions cannot resolve or invoke `smartlab_submit`;
 - a solver shell cannot read lab credentials from its environment;
-- concurrent sessions cannot observe one another's temporary environment values;
-- trace fixtures containing seeded secrets store only redacted values.
+- concurrent sessions cannot observe one another's temporary environment values.
 
 ## Delivery plan
 
+Current priority: implement [observable trial fits and experiment control](experiment-supervision.md). The user selected deadline/convergence work, then clarified that shorter trials and intervention during fitting are essential. Build and test that control path before removing the existing limits.
+
 ### Phase 1: finish and evaluate subagent context partitioning
 
-- [ ] Diagnose the failed `markerExcludedFromParentMessages` smoke assertion.
+- [x] Explain and correct the flawed `markerExcludedFromParentMessages` assertion while preserving the original failed evidence.
+- [ ] Run the corrected live smoke; assess transport checks and bounded reply quality separately.
 - [ ] Decide which parent stage, if any, should receive subagent tools. Do not enable them globally.
 - [ ] Add explicit workspace/file ownership to delegated tasks.
 - [ ] Keep parent and child tool allowlists separate.
-- [ ] Record the assigned task, bounded reply, parent/child run IDs, and spawning tool-call ID.
+- [x] Record the assigned task, bounded reply, parent/child run IDs, and spawning tool-call ID in the optional module's shared trace.
 - [ ] Run a fixed-task comparison between one solver session and a parent with bounded children.
 - [ ] Measure parent context size, total tokens, wall time, model quality, and failure rate.
 - [ ] Keep delegation disabled if it only increases cost without improving completion or context pressure.
@@ -117,22 +159,26 @@ Do not use elapsed time as the sole stop rule. Time belongs in the event history
 
 ### Phase 3: run experiments independently of an agent turn
 
-- [ ] Start bounded subprocess groups without blocking the solver's ability to reason.
-- [ ] Stream structured progress into the shared event sink.
+- [x] Start bounded subprocess groups without blocking the solver's ability to reason.
+- [x] Stream progress out line by line to the run's log, mirrored as events through `StageReporter.event`.
 - [ ] Add native callback adapters where available.
 - [ ] Add parsers for supported verbose output and a small JSON-lines protocol for custom or stdlib training code.
-- [ ] Add a coarse process-health heartbeat when no model-level signal exists.
-- [ ] Provide watch/subscription and explicit stop tools to the solver.
-- [ ] Confirm cancellation reaches descendants and does not leave orphaned training processes.
+- [x] Add a coarse process-health heartbeat when no model-level signal exists: libproc CPU and RSS over the process group, with the stall threshold derived from the pilot's gap.
+- [x] Provide status, output, and explicit stop tools to the solver. Push through `steer()` replaced the watch tool.
+- [x] Confirm cancellation reaches descendants and does not leave orphaned training processes. Asserted against a fixture that spawns its own workers.
+- [ ] Attach the tools to the registered solve session and run the paid live check on both corpora.
 - [ ] Keep useful checkpoints and diagnostics after interruption.
 
 ### Phase 4: replace the fixed agent lifetime and convergence loop
 
 `agent/run/session_runner.ts` currently enforces `SESSION_TIMEOUT_MS = 30 * 60 * 1000`. `agent/run/orchestrate.ts` can repeat evaluator rejection without a convergence policy.
 
+The registered solve loop has a separate fixed iteration limit and measured stop conditions. Keep its bounds, and the current session deadline, until independent supervision, cancellation, and recovery pass their tests. This phase depends on phases 2 and 3. Automatic 100k-token handovers and session replacement are outside the current implementation scope.
+
 - [ ] Separate agent-session lifetime from experiment-process lifetime.
 - [ ] End sessions on settled work, explicit cancellation, or unrecoverable infrastructure failure rather than ordinary elapsed time.
 - [ ] Replace the legacy rejection loop with hypothesis- and evidence-based continuation.
+- [ ] Replace the registered solve iteration cap only when tested supervision and a defined convergence policy can take over.
 - [ ] Record why the solver continued, interrupted, or stopped.
 - [ ] Stop safely when no credible improvement hypothesis remains.
 - [ ] Feed evaluator evidence back into the same logical solver state, even if a fresh model session must reconstruct it.
@@ -141,6 +187,8 @@ Do not use elapsed time as the sole stop rule. Time belongs in the event history
 
 Follow [pipeline-integration.md](pipeline-integration.md).
 
+This phase depends on the P0 submission and capability fixes. Configuration must continue to reject enabling an unregistered stage. Keep evaluator approval bound to the exact artifact hash and recover ambiguous uploads through idempotent accounting and authoritative platform state.
+
 - [ ] Implement typed evaluation inputs and structured output validation.
 - [ ] Return artifact validation separately from agent-session completion.
 - [ ] Implement deterministic submission gates and a minimal archive builder.
@@ -148,16 +196,13 @@ Follow [pipeline-integration.md](pipeline-integration.md).
 - [ ] Enable each stage separately in `pipeline.config.json`.
 - [ ] Keep standalone commands on the same executor path.
 
-### Phase 6: finish telemetry and operational hardening
+### Signal tools still open
 
-- [ ] Add experiment progress and stop/continue decisions to the common event schema.
-- [ ] Add dashboard filters for task, stage, model, typed options, and supplied-input kinds.
-- [ ] Show active experiment health, current/best metrics, selected artifact, evaluator decision, and remaining submissions.
-- [ ] Stop writing the full accumulated message on every streamed update. Current traces can grow by hundreds of megabytes.
-- [ ] Add retention, compaction, and secret-redaction rules for PostgreSQL and local JSONL traces.
-- [ ] Decide whether existing tracked coursework and run artifacts may remain public.
-- [ ] Remove tracked generated run data if publication is not intentional.
-- [ ] Add CI for TypeScript tests, Python tests, archive safety, evaluator parsing, interruption, trace degradation, and docs/config consistency.
+See [pipeline-signals.md](pipeline-signals.md) for the signal roadmap and its current implementation status. Basic scalar feature auditing and model diagnostics exist. The feature audit is not yet exposed as an agent tool. Permutation null checks, richer shift/redundancy measurements, fixed group probes, incremental feature value, and ensemble comparisons remain open. Live experiment progress/watch/stop tools are separate work in phases 2 and 3.
+
+### Removed from scope
+
+CI, dashboard filtering, trace redaction, and retention were removed from the active roadmap at the user's request on 2026-09-09. Existing telemetry and deterministic verification remain part of module completion. The supplied experimentation plan is retained as historical input; its recommendations in these areas are superseded.
 
 ## How to verify the current system
 
@@ -166,8 +211,10 @@ Follow [pipeline-integration.md](pipeline-integration.md).
 ```bash
 bun test
 bun run test:py
-bun test agent/subagents agent/prompts agent/run/session_resources.test.ts
+bun test agent/subagents agent/experiments agent/prompts agent/run/session_resources.test.ts
 ```
+
+`agent/experiments` spawns real processes and calls no model.
 
 With Devbox, prefix commands with `devbox run --`, or enter `devbox shell` first.
 
@@ -204,11 +251,12 @@ curl -fsS http://127.0.0.1:3001/api/traces
 Check storage directly:
 
 ```bash
-devbox run -- psql -Atqc \
+devbox run -- pg_isready -h 127.0.0.1 -p 55433 -d postgres
+devbox run -- psql -X -h 127.0.0.1 -p 55433 -d postgres -Atqc \
   'select count(*), min(observed_at), max(observed_at) from agent_events'
 ```
 
-A registered run always prints its JSONL path. If PostgreSQL is down, the run should continue, print a degraded-trace warning, and retain that local file. The dashboard cannot display fallback-only JSONL traces.
+A registered run always prints its JSONL path. If PostgreSQL is down, the run should continue, print a degraded-trace warning, and retain that local file. The dashboard cannot display fallback-only JSONL traces. Use the [telemetry runbook](telemetry.md) for SSE checks, queries by pipeline and session ID, and partial-storage troubleshooting.
 
 ### Optional paid subagent smoke test
 
@@ -227,24 +275,28 @@ runs/subagents-live-smoke/pipeline/<run>.summary.json
 
 A valid run requires every boolean under `checks` to be `true`, not merely a successful fixture-stage outcome.
 
+`replyQuality` reports bytes, truncation, and marker repetition separately. A transport pass does not establish a useful reply or a reduction in total cost. This command uses the configured model and does not perform the fixed-task comparison by itself.
+
 ## Handover notes
 
 - The active development branch is `solve-stage-hardening`.
-- The subagent implementation and prompt files are currently uncommitted. Preserve that work when changing the README or pipeline wiring.
+- Commit `f2eeb78` contains the subagent implementation, prompts, supplied plan, README, and earlier WIP notes. Preserve and extend that work.
 - The latest live subagent smoke run finished and did not leave a running process. Its summary is named above.
 - The trace database was reachable on port `55433` at the time of this handover.
-- `runs/` is about 1.3 GB locally. Some older run files are already tracked, so `.gitignore` alone will not remove them from repository history.
+- Earlier inspection found about 1.3 GB under `runs/`; measure current size before planning retention. Some older run files are already tracked, so `.gitignore` alone will not remove them from repository history.
 - The legacy memory file is used by `agent/run/orchestrate.ts` for submission counts and prior solver/evaluator state. Registered research and solve stages use typed artifacts and traces instead. Do not mistake that legacy memory for the durable experiment ledger proposed here.
 - The old `agent/instructions/` files are retained for compatibility and must not become a second edited source of prompts.
 
 ## Next developer: start here
 
 1. Run the deterministic test suites.
-2. Reproduce and fix the failed subagent smoke isolation check.
+2. Run the corrected subagent smoke validation and compare fixed tasks for context/cost benefits; assess reply quality separately.
 3. Add tests for fail-closed evaluator parsing and an explicit submission manifest.
 4. Implement the P0 submission and capability fixes before enabling either stage.
-5. Define the experiment state/event types and recovery tests before building process supervision.
-6. Add progress delivery and process-tree cancellation.
-7. Remove the fixed session timeout only after cancellation and recovery are tested.
-8. Register evaluation, then submission, through the shared executor.
-9. Add CI and trace retention/redaction.
+5. Done: runtime guidance for observable fits, and configured-against-actual work recorded in the iteration signal.
+6. Done: the non-blocking supervisor in `agent/experiments/`, with deterministic tests.
+7. Done: coalesced push delivery, with wake rules over the samples rather than a fixed heartbeat.
+8. Attach the experiment tools to the registered solve session, then write and run the paid live check described in [supervisor-build-prompt.md](supervisor-build-prompt.md) against both corpora. Until it has run, the transport is tested and the agent's use of it is not.
+9. Remove the fixed session timeout only after the live check passes. Durable recovery across a supervisor crash is deferred.
+10. Register evaluation, then submission, through the shared executor.
+11. Continue the signal-tool backlog in `pipeline-signals.md`.

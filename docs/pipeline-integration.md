@@ -3,7 +3,7 @@
 Status: partially implemented, updated 2026-09-09. The shared executor, stage
 configuration, trace identity, and the research and solve stages exist.
 Evaluation and submission are not registered stages yet, and the dashboard shows
-pipeline runs but does not yet filter on typed metadata.
+pipeline runs. Dashboard filtering is outside the current scope.
 
 ## Running the pipeline
 
@@ -107,7 +107,7 @@ existing agent run identities and compatibility with older traces. Recording
 failures must be visible; do not silently present an incomplete trace as a
 fully observed execution.
 
-## Typed metadata and future filtering
+## Typed metadata
 
 Module prompts now live in `agent/prompts/`. The executor captures one immutable
 template snapshot per run, shared across stages and research attempts. Research
@@ -132,7 +132,7 @@ For example, a dataset profile can be delivered through `initial_prompt` or
 availability. An enabled setting does not prove useful context was supplied.
 Keep parameter and input schemas validated at runtime as well as typed in code.
 
-Dashboard badges, filters, and grouping should use stable metadata keys.
+Use stable metadata keys when comparing runs. Dashboard filtering is outside the current scope.
 Track tools made available separately from tools actually called. Correlate
 start and completion events by tool-call ID so streamed updates do not inflate
 usage counts. Hashes and artifact references support inspection; stable kinds,
@@ -307,7 +307,6 @@ iterations without a delta clearing its interval), `budget`, `cancelled`, or
 that never produced one returns its artifacts and a failed validation rather
 than throwing, so the iteration history stays in the trace.
 
-Remaining work, in order: register evaluation and submission stages; expose
-typed stage metadata as dashboard filters; carry a champion across pipeline runs;
+Remaining work: register evaluation and submission stages; carry a champion across pipeline runs;
 add autonomous scheduling and the decision agent's `invoke_stage` tool through
 the same executor.

@@ -36,6 +36,47 @@ export interface CanaryResult {
 	kind?: CanaryKind;
 	/** Wall time of one fit on `examples` rows; the basis of the cost projection. */
 	fit_seconds?: number;
+	/** Configured allowance against completed work, read off the same fit. */
+	convergence?: ConvergenceSummary;
+}
+
+/**
+ * What one estimator asked for and what it actually did.
+ *
+ * `max_iter` in a source file is a request. `n_iter_` after the fit is the
+ * answer, and the two disagreeing in either direction is decision-relevant: a
+ * fit that stopped early has budget to spend elsewhere, and one that reached its
+ * ceiling was cut off rather than finished.
+ */
+export interface EstimatorConvergence {
+	estimator: string;
+	/** Position inside the pipeline, empty for the top-level estimator. */
+	path: string;
+	/**
+	 * What this estimator's `max_iter` counts: "epochs" for `SGDClassifier`,
+	 * "solver steps" for lbfgs. Never the bare word "iteration", which in an
+	 * agent prompt already means a whole solve session.
+	 */
+	step_unit?: string;
+	configured: Record<string, string | number | boolean | null>;
+	controls: Record<string, string | number | boolean | null>;
+	completed_iterations?: number;
+	configured_iterations?: number;
+	reached_limit?: boolean;
+}
+
+/**
+ * Convergence facts and the fit they came from.
+ *
+ * The scope matters as much as the numbers: `canary_sample` counts iterations
+ * on a few hundred rows, `development_rows` on the whole development set. The
+ * first says what was configured; only the second says what a real fit costs.
+ */
+export interface ConvergenceSummary {
+	scope: "canary_sample" | "development_rows";
+	rows: number;
+	estimators: EstimatorConvergence[];
+	convergence_warnings: string[];
 }
 
 /**
@@ -118,6 +159,8 @@ export interface IterationSignal {
 	canary?: CanaryResult;
 	/** Present whenever the canary managed a fit, measurable iteration or not. */
 	cost?: IterationCost;
+	/** Configured against actual work. From the full-size fit when there was one. */
+	convergence?: ConvergenceSummary;
 	paired?: PairedComparison | null;
 	entrypoint?: { module: string; factory: string };
 }
@@ -213,6 +256,7 @@ export function parseIterationSignal(raw: unknown): IterationSignal {
 			coverage: value.coverage as IterationSignal["coverage"],
 			canary: value.canary as CanaryResult | undefined,
 			cost: value.cost as IterationCost | undefined,
+			convergence: value.convergence as ConvergenceSummary | undefined,
 			roc_auc: typeof value.roc_auc === "number" ? value.roc_auc : undefined,
 			entrypoint: value.entrypoint as IterationSignal["entrypoint"],
 		};
@@ -273,6 +317,42 @@ function costLine(cost: IterationCost): string {
 		: "";
 	const projectedText = projected >= 120 ? `${(projected / 60).toFixed(1)} min` : `${projected.toFixed(0)} s`;
 	return `${perThousand.toFixed(1)} s per 1,000 rows -> ~${projectedText} for ${shape}${budget}`;
+}
+
+/**
+ * Configured work against completed work, as the agent reads it.
+ *
+ * A `max_iter` in the source proves nothing about what ran, so the useful line
+ * is the pair. The scope is stated on every block because a count from a
+ * few-hundred-row canary sample and one from the full development set are not
+ * the same measurement.
+ */
+function convergenceLines(summary: ConvergenceSummary): string[] {
+	const where = summary.scope === "development_rows"
+		? `${summary.rows.toLocaleString()} development rows`
+		: `a ${summary.rows}-row sample, so the counts are this fit's, not a full pass's`;
+	const lines = [`  work done     measured on ${where}`];
+	for (const estimator of summary.estimators) {
+		const name = estimator.path ? `${estimator.estimator} (${estimator.path})` : estimator.estimator;
+		const parts: string[] = [];
+		if (estimator.completed_iterations !== undefined) {
+			const unit = estimator.step_unit ?? "solver steps";
+			parts.push(estimator.configured_iterations !== undefined
+				? `${estimator.completed_iterations} of ${estimator.configured_iterations} ${unit}${estimator.reached_limit ? ", allowance reached" : ", stopped early"}`
+				: `${estimator.completed_iterations} ${unit}`);
+		}
+		for (const [key, value] of Object.entries(estimator.configured)) {
+			if (key !== "max_iter") parts.push(`${key}=${value}`);
+		}
+		for (const [key, value] of Object.entries(estimator.controls)) {
+			if (value !== null && value !== undefined) parts.push(`${key}=${value}`);
+		}
+		if (parts.length) lines.push(`                ${name}: ${parts.join("   ")}`);
+	}
+	for (const warning of summary.convergence_warnings) {
+		lines.push(`                ConvergenceWarning: ${warning}`);
+	}
+	return lines;
 }
 
 const canaryLine = (canary: CanaryResult) => canary.passed ? "passed" : `FAILED - ${canary.reason}`;
@@ -339,6 +419,7 @@ export function renderIterationSignal(signal: IterationSignal, options: RenderSi
 			lines.push("", "  These numbers are not comparable across iterations and were not recorded.");
 		}
 		if (signal.cost) lines.push("", `  fit cost      ${costLine(signal.cost)}`);
+		if (signal.convergence?.estimators.length) lines.push("", ...convergenceLines(signal.convergence));
 		if (signal.canary) lines.push("", `  canary        ${canaryLine(signal.canary)}`, "", `  ${canaryVerdict(signal.canary)}`);
 		return lines.join("\n");
 	}
@@ -367,6 +448,7 @@ export function renderIterationSignal(signal: IterationSignal, options: RenderSi
 	}
 
 	if (signal.cost) lines.push("", `  fit cost      ${costLine(signal.cost)}`);
+	if (signal.convergence?.estimators.length) lines.push("", ...convergenceLines(signal.convergence));
 	lines.push("", `  canary        ${canaryLine(signal.canary!)}`);
 
 	if (options.revealSealed && signal.sealed) {

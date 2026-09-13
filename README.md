@@ -20,7 +20,7 @@ A solver should be able to test ideas, observe meaningful progress, stop unprodu
 - pipeline and agent telemetry;
 - submission authorization, accounting, and packaging.
 
-The design is described in [Pipeline integration and observability](docs/pipeline-integration.md). The implementation roadmap and handover are in [docs/WIP.md](docs/WIP.md).
+Start with the [developer handover](docs/HANDOVER.md) and [implementation roadmap](docs/WIP.md). The design contract is in [Pipeline integration and observability](docs/pipeline-integration.md), and operational checks are in the [telemetry runbook](docs/telemetry.md).
 
 ## Current state
 
@@ -302,6 +302,8 @@ The canary is separate from the sealed confirmation split. The canary tests feat
 
 ## Telemetry and trace dashboard
 
+Use the [telemetry runbook](docs/telemetry.md) for trace-ID queries, SSE checks, and degraded-storage troubleshooting.
+
 Telemetry has two parts:
 
 1. PostgreSQL stores events for live and historical dashboard queries.
@@ -355,10 +357,11 @@ curl -fsS http://127.0.0.1:3001/api/traces
 Check PostgreSQL directly with Devbox:
 
 ```bash
-devbox run -- psql -Atqc \
+devbox run -- pg_isready -h 127.0.0.1 -p 55433 -d postgres
+devbox run -- psql -X -h 127.0.0.1 -p 55433 -d postgres -Atqc \
   'select count(*), min(observed_at), max(observed_at) from agent_events'
 
-devbox run -- psql -P pager=off -c \
+devbox run -- psql -X -h 127.0.0.1 -p 55433 -d postgres -P pager=off -c \
   'select agent_run_id, event_type, observed_at, stage from agent_events order by observed_at desc limit 20'
 ```
 
@@ -379,7 +382,7 @@ If the dashboard is empty:
 - inspect the JSONL mirror, which may contain the run even when the database was unavailable;
 - restart the Next.js dashboard after changing environment variables.
 
-Trace payloads currently include full model messages and tool results. Treat the database and `runs/` as sensitive development data. Large streamed messages can also make traces very large. Trace compaction and redaction remain TODOs.
+Trace payloads currently include full model messages and tool results. Treat the database and `runs/` as sensitive development data. Large streamed messages can also make traces very large. Automated redaction and retention are outside the current scope.
 
 ## Optional subagents and context management
 
@@ -392,6 +395,7 @@ Subagents do not yet provide durable workflow recovery:
 - they cannot spawn grandchildren;
 - they do not replace the durable experiment record;
 - ordinary Pi compaction still applies;
+- automatic 100k-token handovers and session replacement are deferred;
 - child requests still have a configurable timeout.
 
 The intended use is context partitioning. A long-lived solver remains responsible for the task hypothesis and experiment history, while children handle bounded investigations or isolated implementation tasks. The pipeline must record durable state separately so a restarted parent can recover without relying on a child transcript.
@@ -402,7 +406,7 @@ Read [agent/subagents/README.md](agent/subagents/README.md) before enabling it. 
 bun test agent/subagents agent/prompts agent/run/session_resources.test.ts
 ```
 
-`agent/subagents/live_smoke.ts` makes paid model calls and is not part of the normal test suite. Its latest run found one remaining context-isolation failure, recorded in `docs/WIP.md`.
+`agent/subagents/live_smoke.ts` makes paid model calls and is not part of the normal test suite. Its original run produced valid artifacts but exited nonzero on a flawed marker assertion. The assertion now distinguishes automatic transcript forwarding from text repeated in a bounded reply. The original failed evidence is preserved, and no corrected live rerun has occurred. See the [handover evidence](docs/HANDOVER.md#live-smoke-evidence).
 
 ## Tests
 
@@ -411,7 +415,7 @@ bun test
 bun run test:py
 ```
 
-The TypeScript tests cover pipeline execution, prompt loading, tracing, session resources, solve contracts, and the optional subagent module. Python tests cover solve measurements and setup utilities. A CI workflow has not been added yet.
+The TypeScript tests cover pipeline execution, prompt loading, tracing, session resources, solve contracts, and the optional subagent module. Python tests cover solve measurements and setup utilities. CI is outside the current scope; run these checks locally.
 
 ## Repository map
 
@@ -444,10 +448,14 @@ Do not run that command unattended. Do not treat it as the current pipeline entr
 ## Further reading
 
 - [Autonomous experimentation and safety plan](docs/autonomous-experimentation-plan.md)
-- [Current status, implementation roadmap, and handover](docs/WIP.md)
+- [Developer handover and preserved decisions](docs/HANDOVER.md)
+- [Current status and implementation roadmap](docs/WIP.md)
+- [Telemetry operations and troubleshooting](docs/telemetry.md)
 - [Pipeline integration and observability contract](docs/pipeline-integration.md)
 - [Solve stage harness](agent/solve/README.md)
 - [Prompt management](agent/prompts/README.md)
 - [Optional subagents](agent/subagents/README.md)
+- [Signal implementations and open tools](docs/pipeline-signals.md)
+- [Observable trial fits and experiment control](docs/experiment-supervision.md)
 - [Pi SDK 0.84.1 investigation and upstream links](docs/research/pi-0.84.1/README.md)
 - [Python environment management](agent/runtime/python/README.md)

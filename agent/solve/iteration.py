@@ -21,6 +21,7 @@ from smartlab_eval import metrics as m
 from smartlab_eval.corpus import id_form_hint
 
 from .canary import run_canary
+from .convergence import capture_convergence_warnings, summarise
 from .corpus import load_examples
 from .entrypoint import load_factory
 
@@ -162,6 +163,8 @@ def evaluate(arguments: argparse.Namespace) -> dict:
         seed=arguments.seed,
     )
     signal["canary"] = canary.as_dict()
+    if canary.convergence:
+        signal["convergence"] = canary.convergence
     cost = _cost(canary, len(dev_ids), arguments.folds, arguments.session_seconds)
     if cost is not None:
         signal["cost"] = cost
@@ -181,6 +184,12 @@ def evaluate(arguments: argparse.Namespace) -> dict:
         signal["ok"] = False
         signal["errors"] = [sealed_result["error"]]
         return signal
+    # The sealed scoring fits the declared factory on every development row, so
+    # its iteration counts describe a full-size fit rather than the canary's
+    # sample. The fit itself sees no sealed row, so nothing here reveals the
+    # held-out split.
+    if sealed_result.get("convergence"):
+        signal["convergence"] = sealed_result["convergence"]
     # Held back from the agent until the final iteration. A gap that widens
     # across iterations is the loop overfitting its own folds.
     signal["sealed"] = {
@@ -281,12 +290,14 @@ def _score_sealed(
     try:
         factory = load_factory(project_root, entrypoint["module"], entrypoint["factory"])
         development = load_examples(zip_path, dev_ids)
-        model = factory().fit(development, [labels[row_id] for row_id in dev_ids])
+        with capture_convergence_warnings() as raised:
+            model = factory().fit(development, [labels[row_id] for row_id in dev_ids])
+        convergence = summarise(model, "development_rows", len(dev_ids), raised)
         held_out = load_examples(zip_path, list(sealed_ids))
         predicted = [int(value) for value in model.predict(held_out)]
     except Exception as error:
         return {"error": f"the held-out split could not be scored: {type(error).__name__}: {error}"}
-    return {"n": len(sealed_ids), "bacc": m.balanced_accuracy(truth, predicted)}
+    return {"n": len(sealed_ids), "bacc": m.balanced_accuracy(truth, predicted), "convergence": convergence}
 
 
 def _cost(canary, development_rows: int, folds: int, session_seconds: float) -> dict | None:

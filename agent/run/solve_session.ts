@@ -254,6 +254,9 @@ export async function runSolveSession(
 			sealed_bacc: signal.sealed?.bacc,
 			sealed_gap: signal.sealed?.gap,
 			canary_passed: signal.canary?.passed,
+			convergence_scope: signal.convergence?.scope,
+			convergence_warnings: signal.convergence?.convergence_warnings?.length,
+			reached_iteration_limit: signal.convergence?.estimators.some((entry) => entry.reached_limit === true),
 			delta: signal.paired?.delta,
 			delta_low: signal.paired?.low,
 			delta_high: signal.paired?.high,
@@ -278,6 +281,7 @@ export async function runSolveSession(
 			paired: signal.paired,
 			roc_auc: signal.roc_auc,
 			cost: signal.cost,
+			convergence: signal.convergence,
 		});
 		if (signal.canary) report?.event("leakage_canary", { attempt: iterations, ...signal.canary });
 

@@ -12,6 +12,10 @@ export const PROMPTS = {
 	"subagents.followup-tool": { file: "subagents/followup-tool.md", variables: [] },
 	"subagents.cancel-tool": { file: "subagents/cancel-tool.md", variables: [] },
 	"subagents.list-tool": { file: "subagents/list-tool.md", variables: [] },
+	"experiments.start-tool": { file: "experiments/start-tool.md", variables: [] },
+	"experiments.status-tool": { file: "experiments/status-tool.md", variables: [] },
+	"experiments.output-tool": { file: "experiments/output-tool.md", variables: [] },
+	"experiments.stop-tool": { file: "experiments/stop-tool.md", variables: [] },
 	"shared.python-environment": { file: "shared/python-environment.md", variables: ["pythonExecutable", "declaredDependencies", "totalDistributions", "environmentHash", "projectPath", "lockPath", "notesPath", "pythonCommand", "managerCommand"] },
 	"research.system": { file: "research/system.md", variables: [] },
 	"research.start": { file: "research/start.md", variables: ["taskId", "contextHash", "startupContext"] },
@@ -22,6 +26,7 @@ export const PROMPTS = {
 	"solve.system": { file: "solve/system.md", variables: ["taskId"] },
 	"solve.start": { file: "solve/start.md", variables: ["taskId", "workspace", "datasetPaths", "labelsPath", "rowCount", "classBalance", "foldRecommendation", "researchState", "maxIterations"] },
 	"solve.iteration": { file: "solve/iteration.md", variables: ["signal", "guidance"] },
+	"solve.observable-fits": { file: "solve/observable-fits.md", variables: [] },
 	// The `solver.*` prompts below drive the pre-executor orchestrate.ts path and
 	// are kept unchanged until it is retired.
 	"solver.system": { file: "solver/system.md", variables: [] },

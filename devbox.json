@@ -21,7 +21,8 @@
   "shell": {
     "init_hook": [
       "export PI_CODING_AGENT_DIR=\"$DEVBOX_PROJECT_ROOT/.pi/agent\"",
-      ". \"$VENV_DIR/bin/activate\"",
+      "export VIRTUAL_ENV=\"$VENV_DIR\"",
+      "export PATH=\"$VENV_DIR/bin:$PATH\"",
       "\"$VENV_DIR/bin/python\" -I \"$DEVBOX_PROJECT_ROOT/agent/setup/python_environment.py\" ensure || echo '[python-environment] Readiness check failed; run devbox run python-setup when no runs are using the environment.' >&2"
     ],
     "scripts": {

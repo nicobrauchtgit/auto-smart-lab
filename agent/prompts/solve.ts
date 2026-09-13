@@ -26,10 +26,13 @@ export function prepareSolvePrompts(prompts: PromptSnapshot, input: SolveStartIn
 		researchState: input.researchState,
 		maxIterations: String(input.maxIterations),
 	});
+	// The fit policy is a separate, explicitly selected template: it is stable
+	// across tasks and iterations, while `solve.start` carries this run's data.
+	const fitPolicy = prompts.render("solve.observable-fits", {});
 	return {
 		system,
-		prompt: start.text,
-		promptReferences: [system.reference, start.reference],
+		prompt: `${start.text}\n\n${fitPolicy.text}`,
+		promptReferences: [system.reference, start.reference, fitPolicy.reference],
 	};
 }
 

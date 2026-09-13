@@ -1,7 +1,25 @@
 # Signal-driven iterative ML pipeline
 
-Status: design direction. The first implementation target is the feature audit
-described below.
+Status: partially implemented, checked 2026-09-09. The detailed design below
+includes work that is still open. This status table supersedes the older
+"Implement first/next/later" labels in the implementation-phases table.
+
+## Current implementation and open tools
+
+| Area | Current implementation | Remaining work |
+| --- | --- | --- |
+| Scalar feature audit | `agent/pipeline/feature_audit.ts` covers numeric/binary health, exact duplicates, association, fold-based threshold scores, and basic unseen test values; deterministic tests exist | Expose the audit through an observed tool; add categorical/sparse groups, broader redundancy and shift checks |
+| Null checks and probes | Not implemented as the designed feature-group audit | Label-permutation nulls, fixed probes, baseline/candidate/combined comparisons, incremental value |
+| Model comparison | `agent/solve/iteration.py` and `champion.py` compute paired deltas, bootstrap intervals, corrected/introduced errors, and per-class measurements | Compare several candidate models and ensemble diversity |
+| Score diagnostics | `smartlab_eval` provides ROC, precision/recall, threshold sweep, and calibration; the solve signal includes ROC and threshold data | Broader tool exposure and interpretation of calibration/ensemble evidence |
+| Live progress and control | The optional experiment supervisor records output, process health, stalls, and lifecycle; it provides start, status, output, and stop tools | Attach the tools to the registered solve stage, run live checks, and add durable recovery |
+| Hidden-score feedback | Sealed confirmation measurements exist locally | Remote submission calibration and competing-pipeline/ensemble selection |
+
+The feature audit is currently a library, not a registered stage or exposed
+agent tool. Keep these measurements optional. They must not prescribe the
+solver's feature implementation, estimator, or cross-validation scheme.
+See [WIP.md](WIP.md) for the active delivery order.
+The next control module is specified in [observable trial fits](experiment-supervision.md).
 
 ## Goal
 

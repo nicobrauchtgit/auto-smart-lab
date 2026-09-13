@@ -1,5 +1,10 @@
 # Challenge store
 
+Downloaded unit contents stay local and are ignored by Git. The tracked
+`unit-data-hashes.json` at the repository root contains one aggregate hash per
+unit. Compare that value with the `dataHash` in the local
+`units/<unit>/.data-hash.json` to confirm that two machines use the same data.
+
 Persistent, per-task source of truth for a SmartLab unit. This lives **above**
 the transient `environment/` sandbox on purpose: it holds the prompt + data for
 *every* task, while `environment/` only ever contains the **one** task the agent

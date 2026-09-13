@@ -17,5 +17,6 @@ The `id` column is present so the canary can prove the pipeline ignores it. A
 model must never use the id, path, filename, or extension — for the spam tasks
 those encode the training label exactly.
 
-This directory is version-controlled: it is the reuse library, not scratch space.
-Per-run outputs live in `runs/<task>/solve/`.
+Model code persists locally for reuse across runs. Only this README is tracked;
+agent-generated implementations are excluded from Git. Per-run outputs live in
+`runs/<task>/solve/` and are also local.
