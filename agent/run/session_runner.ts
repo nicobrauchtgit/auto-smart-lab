@@ -43,7 +43,9 @@ export function sessionTimeoutMs(): number {
 /** How many times to re-prompt the same session after the SDK gives up on a model error. */
 const MAX_CONTINUES = 2;
 /** Longest we will sleep for a 429 retry-after before giving up. Override with PI_RATE_LIMIT_MAX_WAIT_MS. */
-const MAX_RATE_LIMIT_WAIT_MS = Number(process.env.PI_RATE_LIMIT_MAX_WAIT_MS) || 15 * 60 * 1000;
+// GWDG quotas are per minute AND per hour; an exhausted hourly window means waiting up to ~60 min.
+// The wait is not charged against the session cap. Override with PI_RATE_LIMIT_MAX_WAIT_MS.
+const MAX_RATE_LIMIT_WAIT_MS = Number(process.env.PI_RATE_LIMIT_MAX_WAIT_MS) || 65 * 60 * 1000;
 /** Fallback wait when a 429 carried no usable retry-after header (covers the per-minute window). */
 const DEFAULT_RATE_LIMIT_WAIT_MS = 60 * 1000;
 const RATE_LIMIT_PATTERN = /\b429\b|rate.?limit|too many requests/i;
