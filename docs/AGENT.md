@@ -132,8 +132,9 @@ Quota per key: 30 requests/min, 200/hour, 1000/day. One from-scratch solver run 
   documents and binaries. On a Mac with Microsoft Defender (or any AV with real-time protection)
   the extracted samples get quarantined during the run — 1505 files vanished on 2026-09-13 — which
   silently corrupts training and test sets. Run those units on a machine without AV (a Linux VM, or
-  the lab's own VMs), or get an exclusion for `units/`. The zip archives survive; extraction is the
-  trigger.
+  the lab's own VMs), or get an exclusion for `units/`. On the 2026-09 machine Defender's tamper
+  protection is set to `block`, so exclusions cannot be added locally — it needs IT. The zip
+  archives survive; extraction is the trigger.
 - **Lab quirks the setup code compensates for:** task titles carry no "1." prefix, so task order is
   taken from the unit page; the task description sits in a `col-md-8` div after the `bd-title` h1;
   a logged-in page has no password form (posting to the first form would hit *logout*); the download
