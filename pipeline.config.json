@@ -34,6 +34,9 @@
   },
   "defaultModel": "saia/mistral-medium-3.5-128b",
   "providers": {
+    "google-vertex": {
+      "builtin": true
+    },
     "saia": {
       "name": "SAIA / GWDG Chat AI",
       "baseUrl": "https://chat-ai.academiccloud.de/v1",

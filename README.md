@@ -175,6 +175,71 @@ Quote values containing spaces or shell metacharacters. The university SSH setti
 
 Outside Devbox, load `.env` with a method appropriate to your shell or environment manager. Do not commit `.env`, cookies, traces, or credentials.
 
+### Gemini through Google Cloud
+
+The pipeline can use Pi's native Google Vertex adapter with Gemini Enterprise
+Agent Platform. The Google Cloud project must have billing and the Agent
+Platform API (`aiplatform.googleapis.com`) enabled. The caller needs Agent
+Platform User (`roles/aiplatform.user`) to run models and Service Usage Consumer
+(`roles/serviceusage.serviceUsageConsumer`) to charge API usage to the project.
+An administrator may need to enable the API and grant those roles.
+
+Google APIs use the project ID, not its numeric project number. If you were only
+given a project number, resolve it after signing in:
+
+```bash
+gcloud auth login
+gcloud projects describe PROJECT_NUMBER --format='value(projectId)'
+```
+
+For local development, create Application Default Credentials and associate
+them with the project:
+
+```bash
+gcloud auth application-default login
+gcloud services enable aiplatform.googleapis.com --project=YOUR_PROJECT_ID
+gcloud auth application-default set-quota-project YOUR_PROJECT_ID
+```
+
+Set the project and location in the ignored `.env` file:
+
+```dotenv
+GOOGLE_CLOUD_PROJECT=YOUR_PROJECT_ID
+GOOGLE_CLOUD_LOCATION=global
+```
+
+For a quick API-key test, set `GOOGLE_CLOUD_API_KEY` instead. ADC is the
+recommended setup for local and server workloads.
+
+On a server, use its attached Google Cloud identity when available. A service
+account credentials file also works through `GOOGLE_APPLICATION_CREDENTIALS`,
+but the JSON file must remain outside Git. The native adapter selects Vertex
+directly, so it does not need `GOOGLE_GENAI_USE_ENTERPRISE`.
+
+Keep SAIA as the default and select Gemini per run:
+
+```bash
+bun run pipeline -- spam1 --model google-vertex/gemini-3.5-flash
+```
+
+The bundled Pi version also includes Gemini 2.5 Flash and Pro, Gemini 3.1 Pro,
+and newer Flash models. Model availability still depends on the selected Google
+Cloud project and location.
+
+Check access with a dry run first, then start a model request:
+
+```bash
+bun run pipeline -- spam1 --dry-run --model google-vertex/gemini-3.5-flash
+bun run pipeline -- spam1 --stop-after research --model google-vertex/gemini-3.5-flash
+```
+
+The dry run validates local configuration without contacting Google. An HTTP
+403 with reason `SERVICE_DISABLED` means the model adapter and credentials
+reached Google, but `aiplatform.googleapis.com` is not enabled in that project.
+If setting the ADC quota project fails with a missing
+`serviceusage.services.use` permission, ask an administrator for
+`roles/serviceusage.serviceUsageConsumer` on the project.
+
 ## Fetch and inspect tasks
 
 Download one unit and write its task metadata under `units/`:

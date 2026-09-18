@@ -3,6 +3,23 @@ import { dirname, resolve } from "node:path";
 
 import type { Api } from "@earendil-works/pi-ai";
 
+export type PipelineProviderConfig =
+	| { builtin: true }
+	| {
+		name?: string;
+		baseUrl: string;
+		api: Api;
+		apiKeyEnv: string;
+		models: Array<{
+			id: string;
+			name?: string;
+			reasoning?: boolean;
+			input?: ("text" | "image")[];
+			contextWindow: number;
+			maxTokens: number;
+		}>;
+	};
+
 export interface PipelineConfig {
 	/** Stage availability and options. Validated by agent/pipeline/config.ts. */
 	pipeline?: {
@@ -17,20 +34,7 @@ export interface PipelineConfig {
 		initialPrompt: string;
 	};
 	defaultModel: string;
-	providers: Record<string, {
-		name?: string;
-		baseUrl: string;
-		api: Api;
-		apiKeyEnv: string;
-		models: Array<{
-			id: string;
-			name?: string;
-			reasoning?: boolean;
-			input?: ("text" | "image")[];
-			contextWindow: number;
-			maxTokens: number;
-		}>;
-	}>;
+	providers: Record<string, PipelineProviderConfig>;
 }
 
 export async function loadPipelineConfig(configPath = "pipeline.config.json") {

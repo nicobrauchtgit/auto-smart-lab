@@ -28,7 +28,7 @@ describe("resolvePipelineSettings", () => {
 	test("configuration cannot enable an unimplemented stage", () => {
 		expect(() => resolvePipelineSettings(config({
 			entryStage: "research",
-			stages: { research: { enabled: true }, solve: { enabled: true } },
+			stages: { research: { enabled: true }, evaluate: { enabled: true } },
 		}))).toThrow(/not implemented/);
 	});
 
