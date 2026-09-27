@@ -5,6 +5,7 @@
  * Uses the PI SDK: createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager.
  */
 
+import { taskEvent, taskStatus } from "./status.js";
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -155,6 +156,13 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 			}
 			const res = await origFetch(input, init);
 			if (/chat\/completions/.test(url)) {
+				const qMin = res.headers.get("x-ratelimit-remaining-minute");
+				const qHour = res.headers.get("x-ratelimit-remaining-hour");
+				const qDay = res.headers.get("x-ratelimit-remaining-day");
+				const qMonth = res.headers.get("x-ratelimit-remaining-month");
+				if (qMin !== null || qHour !== null) {
+					taskStatus({ apiQuota: { minute: qMin && Number(qMin), hour: qHour && Number(qHour), day: qDay && Number(qDay), month: qMonth && Number(qMonth), status: res.status, at: new Date().toISOString() } });
+				}
 				if (res.status === 429) {
 					const retryAfterMs = parseRetryAfterMs(res.headers);
 					lastRateLimit = { retryAfterMs: retryAfterMs ?? DEFAULT_RATE_LIMIT_WAIT_MS, at: Date.now() };
@@ -252,9 +260,28 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 		let lastErrorMessage = "";
 
 		// Heartbeat: log every 30s so we know the session is alive
+		const publishSession = (extra: Record<string, unknown> = {}) =>
+			taskStatus({
+				session: {
+					label,
+					startedAt: new Date(sessionStart).toISOString(),
+					capMinutes: Math.round(sessionTimeoutMs() / 60000),
+					toolCalls: toolCallCount,
+					state: currentToolName ? `running ${currentToolName}` : "thinking",
+					currentTool: currentToolName ?? null,
+					currentToolSince: toolStart ? new Date(toolStart).toISOString() : null,
+					lastText: lastTextForStatus,
+					...extra,
+				},
+				heartbeatAt: new Date().toISOString(),
+			});
+		let lastTextForStatus = "";
+		publishSession({ state: "starting" });
+		taskEvent(`${label}: session started`);
 		const heartbeat = setInterval(() => {
 			const status = currentToolName ? `running ${currentToolName}` : "thinking";
 			process.stdout.write(`${tag} ⏳ still running (${elapsed(sessionStart)}, ${toolCallCount} tool calls, ${status})\n`);
+			publishSession();
 		}, 30_000);
 
 		const debugEvents = process.env.PI_DEBUG_EVENTS === "1";
@@ -288,6 +315,8 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 			if (event.type === "agent_settled") {
 				if (!promptSent) return; // spurious settle on the idle session before prompt()
 				console.log(`${tag} ✓ settled in ${elapsed(sessionStart)} (${toolCallCount} tool calls)`);
+				publishSession({ state: "settled" });
+				taskEvent(`${label}: settled after ${elapsed(sessionStart)}, ${toolCallCount} tool calls`);
 				return;
 			}
 
@@ -319,7 +348,11 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 					} else {
 						lastAssistantWasError = false;
 						const text = assistantText(msg.content);
-						if (text) process.stdout.write(`${tag} 💬 ${truncate(text)}\n`);
+						if (text) {
+							process.stdout.write(`${tag} 💬 ${truncate(text)}\n`);
+							lastTextForStatus = truncate(text, 300);
+							publishSession();
+						}
 					}
 				}
 				return;
@@ -337,12 +370,14 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 				if (!loopAbortReason && recentCalls.length === LOOP_REPEATS && recentCalls.every((c) => c === signature)) {
 					loopAbortReason = `degenerate tool loop: ${currentToolName} called ${LOOP_REPEATS}x in a row with identical arguments`;
 					process.stderr.write(`${tag} ✗ ${loopAbortReason} — aborting session\n`);
+					taskEvent(`${label}: ${loopAbortReason}`);
 					void session.abort().catch(() => undefined);
 				}
 				const inputStr = typeof input === "object"
 					? truncate(JSON.stringify(input).replace(/^{|}$/g, "").replace(/"([^"]+)":/g, "$1:"), 100)
 					: truncate(String(input), 100);
 				process.stdout.write(`${tag} → ${currentToolName}(${inputStr})\n`);
+				publishSession({ lastCall: `${currentToolName}(${truncate(inputStr, 200)})` });
 				return;
 			}
 
@@ -361,6 +396,7 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 				process.stdout.write(`${tag} ← ${name}${took}${suffix}\n`);
 				currentToolName = undefined;
 				toolStart = 0;
+				publishSession({ lastResult: `${name}${took}${suffix}` });
 				return;
 			}
 
@@ -398,6 +434,7 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 				}
 				if (err instanceof Error && err.message === "__timeout__") {
 					process.stderr.write(`${tag} ✗ timed out after ${elapsed(sessionStart)}, aborting session\n`);
+					taskEvent(`${label}: timed out after ${elapsed(sessionStart)}`);
 					run.catch(() => undefined); // the abandoned run must not become an unhandled rejection
 					await session.abort().catch(() => undefined);
 					throw new Error(`Session timed out after ${elapsed(sessionStart)} (limit ${Math.round(SESSION_TIMEOUT_MS / 1000)}s)`);
@@ -430,9 +467,11 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 						? Math.max(0, recent.retryAfterMs - (Date.now() - recent.at)) + 1000
 						: DEFAULT_RATE_LIMIT_WAIT_MS;
 					if (waitMs > MAX_RATE_LIMIT_WAIT_MS) {
-						throw new Error(`model API rate limited; reset in ${Math.round(waitMs / 1000)}s exceeds max wait of ${Math.round(MAX_RATE_LIMIT_WAIT_MS / 1000)}s: ${lastErrorMessage}`);
+						throw new Error(`model API rate limited; reset in ${Math.round(waitMs / 1000)}s (${(waitMs / 3600000).toFixed(1)} h — likely the daily or monthly quota) exceeds max wait of ${Math.round(MAX_RATE_LIMIT_WAIT_MS / 1000)}s: ${lastErrorMessage}`);
 					}
 					process.stderr.write(`${tag} ⏸ rate limited — sleeping ${Math.round(waitMs / 1000)}s until the window resets\n`);
+					publishSession({ state: "rate-limited", rateLimitedUntil: new Date(Date.now() + waitMs).toISOString() });
+					taskEvent(`${label}: rate limited, sleeping ${Math.round(waitMs / 1000)}s`);
 					await sleep(waitMs);
 					deadline += waitMs;
 				}

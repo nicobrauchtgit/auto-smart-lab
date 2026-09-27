@@ -28,6 +28,9 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(HERE, "..", "..");
 const UNITS_DIR = join(PROJECT_ROOT, "units");
 
+/** Thrown when the API key's daily or monthly quota is used up: nothing can run until it resets. */
+class QuotaExhaustedError extends Error {}
+
 /** Quick smoke-test: send a minimal chat completion and verify a response comes back. */
 async function checkModel(modelId: string): Promise<void> {
 	// Read base URL + api key from ~/.pi/agent/models.json
@@ -81,6 +84,17 @@ async function checkModel(modelId: string): Promise<void> {
 					const text = Buffer.concat(chunks).toString();
 					// A 404 here means "Model Not Found" — the model ID is not served
 					// by the API even if it appears in models.json. Treat as fatal.
+					if (r.statusCode === 429) {
+						const h = (k: string) => { const v = r.headers[k]; return v === undefined ? undefined : Number(Array.isArray(v) ? v[0] : v); };
+						const left = { minute: h("x-ratelimit-remaining-minute"), hour: h("x-ratelimit-remaining-hour"), day: h("x-ratelimit-remaining-day"), month: h("x-ratelimit-remaining-month") };
+						const resetS = h("retry-after") ?? h("ratelimit-reset");
+						const window = left.month === 0 ? "monthly" : left.day === 0 ? "daily" : undefined;
+						if (window) {
+							const when = resetS !== undefined ? new Date(Date.now() + resetS * 1000).toISOString().slice(0, 16).replace("T", " ") + " UTC" : "unknown";
+							rej(new QuotaExhaustedError(`${providerName} API ${window} quota exhausted (remaining: ${JSON.stringify(left)}); resets ${when}`));
+							return;
+						}
+					}
 					if (r.statusCode === 404 || /model not found/i.test(text)) {
 						rej(new Error(`model "${modelName}" not served by ${providerName} API (HTTP 404 Model Not Found)`));
 					} else if (r.statusCode && r.statusCode < 500) {
@@ -138,6 +152,7 @@ import { runSolverSession } from "./solver_session.js";
 import { runEvalSession } from "./eval_session.js";
 import { runSubmitSession } from "./submit_session.js";
 import { getTaskMemory, updateTaskMemory } from "./memory_utils.js";
+import { taskEvent, taskStatus } from "./status.js";
 import type { SolverResult } from "./solver_session.js";
 
 const MAX_SUBMISSIONS = 3;
@@ -187,7 +202,7 @@ function salvageSolver(taskId: string): SolverResult | null {
 
 function usage(): never {
 	console.error("Usage: npx tsx agent/run/orchestrate.ts <task_id|list> [--model <id>] [--task-url <url>] [--secure] [--no-submit] [--target <score>] [--solver-timeout <minutes>] [--max-attempts <n>]");
-	console.error("Exit codes: 0 done (target reached, no attempts left, dry run or attempt cap), 1 no attempts before start, 2 solver failed, 3 submission failed, 99 fatal");
+	console.error("Exit codes: 0 done (target reached, no attempts left, dry run or attempt cap), 1 no attempts before start, 2 solver failed, 3 submission failed, 4 model API daily/monthly quota exhausted, 99 fatal");
 	console.error("Required env: LAB_USER, LAB_PASS");
 	console.error("Examples:");
 	console.error("  npm run solve list                    # show all available task IDs");
@@ -278,6 +293,10 @@ async function main() {
 		try {
 			await checkModel(model);
 		} catch (err) {
+			if (err instanceof QuotaExhaustedError) {
+				console.error(`[orchestrate] ${err.message}. Nothing can run until then; stopping.`);
+				process.exit(4);
+			}
 			// Health check failed — warn but continue; the PI SDK uses its own auth flow
 			console.warn(`[orchestrate] Model pre-check warning: ${err}`);
 			console.warn(`  Continuing anyway — the SDK may still be able to use this model.`);
@@ -329,10 +348,14 @@ async function main() {
 	let lastSubmittedHash: string | undefined;
 	let lastPlatformScore: number | null = null;
 	console.log(`[orchestrate] Target platform score: ${target}`);
+	taskStatus({ task: taskId, model: process.env.PI_MODEL ?? null, target, noSubmit, startedAt: new Date().toISOString(), phase: "starting", iteration: 0, events: [], session: null, result: null }, { reset: true });
+	// Record how the process ended, whatever the path (process.exit is used throughout).
+	process.on("exit", (code) => taskStatus({ phase: "exited", exitCode: code, endedAt: new Date().toISOString() }));
 
 	while (true) {
 		iteration++;
 		console.log(`\n[orchestrate] === Iteration ${iteration} ===`);
+		taskStatus({ iteration });
 
 		// Re-check submission budget (updated by submit sessions writing to memory)
 		const mem = getTaskMemory(taskId);
@@ -346,6 +369,7 @@ async function main() {
 		let solverResult: SolverResult;
 		let solverProblem: string | undefined;
 		try {
+			taskStatus({ phase: "solver" });
 			solverResult = await runSolverSession(taskId, feedback);
 			console.log(`[orchestrate] Solver done: val_score=${solverResult.valScore}, csv=${solverResult.csvPath}`);
 		} catch (err) {
@@ -361,6 +385,8 @@ async function main() {
 			: "";
 		if (!csvAbsPath || !existsSync(csvAbsPath)) {
 			solverProblem ??= "ended without a prediction CSV";
+			taskStatus({ phase: "salvage" });
+			taskEvent(`solver ${solverProblem}; salvaging`);
 			const salvaged = salvageSolver(taskId);
 			if (salvaged) {
 				solverResult = salvaged;
@@ -379,8 +405,11 @@ async function main() {
 		solverResult.csvPath = csvAbsPath;
 
 		// Step 2: Eval
+		taskStatus({ phase: "eval", localScore: solverResult.valScore });
+		taskEvent(`solver done: local ${solverResult.valScore}`);
 		const evalResult = await runEvalSession(taskId);
 		console.log(`[orchestrate] Eval decision: ${evalResult.decision}`);
+		taskEvent(`eval: ${evalResult.decision}${evalResult.feedback ? ` — ${evalResult.feedback.slice(0, 120)}` : ""}`);
 
 		if (evalResult.decision === "APPROVE") {
 			const csvPath = evalResult.csvPath || solverResult.csvPath;
@@ -403,7 +432,10 @@ async function main() {
 			console.log(`[orchestrate] Submitting: ${csvPath}`);
 
 			// Step 3: Submit (this consumes a try)
+			taskStatus({ phase: "submit" });
 			const submitResult = await runSubmitSession(taskId, csvPath);
+			taskStatus({ result: { platformScore: submitResult.score, triesLeft: submitResult.triesLeft, ok: submitResult.ok } });
+			taskEvent(`submitted: platform ${submitResult.score}, ${submitResult.triesLeft} attempt(s) left`);
 			console.log(`[orchestrate] Submission result: ok=${submitResult.ok}, score=${submitResult.score}, tries_left=${submitResult.triesLeft}`);
 
 			if (!submitResult.ok) {

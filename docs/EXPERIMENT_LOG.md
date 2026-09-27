@@ -72,3 +72,15 @@ this. **Do not run the malware units on a Defender-managed Mac**; see AGENT.md �
 
 Other fixes from this day: `fetch_units` extracts archives member by member (rtf-train.zip has one
 corrupt CRC entry that aborted `extractall`); task-id column widened in the results table.
+
+---
+
+## 2026-09-27 — preparing VM runs; monthly API quota exhausted
+
+No measured run. The GWDG key's **monthly quota (3000 requests) is used up** until 2026-10-01 00:00
+UTC; a short local test run died on it, which showed the harness reported it as a confusing
+"rate limit exceeds max wait" crash. Fixed: the model pre-check reads the quota headers and exits
+with code 4, `solve-units` stops the batch instead of failing every task. Added live monitoring
+(`logs/status/*.json`, `npm run status`) and the VM tooling (`scripts/vm/`); the bootstrap was
+verified in a clean Ubuntu 24.04 container. The VM itself was not reachable (no VPN) and is untested.
+Remaining unit 2 tasks (documents2–4, 0/3 attempts each) are to be run on the VM once quota returns.

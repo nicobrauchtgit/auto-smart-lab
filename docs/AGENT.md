@@ -62,6 +62,8 @@ Python side                        agent/smartlab_agent.py (CLI), agent/smartlab
                                    agent/smartlab/tasks/<task>.py (written by the agent, gitignored)
 Lab access (setup, not agent)      agent/setup/fetch_lab.py (login/cookies), fetch_units.py, reset_state.py
 Task material                      units/<unit>/<task>/{prompt.md, meta.json, data/}, units/index.json
+Monitoring                         agent/run/status.ts → logs/status/{run,task}.json; npm run status
+Remote execution (lab VM)          scripts/vm/remote.sh (Mac side), scripts/vm/bootstrap.sh (VM side)
 ```
 
 ### 3.2 Per-task loop (`orchestrate.ts`)
@@ -116,7 +118,7 @@ configured in `~/.pi/agent/models.json`). Only some support tool calling, which 
 
 Probe a model by POSTing a completion with a `tools` array and checking for 200. Even working
 models intermittently return 500 or time out; the session runner treats those as transient.
-Quota per key: 30 requests/min, 200/hour, 1000/day. One from-scratch solver run costs roughly
+Quota per key: 30 requests/min, 200/hour, 1000/day, **3000/month** (exhausted on 2026-09-27; resets on the 1st, 00:00 UTC). The orchestrator's model pre-check now detects an exhausted daily/monthly quota and exits with code 4, and `solve-units` then stops the batch. One from-scratch solver run costs roughly
 40–100 requests, so **two to three runs per hour** is the practical ceiling.
 
 ### 3.6 Environment and access
@@ -139,6 +141,22 @@ Quota per key: 30 requests/min, 200/hour, 1000/day. One from-scratch solver run 
   taken from the unit page; the task description sits in a `col-md-8` div after the `bd-title` h1;
   a logged-in page has no password form (posting to the first form would hit *logout*); the download
   host needs the lab session cookie.
+
+### 3.7 Running remotely and monitoring
+
+Long runs, and all malware units, run on the lab VM `stud33.smartlab.mlsec.tu-berlin.de` (Linux,
+private 10.x address, reachable only through the TU VPN, SSH key auth as `stud33`).
+`scripts/vm/remote.sh deploy` bootstraps it without sudo (Node into `~/.local/node`, repo into
+`~/auto-smart-lab`) and copies the two secrets (`.env`, `~/.pi/agent/models.json`); `start` runs
+`solve-units` in a detached tmux session so the run survives VPN drops and a closed laptop.
+
+Monitoring is file-based so it works over plain SSH and needs no service: the batch driver writes
+`logs/status/run.json`, and the orchestrator plus session runner (one process) write
+`logs/status/task.json` on every phase change, tool call, model message, rate-limit sleep and a
+30 s heartbeat, including the API quota headers of the last model response. `npm run status`
+renders both and derives liveness from the PID and heartbeat age. Status writes are best-effort
+and can never fail a run. The colleague's branch has a PostgreSQL-backed trace dashboard; it was
+not adopted here because it needs a database on the VM.
 
 ## 4. Known model failure modes (observed, not fixed on purpose)
 

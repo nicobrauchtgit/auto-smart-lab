@@ -148,6 +148,33 @@ The orchestrator will:
 
 ---
 
+## Running on the lab VM and monitoring it
+
+The malware units must not run on a machine with antivirus (Defender quarantined 1505 samples
+mid-run on a managed Mac), so long runs go to the lab VM (`stud33.smartlab.mlsec.tu-berlin.de`,
+private address, **TU VPN required**). Everything is driven from your own machine:
+
+```bash
+scripts/vm/remote.sh deploy                                # once, and after every push: install Node (no sudo), clone/update, npm install, copy .env + ~/.pi/agent/models.json
+scripts/vm/remote.sh fetch malicious-code-in-documents     # fetch only the unit you need (each malware unit is ~12 GB extracted)
+scripts/vm/remote.sh start --only documents2,documents3,documents4 --model gwdg/qwen3-coder-next
+scripts/vm/remote.sh status --watch                        # live view, refreshes every 15 s, survives VPN drops
+```
+
+The run lives in a tmux session on the VM (or `nohup` if tmux is missing), so closing your laptop
+or losing the VPN does not stop it. Other commands: `logs` (follow the running task's log),
+`attach` (read-only view of the run's terminal, leave with `Ctrl-b d`), `stop`, `pull` (copy the
+VM's `logs/` to `logs/vm/`), `shell`, `check`.
+
+**What `status` shows** (also available locally as `npm run status [-- --watch|--json]`): the batch
+table with each task's outcome, attempts and best platform score; the running task's phase
+(solver, salvage, eval, submit), iteration, local and platform scores; the current LLM session
+with elapsed time against its cap, tool-call count, the call in progress and for how long, and the
+model's last message; remaining API quota per minute/hour/day/month; the last events; and the tail
+of the live log. It flags a **dead process** and a **stale heartbeat** (no sign of life for over two
+minutes outside a rate-limit sleep). The data comes from `logs/status/{run,task}.json`, which the
+agent writes as it works; those files are the thing to read if you script your own monitoring.
+
 ## Models
 
 Models are configured in `~/.pi/agent/models.json`. The GWDG Chat-AI provider is pre-configured. Available model IDs:
@@ -171,6 +198,7 @@ agent/
 ├── memory/              Persistent memory across sessions (gitignored)
 ├── run/                 Orchestrator and session runners (TypeScript)
 │   ├── solve_units.ts   Batch driver: fetch → reset → every open task (npm run solve-units)
+│   ├── status.ts / status_cli.ts  Live status files + `npm run status`
 │   ├── orchestrate.ts   Per-task entry point (npm run solve <task>)
 │   ├── solver_session.ts
 │   ├── eval_session.ts

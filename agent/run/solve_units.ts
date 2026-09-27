@@ -24,6 +24,7 @@ import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync }
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fetchTaskStatus, SimpleClient, type TaskStatus } from "./submit_session.js";
+import { RUN_STATUS, writeStatus } from "./status.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(HERE, "..", "..");
@@ -35,7 +36,7 @@ const ORCHESTRATE = join(HERE, "orchestrate.ts");
 const TSX = join(PROJECT_ROOT, "node_modules", ".bin", "tsx");
 const DEFAULT_TARGET = 0.97;
 
-type Outcome = "solved" | "attempts-exhausted" | "attempt-cap" | "below-target" | "dry-run" | "solver-failed" | "submit-failed" | "fatal" | "skipped";
+type Outcome = "quota-exhausted" | "solved" | "attempts-exhausted" | "attempt-cap" | "below-target" | "dry-run" | "solver-failed" | "submit-failed" | "fatal" | "skipped";
 
 interface TaskResult {
 	id: string;
@@ -90,6 +91,7 @@ function runOrchestrator(taskId: string, args: string[], logPath: string): Promi
 }
 
 function classify(before: TaskStatus | null, after: TaskStatus | null, exitCode: number | null, target: number, noSubmit: boolean, maxAttempts: number): [Outcome, string] {
+	if (exitCode === 4) return ["quota-exhausted", "model API daily/monthly quota used up (see task log)"];
 	if (exitCode === 99 || exitCode === null) return ["fatal", "orchestrator crashed"];
 	if (exitCode === 2) return ["solver-failed", "solver produced no usable predictions"];
 	if (exitCode === 3) return ["submit-failed", "upload or result polling failed"];
@@ -188,6 +190,15 @@ async function main() {
 	if (resetMode === "once" && !runPython(RESET_SCRIPT, [], "resetting all task state")) process.exit(1);
 
 	// 4. Run, one task at a time
+	const publishRun = (extra: Record<string, unknown> = {}) => writeStatus(RUN_STATUS, {
+		stamp, logDir: logDir.replace(PROJECT_ROOT + "/", ""), target, noSubmit, model: model ?? null,
+		tasks: results.map(r => ({ id: r.id, title: r.title, outcome: r.outcome, reason: r.reason, run: toRun.includes(r.id),
+			attempts: r.after ? `${r.after.attemptsUsed ?? "?"}/${r.after.attemptsMax}` : "?", best: r.after?.bestScore ?? null, minutes: r.minutes, log: r.log })),
+		...extra,
+	});
+	writeStatus(RUN_STATUS, { startedAt: new Date().toISOString(), finishedAt: null, current: null }, { reset: true });
+	publishRun({ state: "running" });
+	process.on("exit", (code) => publishRun({ state: code === 0 ? "finished" : "crashed", exitCode: code, finishedAt: new Date().toISOString(), current: null }));
 	for (const id of toRun) {
 		const r = results.find(x => x.id === id)!;
 		if (resetMode === "each" && !runPython(RESET_SCRIPT, [id], `resetting ${id}`)) { r.outcome = "fatal"; r.reason = "reset failed"; continue; }
@@ -195,12 +206,19 @@ async function main() {
 		r.log = logPath.replace(PROJECT_ROOT + "/", "");
 		console.log(`\n${"=".repeat(100)}\n[units] ${id} — ${r.title}\n[units] log: ${r.log}\n${"=".repeat(100)}`);
 		const t0 = Date.now();
+		publishRun({ current: id, currentLog: r.log, currentStartedAt: new Date().toISOString() });
 		r.exitCode = await runOrchestrator(id, passthrough, logPath);
 		r.minutes = Math.round((Date.now() - t0) / 6000) / 10;
 		try { r.after = await fetchTaskStatus(r.url, insecure, client); } catch { /* keep before */ }
 		[r.outcome, r.reason] = classify(r.before, r.after, r.exitCode, target, noSubmit, maxAttempts);
 		console.log(`\n[units] ${id} finished in ${r.minutes} min: ${r.outcome} — ${r.reason}`);
 		writeFileSync(join(logDir, "summary.json"), JSON.stringify({ stamp, target, noSubmit, results }, null, 2));
+		publishRun({ current: null });
+		if (r.outcome === "quota-exhausted") {
+			console.error(`[units] model API quota exhausted — stopping the batch; remaining tasks were not started.`);
+			for (const rest of results) if (toRun.includes(rest.id) && rest.outcome === "skipped" && rest.exitCode === null && rest.id !== r.id) rest.reason = "not started: API quota exhausted";
+			break;
+		}
 	}
 
 	// 5. Report
