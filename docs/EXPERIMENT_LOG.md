@@ -84,3 +84,8 @@ with code 4, `solve-units` stops the batch instead of failing every task. Added 
 (`logs/status/*.json`, `npm run status`) and the VM tooling (`scripts/vm/`); the bootstrap was
 verified in a clean Ubuntu 24.04 container. The VM itself was not reachable (no VPN) and is untested.
 Remaining unit 2 tasks (documents2–4, 0/3 attempts each) are to be run on the VM once quota returns.
+
+**2026-09-28:** VM is `stud03` (not `stud33`). First deploy succeeded (Node installed without sudo,
+lab login ok, no AV). Started fetching the documents unit on the VM. Found that the lab's student VM
+provides numpy/scipy/scikit-learn/torch by default, contradicting the prompt's "stdlib only";
+see AGENT.md §3.7. No measured run: monthly API quota still exhausted until 2026-10-01.

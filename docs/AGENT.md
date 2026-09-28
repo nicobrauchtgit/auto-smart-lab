@@ -144,6 +144,16 @@ Quota per key: 30 requests/min, 200/hour, 1000/day, **3000/month** (exhausted on
 
 ### 3.7 Running remotely and monitoring
 
+**The VM (verified 2026-09-28):** `stud03@stud03.smartlab.mlsec.tu-berlin.de`, Debian 13, x86_64,
+10 CPUs, 23 GB RAM, 49 GB disk with ~17 GB free after setup, no sudo, no `curl` (wget and python3
+are used instead), tmux present, no antivirus, direct outbound access to the lab, the download host,
+GWDG, GitHub and npm. The lab's `~/README` says every student VM ships a Python 3.13 venv at
+`~/env` (numpy, scipy, scikit-learn, pandas, torch, tensorflow), activated on login, and that
+students may `pip install` more. **This contradicts the "stdlib only" statement in
+`agent/instructions/solver.md`**, which came from the original repo, not from the lab. Open
+decision (2026-09-28): correct the environment description, or keep the stdlib condition for
+comparability with the earlier runs. Until decided, remote runs do not activate `~/env`.
+
 Long runs, and all malware units, run on the lab VM `stud03.smartlab.mlsec.tu-berlin.de` (Linux,
 private 10.x address, reachable only through the TU VPN, SSH key auth as `stud03`).
 `scripts/vm/remote.sh deploy` bootstraps it without sudo (Node into `~/.local/node`, repo into
