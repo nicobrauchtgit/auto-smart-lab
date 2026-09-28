@@ -190,6 +190,16 @@ Pass `--model gwdg/<id>` to select one.
 
 ---
 
+### Google models (Gemini Enterprise Agent Platform, formerly Vertex AI)
+
+pi supports these natively as provider `google-vertex`, e.g. `--model google-vertex/gemini-3.1-pro-preview`
+(built-in: Gemini 2.5 Flash/Pro, 3 Flash, 3.1 Pro/Flash Lite, 3.5/3.6/3.7 Flash). Put either
+`GOOGLE_CLOUD_API_KEY`, or `GOOGLE_CLOUD_PROJECT` + `GOOGLE_CLOUD_LOCATION` + credentials
+(`GOOGLE_APPLICATION_CREDENTIALS=<service-account.json>` or gcloud ADC) into `.env`; `remote.sh deploy`
+copies the credentials file to the VM. **This API is paid:** every run logs tokens and cost, `npm run
+status` shows the spend, and `--max-cost <usd>` (on `solve` and `solve-units`) is a hard budget that stops
+the task/batch cleanly (exit code 5) when reached.
+
 ## Project layout
 
 ```

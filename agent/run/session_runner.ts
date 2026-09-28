@@ -37,6 +37,19 @@ const EXTENSION_PATHS = [
 
 /** Hard cap on one runSession call, including SDK retries and continue re-prompts. Override with PI_SESSION_TIMEOUT_MS. */
 const DEFAULT_SESSION_TIMEOUT_MS = 30 * 60 * 1000;
+/**
+ * Token/cost accounting for the whole process (all sessions of one orchestrator run). pi reports
+ * usage and cost per assistant message; cost is 0 for providers without a price table (GWDG).
+ * PI_MAX_COST_USD, when set, is a hard budget for this process: the session that crosses it is
+ * aborted like a degenerate loop, and the orchestrator stops the task.
+ */
+const processUsage = { input: 0, output: 0, cacheRead: 0, requests: 0, costUsd: 0 };
+export function getProcessUsage() { return { ...processUsage }; }
+export function costBudgetUsd(): number | undefined {
+	const v = Number(process.env.PI_MAX_COST_USD);
+	return Number.isFinite(v) && v > 0 ? v : undefined;
+}
+
 /** Resolved at call time so the orchestrator can set PI_SESSION_TIMEOUT_MS from a CLI flag. */
 export function sessionTimeoutMs(): number {
 	return Number(process.env.PI_SESSION_TIMEOUT_MS) || DEFAULT_SESSION_TIMEOUT_MS;
@@ -249,6 +262,7 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 		const LOOP_REPEATS = 6;
 		const recentCalls: string[] = [];
 		let loopAbortReason: string | undefined;
+		const sessionUsage = { input: 0, output: 0, requests: 0, costUsd: 0 };
 		let toolStart = 0;
 		let promptSent = false; // guard: ignore agent_settled fired before prompt is sent
 		// Per-run error tracking. The SDK retries transient errors itself
@@ -293,7 +307,10 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 			console.log(`${tag} provider auth: ${m.provider} → configured=${authStatus.configured} source=${authStatus.source ?? "none"}`);
 			if (!authStatus.configured) {
 				clearInterval(heartbeat);
-				throw new Error(`Provider "${m.provider}" has no configured auth. Check ~/.pi/agent/models.json`);
+				const hint = m.provider === "google-vertex"
+					? "Set GOOGLE_CLOUD_API_KEY, or GOOGLE_CLOUD_PROJECT + GOOGLE_CLOUD_LOCATION + credentials (GOOGLE_APPLICATION_CREDENTIALS=<service-account.json> or ~/.config/gcloud/application_default_credentials.json) in .env"
+					: "Check the provider's apiKey in ~/.pi/agent/models.json";
+				throw new Error(`Provider "${m.provider}" has no configured auth. ${hint}`);
 			}
 		}
 
@@ -314,7 +331,7 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 
 			if (event.type === "agent_settled") {
 				if (!promptSent) return; // spurious settle on the idle session before prompt()
-				console.log(`${tag} ✓ settled in ${elapsed(sessionStart)} (${toolCallCount} tool calls)`);
+				console.log(`${tag} ✓ settled in ${elapsed(sessionStart)} (${toolCallCount} tool calls, ${sessionUsage.requests} model calls, ${sessionUsage.input} in / ${sessionUsage.output} out tokens${sessionUsage.costUsd ? `, $${sessionUsage.costUsd.toFixed(3)}` : ""})`);
 				publishSession({ state: "settled" });
 				taskEvent(`${label}: settled after ${elapsed(sessionStart)}, ${toolCallCount} tool calls`);
 				return;
@@ -342,6 +359,20 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 			if (event.type === "message_end") {
 				const msg = ev.message as { role?: string; content?: unknown; stopReason?: string; errorMessage?: string } | undefined;
 				if (msg?.role === "assistant") {
+					const u = (msg as { usage?: { input?: number; output?: number; cacheRead?: number; cost?: { total?: number } } }).usage;
+					if (u) {
+						const cost = Number(u.cost?.total ?? 0) || 0;
+						sessionUsage.input += u.input ?? 0; sessionUsage.output += u.output ?? 0; sessionUsage.requests++; sessionUsage.costUsd += cost;
+						processUsage.input += u.input ?? 0; processUsage.output += u.output ?? 0; processUsage.cacheRead += u.cacheRead ?? 0; processUsage.requests++; processUsage.costUsd += cost;
+						taskStatus({ usage: { ...processUsage, budgetUsd: costBudgetUsd() ?? null } });
+						const budget = costBudgetUsd();
+						if (budget !== undefined && processUsage.costUsd >= budget && !loopAbortReason) {
+							loopAbortReason = `cost budget exhausted: $${processUsage.costUsd.toFixed(2)} >= $${budget.toFixed(2)}`;
+							process.stderr.write(`${tag} ✗ ${loopAbortReason} — aborting session\n`);
+							taskEvent(`${label}: ${loopAbortReason}`);
+							void session.abort().catch(() => undefined);
+						}
+					}
 					if (msg.stopReason === "error") {
 						lastAssistantWasError = true;
 						lastErrorMessage = msg.errorMessage?.trim() || "unknown error";

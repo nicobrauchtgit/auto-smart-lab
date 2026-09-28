@@ -202,8 +202,8 @@ function salvageSolver(taskId: string): SolverResult | null {
 }
 
 function usage(): never {
-	console.error("Usage: npx tsx agent/run/orchestrate.ts <task_id|list> [--model <id>] [--task-url <url>] [--secure] [--no-submit] [--target <score>] [--solver-timeout <minutes>] [--max-attempts <n>]");
-	console.error("Exit codes: 0 done (target reached, no attempts left, dry run or attempt cap), 1 no attempts before start, 2 solver failed, 3 submission failed, 4 model API daily/monthly quota exhausted, 99 fatal");
+	console.error("Usage: npx tsx agent/run/orchestrate.ts <task_id|list> [--model <id>] [--task-url <url>] [--secure] [--no-submit] [--target <score>] [--solver-timeout <minutes>] [--max-attempts <n>] [--max-cost <usd>]");
+	console.error("Exit codes: 0 done (target reached, no attempts left, dry run or attempt cap), 1 no attempts before start, 2 solver failed, 3 submission failed, 4 model API daily/monthly quota exhausted, 5 cost budget (--max-cost USD) exhausted, 99 fatal");
 	console.error("Required env: LAB_USER, LAB_PASS");
 	console.error("Examples:");
 	console.error("  npm run solve list                    # show all available task IDs");
@@ -237,6 +237,12 @@ async function main() {
 	takeFlag("--insecure"); // accepted for backwards compatibility; it is the default
 	const secure = takeFlag("--secure");
 	const noSubmit = takeFlag("--no-submit");
+	const maxCostArg = takeArg("--max-cost");
+	if (maxCostArg !== undefined) {
+		const usd = Number(maxCostArg);
+		if (!Number.isFinite(usd) || usd <= 0) usage();
+		process.env.PI_MAX_COST_USD = String(usd);
+	}
 	const solverTimeoutArg = takeArg("--solver-timeout");
 	if (solverTimeoutArg !== undefined) {
 		const mins = Number(solverTimeoutArg);
@@ -378,6 +384,10 @@ async function main() {
 			console.log(`[orchestrate] Solver done: val_score=${solverResult.valScore}, csv=${solverResult.csvPath}`);
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err);
+			if (/cost budget exhausted/i.test(msg)) {
+				console.error(`[orchestrate] ${msg}. Stopping this task (no salvage: the budget is spent).`);
+				process.exit(5);
+			}
 			if (!/timed out|degenerate tool loop/i.test(msg)) throw err;
 			console.warn(`[orchestrate] Solver session ended early: ${msg}`);
 			solverProblem = /timed out/i.test(msg) ? "timed out" : "was aborted (degenerate tool loop)";
@@ -411,7 +421,14 @@ async function main() {
 		// Step 2: Eval
 		taskStatus({ phase: "eval", localScore: solverResult.valScore });
 		taskEvent(`solver done: local ${solverResult.valScore}`);
-		const evalResult = await runEvalSession(taskId);
+		let evalResult: Awaited<ReturnType<typeof runEvalSession>>;
+		try {
+			evalResult = await runEvalSession(taskId);
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			if (/cost budget exhausted/i.test(msg)) { console.error(`[orchestrate] ${msg}. Stopping this task.`); process.exit(5); }
+			throw err;
+		}
 		console.log(`[orchestrate] Eval decision: ${evalResult.decision}`);
 		taskEvent(`eval: ${evalResult.decision}${evalResult.feedback ? ` — ${evalResult.feedback.slice(0, 120)}` : ""}`);
 

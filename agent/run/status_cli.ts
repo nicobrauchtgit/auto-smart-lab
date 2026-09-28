@@ -68,7 +68,7 @@ function render(): string {
 		const runAlive = alive(run.pid);
 		const state = run.state === "running" && !runAlive ? "DEAD (process gone without finishing)" : run.state;
 		out.push("", `BATCH   ${state}   started ${ago(run.startedAt)}   model ${run.model ?? "default"}   target ${run.target}${run.noSubmit ? "   --no-submit" : ""}`);
-		out.push(`        logs: ${run.logDir}`);
+		out.push(`        logs: ${run.logDir}${run.spentUsd ? `   spent $${Number(run.spentUsd).toFixed(2)}${run.maxCostUsd ? ` of $${run.maxCostUsd}` : ""}` : run.maxCostUsd ? `   budget $${run.maxCostUsd}` : ""}`);
 		const tasks: Json[] = run.tasks ?? [];
 		if (tasks.length) {
 			out.push("", `  ${pad("task", 11)} ${pad("status", 19)} ${pad("attempts", 9)} ${pad("best", 7)} ${pad("min", 6)} note`);
@@ -100,6 +100,8 @@ function render(): string {
 			if (s.lastResult) out.push(`        last result: ${String(s.lastResult).slice(0, 140)}`);
 			if (s.lastText) out.push(`        last said:   ${String(s.lastText).replace(/\s+/g, " ").slice(0, 140)}`);
 		}
+		const u = task.usage;
+		if (u && u.requests) out.push("", `USAGE   ${u.requests} model calls   ${(u.input / 1e6).toFixed(2)}M in / ${(u.output / 1e3).toFixed(0)}k out tokens   cost $${Number(u.costUsd).toFixed(3)}${u.budgetUsd ? ` of $${u.budgetUsd}` : ""}`);
 		const q = task.apiQuota;
 		if (q) out.push("", `API     remaining: ${q.minute ?? "?"}/min  ${q.hour ?? "?"}/hour  ${q.day ?? "?"}/day  ${q.month ?? "?"}/month   (last HTTP ${q.status}, ${ago(q.at)})`);
 		const ev: string[] = task.events ?? [];

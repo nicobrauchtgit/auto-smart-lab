@@ -24,7 +24,7 @@ import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync }
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fetchTaskStatus, SimpleClient, type TaskStatus } from "./submit_session.js";
-import { RUN_STATUS, writeStatus } from "./status.js";
+import { readJson, RUN_STATUS, TASK_STATUS, writeStatus } from "./status.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(HERE, "..", "..");
@@ -36,7 +36,7 @@ const ORCHESTRATE = join(HERE, "orchestrate.ts");
 const TSX = join(PROJECT_ROOT, "node_modules", ".bin", "tsx");
 const DEFAULT_TARGET = 0.97;
 
-type Outcome = "quota-exhausted" | "solved" | "attempts-exhausted" | "attempt-cap" | "below-target" | "dry-run" | "solver-failed" | "submit-failed" | "fatal" | "skipped";
+type Outcome = "budget-exhausted" | "quota-exhausted" | "solved" | "attempts-exhausted" | "attempt-cap" | "below-target" | "dry-run" | "solver-failed" | "submit-failed" | "fatal" | "skipped";
 
 interface TaskResult {
 	id: string;
@@ -48,6 +48,7 @@ interface TaskResult {
 	after: TaskStatus | null;
 	exitCode: number | null;
 	minutes: number;
+	costUsd: number;
 	log: string | null;
 }
 
@@ -61,6 +62,7 @@ function usage(): never {
   --only          comma-separated task ids to consider
   --retry-solved  run tasks whose best platform score already meets --target
   --max-attempts  attempts one task may spend in this run (default 3)
+  --max-cost      total model spend in USD for the whole batch (paid providers, e.g. google-vertex)
   --secure        verify the lab's TLS certificate (off by default: the lab is self-signed)
 Other flags are passed through to the per-task orchestrator.`);
 	process.exit(1);
@@ -91,6 +93,7 @@ function runOrchestrator(taskId: string, args: string[], logPath: string): Promi
 }
 
 function classify(before: TaskStatus | null, after: TaskStatus | null, exitCode: number | null, target: number, noSubmit: boolean, maxAttempts: number): [Outcome, string] {
+	if (exitCode === 5) return ["budget-exhausted", "--max-cost budget spent (see task log)"];
 	if (exitCode === 4) return ["quota-exhausted", "model API daily/monthly quota used up (see task log)"];
 	if (exitCode === 99 || exitCode === null) return ["fatal", "orchestrator crashed"];
 	if (exitCode === 2) return ["solver-failed", "solver produced no usable predictions"];
@@ -124,6 +127,9 @@ async function main() {
 	const targetArg = takeArg("--target");
 	const target = targetArg !== undefined ? Number(targetArg) : DEFAULT_TARGET;
 	const solverTimeout = takeArg("--solver-timeout");
+	const maxCostArg = takeArg("--max-cost");
+	const maxCost = maxCostArg !== undefined ? Number(maxCostArg) : undefined;
+	if (maxCost !== undefined && !(maxCost > 0)) usage();
 	const maxAttemptsArg = takeArg("--max-attempts");
 	const maxAttempts = maxAttemptsArg !== undefined ? Number(maxAttemptsArg) : 3;
 	if (args.length || !Number.isFinite(target) || !Number.isFinite(maxAttempts)) usage();
@@ -171,7 +177,7 @@ async function main() {
 		} catch (err) {
 			reason = `status check failed: ${err instanceof Error ? err.message : String(err)}`;
 		}
-		const r: TaskResult = { id, url, title: status?.title ?? id, outcome: "skipped", reason, before: status, after: status, exitCode: null, minutes: 0, log: null };
+		const r: TaskResult = { id, url, title: status?.title ?? id, outcome: "skipped", reason, before: status, after: status, exitCode: null, minutes: 0, costUsd: 0, log: null };
 		results.push(r);
 		if (!reason) toRun.push(id);
 		const s = status;
@@ -193,7 +199,8 @@ async function main() {
 	const publishRun = (extra: Record<string, unknown> = {}) => writeStatus(RUN_STATUS, {
 		stamp, logDir: logDir.replace(PROJECT_ROOT + "/", ""), target, noSubmit, model: model ?? null,
 		tasks: results.map(r => ({ id: r.id, title: r.title, outcome: r.outcome, reason: r.reason, run: toRun.includes(r.id),
-			attempts: r.after ? `${r.after.attemptsUsed ?? "?"}/${r.after.attemptsMax}` : "?", best: r.after?.bestScore ?? null, minutes: r.minutes, log: r.log })),
+			attempts: r.after ? `${r.after.attemptsUsed ?? "?"}/${r.after.attemptsMax}` : "?", best: r.after?.bestScore ?? null, minutes: r.minutes, costUsd: r.costUsd, log: r.log })),
+		spentUsd: results.reduce((a, x) => a + (x.costUsd || 0), 0), maxCostUsd: maxCost ?? null,
 		...extra,
 	});
 	writeStatus(RUN_STATUS, { startedAt: new Date().toISOString(), finishedAt: null, current: null }, { reset: true });
@@ -207,16 +214,25 @@ async function main() {
 		console.log(`\n${"=".repeat(100)}\n[units] ${id} — ${r.title}\n[units] log: ${r.log}\n${"=".repeat(100)}`);
 		const t0 = Date.now();
 		publishRun({ current: id, currentLog: r.log, currentStartedAt: new Date().toISOString() });
-		r.exitCode = await runOrchestrator(id, passthrough, logPath);
+		const spent = results.reduce((a, x) => a + (x.costUsd || 0), 0);
+		const taskArgs = [...passthrough];
+		if (maxCost !== undefined) {
+			if (spent >= maxCost) { r.outcome = "budget-exhausted"; r.reason = `not started: batch budget $${maxCost} spent`; break; }
+			taskArgs.push("--max-cost", (maxCost - spent).toFixed(4));
+		}
+		r.exitCode = await runOrchestrator(id, taskArgs, logPath);
+		// Only trust task.json if this task wrote it (a task that exits early leaves the previous one's file).
+		const ts = readJson<{ task?: string; startedAt?: string; usage?: { costUsd?: number } }>(TASK_STATUS);
+		r.costUsd = ts?.task === id && ts.startedAt && Date.parse(ts.startedAt) >= t0 - 1000 ? Number(ts.usage?.costUsd ?? 0) || 0 : 0;
 		r.minutes = Math.round((Date.now() - t0) / 6000) / 10;
 		try { r.after = await fetchTaskStatus(r.url, insecure, client); } catch { /* keep before */ }
 		[r.outcome, r.reason] = classify(r.before, r.after, r.exitCode, target, noSubmit, maxAttempts);
 		console.log(`\n[units] ${id} finished in ${r.minutes} min: ${r.outcome} — ${r.reason}`);
 		writeFileSync(join(logDir, "summary.json"), JSON.stringify({ stamp, target, noSubmit, results }, null, 2));
 		publishRun({ current: null });
-		if (r.outcome === "quota-exhausted") {
-			console.error(`[units] model API quota exhausted — stopping the batch; remaining tasks were not started.`);
-			for (const rest of results) if (toRun.includes(rest.id) && rest.outcome === "skipped" && rest.exitCode === null && rest.id !== r.id) rest.reason = "not started: API quota exhausted";
+		if (r.outcome === "quota-exhausted" || r.outcome === "budget-exhausted") {
+			console.error(`[units] ${r.outcome === "budget-exhausted" ? "cost budget" : "model API quota"} exhausted — stopping the batch; remaining tasks were not started.`);
+			for (const rest of results) if (toRun.includes(rest.id) && rest.outcome === "skipped" && rest.exitCode === null && rest.id !== r.id) rest.reason = `not started: ${r.outcome}`;
 			break;
 		}
 	}

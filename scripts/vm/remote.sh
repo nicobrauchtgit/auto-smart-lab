@@ -25,7 +25,9 @@ SSH_OPTS=(-o ConnectTimeout=15 -o ServerAliveInterval=30)
 
 # Remote prologue: node on PATH, secrets loaded, cwd = repo.
 # The lab's ~/env venv (numpy, sklearn, ...) is activated exactly as a student's login shell does.
-PRE='export PATH="$HOME/.local/node/bin:$PATH"; [ -f "$HOME/env/bin/activate" ] && . "$HOME/env/bin/activate"; cd "$HOME/'"$VM_REPO"'" || exit 1; set -a; [ -f .env ] && . ./.env; set +a;'
+# GOOGLE_APPLICATION_CREDENTIALS in .env is a path on the Mac; deploy copies that file to the VM's default
+# ADC location, so drop the variable on the VM when the path does not exist there.
+PRE='export PATH="$HOME/.local/node/bin:$PATH"; [ -f "$HOME/env/bin/activate" ] && . "$HOME/env/bin/activate"; cd "$HOME/'"$VM_REPO"'" || exit 1; set -a; [ -f .env ] && . ./.env; set +a; [ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" ] && [ ! -f "$GOOGLE_APPLICATION_CREDENTIALS" ] && unset GOOGLE_APPLICATION_CREDENTIALS;'
 
 rssh()  { ssh "${SSH_OPTS[@]}" "$VM_HOST" "$@"; }
 rssht() { ssh -t "${SSH_OPTS[@]}" "$VM_HOST" "$@"; }
@@ -53,6 +55,15 @@ deploy)
 	scp -q "${SSH_OPTS[@]}" "$ROOT/.env" "$VM_HOST:$VM_REPO/.env"
 	scp -q "${SSH_OPTS[@]}" "$HOME/.pi/agent/models.json" "$VM_HOST:.pi/agent/models.json"
 	[[ -f "$HOME/.pi/agent/settings.json" ]] && scp -q "${SSH_OPTS[@]}" "$HOME/.pi/agent/settings.json" "$VM_HOST:.pi/agent/settings.json"
+	# Google credentials (optional): a service-account file named in .env, else local gcloud ADC.
+	gac=$(set -a; . "$ROOT/.env"; echo "${GOOGLE_APPLICATION_CREDENTIALS:-}")
+	[[ -z "$gac" && -f "$HOME/.config/gcloud/application_default_credentials.json" ]] && gac="$HOME/.config/gcloud/application_default_credentials.json"
+	if [[ -n "$gac" && -f "$gac" ]]; then
+		rssh "mkdir -p ~/.config/gcloud && chmod 700 ~/.config/gcloud"
+		scp -q "${SSH_OPTS[@]}" "$gac" "$VM_HOST:.config/gcloud/application_default_credentials.json"
+		rssh "chmod 600 ~/.config/gcloud/application_default_credentials.json"
+		echo "copied Google credentials ($gac)"
+	fi
 	rssh "chmod 600 ~/$VM_REPO/.env ~/.pi/agent/*.json"
 	echo "== smoke test on the VM"
 	rssh "$PRE"' npm run -s status | head -3; python3 -c "
