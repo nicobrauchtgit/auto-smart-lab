@@ -153,6 +153,7 @@ import { runEvalSession } from "./eval_session.js";
 import { runSubmitSession } from "./submit_session.js";
 import { getTaskMemory, updateTaskMemory } from "./memory_utils.js";
 import { taskEvent, taskStatus } from "./status.js";
+import { detectPythonRuntime } from "./runtime_env.js";
 import type { SolverResult } from "./solver_session.js";
 
 const MAX_SUBMISSIONS = 3;
@@ -348,7 +349,10 @@ async function main() {
 	let lastSubmittedHash: string | undefined;
 	let lastPlatformScore: number | null = null;
 	console.log(`[orchestrate] Target platform score: ${target}`);
-	taskStatus({ task: taskId, model: process.env.PI_MODEL ?? null, target, noSubmit, startedAt: new Date().toISOString(), phase: "starting", iteration: 0, events: [], session: null, result: null }, { reset: true });
+	const py = detectPythonRuntime();
+	console.log(`[orchestrate] Python runtime: ${py ? `${py.executable} ${py.version}, ${py.packages.length} third-party packages${py.inVirtualenv ? ", virtualenv" : ""}` : "not detected"}`);
+	taskStatus({ task: taskId, model: process.env.PI_MODEL ?? null, target, noSubmit, startedAt: new Date().toISOString(), phase: "starting", iteration: 0, events: [], session: null, result: null,
+		python: py ? { executable: py.executable, version: py.version, packages: py.packages.length, virtualenv: py.inVirtualenv } : null }, { reset: true });
 	// Record how the process ended, whatever the path (process.exit is used throughout).
 	process.on("exit", (code) => taskStatus({ phase: "exited", exitCode: code, endedAt: new Date().toISOString() }));
 

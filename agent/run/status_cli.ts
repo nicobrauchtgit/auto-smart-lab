@@ -87,6 +87,7 @@ function render(): string {
 		let health = task.phase === "exited" ? `exited (code ${task.exitCode}) ${ago(task.endedAt)}` : taskAlive ? "alive" : "DEAD (process gone)";
 		if (taskAlive && task.phase !== "exited" && hb !== null && hb > 120 && task.session?.state !== "rate-limited") health += `  ⚠ no heartbeat for ${fmtDur(hb)}`;
 		out.push("", `TASK    ${task.task}   phase ${task.phase}   iteration ${task.iteration ?? "-"}   ${health}`);
+		if (task.python) out.push(`        python ${task.python.version}${task.python.virtualenv ? " (venv)" : ""}, ${task.python.packages} packages — ${task.python.executable}`);
 		out.push(`        started ${ago(task.startedAt)}${task.localScore != null ? `   local ${task.localScore}` : ""}${task.result ? `   platform ${task.result.platformScore} (${task.result.triesLeft} left)` : ""}`);
 		const s = task.session;
 		if (s && task.phase !== "exited") {

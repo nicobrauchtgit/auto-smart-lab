@@ -24,7 +24,8 @@ SESSION=agent
 SSH_OPTS=(-o ConnectTimeout=15 -o ServerAliveInterval=30)
 
 # Remote prologue: node on PATH, secrets loaded, cwd = repo.
-PRE='export PATH="$HOME/.local/node/bin:$PATH"; cd "$HOME/'"$VM_REPO"'" || exit 1; set -a; [ -f .env ] && . ./.env; set +a;'
+# The lab's ~/env venv (numpy, sklearn, ...) is activated exactly as a student's login shell does.
+PRE='export PATH="$HOME/.local/node/bin:$PATH"; [ -f "$HOME/env/bin/activate" ] && . "$HOME/env/bin/activate"; cd "$HOME/'"$VM_REPO"'" || exit 1; set -a; [ -f .env ] && . ./.env; set +a;'
 
 rssh()  { ssh "${SSH_OPTS[@]}" "$VM_HOST" "$@"; }
 rssht() { ssh -t "${SSH_OPTS[@]}" "$VM_HOST" "$@"; }

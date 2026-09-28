@@ -209,7 +209,7 @@ agent/
 │   └── load_challenge.py Load a task into environment/ for manual testing
 ├── smartlab/            Python solver framework
 │   ├── smartlab_agent.py  CLI: list / download / validate / solve
-│   ├── common.py        Shared utilities (stdlib-only)
+│   ├── common.py        Shared utilities (stdlib-only helpers)
 │   └── tasks/           One solver module per task (e.g. spam1.py)
 └── tools/               PI extension tools
     ├── smartlab.ts      smartlab_submit tool (manual use only — NOT loaded into agent sessions; the orchestrator submits)
@@ -264,7 +264,7 @@ def solve(output_path: Path = DEFAULT_SUBMISSION) -> Path: ...
 
 `smartlab_agent.py` discovers every module in `agent/smartlab/tasks/` automatically; no registration needed.
 
-**Constraint:** stdlib Python only — no scikit-learn, numpy, or pandas. The SmartLab VM has none of these.
+**Python packages:** solvers may use whatever the Python runtime provides. The lab's student VM ships a venv (`~/env`) with numpy, scipy, scikit-learn, pandas, torch and tensorflow and allows `pip install`; the harness detects the actual runtime and tells the agent. (Until 2026-09-28 the agent was told "stdlib only", which was a false assumption.)
 
 ---
 

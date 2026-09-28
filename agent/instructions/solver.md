@@ -16,9 +16,9 @@ contains no advice on how to solve tasks.
 - **Solver module:** your code lives in `agent/smartlab/tasks/<task_id>.py`. A stub with the required
   interface is created for you if the file does not exist. Other modules in that directory, if any,
   are solvers written earlier in this run for other tasks.
-- **Runtime:** the SmartLab evaluation VM has Python's standard library only — no scikit-learn,
-  numpy or pandas. Solver code must not import third-party packages. `agent/smartlab/common.py`
-  contains small helpers (`iter_zip_texts`, `parse_semicolon_labels`, `write_semicolon_predictions`,
+- **Runtime:** your first message states the Python interpreter your commands use, its version,
+  the third-party packages installed in it, and whether you may install more. This matches what a
+  student gets on the lab's VM. `agent/smartlab/common.py` contains small stdlib helpers (`iter_zip_texts`, `parse_semicolon_labels`, `write_semicolon_predictions`,
   `balanced_accuracy`, `download_file`, `project_root`).
 - **CLI:** from the `agent/` directory, `python3 smartlab_agent.py validate <task_id>` calls your
   `validate()` and prints `VALIDATE_SCORE=<x>`; `python3 smartlab_agent.py solve <task_id>` calls
@@ -80,5 +80,6 @@ The orchestrator depends on the following. Everything else is your call.
 
 - Do not modify `agent/setup/`, `agent/smartlab_agent.py`, `agent/smartlab/common.py` or the
   orchestrator; write your code in your task module (and helper files next to it if you want).
-- Do not use non-stdlib Python in solver code.
+- Solver code may use any package available in the stated Python runtime. If you install packages,
+  record them in `agent/smartlab/tasks/<task_id>_requirements.txt` so the source upload is reproducible.
 - Do not attempt to submit to the platform yourself.

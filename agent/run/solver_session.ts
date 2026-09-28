@@ -7,6 +7,7 @@
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runSession, sessionTimeoutMs } from "./session_runner.js";
+import { describePythonRuntime } from "./runtime_env.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const AGENT_DIR = resolve(HERE, "..");
@@ -32,7 +33,7 @@ export async function runSolverSession(taskId: string, feedback?: string): Promi
 	const clock = ` It is now ${hhmm(now)}; this session is killed at ${hhmm(hardStop)} (${capMin} min cap) and anything unfinished at that point is lost.`;
 	const prompt = (feedback
 		? `Task: ${taskId}. Feedback on your previous attempt: ${feedback} Your previous solver module is still in place.`
-		: `Solve task: ${taskId}.`) + clock;
+		: `Solve task: ${taskId}.`) + clock + describePythonRuntime();
 
 	console.log(`[solver] Starting session for task ${taskId}${feedback ? " (re-solve)" : ""}`);
 

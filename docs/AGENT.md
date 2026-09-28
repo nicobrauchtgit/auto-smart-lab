@@ -128,8 +128,13 @@ Quota per key: 30 requests/min, 200/hour, 1000/day, **3000/month** (exhausted on
   connections (`--secure` / `LAB_INSECURE_TLS=0` to verify, `LAB_CA_BUNDLE` for the Python scripts).
 - **Secrets** live in the untracked `.env` (`LAB_USER`, `LAB_PASS`, `GWDG_API_KEY`, optional
   `TAVILY_API_KEY`); see `.env.example`. Without direnv, load them with `set -a; source .env; set +a`.
-- **Python.** Solvers must be stdlib-only because the SmartLab evaluation VM has no third-party
-  packages. Locally, Homebrew Python 3.14 is used; macOS has no GNU `timeout` command.
+- **Python.** Solvers may use any package in the Python runtime they run on. On the lab VM that is
+  the student venv `~/env` (numpy, scipy, scikit-learn, pandas, torch, tensorflow; `pip install`
+  allowed), which `remote.sh` activates. `runtime_env.ts` probes `python3` and the solver's first
+  message states the interpreter, version, installed distributions and whether pip is allowed —
+  a fact, not a recommendation. Before 2026-09-28 the prompt claimed "stdlib only"; runs before that
+  date are a different condition. Locally, Homebrew Python 3.14 has no packages; macOS has no GNU
+  `timeout` command.
 - **Malware datasets vs. endpoint protection.** Units 02-maldoc and 03-clust contain real malicious
   documents and binaries. On a Mac with Microsoft Defender (or any AV with real-time protection)
   the extracted samples get quarantined during the run — 1505 files vanished on 2026-09-13 — which
@@ -149,10 +154,7 @@ Quota per key: 30 requests/min, 200/hour, 1000/day, **3000/month** (exhausted on
 are used instead), tmux present, no antivirus, direct outbound access to the lab, the download host,
 GWDG, GitHub and npm. The lab's `~/README` says every student VM ships a Python 3.13 venv at
 `~/env` (numpy, scipy, scikit-learn, pandas, torch, tensorflow), activated on login, and that
-students may `pip install` more. **This contradicts the "stdlib only" statement in
-`agent/instructions/solver.md`**, which came from the original repo, not from the lab. Open
-decision (2026-09-28): correct the environment description, or keep the stdlib condition for
-comparability with the earlier runs. Until decided, remote runs do not activate `~/env`.
+students may `pip install` more. The prompt used to claim "stdlib only"; corrected on 2026-09-28 (see Python bullet in 3.6). Remote runs activate `~/env`.
 
 Long runs, and all malware units, run on the lab VM `stud03.smartlab.mlsec.tu-berlin.de` (Linux,
 private 10.x address, reachable only through the TU VPN, SSH key auth as `stud03`).
@@ -191,6 +193,7 @@ prompting:
 | Status for skipping tasks comes from the lab page | Memory is reset per run and once missed three real submissions. |
 | Salvage runs the module directly instead of re-prompting first | A finished module with a decent score is worth more than another 30 minutes of the same model. |
 | Rate-limit waits do not count against the session cap | Otherwise the API's quota, not the model, decides the outcome. |
+| Runtime described by detection, not by rule (2026-09-28) | The prompt's "stdlib only" was an inherited assumption; the lab's student VM ships numpy/sklearn/torch. Stating the real environment is a fact, not coaching. |
 | Coaching stripped from prompts (2026-09-10) | The experiment measures the model, not our hints; a coached agent lives elsewhere. |
 | Tasks run sequentially | Parallel runs only trigger 429s under the per-minute quota. |
 

@@ -89,3 +89,8 @@ Remaining unit 2 tasks (documents2–4, 0/3 attempts each) are to be run on the 
 lab login ok, no AV). Started fetching the documents unit on the VM. Found that the lab's student VM
 provides numpy/scipy/scikit-learn/torch by default, contradicting the prompt's "stdlib only";
 see AGENT.md §3.7. No measured run: monthly API quota still exhausted until 2026-10-01.
+
+**Condition change, 2026-09-28:** the solver is no longer told "stdlib only". Its first message now
+states the detected Python runtime (on the VM: the lab's `~/env` venv with numpy, scipy,
+scikit-learn, pandas, torch, tensorflow; pip allowed). **Runs from here on are not directly
+comparable with the earlier stdlib-only runs**; tag entries with the condition.
