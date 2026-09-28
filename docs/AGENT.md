@@ -144,8 +144,8 @@ Quota per key: 30 requests/min, 200/hour, 1000/day, **3000/month** (exhausted on
 
 ### 3.7 Running remotely and monitoring
 
-Long runs, and all malware units, run on the lab VM `stud33.smartlab.mlsec.tu-berlin.de` (Linux,
-private 10.x address, reachable only through the TU VPN, SSH key auth as `stud33`).
+Long runs, and all malware units, run on the lab VM `stud03.smartlab.mlsec.tu-berlin.de` (Linux,
+private 10.x address, reachable only through the TU VPN, SSH key auth as `stud03`).
 `scripts/vm/remote.sh deploy` bootstraps it without sudo (Node into `~/.local/node`, repo into
 `~/auto-smart-lab`) and copies the two secrets (`.env`, `~/.pi/agent/models.json`); `start` runs
 `solve-units` in a detached tmux session so the run survives VPN drops and a closed laptop.

@@ -23,9 +23,26 @@ WARNINGS=0; FAILURES=0
 
 echo "== host: $(hostname)  $(. /etc/os-release 2>/dev/null; echo "${PRETTY_NAME:-unknown}")  $(uname -m)  $(nproc 2>/dev/null) cpu  $(free -h 2>/dev/null | awk '/Mem:/{print $2}') ram"
 
+# HTTP status of a URL using whatever exists (the lab VM has wget + python3 but no curl).
+http_code() {
+	if command -v curl >/dev/null; then curl -sk -m 12 -o /dev/null -w '%{http_code}' "$1" 2>/dev/null; return; fi
+	python3 - "$1" <<'PY' 2>/dev/null || echo 000
+import ssl, sys, urllib.request, urllib.error
+try:
+    print(urllib.request.urlopen(sys.argv[1], timeout=12, context=ssl._create_unverified_context()).status)
+except urllib.error.HTTPError as e:
+    print(e.code)
+except Exception:
+    print("000")
+PY
+}
+download() { # url dest
+	if command -v curl >/dev/null; then curl -fsSL -m 300 "$1" -o "$2"; else wget -q -T 300 -O "$2" "$1"; fi
+}
+
 echo "== network"
 probe() { # name url
-	local code; code=$(curl -sk -m 12 -o /dev/null -w '%{http_code}' "$2" 2>/dev/null)
+	local code; code=$(http_code "$2")
 	if [[ "$code" =~ ^[23] || "$code" == "401" ]]; then ok "$1 ($code)"; else fail "$1 unreachable (HTTP $code): $2"; fi
 }
 probe "SmartLab"      "https://lab-test.smartlab.mlsec.tu-berlin.de/"
@@ -45,7 +62,7 @@ else
 		tarball="node-${NODE_VERSION}-linux-${arch}.tar.xz"
 		echo "  installing $tarball into $NODE_HOME"
 		tmp=$(mktemp -d)
-		if curl -fsSL -m 300 "https://nodejs.org/dist/${NODE_VERSION}/${tarball}" -o "$tmp/$tarball" && mkdir -p "$NODE_HOME" \
+		if download "https://nodejs.org/dist/${NODE_VERSION}/${tarball}" "$tmp/$tarball" && mkdir -p "$NODE_HOME" \
 			&& tar -xJf "$tmp/$tarball" -C "$NODE_HOME" --strip-components=1; then
 			ok "node $(node -v) installed"
 		else

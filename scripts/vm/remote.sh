@@ -12,11 +12,11 @@
 #   scripts/vm/remote.sh pull                  copy the VM's logs/ to ./logs/vm/<host>/
 #   scripts/vm/remote.sh shell                 interactive shell in the repo on the VM
 #
-# Config via env: VM_HOST (default stud33.smartlab.mlsec.tu-berlin.de, uses ~/.ssh/config),
+# Config via env: VM_HOST (default stud03@stud03.smartlab.mlsec.tu-berlin.de),
 # VM_REPO (default ~/auto-smart-lab on the VM).
 set -euo pipefail
 
-VM_HOST="${VM_HOST:-stud33.smartlab.mlsec.tu-berlin.de}"
+VM_HOST="${VM_HOST:-stud03@stud03.smartlab.mlsec.tu-berlin.de}"
 VM_REPO="${VM_REPO:-auto-smart-lab}"   # relative to the VM user's home
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
@@ -54,7 +54,13 @@ deploy)
 	[[ -f "$HOME/.pi/agent/settings.json" ]] && scp -q "${SSH_OPTS[@]}" "$HOME/.pi/agent/settings.json" "$VM_HOST:.pi/agent/settings.json"
 	rssh "chmod 600 ~/$VM_REPO/.env ~/.pi/agent/*.json"
 	echo "== smoke test on the VM"
-	rssh "$PRE"' npm run -s status | head -3; curl -s -m 15 -o /dev/null -w "GWDG completion with key: HTTP %{http_code}\n" https://chat-ai.academiccloud.de/v1/chat/completions -H "Authorization: Bearer $GWDG_API_KEY" -H "Content-Type: application/json" -d "{\"model\":\"qwen3-coder-next\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":1}"; python3 agent/setup/fetch_lab.py login >/dev/null 2>&1 && echo "lab login: ok" || echo "lab login: FAILED"'
+	rssh "$PRE"' npm run -s status | head -3; python3 -c "
+import json, os, urllib.request, urllib.error
+req = urllib.request.Request(\"https://chat-ai.academiccloud.de/v1/chat/completions\", data=json.dumps({\"model\": \"qwen3-coder-next\", \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}], \"max_tokens\": 1}).encode(), headers={\"Authorization\": \"Bearer \" + os.environ.get(\"GWDG_API_KEY\", \"\"), \"Content-Type\": \"application/json\"})
+try: r = urllib.request.urlopen(req, timeout=20); code, h = r.status, r.headers
+except urllib.error.HTTPError as e: code, h = e.code, e.headers
+print(f\"GWDG completion with key: HTTP {code}, remaining month={h.get(\"x-ratelimit-remaining-month\")} day={h.get(\"x-ratelimit-remaining-day\")}\")
+"; python3 agent/setup/fetch_lab.py login >/dev/null 2>&1 && echo "lab login: ok" || echo "lab login: FAILED"'
 	;;
 
 fetch)

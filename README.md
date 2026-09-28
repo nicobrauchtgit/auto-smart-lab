@@ -151,7 +151,7 @@ The orchestrator will:
 ## Running on the lab VM and monitoring it
 
 The malware units must not run on a machine with antivirus (Defender quarantined 1505 samples
-mid-run on a managed Mac), so long runs go to the lab VM (`stud33.smartlab.mlsec.tu-berlin.de`,
+mid-run on a managed Mac), so long runs go to the lab VM (`stud03.smartlab.mlsec.tu-berlin.de`,
 private address, **TU VPN required**). Everything is driven from your own machine:
 
 ```bash
