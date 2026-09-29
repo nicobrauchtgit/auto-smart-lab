@@ -6,6 +6,7 @@
  */
 
 import { taskEvent, taskStatus } from "./status.js";
+import { snapshotPluginParentEnv } from "./langfuse.js";
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,6 +34,9 @@ const EXTENSION_PATHS = [
 	join(TOOLS_DIR, "memory.ts"),
 	join(TOOLS_DIR, "web_search.ts"),
 	join(TOOLS_DIR, "challenge_context.ts"),
+	// Langfuse tracing (turns, generations, tokens, tool calls). Observability only: it registers no
+	// tools and does not touch the prompt. Inert unless LANGFUSE_PUBLIC_KEY/LANGFUSE_SECRET_KEY are set.
+	join(PROJECT_ROOT, "node_modules", "@langfuse", "pi-observability-plugin", "src", "index.ts"),
 ];
 
 /** Hard cap on one runSession call, including SDK retries and continue re-prompts. Override with PI_SESSION_TIMEOUT_MS. */
@@ -192,6 +196,11 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 			return res;
 		}) as typeof fetch;
 	}
+
+	// The Langfuse plugin publishes the open turn in process.env for subagents and withdraws it when
+	// the turn settles. An aborted session may never settle, and the next session in this process
+	// would then nest under the dead turn; restore the values we started with when we are done.
+	const restoreLangfuseEnv = snapshotPluginParentEnv();
 
 	// Inject env vars before session starts (tools read from process.env)
 	const envBackup: Record<string, string | undefined> = {};
@@ -530,6 +539,7 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 
 		return { output: textParts.join("") };
 	} finally {
+		restoreLangfuseEnv();
 		if (env) {
 			for (const [key, originalValue] of Object.entries(envBackup)) {
 				if (originalValue === undefined) delete process.env[key];

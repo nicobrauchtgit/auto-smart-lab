@@ -154,6 +154,7 @@ import { runSubmitSession } from "./submit_session.js";
 import { getTaskMemory, updateTaskMemory } from "./memory_utils.js";
 import { taskEvent, taskStatus } from "./status.js";
 import { detectPythonRuntime } from "./runtime_env.js";
+import { endRun, scoreRun, stage, startRun } from "./langfuse.js";
 import type { SolverResult } from "./solver_session.js";
 
 const MAX_SUBMISSIONS = 3;
@@ -362,6 +363,18 @@ async function main() {
 	// Record how the process ended, whatever the path (process.exit is used throughout).
 	process.on("exit", (code) => taskStatus({ phase: "exited", exitCode: code, endedAt: new Date().toISOString() }));
 
+	// Langfuse (optional): this run is one session; each stage below is a trace in it.
+	startRun({ taskId, model: process.env.PI_MODEL, metadata: { target: String(target), no_submit: String(noSubmit) } });
+	let bestPlatformScore: number | null = null;
+	/** End the run: session-level scores, flush traces, then exit. */
+	async function exitRun(code: number, outcome: string): Promise<never> {
+		if (bestPlatformScore !== null) void scoreRun("platform_score", bestPlatformScore, `best of ${attemptsThisRun} submission(s) this run`);
+		void scoreRun("submissions", attemptsThisRun);
+		await scoreRun("outcome", outcome, `exit code ${code}`);
+		await endRun();
+		process.exit(code);
+	}
+
 	while (true) {
 		iteration++;
 		console.log(`\n[orchestrate] === Iteration ${iteration} ===`);
@@ -371,7 +384,7 @@ async function main() {
 		const mem = getTaskMemory(taskId);
 		if (mem.tries_used >= MAX_SUBMISSIONS) {
 			console.error(`[orchestrate] No submissions left (${mem.tries_used}/${MAX_SUBMISSIONS} used). Stopping.`);
-			process.exit(1);
+			await exitRun(1, "no_attempts_left");
 		}
 		console.log(`[orchestrate] Submissions: ${mem.tries_used}/${MAX_SUBMISSIONS} used, ${mem.tries_left ?? MAX_SUBMISSIONS - mem.tries_used} remaining`);
 
@@ -380,13 +393,18 @@ async function main() {
 		let solverProblem: string | undefined;
 		try {
 			taskStatus({ phase: "solver" });
-			solverResult = await runSolverSession(taskId, feedback);
+			solverResult = await stage("solver", { iteration, input: { task: taskId, feedback: feedback ?? null } }, async (t) => {
+				const r = await runSolverSession(taskId, feedback);
+				t.output(r);
+				t.score("local_val_score", r.valScore);
+				return r;
+			});
 			console.log(`[orchestrate] Solver done: val_score=${solverResult.valScore}, csv=${solverResult.csvPath}`);
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err);
 			if (/cost budget exhausted/i.test(msg)) {
 				console.error(`[orchestrate] ${msg}. Stopping this task (no salvage: the budget is spent).`);
-				process.exit(5);
+				await exitRun(5, "cost_budget_exhausted");
 			}
 			if (!/timed out|degenerate tool loop/i.test(msg)) throw err;
 			console.warn(`[orchestrate] Solver session ended early: ${msg}`);
@@ -401,7 +419,12 @@ async function main() {
 			solverProblem ??= "ended without a prediction CSV";
 			taskStatus({ phase: "salvage" });
 			taskEvent(`solver ${solverProblem}; salvaging`);
-			const salvaged = salvageSolver(taskId);
+			const salvaged = await stage("salvage", { iteration, input: { reason: solverProblem } }, async (t) => {
+				const r = salvageSolver(taskId);
+				t.output(r ?? { salvaged: false });
+				if (r) t.score("local_val_score", r.valScore);
+				return r;
+			});
 			if (salvaged) {
 				solverResult = salvaged;
 				csvAbsPath = isAbsolute(salvaged.csvPath) ? salvaged.csvPath : resolve(PROJECT_ROOT, salvaged.csvPath);
@@ -409,7 +432,7 @@ async function main() {
 				solverFailures++;
 				if (solverFailures >= MAX_SOLVER_FAILURES) {
 					console.error(`[orchestrate] Solver ${solverProblem} ${solverFailures} time(s) and nothing could be salvaged. Stopping.`);
-					process.exit(2);
+					await exitRun(2, "solver_failed");
 				}
 				feedback = `Your previous session ${solverProblem} before producing predictions. This is the last session for this task.`;
 				console.log(`[orchestrate] Nothing to salvage — re-running solver with finish-first instructions.`);
@@ -423,10 +446,15 @@ async function main() {
 		taskEvent(`solver done: local ${solverResult.valScore}`);
 		let evalResult: Awaited<ReturnType<typeof runEvalSession>>;
 		try {
-			evalResult = await runEvalSession(taskId);
+			evalResult = await stage("eval", { iteration, input: { task: taskId, local_val_score: solverResult.valScore } }, async (t) => {
+				const r = await runEvalSession(taskId);
+				t.output(r);
+				t.score("eval_decision", r.decision, r.feedback || undefined);
+				return r;
+			});
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err);
-			if (/cost budget exhausted/i.test(msg)) { console.error(`[orchestrate] ${msg}. Stopping this task.`); process.exit(5); }
+			if (/cost budget exhausted/i.test(msg)) { console.error(`[orchestrate] ${msg}. Stopping this task.`); await exitRun(5, "cost_budget_exhausted"); }
 			throw err;
 		}
 		console.log(`[orchestrate] Eval decision: ${evalResult.decision}`);
@@ -436,7 +464,7 @@ async function main() {
 			const csvPath = evalResult.csvPath || solverResult.csvPath;
 			if (noSubmit) {
 				console.log(`\n[orchestrate] DRY RUN (--no-submit) — eval approved ${csvPath}; skipping submission.`);
-				process.exit(0);
+				await exitRun(0, "dry_run_approved");
 			}
 			// Never spend a try on predictions identical to the last submission.
 			const csvHash = createHash("sha256").update(readFileSync(csvPath)).digest("hex");
@@ -448,20 +476,26 @@ async function main() {
 
 			if (attemptsThisRun >= maxAttemptsThisRun) {
 				console.log(`\n[orchestrate] DONE — attempt cap for this run reached (${attemptsThisRun}/${maxAttemptsThisRun}); eval approved ${csvPath} but not submitting.`);
-				process.exit(0);
+				await exitRun(0, "attempt_cap_reached");
 			}
 			console.log(`[orchestrate] Submitting: ${csvPath}`);
 
 			// Step 3: Submit (this consumes a try)
 			taskStatus({ phase: "submit" });
-			const submitResult = await runSubmitSession(taskId, csvPath);
+			const submitResult = await stage("submit", { iteration, input: { csv: csvPath } }, async (t) => {
+				const r = await runSubmitSession(taskId, csvPath);
+				t.output(r);
+				if (r.score !== null) t.score("platform_score", r.score);
+				return r;
+			});
+			if (submitResult.score !== null && (bestPlatformScore === null || submitResult.score > bestPlatformScore)) bestPlatformScore = submitResult.score;
 			taskStatus({ result: { platformScore: submitResult.score, triesLeft: submitResult.triesLeft, ok: submitResult.ok } });
 			taskEvent(`submitted: platform ${submitResult.score}, ${submitResult.triesLeft} attempt(s) left`);
 			console.log(`[orchestrate] Submission result: ok=${submitResult.ok}, score=${submitResult.score}, tries_left=${submitResult.triesLeft}`);
 
 			if (!submitResult.ok) {
 				console.error(`[orchestrate] Submission failed: ${submitResult.error ?? "unknown error"}. Check logs.`);
-				process.exit(3);
+				await exitRun(3, "submission_failed");
 			}
 			attemptsThisRun++;
 			lastSubmittedHash = csvHash;
@@ -470,13 +504,13 @@ async function main() {
 
 			if (score >= target) {
 				console.log(`\n[orchestrate] SUCCESS — platform score ${score} >= target ${target}, tries_left=${submitResult.triesLeft}`);
-				process.exit(0);
+				await exitRun(0, "target_reached");
 			}
 
 			const triesLeft = submitResult.triesLeft ?? (MAX_SUBMISSIONS - getTaskMemory(taskId).tries_used);
 			if (triesLeft <= 0) {
 				console.log(`\n[orchestrate] DONE — platform score ${score} < target ${target}, but no submissions left.`);
-				process.exit(0);
+				await exitRun(0, "below_target_no_attempts_left");
 			}
 
 			// Step 4: platform score below target — feed the real result back and re-solve.
@@ -493,7 +527,9 @@ async function main() {
 	}
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
 	console.error("[orchestrate] Fatal error:", err);
+	await scoreRun("outcome", "fatal", String(err).slice(0, 500));
+	await endRun();
 	process.exit(99);
 });

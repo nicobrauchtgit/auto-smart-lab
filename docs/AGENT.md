@@ -127,7 +127,16 @@ Quota per key: 30 requests/min, 200/hour, 1000/day, **3000/month** (exhausted on
 - **TLS.** The lab has a self-signed certificate; verification is off by default for lab
   connections (`--secure` / `LAB_INSECURE_TLS=0` to verify, `LAB_CA_BUNDLE` for the Python scripts).
 - **Secrets** live in the untracked `.env` (`LAB_USER`, `LAB_PASS`, `GWDG_API_KEY`, optional
-  `TAVILY_API_KEY`); see `.env.example`. Without direnv, load them with `set -a; source .env; set +a`.
+  `TAVILY_API_KEY`, optional `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY`/`LANGFUSE_BASE_URL` for
+  Langfuse tracing); see `.env.example`.
+- **Langfuse (optional, observability only).** `@langfuse/pi-observability-plugin` is loaded into
+  every pi session and traces turns, LLM calls and tool calls; without keys it does nothing.
+  `agent/run/langfuse.ts` makes one orchestrator run one Langfuse session (id
+  `<task>-<timestamp>-<rand>`): each stage (solver, eval, salvage, submit) is a trace tagged
+  `task:`, `model:`, `stage:`, and the plugin's turns nest under it as "Subagent Turn" spans (via
+  its `LANGFUSE_PI_PARENT_*` env hook). Scores: `local_val_score` (solver/salvage), `eval_decision`
+  (eval), `platform_score` (submit) on stage traces; `outcome`, `submissions` and best
+  `platform_score` on the session when the run ends. Nothing here reaches a model prompt. Without direnv, load them with `set -a; source .env; set +a`.
 - **Python.** Solvers may use any package in the Python runtime they run on. On the lab VM that is
   the student venv `~/env` (numpy, scipy, scikit-learn, pandas, torch, tensorflow; `pip install`
   allowed), which `remote.sh` activates. `runtime_env.ts` probes `python3` and the solver's first
