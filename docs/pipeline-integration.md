@@ -176,6 +176,19 @@ session is raised as an error.
 
 ## The solve stage
 
+The training ownership contract is defined in
+[Harness-owned training framework](harness-owned-training.md). The registered
+solve stage now uses the agent-driven harness path: the agent authors a pipeline
+and deliberately requests trials, while the harness owns fold materialization,
+fitting, predictions, measurements, process control, and promotion evidence.
+See the [integration plan](agent-driven-harness-integration.md) for its boundary
+and remaining milestones.
+
+The material below describes the retained pre-migration result format. It is
+historical compatibility documentation only: the registered solve stage no
+longer accepts agent-written `metrics.json` or prediction files as promotion
+evidence, and new work must not extend this legacy path.
+
 Solve inverts the balance the legacy solver had. That path prescribed the
 implementation -- a fixed `download`/`validate`/`solve` module, one holdout split
 -- and trusted a `SOLVER_DONE val_score=...` line scraped from model output.

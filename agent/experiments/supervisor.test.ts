@@ -145,6 +145,15 @@ describe("starting without blocking", () => {
 		const { supervisor, root } = harness();
 		expect(() => supervisor.start({ ...spec(root, "progress"), scope: "  " })).toThrow(/scope/);
 	}, 30_000);
+
+	test("a framework adapter can reserve the durable experiment id before spawn", async () => {
+		const { supervisor, root } = harness();
+		const view = supervisor.start(spec(root, "progress", ["1", "10"]), "toolu_02", "training-17");
+		expect(view.id).toBe("training-17");
+		expect(() => supervisor.start(spec(root, "progress"), undefined, "training-17")).toThrow(/already exists/);
+		expect(() => supervisor.start(spec(root, "progress"), undefined, "../escape")).toThrow(/experiment id/);
+		expect(await until(() => supervisor.status(view.id).status === "exited")).toBe(true);
+	}, 30_000);
 });
 
 describe("stopping the group", () => {

@@ -13,7 +13,7 @@ import {
 	createAgentSession,
 	SessionManager,
 } from "@earendil-works/pi-coding-agent";
-import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import type { AgentSessionEvent, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { initializeModel } from "../model_provider.js";
 import { observeAgentSession, type AgentObservation } from "../observability.js";
 import { loadPipelineConfig } from "../pipeline_config.js";
@@ -51,6 +51,10 @@ export interface RunSessionOptions {
 	model?: string;
 	/** Built-in tools exposed to the session. Omit for the normal solver/eval set. */
 	tools?: string[];
+	/** Scoped tools supplied by the caller, such as harness-owned experiment controls. */
+	customTools?: ToolDefinition[];
+	/** Bind session-scoped services after observation is attached and before the first prompt. */
+	onSessionReady?: (session: Awaited<ReturnType<typeof createAgentSession>>["session"]) => void | Promise<void>;
 	/** Whether project extensions should be loaded. Defaults to true. */
 	extensions?: boolean;
 	/** Optional extension allowlist. Defaults to the normal pipeline extensions. */
@@ -129,6 +133,7 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 			modelRuntime,
 			model,
 			...(options.tools ? { tools: options.tools } : {}),
+			...(options.customTools ? { customTools: options.customTools } : {}),
 			resourceLoader,
 			sessionManager: SessionManager.inMemory(sessionCwd),
 		});
@@ -144,6 +149,7 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 			: undefined;
 
 		try {
+			await options.onSessionReady?.(session);
 			observability?.record("prompt_snapshot", {
 				type: "prompt_snapshot",
 				prompts: [...options.promptReferences, python.prompt.reference],

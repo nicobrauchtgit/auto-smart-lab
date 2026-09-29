@@ -2,6 +2,13 @@
 
 Updated: 2026-09-10. Start here, then use [WIP.md](WIP.md) for the implementation roadmap and [telemetry.md](telemetry.md) for operational checks.
 
+> **Active training migration (2026-09-24):** the ownership statement and next
+> steps below predate the harness-owned training work. A new implementation
+> agent should start with the
+> [harness-owned training contract](harness-owned-training.md). This older
+> document remains useful for the surrounding pipeline, submission blockers,
+> and subagent history.
+
 ## Repository state
 
 Commit `f2eeb78` on the rewritten `solve-stage-hardening` history contains the experimentation plan, README, WIP notes, and optional subagent implementation. The checked-in [plan](autonomous-experimentation-plan.md) matches `/Users/I552342/Downloads/Auto-SmartLab-Autonomous-Experimentation-Plan.md`. Preserve it as the supplied design and historical review. The roadmap reconciles its findings with current code.

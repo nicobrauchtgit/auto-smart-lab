@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 
 import { solveStage } from "./solve.js";
-import { PROJECT_ROOT } from "../resolve_task.js";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const RESEARCH = join(PROJECT_ROOT, "runs", "spam1", "research", "research.md");
+const RESEARCH = join(mkdtempSync(join(tmpdir(), "solve-stage-research-")), "research.md");
+writeFileSync(RESEARCH, "# Research\n");
 
 describe("solve stage options", () => {
 	test("applies defaults", () => {

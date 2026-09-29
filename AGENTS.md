@@ -12,14 +12,20 @@ stages, and `agent/pipeline/registry.ts` lists the implemented ones. Research an
 solve are implemented; `evaluate` and `submit` are known names that configuration
 cannot enable until they are registered.
 
-The solve stage deliberately owns almost nothing about the model. The agent
+The solve stage is a training framework, not a prescribed model. The agent
 writes its own scikit-learn pipeline under `solutions/`, chooses its own
-features, estimator, and cross-validation scheme, and reuses code across tasks.
-The harness prepares inputs, reads a two-file results contract, and returns
-measured signals. When changing it, keep that line: add measurements, not
-constraints on the implementation. The exceptions are narrow and deliberate —
-the `solutions/tasks/<id>.py` entrypoint convention, which exists so the harness
-can re-run the agent's own pipeline, and the sealed confirmation split.
+features, estimator, hyperparameters, and cross-validation scheme, and reuses
+code across tasks. The harness owns the training processes, supplies seeds,
+materializes the agent's fold design, writes authoritative predictions and
+measurements, and controls observation, interruption, promotion, and final
+refitting. Follow [the harness-owned training contract](docs/harness-owned-training.md).
+Add primitives and measurements, not constraints on model design.
+
+The `solutions/tasks/<id>.py` entrypoint convention exists so the harness can
+execute the agent's pipeline. Agent-run fits may inform development, but only
+harness-run fits are promotion evidence. The sealed confirmation split stays
+unavailable to the agent and joins training only after the selected pipeline is
+frozen for terminal refitting.
 
 To add a stage, implement `StageDefinition` from `agent/pipeline/types.ts`,
 register it, and enable it in `pipeline.config.json`. Report every agent session

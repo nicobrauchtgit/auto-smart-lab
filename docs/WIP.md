@@ -127,7 +127,13 @@ Acceptance checks:
 
 ## Delivery plan
 
-Current priority: implement [observable trial fits and experiment control](experiment-supervision.md). The user selected deadline/convergence work, then clarified that shorter trials and intervention during fitting are essential. Build and test that control path before removing the existing limits.
+Current priority: implement the [harness-owned training framework](harness-owned-training.md).
+The agent retains control of pipelines, CV semantics, and experiment strategy;
+the harness owns seeds, materialized folds, all promotable fitting, observation,
+interruption, evidence, and terminal full-data refitting. Reuse the existing
+process supervisor as transport, but replace its arbitrary-command interface
+and the legacy agent-written OOF contract with typed training requests and a
+fixed worker. Build and test this path before removing existing limits.
 
 ### Phase 1: finish and evaluate subagent context partitioning
 

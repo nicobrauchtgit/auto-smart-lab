@@ -92,11 +92,13 @@ test("the solve opening carries the fit policy as its own identified template", 
 	// than prose inside the run-specific opening.
 	const policy = prepared.promptReferences.find(reference => reference.id === "solve.observable-fits");
 	assert.ok(policy);
-	assert.match(prepared.prompt, /Start with a pilot/);
-	assert.match(prepared.prompt, /partial_fit/);
-	assert.match(prepared.prompt, /AutoPropagatedCallback/);
-	// The caveats are the part that gets lost if the policy is ever summarised.
-	assert.match(prepared.prompt, /does not apply to `partial_fit`/);
-	assert.match(prepared.prompt, /validation_fraction/);
+	assert.match(prepared.prompt, /create it if it does not exist/);
+	assert.match(prepared.prompt, /Do not write out-of-fold predictions or reported metrics yourself/);
+	assert.match(prepared.prompt, /`experiment_start`/);
+	assert.match(prepared.prompt, /`experiment_status`/);
+	assert.match(prepared.prompt, /`experiment_output`/);
+	assert.match(prepared.prompt, /`experiment_stop`/);
+	assert.match(prepared.prompt, /The harness materializes your fold\s+design with harness-owned seeds/);
+	assert.match(prepared.prompt, /A pilot should deliberately reduce work/);
 	assert.equal(snapshot.render("solve.observable-fits", {}).reference.rendered_sha256, policy.rendered_sha256);
 });

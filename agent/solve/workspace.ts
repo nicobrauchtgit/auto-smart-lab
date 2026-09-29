@@ -9,7 +9,7 @@
 
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { basename, dirname, join, relative } from "node:path";
+import { basename, join, relative } from "node:path";
 
 import { parseTrainingLabels, TRAINING_LABEL_FILES } from "../research/startup_context.js";
 import { PROJECT_ROOT, resolveTask } from "../pipeline/resolve_task.js";
@@ -40,8 +40,6 @@ export interface SolveWorkspace {
 	researchDocumentSha256?: string;
 	/** Where a previous run's outputs were moved, when this run displaced any. */
 	archivedPrevious?: string;
-	/** True when this run created the entrypoint rather than finding the agent's. */
-	scaffolded: boolean;
 }
 
 /**
@@ -87,6 +85,19 @@ export interface PrepareOptions {
 	projectRoot?: string;
 }
 
+/** Reserve the shared location where the agent, and only the agent, authors pipelines. */
+export function prepareSolutionsWorkspace(
+	projectRoot: string,
+	taskId: string,
+): Pick<SolveWorkspace, "solutionsRoot" | "entrypointPath"> {
+	const solutionsRoot = join(projectRoot, "solutions");
+	mkdirSync(join(solutionsRoot, "tasks"), { recursive: true });
+	return {
+		solutionsRoot,
+		entrypointPath: join(solutionsRoot, "tasks", `${taskId}.py`),
+	};
+}
+
 export function resolveLabelsFile(taskId: string, dataDir: string): string {
 	const name = TRAINING_LABEL_FILES[taskId];
 	if (!name) throw new Error(`No training labels adapter for task "${taskId}"; add one to TRAINING_LABEL_FILES`);
@@ -114,10 +125,7 @@ export function prepareSolveWorkspace(taskId: string, options: PrepareOptions = 
 	for (const directory of [dataOut, researchDir, join(root, "iterations")]) {
 		mkdirSync(directory, { recursive: true });
 	}
-	const solutionsRoot = join(projectRoot, "solutions");
-	mkdirSync(join(solutionsRoot, "tasks"), { recursive: true });
-	const entrypointPath = join(solutionsRoot, "tasks", `${taskId}.py`);
-	const scaffolded = ensureEntrypointScaffold(entrypointPath, taskId);
+	const { solutionsRoot, entrypointPath } = prepareSolutionsWorkspace(projectRoot, taskId);
 
 	const taskPath = join(root, "task.md");
 	const prompt = readFileSync(join(task.taskDir, "prompt.md"), "utf8");
@@ -146,7 +154,6 @@ export function prepareSolveWorkspace(taskId: string, options: PrepareOptions = 
 		root,
 		solutionsRoot,
 		entrypointPath,
-		scaffolded,
 		taskPath,
 		researchDir,
 		devLabelsPath,
@@ -168,62 +175,6 @@ export function prepareSolveWorkspace(taskId: string, options: PrepareOptions = 
 		researchDocumentSha256: options.upstream?.find((artifact) => artifact.kind === "research_document")?.sha256,
 		...(archivedPrevious ? { archivedPrevious } : {}),
 	};
-}
-
-/**
- * Write the orchestration file the harness will load, if it is not there yet.
- *
- * The factory is the one convention the agent must honour, and it is now load
- * bearing in three places: the leakage canary, the held-out score, and the
- * paired champion comparison. Asking an agent to author that file from a written
- * spec makes the contract something to get wrong. Handing it a file that already
- * runs makes complying the default and departing the deliberate act.
- *
- * Only written when absent. `solutions/` persists across runs on purpose, so an
- * agent's own work is never overwritten by a later run's scaffold.
- */
-function ensureEntrypointScaffold(entrypointPath: string, taskId: string): boolean {
-	if (existsSync(entrypointPath)) return false;
-	mkdirSync(dirname(entrypointPath), { recursive: true });
-	writeFileSync(entrypointPath, `"""Orchestration entrypoint for task ${taskId}.
-
-This file is the contract between your work and the harness. Everything else
-under \`solutions/\` is yours to organise however you like; import it from here.
-
-\`build_pipeline()\` must return an **unfitted** estimator. The harness calls it
-and fits it itself, in three places:
-
-  - the leakage canary, twice on identical text with the ids swapped
-  - the held-out score, fitted on the development rows and predicting rows you
-    do not have
-  - the champion comparison, refitting an earlier snapshot against your latest
-
-So this function has to be your real approach, not a simplified stand-in for it.
-Anything you do outside it, a threshold tuned in a script or an ensemble built by
-hand, is invisible to every number you are shown.
-
-\`X\` is a pandas DataFrame with an \`id\` column and a \`text\` column. Use
-\`text\`. The id is present so the canary can prove you ignore it: a training
-file's extension is its label, and reading it scores near-perfectly in
-cross-validation and nothing at all on the test set.
-
-The baseline below runs and passes the canary. It is a starting point, not a
-suggestion. Replace it.
-"""
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.linear_model import LogisticRegression
-from sklearn.pipeline import FunctionTransformer, Pipeline
-
-
-def build_pipeline():
-    """Return an unfitted estimator over an id/text frame."""
-    return Pipeline([
-        ("text", FunctionTransformer(lambda frame: frame["text"], validate=False)),
-        ("tfidf", TfidfVectorizer()),
-        ("model", LogisticRegression(max_iter=1000, random_state=0)),
-    ])
-`);
-	return true;
 }
 
 /**

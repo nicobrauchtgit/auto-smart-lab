@@ -7,34 +7,22 @@
  * artifacts and a failed validation rather than throwing.
  */
 
-import { createHash } from "node:crypto";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-import { runSolveSession } from "../../run/solve_session.js";
+import { runHarnessSolveSession } from "../../run/harness_solve_session.js";
 import { resolveLabelsFile } from "../../solve/workspace.js";
-import { resolveTask } from "../resolve_task.js";
-import type { StageArtifact, StageDefinition } from "../types.js";
+import { PROJECT_ROOT, resolveTask } from "../resolve_task.js";
+import type { StageDefinition } from "../types.js";
 
 export interface SolveOptions {
-	/** Agent passes before the loop stops, whatever the evidence says. */
+	/** Maximum harness trials the agent may start; it may stop earlier. */
 	maxIterations: number;
 	/** Fraction of training rows sealed out of every fold for the whole run. */
 	sealedFraction: number;
-	/** Seed for the sealed draw. Fold seeds rotate per iteration from the run id. */
+	/** Root seed for the sealed draw and harness-owned training seed lineage. */
 	seed: number;
 	foldPolicy: "auto" | { folds: number; repeats: number };
-}
-
-function artifact(kind: string, path: string): StageArtifact | undefined {
-	if (!existsSync(path)) return undefined;
-	const content = readFileSync(path);
-	return {
-		kind,
-		path,
-		bytes: statSync(path).size,
-		sha256: createHash("sha256").update(content).digest("hex"),
-	};
 }
 
 function parseFoldPolicy(raw: unknown): SolveOptions["foldPolicy"] {
@@ -103,8 +91,8 @@ export const solveStage: StageDefinition<SolveOptions> = {
 	},
 
 	async run(context) {
-		const result = await runSolveSession(context.input.taskId, context.input.model, {
-			maxIterations: context.options.maxIterations,
+		const result = await runHarnessSolveSession(context.input.taskId, context.input.model, {
+			maxTrials: context.options.maxIterations,
 			sealedFraction: context.options.sealedFraction,
 			seed: context.options.seed,
 			foldPolicy: context.options.foldPolicy,
@@ -116,29 +104,26 @@ export const solveStage: StageDefinition<SolveOptions> = {
 			// task draw different partitions and a fixed split cannot be ground down.
 			runId: context.report.agentIdentity(1).stageInvocationId ?? undefined,
 		});
-		const artifacts = [
-			artifact("solve_metrics", join(result.workspace, "metrics.json")),
-			artifact("oof_predictions", join(result.workspace, "oof_predictions.csv")),
-			artifact("confirmation_predictions", join(result.workspace, "confirmation_predictions.csv")),
-			artifact("solve_notes", join(result.workspace, "notes.md")),
-			artifact("solve_iterations", join(result.workspace, "iterations.jsonl")),
-			...(result.champion ? [artifact("solve_entrypoint", join(result.champion.root, result.champion.module))] : []),
-		].filter((entry): entry is StageArtifact => entry !== undefined);
+		const artifacts = result.collection.artifacts.map(({ kind, path, bytes, sha256 }) => ({
+			kind, path, bytes, sha256,
+		}));
+		if (result.collection.selected?.request?.pipeline.module) {
+			const path = join(PROJECT_ROOT, result.collection.selected.request.pipeline.module);
+			if (existsSync(path)) artifacts.push({ kind: "solve_entrypoint", path });
+		}
 
 		return {
 			artifacts,
 			validation: { valid: result.valid, errors: result.errors },
-			attempts: result.iterations,
+			attempts: result.attempts,
 			summary: {
-				iterations: result.iterations,
+				trials: result.collection.trials.length,
+				eligible_trials: result.collection.trials.filter((trial) => trial.eligible).length,
 				stop_reason: result.stopReason,
-				champion_iteration: result.champion?.iteration,
-				champion_mean_bacc: result.champion?.meanBacc,
-				champion_approach: result.champion?.approach,
-				sealed_bacc: result.sealedBacc,
-				sealed_gap: result.sealedGap,
-				// A widening gap across iterations is the loop overfitting its folds.
-				sealed_gap_trend: result.sealedGapTrend,
+				selected_experiment_id: result.collection.selected?.experimentId,
+				selected_balanced_accuracy: result.collection.selected?.result?.metrics?.balancedAccuracy,
+				session_error: result.sessionError,
+				trial_validation_errors: result.collection.errors,
 			},
 		};
 	},

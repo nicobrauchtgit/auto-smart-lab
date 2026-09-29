@@ -86,7 +86,7 @@ export class ExperimentSupervisor {
 	 * spawn, because a process that outlives its supervisor is exactly the case
 	 * where the record cannot be written afterwards.
 	 */
-	start(spec: ExperimentSpec, requestedByToolCallId?: string): ExperimentView {
+	start(spec: ExperimentSpec, requestedByToolCallId?: string, requestedId?: string): ExperimentView {
 		const running = [...this.live.values()].filter((entry) => entry.status === "running").length;
 		if (running >= this.limits.maxConcurrent) {
 			throw new Error(`${running} experiment(s) already running; stop one before starting another`);
@@ -95,7 +95,11 @@ export class ExperimentSupervisor {
 		if (!existsSync(spec.cwd)) throw new Error(`working directory does not exist: ${spec.cwd}`);
 		if (!spec.scope.trim()) throw new Error("scope must say what work this trial actually does");
 
-		const id = randomUUID().slice(0, 8);
+		const id = requestedId ?? randomUUID().slice(0, 8);
+		if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(id)) {
+			throw new Error("experiment id must contain 1..64 letters, digits, underscores, or hyphens");
+		}
+		if (this.live.has(id)) throw new Error(`experiment ${id} already exists`);
 		const directory = join(this.options.root, id);
 		mkdirSync(directory, { recursive: true });
 		const logPath = join(directory, "output.log");
