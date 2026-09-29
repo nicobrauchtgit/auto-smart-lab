@@ -47,6 +47,9 @@ search, cloud, or unrelated credentials.
 3. Tell the agent to create its pipeline and use the training tools. The agent
    may run several pilots and promotion trials during the same session; tool
    calls return IDs immediately so it can observe or stop owned processes.
+   `solve.experimentUpdateIntervalSeconds` in `pipeline.config.json` sets the
+   minimum gap between routine progress messages. The configured value is 30
+   seconds. Exit, warning, memory, and stall updates can arrive sooner.
 4. Pass each accepted request through `TrainingService`. The service supplies
    the executable, cwd, inputs, output directory, and seed lineage and starts
    only the fixed worker.

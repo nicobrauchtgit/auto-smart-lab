@@ -37,6 +37,8 @@ export interface RunHarnessSolveOptions {
 	sealedFraction?: number;
 	seed?: number;
 	foldPolicy?: "auto" | { folds: number; repeats: number };
+	/** Minimum seconds between routine experiment updates. */
+	experimentUpdateIntervalSeconds?: number;
 	upstream?: StageArtifact[];
 	prompts?: PromptSnapshot;
 	report?: StageReporter;
@@ -184,6 +186,7 @@ export async function runHarnessSolveSession(
 		zipPath: workspace.devZip,
 		labelsPath: workspace.devLabelsPath,
 		maxExperiments: options.maxTrials ?? 6,
+		limits: { updateIntervalMs: (options.experimentUpdateIntervalSeconds ?? 30) * 1_000 },
 		prompts,
 		...(options.signal ? { signal: options.signal } : {}),
 	});

@@ -12,12 +12,17 @@ describe("solve stage options", () => {
 	test("applies defaults", () => {
 		expect(solveStage.parseOptions(undefined)).toEqual({
 			maxIterations: 6, sealedFraction: 0.1, seed: 13, foldPolicy: "auto",
+			experimentUpdateIntervalSeconds: 30,
 		});
 	});
 
 	test("accepts an explicit fold policy", () => {
 		expect(solveStage.parseOptions({ foldPolicy: { folds: 10, repeats: 3 } }).foldPolicy)
 			.toEqual({ folds: 10, repeats: 3 });
+	});
+
+	test("accepts a routine experiment update interval", () => {
+		expect(solveStage.parseOptions({ experimentUpdateIntervalSeconds: 45 }).experimentUpdateIntervalSeconds).toBe(45);
 	});
 
 	test("rejects unknown options rather than ignoring them", () => {
@@ -31,6 +36,8 @@ describe("solve stage options", () => {
 		expect(() => solveStage.parseOptions({ sealedFraction: 0 })).toThrow(/sealedFraction/);
 		expect(() => solveStage.parseOptions({ sealedFraction: 0.6 })).toThrow(/sealedFraction/);
 		expect(() => solveStage.parseOptions({ seed: 1.5 })).toThrow(/seed/);
+		expect(() => solveStage.parseOptions({ experimentUpdateIntervalSeconds: 0 })).toThrow(/experimentUpdateIntervalSeconds/);
+		expect(() => solveStage.parseOptions({ experimentUpdateIntervalSeconds: 1.5 })).toThrow(/experimentUpdateIntervalSeconds/);
 		expect(() => solveStage.parseOptions({ foldPolicy: { folds: 1, repeats: 1 } })).toThrow(/at least 2/);
 		expect(() => solveStage.parseOptions("auto")).toThrow(/must be an object/);
 	});

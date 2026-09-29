@@ -16,7 +16,8 @@
           "maxIterations": 6,
           "sealedFraction": 0.1,
           "seed": 13,
-          "foldPolicy": "auto"
+          "foldPolicy": "auto",
+          "experimentUpdateIntervalSeconds": 30
         }
       },
       "evaluate": {

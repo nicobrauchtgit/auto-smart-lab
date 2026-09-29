@@ -78,6 +78,15 @@ export interface RunSessionResult {
 	agentRunId?: string;
 }
 
+/** Pi's `tools` option allowlists custom definitions as well as built-ins. */
+export function sessionToolAllowlist(
+	tools: readonly string[] | undefined,
+	customTools: readonly Pick<ToolDefinition, "name">[] | undefined,
+): string[] | undefined {
+	if (tools === undefined) return undefined;
+	return [...new Set([...tools, ...(customTools ?? []).map((tool) => tool.name)])];
+}
+
 /**
  * Run a PI agent session, wait for it to settle, and return the collected output.
  */
@@ -132,7 +141,7 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 			agentDir,
 			modelRuntime,
 			model,
-			...(options.tools ? { tools: options.tools } : {}),
+			...(options.tools ? { tools: sessionToolAllowlist(options.tools, options.customTools) } : {}),
 			...(options.customTools ? { customTools: options.customTools } : {}),
 			resourceLoader,
 			sessionManager: SessionManager.inMemory(sessionCwd),

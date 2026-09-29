@@ -67,14 +67,18 @@ describe("agent-driven harness solve session", () => {
 		const observed = reporter();
 		let closed = false;
 		let bound = false;
+		let updateIntervalMs: number | undefined;
 		const toolNames = ["experiment_start", "experiment_status", "experiment_output", "experiment_stop"];
 		const dependencies: Partial<HarnessSolveDependencies> = {
 			prepareWorkspace: () => workspace,
 			readPython: python,
-			createTraining: (options) => ({
-				tools: toolNames.map((name) => ({ name })), toolPrompts: [], supervisor: {}, service: {},
-				bindSession: () => { bound = true; }, close: async () => { closed = true; },
-			} as never),
+			createTraining: (options) => {
+				updateIntervalMs = options.limits?.updateIntervalMs;
+				return {
+					tools: toolNames.map((name) => ({ name })), toolPrompts: [], supervisor: {}, service: {},
+					bindSession: () => { bound = true; }, close: async () => { closed = true; },
+				} as never;
+			},
 			runAgentSession: async (options) => {
 				expect(options.extensionPaths).toEqual([]);
 				expect(options.customTools?.map((tool) => tool.name)).toEqual(toolNames);
@@ -91,8 +95,10 @@ describe("agent-driven harness solve session", () => {
 
 		const result = await runHarnessSolveSession("task", undefined, {
 			runId: "stage-1", report: observed.report, dependencies,
+			experimentUpdateIntervalSeconds: 45,
 		});
 		expect(bound).toBe(true);
+		expect(updateIntervalMs).toBe(45_000);
 		expect(closed).toBe(true);
 		expect(result.valid).toBe(false);
 		expect(result.stopReason).toBe("no_promotion");

@@ -23,6 +23,8 @@ export interface SolveOptions {
 	/** Root seed for the sealed draw and harness-owned training seed lineage. */
 	seed: number;
 	foldPolicy: "auto" | { folds: number; repeats: number };
+	/** Minimum seconds between routine training updates sent to the agent. */
+	experimentUpdateIntervalSeconds: number;
 }
 
 function parseFoldPolicy(raw: unknown): SolveOptions["foldPolicy"] {
@@ -53,7 +55,7 @@ export const solveStage: StageDefinition<SolveOptions> = {
 			throw new Error("solve options must be an object");
 		}
 		const options = (raw ?? {}) as Record<string, unknown>;
-		const known = new Set(["maxIterations", "sealedFraction", "seed", "foldPolicy"]);
+		const known = new Set(["maxIterations", "sealedFraction", "seed", "foldPolicy", "experimentUpdateIntervalSeconds"]);
 		const unknown = Object.keys(options).filter((key) => !known.has(key));
 		if (unknown.length > 0) throw new Error(`unknown solve options: ${unknown.join(", ")}`);
 
@@ -67,12 +69,17 @@ export const solveStage: StageDefinition<SolveOptions> = {
 		}
 		const seed = options.seed ?? 13;
 		if (!Number.isInteger(seed)) throw new Error("solve.seed must be an integer");
+		const experimentUpdateIntervalSeconds = options.experimentUpdateIntervalSeconds ?? 30;
+		if (!Number.isInteger(experimentUpdateIntervalSeconds) || (experimentUpdateIntervalSeconds as number) < 1) {
+			throw new Error("solve.experimentUpdateIntervalSeconds must be a positive integer");
+		}
 
 		return {
 			maxIterations: maxIterations as number,
 			sealedFraction,
 			seed: seed as number,
 			foldPolicy: parseFoldPolicy(options.foldPolicy),
+			experimentUpdateIntervalSeconds: experimentUpdateIntervalSeconds as number,
 		};
 	},
 
@@ -96,6 +103,7 @@ export const solveStage: StageDefinition<SolveOptions> = {
 			sealedFraction: context.options.sealedFraction,
 			seed: context.options.seed,
 			foldPolicy: context.options.foldPolicy,
+			experimentUpdateIntervalSeconds: context.options.experimentUpdateIntervalSeconds,
 			upstream: context.input.upstream,
 			prompts: context.prompts,
 			report: context.report,
