@@ -196,7 +196,7 @@ pi supports these natively as provider `google-vertex`, e.g. `--model google-ver
 (built-in: Gemini 2.5 Flash/Pro, 3 Flash, 3.1 Pro/Flash Lite, 3.5/3.6/3.7 Flash). Put either
 `GOOGLE_CLOUD_API_KEY`, or `GOOGLE_CLOUD_PROJECT` + `GOOGLE_CLOUD_LOCATION` + credentials
 (`GOOGLE_APPLICATION_CREDENTIALS=<service-account.json>` or gcloud ADC) into `.env`; `remote.sh deploy`
-copies the credentials file to the VM. **This API is paid:** every run logs tokens and cost, `npm run
+copies a service-account file to the VM; your personal gcloud login is only copied with `deploy --with-gcloud-adc`. Current setup (2026-10-01): project `smartlab-agents` (number 752903476302), location `global`, auth via `gcloud auth application-default login` as the project member's Google account; verified tool calling on gemini-3.1-pro-preview, gemini-3.7-flash and gemini-2.5-flash. **This API is paid:** every run logs tokens and cost, `npm run
 status` shows the spend, and `--max-cost <usd>` (on `solve` and `solve-units`) is a hard budget that stops
 the task/batch cleanly (exit code 5) when reached.
 

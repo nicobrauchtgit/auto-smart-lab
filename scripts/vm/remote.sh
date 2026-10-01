@@ -2,7 +2,7 @@
 # Run and monitor the agent on the lab VM from your own machine. Needs the TU VPN.
 #
 #   scripts/vm/remote.sh check                 can we reach the VM?
-#   scripts/vm/remote.sh deploy                install/update everything on the VM, copy secrets
+#   scripts/vm/remote.sh deploy [--with-gcloud-adc]   install/update everything on the VM, copy secrets
 #   scripts/vm/remote.sh fetch <unit-slug>     fetch one unit's material + data on the VM (saves disk)
 #   scripts/vm/remote.sh start [solve-units args]   start a detached batch run (tmux session "agent")
 #   scripts/vm/remote.sh status [--watch]      live summary: batch table, phase, session, API quota
@@ -56,8 +56,15 @@ deploy)
 	scp -q "${SSH_OPTS[@]}" "$HOME/.pi/agent/models.json" "$VM_HOST:.pi/agent/models.json"
 	[[ -f "$HOME/.pi/agent/settings.json" ]] && scp -q "${SSH_OPTS[@]}" "$HOME/.pi/agent/settings.json" "$VM_HOST:.pi/agent/settings.json"
 	# Google credentials (optional): a service-account file named in .env, else local gcloud ADC.
+	# Personal gcloud ADC (a refresh token for your Google account, all cloud-platform scopes) is NOT
+	# copied unless you pass --with-gcloud-adc: the VM is a shared university machine. Prefer a
+	# service-account JSON named in .env (GOOGLE_APPLICATION_CREDENTIALS) or GOOGLE_CLOUD_API_KEY.
 	gac=$(set -a; . "$ROOT/.env"; echo "${GOOGLE_APPLICATION_CREDENTIALS:-}")
-	[[ -z "$gac" && -f "$HOME/.config/gcloud/application_default_credentials.json" ]] && gac="$HOME/.config/gcloud/application_default_credentials.json"
+	if [[ -z "$gac" && " $* " == *" --with-gcloud-adc "* && -f "$HOME/.config/gcloud/application_default_credentials.json" ]]; then
+		gac="$HOME/.config/gcloud/application_default_credentials.json"
+	elif [[ -z "$gac" && -f "$HOME/.config/gcloud/application_default_credentials.json" ]]; then
+		echo "note: not copying your personal gcloud credentials to the VM (pass --with-gcloud-adc to do it); google-vertex models will not work there"
+	fi
 	if [[ -n "$gac" && -f "$gac" ]]; then
 		rssh "mkdir -p ~/.config/gcloud && chmod 700 ~/.config/gcloud"
 		scp -q "${SSH_OPTS[@]}" "$gac" "$VM_HOST:.config/gcloud/application_default_credentials.json"

@@ -94,3 +94,11 @@ see AGENT.md §3.7. No measured run: monthly API quota still exhausted until 202
 states the detected Python runtime (on the VM: the lab's `~/env` venv with numpy, scipy,
 scikit-learn, pandas, torch, tensorflow; pip allowed). **Runs from here on are not directly
 comparable with the earlier stdlib-only runs**; tag entries with the condition.
+
+---
+
+## 2026-10-01 — Google models connected
+
+gcloud CLI installed, signed in, ADC created. Probe sessions (one bash tool call each) through
+`session_runner` succeeded on `google-vertex/gemini-3.1-pro-preview` (7 s, $0.008),
+`gemini-3.7-flash` (3 s, $0.002) and `gemini-2.5-flash` (1 s, $0.001). No task run yet.

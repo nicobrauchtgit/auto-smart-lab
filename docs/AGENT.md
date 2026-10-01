@@ -116,7 +116,15 @@ configured in `~/.pi/agent/models.json`). Only some support tool calling, which 
 |---|---|
 | `qwen3-coder-next` (used for all 2026-09-10 runs), `openai-gpt-oss-120b`, `devstral-2-123b-instruct-2512` | `qwen3.5-397b-a17b` (the old default), `mistral-medium-3.5-128b`, `glm-4.7`, `qwen3.6-35b-a3b`; some listed IDs 404 |
 
-Probe a model by POSTing a completion with a `tools` array and checking for 200. Even working
+Probe a model by POSTing a completion with a `tools` array and checking for 200.
+
+**Google models (since 2026-10-01).** Gemini via Gemini Enterprise Agent Platform (Vertex AI), pi
+provider `google-vertex`, project `smartlab-agents` (752903476302), location `global`, ADC auth from
+`gcloud auth application-default login`. Verified with a tool-calling probe: gemini-3.1-pro-preview,
+gemini-3.7-flash, gemini-2.5-flash. Paid per token: pi reports cost per call, the harness sums it,
+`--max-cost` caps it. Raw REST calls to Gemini 3.x need the `v1beta1` path (`v1` returns 404); pi's
+client already does this. The account lacks `serviceusage.services.use`, so the project cannot be
+set as ADC quota project and model listing is denied; generation works regardless. Even working
 models intermittently return 500 or time out; the session runner treats those as transient.
 Quota per key: 30 requests/min, 200/hour, 1000/day, **3000/month** (exhausted on 2026-09-27; resets on the 1st, 00:00 UTC). The orchestrator's model pre-check now detects an exhausted daily/monthly quota and exits with code 4, and `solve-units` then stops the batch. One from-scratch solver run costs roughly
 40–100 requests, so **two to three runs per hour** is the practical ceiling.

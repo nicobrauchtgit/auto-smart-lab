@@ -22,5 +22,6 @@ Long and malware runs go to the lab VM via `scripts/vm/remote.sh` (VPN needed); 
 Practicalities: load secrets with `set -a; source .env; set +a`; the lab needs the TU VPN; lab
 TLS verification is off by default (self-signed); GWDG quota is 30/min, 200/hour, 1000/day, 3000/month, so at most two
 to three solver runs per hour; only `qwen3-coder-next`, `openai-gpt-oss-120b` and
-`devstral-2-123b-instruct-2512` support tool calling. Append every run to `docs/EXPERIMENT_LOG.md`
+`devstral-2-123b-instruct-2512` support tool calling on GWDG; Gemini models run via `--model google-vertex/<id>`
+(paid, use `--max-cost`; gcloud is in /opt/homebrew/share/google-cloud-sdk/bin). Append every run to `docs/EXPERIMENT_LOG.md`
 and update `docs/AGENT.md` when behaviour or rules change.
