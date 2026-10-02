@@ -79,12 +79,7 @@ req = urllib.request.Request(\"https://chat-ai.academiccloud.de/v1/chat/completi
 try: r = urllib.request.urlopen(req, timeout=20); code, h = r.status, r.headers
 except urllib.error.HTTPError as e: code, h = e.code, e.headers
 print(f\"GWDG completion with key: HTTP {code}, remaining month={h.get(\"x-ratelimit-remaining-month\")} day={h.get(\"x-ratelimit-remaining-day\")}\")
-"; python3 agent/setup/fetch_lab.py login >/dev/null 2>&1 && echo "lab login: ok" || echo "lab login: FAILED"
-		if [ -f ~/.config/gcloud/application_default_credentials.json ] || [ -n "${GOOGLE_CLOUD_API_KEY:-}" ]; then
-			npm run -s probe-model -- google-vertex/gemini-3.7-flash 2>&1 | grep "^PROBE"
-		else
-			echo "google-vertex: no credentials on the VM (deploy --with-gcloud-adc, or a service account in .env)"
-		fi'
+"; python3 agent/setup/fetch_lab.py login >/dev/null 2>&1 && echo "lab login: ok" || echo "lab login: FAILED"'
 	;;
 
 fetch)
@@ -96,14 +91,25 @@ start)
 	check
 	args=$(printf ' %q' "$@")
 	stamp=$(date +%Y%m%d-%H%M%S)
-	rssh "$PRE"' mkdir -p logs
+	# Write the run as a script file on the VM and execute that, instead of nesting the environment
+	# setup through ssh -> tmux -> bash -lc quoting (that lost PATH and the ~/env venv on 2026-10-02).
+	runner="logs/run-$stamp.sh"
+	rssh "mkdir -p ~/$VM_REPO/logs && cat > ~/$VM_REPO/$runner" <<RUNNER
+#!/usr/bin/env bash
+$PRE
+echo "[run] host=\$(hostname) python=\$(command -v python3) node=\$(command -v node) venv=\${VIRTUAL_ENV:-none}"
+npm run solve-units --$args 2>&1 | tee -a logs/vm-run-$stamp.log
+code=\${PIPESTATUS[0]}
+echo; echo "run finished, exit \$code"
+RUNNER
+	rssh "cd ~/$VM_REPO && chmod +x $runner"'
 		if command -v tmux >/dev/null; then
 			tmux has-session -t '"$SESSION"' 2>/dev/null && { echo "a run is already active (tmux session '"$SESSION"'). Use: remote.sh stop"; exit 1; }
-			tmux new-session -d -s '"$SESSION"' -x 200 -y 50 "bash -lc '\''$(printf %q "$PRE") npm run solve-units --'"$args"' 2>&1 | tee -a logs/vm-run-'"$stamp"'.log; echo; echo run finished, exit \$?; sleep 86400'\''"
+			tmux new-session -d -s '"$SESSION"' -x 200 -y 50 "bash ~/'"$VM_REPO/$runner"'; exec sleep 86400"
 			echo "started in tmux session '"$SESSION"' on $(hostname)"
 		else
 			pgrep -f "solve_units.ts" >/dev/null && { echo "a run is already active"; exit 1; }
-			nohup setsid bash -c "npm run solve-units --'"$args"'" > logs/vm-run-'"$stamp"'.log 2>&1 < /dev/null &
+			nohup setsid bash ~/'"$VM_REPO/$runner"' > /dev/null 2>&1 < /dev/null &
 			echo "started with nohup (pid $!) on $(hostname); no tmux, so use status/logs instead of attach"
 		fi
 		echo "console log: logs/vm-run-'"$stamp"'.log"'
