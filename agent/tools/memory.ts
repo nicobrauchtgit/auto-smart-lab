@@ -3,7 +3,7 @@
  *
  * Exposes three pi tools:
  *   memory_read            – read the full memory store
- *   memory_write           – deep-merge a patch into the store (atomic write)
+ *   memory_write           – set typed fields of one task (or global_notes) (atomic write)
  *   memory_append_session  – append a session log entry
  *
  * State file: <project-root>/agent/memory/memory.json
@@ -36,7 +36,7 @@ interface TaskMemory {
 	failed_approaches: string[];
 	eval_decision: string | null;
 	eval_notes: string;
-	checkpoint?: Record<string, unknown>;
+	checkpoint?: string | Record<string, unknown>;
 }
 
 interface SessionEntry {
@@ -135,7 +135,7 @@ function validatePatch(patch: Record<string, unknown>): string[] {
 				else if (NUMBER_OR_NULL.has(field) && v !== null && typeof v !== "number") errors.push(`"${f}" must be a number or null, got ${kind(v)}.`);
 				else if (STRING_FIELDS.has(field) && v !== null && typeof v !== "string") errors.push(`"${f}" must be a string, got ${kind(v)}.`);
 				else if (STRING_ARRAY_FIELDS.has(field) && !(Array.isArray(v) && v.every((x) => typeof x === "string"))) errors.push(`"${f}" must be an array of strings, got ${kind(v)}.`);
-				else if (field === "checkpoint" && v !== null && !isPlainObject(v)) errors.push(`"${f}" must be an object, got ${kind(v)}.`);
+				else if (field === "checkpoint" && v !== null && typeof v !== "string" && !isPlainObject(v)) errors.push(`"${f}" must be text, got ${kind(v)}.`);
 			}
 		}
 	}
@@ -181,24 +181,35 @@ export default function memoryExtension(pi: ExtensionAPI) {
 			name: "memory_write",
 			label: "Memory: write",
 			description:
-				"Deep-merge a patch object into the persistent memory store. Use this to record scores, approaches, failed strategies, and submission results.",
+				"Record results for one task in the persistent memory store (tasks.<task_id>.<field>). Only the fields you pass are changed. Set global_notes to replace the store-wide notes.",
 			promptSnippet: "Write to the agent memory store",
 			promptGuidelines: [
-				"After completing validation or solving, call memory_write to record last_val_score, last_submission_csv, approach used, and any failed_approaches.",
-				"To update a nested key such as tasks.spam1.last_val_score, pass { tasks: { spam1: { last_val_score: 0.99 } } } (an object, not JSON text).",
+				"memory_write takes flat fields for one task, e.g. { task_id: \"spam1\", last_val_score: 0.99, best_approach: \"...\" }.",
 				"tries_used, tries_left and best_score are maintained by the orchestrator; session entries go through memory_append_session.",
 			],
+			// Flat, fully typed parameters on purpose: providers with constrained tool calling (Gemini)
+			// cannot emit nested objects for untyped values and fall back to JSON text (2026-10-02).
 			parameters: Type.Object({
-				patch: Type.Record(
-					Type.String(),
-					Type.Unknown(),
-					{ description: "Partial memory object to deep-merge into the store" },
-				),
+				task_id: Type.Optional(Type.String({ description: "Task the fields belong to, e.g. spam1. Required unless only global_notes is written." })),
+				last_val_score: Type.Optional(Type.Number({ description: "Latest local validation score (the task's metric)" })),
+				last_submission_csv: Type.Optional(Type.String({ description: "Path of the prediction CSV" })),
+				best_approach: Type.Optional(Type.String({ description: "One-line description of the best approach so far" })),
+				failed_approaches: Type.Optional(Type.Array(Type.String(), { description: "Approaches that did not work, one line each (replaces the stored list)" })),
+				checkpoint: Type.Optional(Type.String({ description: "Free-text state for resuming after a restart or context compaction" })),
+				eval_decision: Type.Optional(Type.String({ description: "APPROVE or REJECT (eval agent)" })),
+				eval_notes: Type.Optional(Type.String({ description: "One-sentence rationale (eval agent)" })),
+				global_notes: Type.Optional(Type.String({ description: "Store-wide notes (replaces the stored text)" })),
 			}),
 			async execute(_toolCallId, params, _signal) {
-				const patch = params.patch as Record<string, unknown>;
-				const errors = validatePatch(patch);
+				const { task_id, global_notes, ...fields } = params as Record<string, unknown> & { task_id?: string; global_notes?: string };
+				const taskFields = Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined));
+				if (Object.keys(taskFields).length && !task_id) throw new Error("memory not changed:\n- task_id is required when writing task fields.");
+				if (!Object.keys(taskFields).length && global_notes === undefined) throw new Error("memory not changed:\n- nothing to write: pass task_id with at least one field, or global_notes.");
+				const patch: Record<string, unknown> = {};
+				if (Object.keys(taskFields).length) patch.tasks = { [task_id as string]: taskFields };
+				if (global_notes !== undefined) patch.global_notes = global_notes;
 				// Thrown errors become failed tool calls in pi, so the model sees the call did not succeed.
+				const errors = validatePatch(patch);
 				if (errors.length) throw new Error(`memory not changed:\n- ${errors.join("\n- ")}`);
 				const store = readStore();
 				const merged = deepMerge(store as unknown as Record<string, unknown>, patch);

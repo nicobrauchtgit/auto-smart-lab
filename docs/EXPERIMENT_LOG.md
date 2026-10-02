@@ -126,4 +126,11 @@ documents2, session 1: Gemini reached 0.978 local, wrote the CSV, then wrote its
 then missed the CSV (harness bug: path resolved against the repo root instead of `agent/`; fixed in 0f9cca8),
 so a second session re-ran solve; it started writing `tasks.documents2 = null` repeatedly. Fix (tool
 correctness, applies to sessions started after the VM pull): `memory_write` now rejects such patches with
-an explicit error. Results: _pending_.
+an explicit error. That did not stop the loop: Gemini kept sending the same JSON text, because the
+tool's untyped nested `patch` parameter cannot be filled with an object under Gemini's constrained tool
+calling (harness issue, not model behaviour). documents2 then crashed when its *eval* session hit the same
+loop (unhandled; harness bug) after attempt 1 scored **0.6583** on the platform (local 0.978; training
+data 2016-07/2017-01, test 2017-09: temporal shift, 66% vs 17% predicted malicious); its second
+candidate (local 0.976) was never evaluated. Fixes in the commit after 51f080e: typed flat
+`memory_write` parameters (verified with gemini-3.7-flash and 3×gemini-3.1-pro-preview), eval retry.
+documents3: attempt 1 platform **0.9382** (local 0.983), re-solving. Results: _pending_.

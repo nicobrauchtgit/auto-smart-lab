@@ -205,7 +205,7 @@ function salvageSolver(taskId: string): SolverResult | null {
 
 function usage(): never {
 	console.error("Usage: npx tsx agent/run/orchestrate.ts <task_id|list> [--model <id>] [--task-url <url>] [--secure] [--no-submit] [--target <score>] [--solver-timeout <minutes>] [--max-attempts <n>] [--max-cost <usd>]");
-	console.error("Exit codes: 0 done (target reached, no attempts left, dry run or attempt cap), 1 no attempts before start, 2 solver failed, 3 submission failed, 4 model API daily/monthly quota exhausted, 5 cost budget (--max-cost USD) exhausted, 99 fatal");
+	console.error("Exit codes: 0 done (target reached, no attempts left, dry run or attempt cap), 1 no attempts before start, 2 solver failed, 3 submission failed, 4 model API daily/monthly quota exhausted, 5 cost budget (--max-cost USD) exhausted, 6 eval session failed twice, 99 fatal");
 	console.error("Required env: LAB_USER, LAB_PASS");
 	console.error("Examples:");
 	console.error("  npm run solve list                    # show all available task IDs");
@@ -445,19 +445,30 @@ async function main() {
 		// Step 2: Eval
 		taskStatus({ phase: "eval", localScore: solverResult.valScore });
 		taskEvent(`solver done: local ${solverResult.valScore}`);
-		let evalResult: Awaited<ReturnType<typeof runEvalSession>>;
-		try {
-			evalResult = await stage("eval", { iteration, input: { task: taskId, local_val_score: solverResult.valScore } }, async (t) => {
-				const r = await runEvalSession(taskId);
-				t.output(r);
-				t.score("eval_decision", r.decision, r.feedback || undefined);
-				return r;
-			});
-		} catch (err) {
-			const msg = err instanceof Error ? err.message : String(err);
-			if (/cost budget exhausted/i.test(msg)) { console.error(`[orchestrate] ${msg}. Stopping this task.`); await exitRun(5, "cost_budget_exhausted"); }
-			throw err;
+		let evalResult: Awaited<ReturnType<typeof runEvalSession>> | undefined;
+		// An eval session that loops or times out must not crash the task: retry it once, then stop
+		// the task without submitting (never submit without an approval).
+		for (let evalTry = 1; evalTry <= 2 && !evalResult; evalTry++) {
+			try {
+				evalResult = await stage("eval", { iteration, input: { task: taskId, local_val_score: solverResult.valScore, attempt: evalTry } }, async (t) => {
+					const r = await runEvalSession(taskId);
+					t.output(r);
+					t.score("eval_decision", r.decision, r.feedback || undefined);
+					return r;
+				});
+			} catch (err) {
+				const msg = err instanceof Error ? err.message : String(err);
+				if (/cost budget exhausted/i.test(msg)) { console.error(`[orchestrate] ${msg}. Stopping this task.`); await exitRun(5, "cost_budget_exhausted"); }
+				if (!/timed out|degenerate tool loop/i.test(msg)) throw err;
+				taskEvent(`eval ended early (${/timed out/i.test(msg) ? "timeout" : "tool loop"}), try ${evalTry}/2`);
+				if (evalTry === 2) {
+					console.error(`[orchestrate] Eval session ended early twice (${msg}). Stopping this task without submitting.`);
+					await exitRun(6, "eval_failed");
+				}
+				console.warn(`[orchestrate] Eval session ended early: ${msg}. Retrying the eval once.`);
+			}
 		}
+		if (!evalResult) throw new Error("unreachable: eval produced no result");
 		console.log(`[orchestrate] Eval decision: ${evalResult.decision}`);
 		taskEvent(`eval: ${evalResult.decision}${evalResult.feedback ? ` — ${evalResult.feedback.slice(0, 120)}` : ""}`);
 

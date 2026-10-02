@@ -57,17 +57,8 @@ machine-learning advice.
 
 ### 4. Write your decision to memory
 
-Call `memory_write`:
-```json
-{
-  "tasks": {
-    "<task_id>": {
-      "eval_decision": "APPROVE",
-      "eval_notes": "<one sentence rationale>"
-    }
-  }
-}
-```
+Call `memory_write` with `task_id`, `eval_decision` (`APPROVE` or `REJECT`) and `eval_notes`
+(one-sentence rationale).
 
 Then call `memory_append_session` with task_id, phase `"eval"`, and notes summarizing the decision.
 

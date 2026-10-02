@@ -58,18 +58,12 @@ The orchestrator depends on the following. Everything else is your call.
    def validate(validation_fraction: float, seed: int) -> float: ...  # the task's metric on a holdout split
    def solve(output_path: Path) -> Path: ...                  # writes the prediction CSV, returns its path
    ```
-2. **Memory.** Before finishing, `memory_write`:
-   ```json
-   {"tasks": {"<task_id>": {
-     "last_val_score": <score>,
-     "last_submission_csv": "submissions/<task_id>_predictions.csv",
-     "best_approach": "<one line>",
-     "failed_approaches": ["<one line each>"]
-   }}}
-   ```
+2. **Memory.** Before finishing, call `memory_write` with
+   `task_id`, `last_val_score`, `last_submission_csv` (e.g. `submissions/<task_id>_predictions.csv`),
+   `best_approach` (one line) and `failed_approaches` (list of one-liners),
    then `memory_append_session` with the task id, phase `"solve"`, approach and val_score.
    If a previous session exists, `memory_read` shows its results and any `checkpoint` it left; you may
-   write a `checkpoint` object under the task at any time to survive context compaction or a restart.
+   write a `checkpoint` (free text) for the task at any time to survive context compaction or a restart.
 3. **Completion sentinel.** The absolute last thing you output, as plain text after all tool calls:
    ```
    SOLVER_DONE val_score=<X> csv=<path> approach=<one line>

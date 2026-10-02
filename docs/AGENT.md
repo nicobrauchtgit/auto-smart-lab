@@ -102,11 +102,17 @@ table and `logs/solve-units/<stamp>/summary.json` are written.
   session spent all three spam2 attempts by calling it directly; that is why.
 - **Attempt budget** is read from the task page ("N of 3 attempts used") before and after every
   submission.
-- **Memory writes are validated.** `memory_write` rejects malformed patches with a failed tool call
+- **`memory_write` has flat, typed parameters** (`task_id`, `last_val_score`, `last_submission_csv`,
+  `best_approach`, `failed_approaches`, `checkpoint`, `eval_decision`, `eval_notes`, `global_notes`).
+  It used to take a free-form nested `patch`; Gemini's constrained tool calling cannot emit nested objects
+  for untyped values and sent JSON text instead, looping on it (2026-10-02). Writes are also validated:
+  it rejects malformed patches with a failed tool call
   naming the problem (task entry not an object, e.g. JSON text or null; wrong field types; unknown
   top-level keys; `sessions`, which go through `memory_append_session`). `tries_used`, `tries_left` and
   `best_score` are orchestrator-owned and cannot be written by agents. Successful writes report the
   changed fields, and a write that changes nothing says so.
+- **An eval session that loops or times out is retried once**; a second failure stops the task with
+  exit code 6 (`eval-failed`) and nothing is submitted. Before 2026-10-02 it crashed the task.
 - **Degenerate tool loops** (same tool, same arguments, 6× in a row) abort the session and take the
   salvage path. `memory_append_session` ignores duplicate consecutive entries.
 - **Rate limits** (HTTP 429) are handled by sleeping until the window resets; the wait is not

@@ -36,7 +36,7 @@ const ORCHESTRATE = join(HERE, "orchestrate.ts");
 const TSX = join(PROJECT_ROOT, "node_modules", ".bin", "tsx");
 const DEFAULT_TARGET = 0.97;
 
-type Outcome = "budget-exhausted" | "quota-exhausted" | "solved" | "attempts-exhausted" | "attempt-cap" | "below-target" | "dry-run" | "solver-failed" | "submit-failed" | "fatal" | "skipped";
+type Outcome = "eval-failed" | "budget-exhausted" | "quota-exhausted" | "solved" | "attempts-exhausted" | "attempt-cap" | "below-target" | "dry-run" | "solver-failed" | "submit-failed" | "fatal" | "skipped";
 
 interface TaskResult {
 	id: string;
@@ -93,6 +93,7 @@ function runOrchestrator(taskId: string, args: string[], logPath: string): Promi
 }
 
 function classify(before: TaskStatus | null, after: TaskStatus | null, exitCode: number | null, target: number, noSubmit: boolean, maxAttempts: number): [Outcome, string] {
+	if (exitCode === 6) return ["eval-failed", "eval session ended early twice; not submitted"];
 	if (exitCode === 5) return ["budget-exhausted", "--max-cost budget spent (see task log)"];
 	if (exitCode === 4) return ["quota-exhausted", "model API daily/monthly quota used up (see task log)"];
 	if (exitCode === 99 || exitCode === null) return ["fatal", "orchestrator crashed"];
