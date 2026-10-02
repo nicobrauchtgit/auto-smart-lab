@@ -79,7 +79,12 @@ req = urllib.request.Request(\"https://chat-ai.academiccloud.de/v1/chat/completi
 try: r = urllib.request.urlopen(req, timeout=20); code, h = r.status, r.headers
 except urllib.error.HTTPError as e: code, h = e.code, e.headers
 print(f\"GWDG completion with key: HTTP {code}, remaining month={h.get(\"x-ratelimit-remaining-month\")} day={h.get(\"x-ratelimit-remaining-day\")}\")
-"; python3 agent/setup/fetch_lab.py login >/dev/null 2>&1 && echo "lab login: ok" || echo "lab login: FAILED"'
+"; python3 agent/setup/fetch_lab.py login >/dev/null 2>&1 && echo "lab login: ok" || echo "lab login: FAILED"
+		if [ -f ~/.config/gcloud/application_default_credentials.json ] || [ -n "${GOOGLE_CLOUD_API_KEY:-}" ]; then
+			npm run -s probe-model -- google-vertex/gemini-3.7-flash 2>&1 | grep "^PROBE"
+		else
+			echo "google-vertex: no credentials on the VM (deploy --with-gcloud-adc, or a service account in .env)"
+		fi'
 	;;
 
 fetch)
