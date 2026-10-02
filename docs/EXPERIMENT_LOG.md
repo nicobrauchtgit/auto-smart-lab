@@ -112,3 +112,13 @@ both completed a tool call. GWDG monthly quota has reset (2779 left). VM disk: 8
 (expected at that cap), outcome `solver_failed`. Langfuse session `documents4-20261002T194015-148d9c`:
 4 stage traces, 44 generations with model `gemini-3.7-flash`, 44 tool calls, cost $0.230 (harness log:
 $0.229), scores `outcome=solver_failed`, `submissions=0`. Tracing works end to end on the VM.
+
+---
+
+## 2026-10-02 — Unit 2 on the VM with Gemini 3.1 Pro (runtime: lab venv, barebones prompt)
+
+`remote.sh start --only documents2,documents3,documents4 --model google-vertex/gemini-3.1-pro-preview --max-cost 20`,
+real submissions, documents1 skipped (already solved, 0.976). A first launch (19:55) ran with the system
+`/usr/bin/python3` instead of `~/env` because of a quoting bug in `remote.sh start`; it was stopped in the
+solver phase after $0.16, no submission, and relaunched at 19:59 after the fix (logs/solve-units/2026-10-02T19-59-01).
+Results: _pending_.
