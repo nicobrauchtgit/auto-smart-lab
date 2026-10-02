@@ -194,7 +194,8 @@ function salvageSolver(taskId: string): SolverResult | null {
 	const so = runCli("solve", taskId, 20 * 60 * 1000);
 	const sm = so?.match(/SOLVE_CSV=(\S+)/);
 	if (!sm) return null;
-	const csvPath = sm[1];
+	// The CLI ran with cwd=agent/; a module with a relative output path writes relative to that.
+	const csvPath = isAbsolute(sm[1]) ? sm[1] : resolve(AGENT_DIR, sm[1]);
 	if (!existsSync(csvPath)) { console.warn(`[salvage] solve reported ${csvPath} but it does not exist`); return null; }
 	const approach = "(salvaged: solver session ended early; predictions produced by running its module directly)";
 	updateTaskMemory(taskId, { last_val_score: valScore, last_submission_csv: csvPath, approach });

@@ -84,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
             task_module.download()
         output_path = args.out if args.out is not None else task_module.DEFAULT_SUBMISSION
         result_path = task_module.solve(output_path=output_path)
-        print(f"SOLVE_CSV={result_path if result_path is not None else output_path}")
+        print(f"SOLVE_CSV={Path(result_path if result_path is not None else output_path).resolve()}")
         return 0
 
     raise SystemExit(f"Unknown command: {args.command}")
