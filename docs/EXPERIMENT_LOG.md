@@ -102,3 +102,7 @@ comparable with the earlier stdlib-only runs**; tag entries with the condition.
 gcloud CLI installed, signed in, ADC created. Probe sessions (one bash tool call each) through
 `session_runner` succeeded on `google-vertex/gemini-3.1-pro-preview` (7 s, $0.008),
 `gemini-3.7-flash` (3 s, $0.002) and `gemini-2.5-flash` (1 s, $0.001). No task run yet.
+
+**2026-10-02:** VM deployed with the personal gcloud ADC (`deploy --with-gcloud-adc`, temporary until a
+project service account exists). Probe sessions on the VM: gemini-3.7-flash and gemini-3.1-pro-preview
+both completed a tool call. GWDG monthly quota has reset (2779 left). VM disk: 8 GB free.
