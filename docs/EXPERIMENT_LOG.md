@@ -106,3 +106,9 @@ gcloud CLI installed, signed in, ADC created. Probe sessions (one bash tool call
 **2026-10-02:** VM deployed with the personal gcloud ADC (`deploy --with-gcloud-adc`, temporary until a
 project service account exists). Probe sessions on the VM: gemini-3.7-flash and gemini-3.1-pro-preview
 both completed a tool call. GWDG monthly quota has reset (2779 left). VM disk: 8 GB free.
+
+**2026-10-02, Langfuse test (not a measured run):** documents4 on the VM, gemini-3.7-flash,
+`--no-submit --solver-timeout 5 --max-cost 1`. Both 5-min solver sessions timed out without a module
+(expected at that cap), outcome `solver_failed`. Langfuse session `documents4-20261002T194015-148d9c`:
+4 stage traces, 44 generations with model `gemini-3.7-flash`, 44 tool calls, cost $0.230 (harness log:
+$0.229), scores `outcome=solver_failed`, `submissions=0`. Tracing works end to end on the VM.

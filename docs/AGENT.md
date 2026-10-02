@@ -187,6 +187,18 @@ renders both and derives liveness from the PID and heartbeat age. Status writes 
 and can never fail a run. The colleague's branch has a PostgreSQL-backed trace dashboard; it was
 not adopted here because it needs a database on the VM.
 
+**Langfuse (verified 2026-10-02).** Keys in `.env` (project `auto-smart-lab` on cloud.langfuse.com, EU);
+`deploy` copies them to the VM. Each orchestrator run is one Langfuse *session* named
+`<task>-<timestamp>-<id>` (printed as `[langfuse] run …`), with one trace per stage (solver, salvage,
+eval, submit), the pi turns nested inside as generations and tool calls with token usage and cost, and
+scores `local_val_score`, `eval_decision`, `platform_score` per stage plus `outcome`, `submissions`,
+`platform_score` per session. Langfuse outages cannot break or hang a run (flush capped at 5 s).
+Reading back via API: this organisation (created after 2026-09-16) only has the new APIs —
+`GET /api/public/v2/observations?sessionId=…&fields=core,basic,model,usage` and
+`GET /api/public/v3/scores?sessionId=…`; the v1 `traces`/`sessions`/`scores` endpoints return 410.
+Traces contain task text, tool output (dataset snippets) and model reasoning, i.e. lab material goes to
+Langfuse Cloud.
+
 ## 4. Known model failure modes (observed, not fixed on purpose)
 
 These are *results* of the experiment, handled by infrastructure but deliberately not prevented by

@@ -52,7 +52,9 @@ function tail(path: string, n: number): string[] {
 
 function render(): string {
 	const run = readJson<Json>(RUN_STATUS);
-	const task = readJson<Json>(TASK_STATUS);
+	const rawTask = readJson<Json>(TASK_STATUS);
+	// Standalone sessions (probes) write session/usage fields without an orchestrator task: ignore those.
+	const task = rawTask && rawTask.task ? rawTask : null;
 	if (asJson) return JSON.stringify({ run, task, now: new Date().toISOString() }, null, 2);
 	const out: string[] = [];
 	const now = new Date().toISOString().replace("T", " ").slice(0, 19);
