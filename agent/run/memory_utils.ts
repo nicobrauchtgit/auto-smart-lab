@@ -42,7 +42,8 @@ export function readMemory(): MemoryStore {
 
 export function getTaskMemory(taskId: string): TaskMemory {
 	const store = readMemory();
-	const saved = store.tasks[taskId] ?? {};
+	const raw = store.tasks[taskId] as unknown;
+	const saved = (raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {}) as Partial<TaskMemory>;
 	return {
 		best_score: (saved as TaskMemory).best_score ?? null,
 		best_approach: (saved as TaskMemory).best_approach ?? "",

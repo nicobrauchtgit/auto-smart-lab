@@ -121,4 +121,9 @@ $0.229), scores `outcome=solver_failed`, `submissions=0`. Tracing works end to e
 real submissions, documents1 skipped (already solved, 0.976). A first launch (19:55) ran with the system
 `/usr/bin/python3` instead of `~/env` because of a quoting bug in `remote.sh start`; it was stopped in the
 solver phase after $0.16, no submission, and relaunched at 19:59 after the fix (logs/solve-units/2026-10-02T19-59-01).
-Results: _pending_.
+documents2, session 1: Gemini reached 0.978 local, wrote the CSV, then wrote its memory entry as a JSON
+*string* six times (each acknowledged "Memory updated.") until the loop guard aborted the session. Salvage
+then missed the CSV (harness bug: path resolved against the repo root instead of `agent/`; fixed in 0f9cca8),
+so a second session re-ran solve; it started writing `tasks.documents2 = null` repeatedly. Fix (tool
+correctness, applies to sessions started after the VM pull): `memory_write` now rejects such patches with
+an explicit error. Results: _pending_.

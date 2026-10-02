@@ -260,7 +260,8 @@ function updateMemory(taskId: string, triesUsed: number|null, score: number|null
 	let store: Record<string,unknown> = { tasks:{}, sessions:[], global_notes:"" };
 	try { if (existsSync(MEMORY_FILE)) store = JSON.parse(readFileSync(MEMORY_FILE,"utf8")); } catch {}
 	const tasks = (store.tasks ?? {}) as Record<string,Record<string,unknown>>;
-	const task = tasks[taskId] ?? {};
+	const raw = tasks[taskId];
+	const task: Record<string, unknown> = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
 	const MAX = 3;
 	const newTriesUsed = triesUsed ?? ((Number(task.tries_used??0))+1);
 	tasks[taskId] = { ...task, tries_used: newTriesUsed, tries_left: MAX-newTriesUsed, ...(score!==null&&(task.best_score===null||task.best_score===undefined||Number(task.best_score)<score)?{best_score:score}:{}) };

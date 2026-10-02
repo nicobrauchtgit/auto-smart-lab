@@ -98,6 +98,60 @@ function deepMerge(target: Record<string, unknown>, patch: Record<string, unknow
 }
 
 // --------------------------------------------------------------------------
+// Validation (tool correctness: reject malformed writes with a precise error instead of
+// silently storing them; seen 2026-10-02: a task entry written as a JSON *string*, then
+// as null, each acknowledged with "Memory updated." while the model kept retrying)
+// --------------------------------------------------------------------------
+
+/** Fields maintained by the orchestrator from the platform; agents must not overwrite them. */
+const ORCHESTRATOR_FIELDS = new Set(["tries_used", "tries_left", "best_score"]);
+const NUMBER_OR_NULL = new Set(["last_val_score"]);
+const STRING_FIELDS = new Set(["last_submission_csv", "best_approach", "approach", "eval_decision", "eval_notes"]);
+const STRING_ARRAY_FIELDS = new Set(["failed_approaches"]);
+const TOP_LEVEL = new Set(["tasks", "global_notes"]);
+
+const isPlainObject = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
+const kind = (v: unknown) => (v === null ? "null" : Array.isArray(v) ? "array" : typeof v);
+
+/** Return a list of problems with the patch; empty when it is acceptable. */
+function validatePatch(patch: Record<string, unknown>): string[] {
+	const errors: string[] = [];
+	for (const [key, value] of Object.entries(patch)) {
+		if (key === "sessions") { errors.push(`"sessions" cannot be written with memory_write; use memory_append_session.`); continue; }
+		if (!TOP_LEVEL.has(key)) { errors.push(`unknown top-level key "${key}" (allowed: tasks, global_notes).`); continue; }
+		if (key === "global_notes" && typeof value !== "string") errors.push(`"global_notes" must be a string, got ${kind(value)}.`);
+		if (key !== "tasks") continue;
+		if (!isPlainObject(value)) { errors.push(`"tasks" must be an object keyed by task id, got ${kind(value)}.`); continue; }
+		for (const [taskId, entry] of Object.entries(value)) {
+			const where = `tasks.${taskId}`;
+			if (!isPlainObject(entry)) {
+				const hint = typeof entry === "string" && entry.trim().startsWith("{") ? " (it looks like JSON text; pass the object itself, not a string)" : "";
+				errors.push(`"${where}" must be an object of fields, got ${kind(entry)}${hint}.`);
+				continue;
+			}
+			for (const [field, v] of Object.entries(entry)) {
+				const f = `${where}.${field}`;
+				if (ORCHESTRATOR_FIELDS.has(field)) errors.push(`"${f}" is maintained by the orchestrator and cannot be written.`);
+				else if (NUMBER_OR_NULL.has(field) && v !== null && typeof v !== "number") errors.push(`"${f}" must be a number or null, got ${kind(v)}.`);
+				else if (STRING_FIELDS.has(field) && v !== null && typeof v !== "string") errors.push(`"${f}" must be a string, got ${kind(v)}.`);
+				else if (STRING_ARRAY_FIELDS.has(field) && !(Array.isArray(v) && v.every((x) => typeof x === "string"))) errors.push(`"${f}" must be an array of strings, got ${kind(v)}.`);
+				else if (field === "checkpoint" && v !== null && !isPlainObject(v)) errors.push(`"${f}" must be an object, got ${kind(v)}.`);
+			}
+		}
+	}
+	return errors;
+}
+
+/** Dotted paths of leaf values that differ between two stores. */
+function changedPaths(before: unknown, after: unknown, prefix = ""): string[] {
+	if (isPlainObject(before) && isPlainObject(after)) {
+		const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+		return [...keys].flatMap((k) => changedPaths(before[k], after[k], prefix ? `${prefix}.${k}` : k));
+	}
+	return JSON.stringify(before) === JSON.stringify(after) ? [] : [prefix];
+}
+
+// --------------------------------------------------------------------------
 // Extension
 // --------------------------------------------------------------------------
 
@@ -131,7 +185,8 @@ export default function memoryExtension(pi: ExtensionAPI) {
 			promptSnippet: "Write to the agent memory store",
 			promptGuidelines: [
 				"After completing validation or solving, call memory_write to record last_val_score, last_submission_csv, approach used, and any failed_approaches.",
-				"To update a nested key such as tasks.spam1.last_val_score, pass { tasks: { spam1: { last_val_score: 0.99 } } }.",
+				"To update a nested key such as tasks.spam1.last_val_score, pass { tasks: { spam1: { last_val_score: 0.99 } } } (an object, not JSON text).",
+				"tries_used, tries_left and best_score are maintained by the orchestrator; session entries go through memory_append_session.",
 			],
 			parameters: Type.Object({
 				patch: Type.Record(
@@ -141,12 +196,20 @@ export default function memoryExtension(pi: ExtensionAPI) {
 				),
 			}),
 			async execute(_toolCallId, params, _signal) {
+				const patch = params.patch as Record<string, unknown>;
+				const errors = validatePatch(patch);
+				// Thrown errors become failed tool calls in pi, so the model sees the call did not succeed.
+				if (errors.length) throw new Error(`memory not changed:\n- ${errors.join("\n- ")}`);
 				const store = readStore();
-				const merged = deepMerge(store as unknown as Record<string, unknown>, params.patch as Record<string, unknown>);
+				const merged = deepMerge(store as unknown as Record<string, unknown>, patch);
+				const changed = changedPaths(store, merged);
+				if (!changed.length) {
+					return { content: [{ type: "text", text: "No change: memory already contains these values." }], details: {} };
+				}
 				writeStore(merged as unknown as MemoryStore);
 				return {
-					content: [{ type: "text", text: "Memory updated." }],
-					details: {},
+					content: [{ type: "text", text: `Memory updated: ${changed.join(", ")}.` }],
+					details: { changed },
 				};
 			},
 		}),
@@ -165,7 +228,7 @@ export default function memoryExtension(pi: ExtensionAPI) {
 				task_id: Type.String({ description: "Task identifier, e.g. spam1" }),
 				phase: Type.Union([Type.Literal("solve"), Type.Literal("eval")], { description: "Session phase" }),
 				approach: Type.Optional(Type.String({ description: "Brief description of the approach used" })),
-				val_score: Type.Optional(Type.Number({ description: "Local validation balanced accuracy" })),
+				val_score: Type.Optional(Type.Number({ description: "Local validation score (the task's metric)" })),
 				notes: Type.Optional(Type.String({ description: "Any additional notes or observations" })),
 			}),
 			async execute(_toolCallId, params, _signal) {

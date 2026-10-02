@@ -102,6 +102,11 @@ table and `logs/solve-units/<stamp>/summary.json` are written.
   session spent all three spam2 attempts by calling it directly; that is why.
 - **Attempt budget** is read from the task page ("N of 3 attempts used") before and after every
   submission.
+- **Memory writes are validated.** `memory_write` rejects malformed patches with a failed tool call
+  naming the problem (task entry not an object, e.g. JSON text or null; wrong field types; unknown
+  top-level keys; `sessions`, which go through `memory_append_session`). `tries_used`, `tries_left` and
+  `best_score` are orchestrator-owned and cannot be written by agents. Successful writes report the
+  changed fields, and a write that changes nothing says so.
 - **Degenerate tool loops** (same tool, same arguments, 6× in a row) abort the session and take the
   salvage path. `memory_append_session` ignores duplicate consecutive entries.
 - **Rate limits** (HTTP 429) are handled by sleeping until the window resets; the wait is not
