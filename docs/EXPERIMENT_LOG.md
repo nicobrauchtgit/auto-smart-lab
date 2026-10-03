@@ -133,4 +133,17 @@ loop (unhandled; harness bug) after attempt 1 scored **0.6583** on the platform 
 data 2016-07/2017-01, test 2017-09: temporal shift, 66% vs 17% predicted malicious); its second
 candidate (local 0.976) was never evaluated. Fixes in the commit after 51f080e: typed flat
 `memory_write` parameters (verified with gemini-3.7-flash and 3×gemini-3.1-pro-preview), eval retry.
-documents3: attempt 1 platform **0.9382** (local 0.983), re-solving. Results: _pending_.
+documents3: attempt 1 platform **0.9382** (local 0.983).
+
+**Restarted batch, 2026-10-02 22:40 → 2026-10-03 ~03:00, fixed code, cap $17, spent $8.96.** Final lab state:
+
+| Task | Platform scores (all attempts, both batches) | Best | Local scores | Notes |
+|---|---|---|---|---|
+| documents2 PDF | 0.6583, 0.6483, 0.6776 | 0.6776 | 0.973–0.978 | temporal shift (train 2016/early 2017, test late 2017) never addressed |
+| documents3 RTF | 0.9382, 0.9498, 0.9483 | 0.9498 | 0.979–0.987 | **12 consecutive re-solves produced byte-identical CSVs** (≈3 h): the identical-CSV guard makes re-solving free and unbounded |
+| documents4 Mixed | 0.8334, 0.783, 0.7952 | 0.8334 | 0.982–0.988 | session 3 hit the 30-min cap, salvage produced attempt 3 |
+
+No memory loops, eval crashes or harness crashes after the fixes. Every local score was ≥ 0.97 while every
+platform score was below it: the agent's random-split validation never predicted the platform result, and
+the eval agent (which only sees the local score) approved every candidate. Harness issue found: no cap on
+consecutive re-solves that reproduce the last submission.
