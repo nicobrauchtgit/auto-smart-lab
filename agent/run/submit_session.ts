@@ -22,6 +22,11 @@ export interface SubmitResult {
 	score: number | null;
 	triesLeft: number | null;
 	error?: string;
+	/**
+	 * The platform's grader refused the file (result row "FAILURE", e.g. "Error: 2990 superfluous IDs")
+	 * without counting an attempt. `error` holds the platform's message. Seen on attacks2, 2026-10-03.
+	 */
+	rejected?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -408,6 +413,13 @@ async function pollResult(client: SimpleClient, taskId: string, taskUrl: string,
 	console.log(`[submit] Result: score=${score}, tries_used=${triesUsed}, tries_left=${triesLeft}`);
 
 	updateMemory(taskId, triesUsed, score);
+	if (score === null && /failure/i.test(newAttempt.info)) {
+		const before_used = parseTriesUsed(before.attemptsUsed);
+		const counted = triesUsed === null || before_used === null || triesUsed > before_used;
+		const message = cleanHtml(newAttempt.comment) || "FAILURE (no message)";
+		console.log(`[submit] Platform rejected the upload${counted ? "" : " without counting an attempt"}: ${message}`);
+		return {ok:false, score:null, triesLeft, error:message, rejected: !counted};
+	}
 	return {ok: score!==null, score, triesLeft};
 }
 

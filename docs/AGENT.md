@@ -82,12 +82,16 @@ Remote execution (lab VM)          scripts/vm/remote.sh (Mac side), scripts/vm/b
    memory, and ends with the sentinel `SOLVER_DONE val_score=<x|none> csv=… approach=…` (or
    `token=…` for token tasks, below). **That line is the decision to submit.** `none` is allowed
    because some tasks have no training labels to validate against.
-3. **Output check** (`output_check.ts`, deterministic). A CSV must exist, be non-empty, consist of
-   `<id>;<integer label>` lines without duplicate ids and, when the task's data has a `*-test.zip`,
-   name exactly that archive's files (the archives' member paths are the ids the platform expects;
-   verified for spam, documents, clustering and adversarial-example detection). Network-intrusion
-   (pcap) gets the line checks only; a token must be one non-empty string. Output that fails is not
-   submitted; the defects go to the next solver session as facts. There is no LLM reviewer: the
+3. **Output check** (`output_check.ts`, deterministic). A CSV must exist, be non-empty and consist
+   of `<id>;<integer label>` lines without duplicate ids; a token must be one non-empty string.
+   Output that fails is not submitted; the defects go to the next solver session as facts. The ids
+   themselves are left to the platform: its grader refuses unknown ids and similar errors with a
+   FAILURE row (message in the comment column, e.g. "Error: 2990 superfluous IDs") **without
+   counting an attempt** (attacks2, 2026-10-03). `submit_session.ts` detects that row, and the
+   orchestrator passes the message verbatim to a new solver session — what a student sees on the
+   task page; 3 refusals in a row (or re-declaring a refused file) stop the task (exit 3). A first
+   version of the check also required ids to equal the test archive's file names; that held for
+   unit 2 but attacks2's platform refused exactly those ids, so the rule was removed. There is no LLM reviewer: the
    eval agent was removed on 2026-10-03 (see section 5).
    **Premature finishes:** a session killed at its cap, aborted in a tool loop or ending without
    `SOLVER_DONE` submits nothing (no salvage; the next session is told and its files are still

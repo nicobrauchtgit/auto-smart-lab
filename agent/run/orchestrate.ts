@@ -222,7 +222,7 @@ function resolveReported(p: string): string {
 
 function usage(): never {
 	console.error("Usage: npx tsx agent/run/orchestrate.ts <task_id|list> [--model <id>] [--task-url <url>] [--secure] [--no-submit] [--target <score>] [--solver-timeout <minutes>] [--max-attempts <n>] [--max-cost <usd>] [--max-unchanged <n>]");
-	console.error(`Exit codes: 0 done (target reached, no attempts left, dry run or attempt cap), 1 no attempts before start, 2 solver failed (${MAX_SOLVER_FAILURES} sessions in a row without a submittable result), 3 submission failed, 4 model API daily/monthly quota exhausted, 5 cost budget (--max-cost USD) exhausted, 7 solver kept reproducing the last submission (--max-unchanged, default 3), 9 token task without the VM's local service, 99 fatal (6 and 8 belonged to the removed eval agent)`);
+	console.error(`Exit codes: 0 done (target reached, no attempts left, dry run or attempt cap), 1 no attempts before start, 2 solver failed (${MAX_SOLVER_FAILURES} sessions in a row without a submittable result), 3 submission failed (or the platform refused ${MAX_SOLVER_FAILURES} uploads in a row), 4 model API daily/monthly quota exhausted, 5 cost budget (--max-cost USD) exhausted, 7 solver kept reproducing the last submission (--max-unchanged, default 3), 9 token task without the VM's local service, 99 fatal (6 and 8 belonged to the removed eval agent)`);
 	console.error("Required env: LAB_USER, LAB_PASS");
 	console.error("Examples:");
 	console.error("  npm run solve list                    # show all available task IDs");
@@ -410,6 +410,9 @@ async function main() {
 	let attemptsThisRun = 0;
 	let lastSubmittedHash: string | undefined;
 	let unchangedStreak = 0;
+	/** Consecutive uploads the platform refused without counting an attempt, and the last refused output. */
+	let platformRejects = 0;
+	let lastRejectedHash: string | undefined;
 	let lastPlatformScore: number | null = null;
 	console.log(`[orchestrate] Target platform score: ${target}`);
 	const py = detectPythonRuntime();
@@ -487,7 +490,7 @@ async function main() {
 		const csvPath = resolveReported(solverResult.csvPath);
 		const check = problem ? null
 			: submission === "token" ? checkToken(solverResult.token)
-			: checkCsv(csvPath, meta ? join(meta.dir, "data") : null);
+			: checkCsv(csvPath);
 		if (!check || !check.ok) {
 			solverFailures++;
 			const fact = check ? check.message : `Your previous session ${problem}; nothing was submitted. Your files are still in place.`;
@@ -525,6 +528,17 @@ async function main() {
 			continue;
 		}
 		unchangedStreak = 0;
+		if (outHash === lastRejectedHash) {
+			platformRejects++;
+			if (platformRejects >= MAX_SOLVER_FAILURES) {
+				console.error(`[orchestrate] ${platformRejects} results in a row were refused by the platform or identical to a refused upload. Stopping.`);
+				await exitRun(3, "platform_rejected");
+			}
+			feedback = `Your new output is byte-identical to the upload the platform refused; it was not uploaded again. ` +
+				`That was result ${platformRejects} of ${MAX_SOLVER_FAILURES} in a row without an accepted upload; at ${MAX_SOLVER_FAILURES} the task stops.`;
+			taskEvent(`output identical to the refused upload (${platformRejects}/${MAX_SOLVER_FAILURES})`);
+			continue;
+		}
 
 		if (attemptsThisRun >= maxAttemptsThisRun) {
 			console.log(`\n[orchestrate] DONE — attempt cap for this run reached (${attemptsThisRun}/${maxAttemptsThisRun}); not submitting ${what}.`);
@@ -547,6 +561,22 @@ async function main() {
 		taskEvent(`submitted: platform ${submitResult.score}, ${submitResult.triesLeft} attempt(s) left`);
 		console.log(`[orchestrate] Submission result: ok=${submitResult.ok}, score=${submitResult.score}, tries_left=${submitResult.triesLeft}`);
 
+		if (submitResult.rejected) {
+			// The platform's grader refused the file and did not count an attempt: a student sees the
+			// message on the task page, so the solver gets it verbatim.
+			platformRejects++;
+			lastRejectedHash = outHash;
+			taskEvent(`platform refused the upload, no attempt counted: ${String(submitResult.error).slice(0, 120)}`);
+			if (platformRejects >= MAX_SOLVER_FAILURES) {
+				console.error(`[orchestrate] The platform refused ${platformRejects} uploads in a row. Stopping.`);
+				await exitRun(3, "platform_rejected");
+			}
+			feedback = `The platform refused your upload without counting an attempt. Its message: "${submitResult.error}". ` +
+				`${submitResult.triesLeft ?? "?"} attempt(s) left. That was upload ${platformRejects} of ${MAX_SOLVER_FAILURES} in a row refused; at ${MAX_SOLVER_FAILURES} the task stops.`;
+			console.log(`[orchestrate] Upload refused by the platform (${platformRejects}/${MAX_SOLVER_FAILURES}) — re-solving with its message.`);
+			continue;
+		}
+		platformRejects = 0;
 		if (!submitResult.ok) {
 			console.error(`[orchestrate] Submission failed: ${submitResult.error ?? "unknown error"}. Check logs.`);
 			await exitRun(3, "submission_failed");

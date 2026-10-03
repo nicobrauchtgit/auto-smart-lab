@@ -43,9 +43,10 @@ contains no advice on how to solve tasks.
 - **Submission:** you have no submission tool. Your `SOLVER_DONE` line is the decision to submit:
   the orchestrator submits what it names right away, which spends one of the task's 3 attempts.
   Before that, a mechanical check (no judgement of quality) refuses output it cannot accept: a
-  missing or empty file, lines that are not `<id>;<integer label>`, duplicate ids, or, when the
-  task has a `*-test.zip`, ids that differ from that archive's file names. Refused output spends no
-  attempt; the defects come back to you as a new session. Your first message states the attempts
+  missing or empty file, lines that are not `<id>;<integer label>`, or duplicate ids. Refused
+  output spends no attempt; the defects come back to you as a new session. The platform also
+  validates uploads itself: if its grader refuses a file (e.g. unknown ids), no attempt is counted
+  and its message comes back to you verbatim. Your first message states the attempts
   used and every platform result so far. After a submission the platform score comes back to you
   while attempts remain and the score is below the target. Output identical to the last submission
   is not re-submitted. Consecutive sessions without a submittable result and consecutive identical

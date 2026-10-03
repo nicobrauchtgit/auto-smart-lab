@@ -143,9 +143,10 @@ The orchestrator will:
 1. Scaffold a solver at `agent/smartlab/tasks/<task_id>.py` if missing
 2. Run the **solver agent** (researches, implements, validates locally). Its first message states
    the attempts used and the platform results so far; its `SOLVER_DONE` line is the decision to submit.
-3. **Check the output** mechanically: file exists, `<id>;<integer label>` lines, no duplicates, and
-   ids equal to the file names in the task's `*-test.zip` when there is one. Failing output is not
-   submitted; the defects go back to a new solver session (no attempt spent).
+3. **Check the output** mechanically: file exists, `<id>;<integer label>` lines, no duplicates.
+   Failing output is not submitted; the defects go back to a new solver session (no attempt spent).
+   If the platform's grader refuses an upload (shown as FAILURE, no attempt counted), its message
+   goes back to the solver; 3 refusals in a row stop the task.
 4. **Submit directly** (HTTP upload or token form + poll for score)
 5. If the **platform score is below `--target`** (default 0.97) and submissions remain, the real
    score is fed back to the solver and the loop continues. Identical predictions are never

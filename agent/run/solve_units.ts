@@ -103,7 +103,7 @@ function classify(before: TaskStatus | null, after: TaskStatus | null, exitCode:
 	if (exitCode === 4) return ["quota-exhausted", "model API daily/monthly quota used up (see task log)"];
 	if (exitCode === 99 || exitCode === null) return ["fatal", "orchestrator crashed"];
 	if (exitCode === 2) return ["solver-failed", "solver sessions in a row without a submittable result"];
-	if (exitCode === 3) return ["submit-failed", "upload or result polling failed"];
+	if (exitCode === 3) return ["submit-failed", "upload/polling failed, or the platform refused 3 uploads in a row (see task log)"];
 	if (noSubmit) return ["dry-run", "solver declared a result that passed the output check; not submitted (--no-submit)"];
 	const best = after?.bestScore ?? null;
 	const spent = (after?.attemptsUsed ?? 0) - (before?.attemptsUsed ?? 0);

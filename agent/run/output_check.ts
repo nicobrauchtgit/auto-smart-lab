@@ -3,17 +3,16 @@
  * of three attempts, so output that cannot be what the task asks for is not uploaded; the solver gets
  * the defects back as facts and another session.
  *
- * Checks only what is unambiguous from the task material, no judgement of quality:
- *  - CSV: exists, non-empty, every line `<id>;<label>` with an integer label, no duplicate ids;
- *    when the task's data has a `*-test.zip`, the ids must be exactly that archive's file names
- *    (the test archives' member paths are the ids the platform expects, e.g. data/spam1-test/x.x).
- *    Tasks without a test archive (network-intrusion: pcap) get the line checks only.
+ * Checks only the structure every task's format shares, no judgement of quality and no guess at the
+ * ids: the platform checks those itself and refuses wrong ones without counting an attempt (the
+ * orchestrator passes its message to the solver). An earlier version required the ids to equal the
+ * test archive's member paths; that held for unit 2 but the platform refused exactly those ids for
+ * attacks2 ("2990 superfluous IDs", 2026-10-03), so it was removed.
+ *  - CSV: exists, non-empty, every line `<id>;<integer label>`, no duplicate ids.
  *  - Token: a single non-empty string without whitespace.
  */
 
-import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 
 export interface OutputCheck {
 	ok: boolean;
@@ -23,18 +22,7 @@ export interface OutputCheck {
 
 const MAX_EXAMPLES = 3;
 
-/** File members of the task's test archive, or null when there is none (or it cannot be read). */
-function testArchiveMembers(dataDir: string | null): { name: string; members: Set<string> } | null {
-	if (!dataDir || !existsSync(dataDir)) return null;
-	const zip = readdirSync(dataDir).find(f => /-test\.zip$/i.test(f));
-	if (!zip) return null;
-	const r = spawnSync("python3", ["-c", "import sys,zipfile,json;print(json.dumps([i.filename for i in zipfile.ZipFile(sys.argv[1]).infolist() if not i.is_dir()]))", join(dataDir, zip)],
-		{ encoding: "utf8", timeout: 60_000, maxBuffer: 64 * 1024 * 1024 });
-	if (r.status !== 0) return null;
-	try { return { name: zip, members: new Set(JSON.parse(r.stdout) as string[]) }; } catch { return null; }
-}
-
-export function checkCsv(csvPath: string, dataDir: string | null): OutputCheck {
+export function checkCsv(csvPath: string): OutputCheck {
 	if (!csvPath || !existsSync(csvPath)) return { ok: false, message: `The declared CSV ${csvPath || "(none)"} does not exist.` };
 	const lines = readFileSync(csvPath, "utf8").split(/\r?\n/).filter(l => l.trim() !== "");
 	if (!lines.length) return { ok: false, message: `The declared CSV ${csvPath} is empty.` };
@@ -52,14 +40,7 @@ export function checkCsv(csvPath: string, dataDir: string | null): OutputCheck {
 	if (malformed.length) problems.push(`${malformed.length} line(s) are not \`<id>;<integer label>\` (${malformed.slice(0, MAX_EXAMPLES).join("; ")})`);
 	if (dupes.length) problems.push(`${dupes.length} duplicate id(s) (e.g. ${dupes.slice(0, MAX_EXAMPLES).join(", ")})`);
 
-	const test = testArchiveMembers(dataDir);
-	if (test) {
-		const unknown = [...seen].filter(id => !test.members.has(id));
-		const missing = [...test.members].filter(id => !seen.has(id));
-		if (unknown.length) problems.push(`${unknown.length} id(s) are not file names in ${test.name} (e.g. ${unknown.slice(0, MAX_EXAMPLES).join(", ")}; its files are named like ${[...test.members].slice(0, 2).join(", ")})`);
-		if (missing.length) problems.push(`${missing.length} of the ${test.members.size} files in ${test.name} have no prediction`);
-	}
-	const summary = `${lines.length} lines${test ? `, ids match the ${test.members.size} files in ${test.name}` : ""}`;
+	const summary = `${lines.length} lines`;
 	return problems.length
 		? { ok: false, message: `The declared CSV ${csvPath} was not submitted: ${problems.join("; ")}.` }
 		: { ok: true, message: summary };
