@@ -147,3 +147,26 @@ No memory loops, eval crashes or harness crashes after the fixes. Every local sc
 platform score was below it: the agent's random-split validation never predicted the platform result, and
 the eval agent (which only sees the local score) approved every candidate. Harness issue found: no cap on
 consecutive re-solves that reproduce the last submission. Fixed afterwards: `--max-unchanged` (default 3).
+
+---
+
+## 2026-10-03 — Harness: run conditions, report, eval facts and caps, token tasks (4db6b6c)
+
+Changes (see AGENT.md 3.2): every task run records its conditions (commit, prompt hashes, model, host,
+runtime, caps); `npm run report` tabulates all batch results; the eval agent's first message states the
+candidate, the attempts used and the platform history (synced from the task page at start); a missing
+`EVAL_DECISION` line is a failed eval instead of an approval; `--max-rejections` (default 3, exit 8) and
+`--no-eval`; `fetch_units.py` records the metric and the submission kind; token tasks (adversarial ML) log
+the local service's token via the task page's form (verified up to the form, no token logged yet); the
+solver is told the host OS instead of "macOS"; reported CSV paths are resolved against the repo root or `agent/`.
+
+**Smoke test (not a measured result, ran on the pre-commit working tree c929d80+):** attacks2 (adversarial
+example detection, BACC, no training labels) on the Mac, `solve-units --only attacks2 --no-submit
+--model gwdg/qwen3-coder-next --solver-timeout 25`, 62.7 min including a 29-min hourly-quota wait.
+Three solver sessions (Isolation Forest ensembles on pixel statistics; local 0.929, 0.929, 0.806, a score
+it derived from the `.0`/`.x` file-name suffixes), three eval rejections (the eval rubric needs 0.97 with 3
+attempts left), then exit 8 `eval-rejected`, nothing submitted. Each solver result went through salvage
+because the solver reported `csv=submissions/…` relative to `agent/` (harness bug, fixed in 4db6b6c).
+Model observations: the CSV lines are `name.x;label` while the task prompt's example is
+`adv-test/name.x;label`, and the eval agent called the format valid; the solver also wrote a
+`SOLVER_DONE.txt` into the repo root.
