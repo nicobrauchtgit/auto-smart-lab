@@ -255,6 +255,45 @@ class LabClient:
         self.save_cookies()
         return response
 
+    def download(self, path_or_url: str, dest: Path, chunk_size: int = 8 * 1024 * 1024) -> int:
+        """Stream a (possibly multi-GB) file to dest without holding it in memory; returns bytes written.
+
+        get() reads the whole body and decodes it as text to detect the login page; for the 3.2 GB
+        android-train.zip that exhausted the lab VM's memory (no swap) and hung it (2026-10-03).
+        Writes to <dest>.part and renames on success, so an interrupted download is never mistaken
+        for a finished one.
+        """
+        url = urljoin(BASE_URL, path_or_url)
+        part = dest.with_name(dest.name + ".part")
+        for attempt in (1, 2):
+            req = Request(url, headers={"User-Agent": "Mozilla/5.0 smartlab-auto-agent/0.1", "Accept": "*/*"})
+            try:
+                with self.opener.open(req, timeout=120) as response:
+                    ctype = (response.headers.get("Content-Type") or "").lower()
+                    if "text/html" in ctype:
+                        # A login page instead of the file: log in once and retry.
+                        page = response.read(2 * 1024 * 1024).decode("utf-8", errors="replace")
+                        if attempt == 1 and self.is_login_page(page):
+                            self.login()
+                            continue
+                    written = 0
+                    with open(part, "wb") as out:
+                        while True:
+                            chunk = response.read(chunk_size)
+                            if not chunk:
+                                break
+                            out.write(chunk)
+                            written += len(chunk)
+            except HTTPError as exc:
+                if exc.code in (401, 403) and attempt == 1:
+                    self.login()
+                    continue
+                raise RuntimeError(f"Download failed: HTTP {exc.code} for {url}") from exc
+            part.replace(dest)
+            self.save_cookies()
+            return written
+        raise RuntimeError(f"Download failed: still redirected to login for {url}")
+
     def cookie_summary(self, show_sensitive: bool = False) -> str:
         if not list(self.cookies):
             return "No cookies stored."

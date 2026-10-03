@@ -226,11 +226,11 @@ def _download_data(client: LabClient, download_urls: list[str], dest_dir: Path) 
             continue
         print(f"    [download] {url}")
         try:
-            response = client.get(url)
+            size = client.download(url, local)  # streamed to disk; multi-GB archives must not sit in memory
         except Exception as exc:
             print(f"    [warn] failed to download {url}: {exc}")
             continue
-        local.write_bytes(response.body)
+        print(f"    [download] {filename}: {size / 1e6:.0f} MB")
         written.append(local)
         if filename.endswith(".zip"):
             _extract_zip(local, dest_dir)
