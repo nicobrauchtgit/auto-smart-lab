@@ -160,6 +160,13 @@ import type { SolverResult } from "./solver_session.js";
 const MAX_SUBMISSIONS = 3;
 /** Platform score at or above which we stop iterating. Override with --target. */
 const DEFAULT_TARGET = 0.97;
+/**
+ * How many consecutive solver results may reproduce the last submission byte-for-byte before the task
+ * stops (keeping its remaining attempts). Re-solving is free, so without a cap a model that keeps
+ * producing the same predictions loops indefinitely (documents3, 2026-10-02: 12 times, ~3 h).
+ * Override with --max-unchanged.
+ */
+const DEFAULT_MAX_UNCHANGED = 3;
 /** How many solver sessions may time out / fail to produce a CSV before we give up on the task. */
 const MAX_SOLVER_FAILURES = 2;
 const AGENT_DIR = join(PROJECT_ROOT, "agent");
@@ -204,8 +211,8 @@ function salvageSolver(taskId: string): SolverResult | null {
 }
 
 function usage(): never {
-	console.error("Usage: npx tsx agent/run/orchestrate.ts <task_id|list> [--model <id>] [--task-url <url>] [--secure] [--no-submit] [--target <score>] [--solver-timeout <minutes>] [--max-attempts <n>] [--max-cost <usd>]");
-	console.error("Exit codes: 0 done (target reached, no attempts left, dry run or attempt cap), 1 no attempts before start, 2 solver failed, 3 submission failed, 4 model API daily/monthly quota exhausted, 5 cost budget (--max-cost USD) exhausted, 6 eval session failed twice, 99 fatal");
+	console.error("Usage: npx tsx agent/run/orchestrate.ts <task_id|list> [--model <id>] [--task-url <url>] [--secure] [--no-submit] [--target <score>] [--solver-timeout <minutes>] [--max-attempts <n>] [--max-cost <usd>] [--max-unchanged <n>]");
+	console.error("Exit codes: 0 done (target reached, no attempts left, dry run or attempt cap), 1 no attempts before start, 2 solver failed, 3 submission failed, 4 model API daily/monthly quota exhausted, 5 cost budget (--max-cost USD) exhausted, 6 eval session failed twice, 7 solver kept reproducing the last submission (--max-unchanged, default 3), 99 fatal");
 	console.error("Required env: LAB_USER, LAB_PASS");
 	console.error("Examples:");
 	console.error("  npm run solve list                    # show all available task IDs");
@@ -251,6 +258,9 @@ async function main() {
 		if (!Number.isFinite(mins) || mins <= 0) usage();
 		process.env.PI_SESSION_TIMEOUT_MS = String(Math.round(mins * 60 * 1000));
 	}
+	const maxUnchangedArg = takeArg("--max-unchanged");
+	const maxUnchanged = maxUnchangedArg !== undefined ? Number(maxUnchangedArg) : DEFAULT_MAX_UNCHANGED;
+	if (!Number.isInteger(maxUnchanged) || maxUnchanged < 1) usage();
 	const maxAttemptsArg = takeArg("--max-attempts");
 	const maxAttemptsThisRun = maxAttemptsArg !== undefined ? Number(maxAttemptsArg) : MAX_SUBMISSIONS;
 	if (!Number.isFinite(maxAttemptsThisRun) || maxAttemptsThisRun < 0) usage();
@@ -355,6 +365,7 @@ async function main() {
 	let solverFailures = 0;
 	let attemptsThisRun = 0;
 	let lastSubmittedHash: string | undefined;
+	let unchangedStreak = 0;
 	let lastPlatformScore: number | null = null;
 	console.log(`[orchestrate] Target platform score: ${target}`);
 	const py = detectPythonRuntime();
@@ -481,10 +492,18 @@ async function main() {
 			// Never spend a try on predictions identical to the last submission.
 			const csvHash = createHash("sha256").update(readFileSync(csvPath)).digest("hex");
 			if (lastSubmittedHash && csvHash === lastSubmittedHash) {
-				feedback = `Your new predictions are byte-identical to the last submission (platform score ${lastPlatformScore}); they were not re-submitted.`;
-				console.log(`[orchestrate] CSV unchanged since last submission — re-solving instead of submitting.`);
+				unchangedStreak++;
+				taskEvent(`predictions identical to last submission (${unchangedStreak}/${maxUnchanged})`);
+				if (unchangedStreak >= maxUnchanged) {
+					console.log(`\n[orchestrate] DONE — ${unchangedStreak} consecutive solver results reproduced the last submission; stopping with remaining attempts unused.`);
+					await exitRun(7, "no_new_predictions");
+				}
+				feedback = `Your new predictions are byte-identical to the last submission (platform score ${lastPlatformScore}); they were not re-submitted. ` +
+					`This is identical result ${unchangedStreak} of ${maxUnchanged} in a row; at ${maxUnchanged} the task stops without using the remaining attempts.`;
+				console.log(`[orchestrate] CSV unchanged since last submission (${unchangedStreak}/${maxUnchanged}) — re-solving instead of submitting.`);
 				continue;
 			}
+			unchangedStreak = 0;
 
 			if (attemptsThisRun >= maxAttemptsThisRun) {
 				console.log(`\n[orchestrate] DONE — attempt cap for this run reached (${attemptsThisRun}/${maxAttemptsThisRun}); eval approved ${csvPath} but not submitting.`);

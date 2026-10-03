@@ -140,7 +140,8 @@ The orchestrator will:
 5. On rejection: re-solve with feedback (free, no submission consumed)
 6. If the **platform score is below `--target`** (default 0.97) and submissions remain, the real
    score is fed back to the solver and the loop continues. Identical predictions are never
-   re-submitted. The run stops at the target or when all 3 submissions are spent.
+   re-submitted; after 3 identical results in a row (`--max-unchanged`) the task stops and keeps
+   its remaining attempts. The run stops at the target or when all 3 submissions are spent.
 7. If a solver session hits its time cap (`--solver-timeout`, default 30 min) or ends without a CSV,
    the orchestrator **salvages** the solver module it left behind (runs `validate` + `solve`
    directly, no LLM) and continues; if there is nothing to salvage it re-runs the solver once

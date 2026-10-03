@@ -84,6 +84,8 @@ Remote execution (lab VM)          scripts/vm/remote.sh (Mac side), scripts/vm/b
    without a CSV, the orchestrator runs the module it left behind directly (validate + solve,
    no LLM) and continues; if nothing is salvageable it re-runs the solver once.
 
+`--max-unchanged <n>` (default 3): if that many consecutive solver results reproduce the last submission byte-for-byte, the task stops with its remaining attempts unused (exit code 7); the solver is told the count and the limit as facts. Added after documents3 (2026-10-02) re-solved 12 times with identical output for about three hours.
+
 `--no-submit` stops after eval approval and spends no attempt. Exit codes: 0 done, 1 no attempts
 before start, 2 solver failed, 3 submission failed, 99 fatal.
 

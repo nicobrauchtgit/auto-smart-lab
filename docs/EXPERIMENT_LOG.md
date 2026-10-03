@@ -146,4 +146,4 @@ documents3: attempt 1 platform **0.9382** (local 0.983).
 No memory loops, eval crashes or harness crashes after the fixes. Every local score was ≥ 0.97 while every
 platform score was below it: the agent's random-split validation never predicted the platform result, and
 the eval agent (which only sees the local score) approved every candidate. Harness issue found: no cap on
-consecutive re-solves that reproduce the last submission.
+consecutive re-solves that reproduce the last submission. Fixed afterwards: `--max-unchanged` (default 3).
