@@ -182,3 +182,29 @@ limit and was stopped; no result reached the orchestrator. Both CSVs the solver 
 (`iaucoouqje-4.x`) instead of the archive paths the platform expects (`adv-test/iaucoouqje-4.x`) — the same
 defect the removed eval agent called valid. Observation: qwen spends 150–350 tool calls per session, so the
 200/hour GWDG quota, not the session cap, sets the pace.
+
+---
+
+## 2026-10-03 — Detection of unknown attacks on the VM with Gemini 3.7 Flash (first run without eval agent)
+
+`remote.sh start --only attacks1,attacks2 --model google-vertex/gemini-3.7-flash --max-cost 5`, real submissions,
+commit f8b8db7 (clean), lab venv (Python 3.13.5, 198 packages), from scratch (reset; 62 untracked scratch files
+left in the VM repo by earlier Gemini runs were moved to `logs/scratch-moved-20261003-173502/` first).
+Logs: `logs/vm/stud03@…/solve-units/2026-10-03T15-35-18/`. `npm run report -- --since 2026-10-03 --md --lab`:
+
+| task | model | commit | outcome | attempts | best | local→platform | min | $ |
+|---|---|---|---|---|---|---|---|---|
+| attacks1 (FTP intrusion detection, BACC with missing values) | gemini-3.7-flash | f8b8db7 | attempts-exhausted | 3/3 | **0.7750** | 1.000→0.719, 1.000→0.738, 1.000→0.775 | 35.4 | 4.93 |
+| attacks2 (adversarial example detection) | gemini-3.7-flash | f8b8db7 | budget-exhausted | 0/3 | – | – | 1.4 | 0.08 |
+
+- **The new flow worked end to end:** three solver sessions (15, 8 and ~12 min), each ended with `SOLVER_DONE`,
+  each CSV passed the output check (9995 lines; pcap task, so line checks only), was submitted, and the
+  platform score went back to the next session. No harness errors, no tool loops, no rate limits.
+- **Model behaviour:** a rule-based FTP detector (anonymous writes, exploit patterns, later TF-IDF similarity),
+  improved slightly with each platform score (0.719 → 0.738 → 0.775). Its `validate()` labels the holdout with
+  `classify_session()` and predicts with the same `classify_session()`, so the local score is 1.0 by
+  construction: without training labels it graded itself against itself and submitted every candidate
+  immediately. With the eval agent gone nothing second-guessed that; the platform feedback was the only signal.
+- **Budget:** attacks1 used $4.93 of the $5 batch budget; attacks2 was started with the remaining $0.07 and
+  stopped after 1.4 min (no attempt spent). Harness note: a task should not be started with a remainder
+  that cannot pay for a session.
