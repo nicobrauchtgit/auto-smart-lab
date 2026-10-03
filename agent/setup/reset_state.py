@@ -23,6 +23,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 TASKS_DIR = REPO_ROOT / "agent" / "smartlab" / "tasks"
 MEMORY_FILE = REPO_ROOT / "agent" / "memory" / "memory.json"
 SUBMISSIONS_DIR = REPO_ROOT / "submissions"
+# Modules run by smartlab_agent.py (cwd agent/) write relative output paths here; a run on
+# 2026-10-03 read earlier tasks' predictions from it, so it is task state too.
+AGENT_SUBMISSIONS_DIR = REPO_ROOT / "agent" / "submissions"
 REPORTS_DIR = REPO_ROOT / "reports"
 CHECKPOINTS_DIR = REPO_ROOT / "agent" / "smartlab" / "checkpoints"  # solver-written resume state
 EMPTY_MEMORY = {"tasks": {}, "sessions": [], "global_notes": ""}
@@ -55,8 +58,10 @@ def reset(task_id: str | None, dry_run: bool) -> int:
             _remove(path, dry_run)
 
     # 2. Prediction CSVs
-    if SUBMISSIONS_DIR.exists():
-        for path in sorted(SUBMISSIONS_DIR.iterdir()):
+    for sub_dir in (SUBMISSIONS_DIR, AGENT_SUBMISSIONS_DIR):
+        if not sub_dir.exists():
+            continue
+        for path in sorted(sub_dir.iterdir()):
             if task_id and not path.name.startswith(f"{task_id}_"):
                 continue
             _remove(path, dry_run)

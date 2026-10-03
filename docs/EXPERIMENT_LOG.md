@@ -208,3 +208,27 @@ Logs: `logs/vm/stud03@…/solve-units/2026-10-03T15-35-18/`. `npm run report -- 
 - **Budget:** attacks1 used $4.93 of the $5 batch budget; attacks2 was started with the remaining $0.07 and
   stopped after 1.4 min (no attempt spent). Harness note: a task should not be started with a remainder
   that cannot pay for a session.
+
+---
+
+## 2026-10-03 — attacks2 (adversarial example detection) on the VM, Gemini 3.7 Flash, no cost cap
+
+**Run 1** (`remote.sh start --only attacks2 --model google-vertex/gemini-3.7-flash`, f8b8db7, real submissions,
+logs `solve-units/2026-10-03T16-39-16`): one 25-min session, local BACC 0.7319 on a holdout of its own
+heuristic labels, CSV ids `adv-test/<name>.x` (the test archive's member paths and the prompt's example).
+Upload accepted, but the platform's grader answered with a FAILURE row: **"Error: 2990 superfluous IDs"**, no
+score, **no attempt counted** (task page still "0 of 3 attempts used"). Harness bug: this was treated as a
+failed submission (exit 3), so the solver never saw the message; and the output check required exactly those
+archive ids. Fixed in dc3026b: platform refusals go back to the solver verbatim (3 in a row stop the task),
+the archive-id rule is gone. $1.05.
+
+**Run 2** (dc3026b, from scratch, logs `solve-units/2026-10-03T17-12-32`, 8.7 min, $0.60): Gemini downloaded the
+original **CIFAR-10** dataset via Keras and labelled every test image that is not a byte-exact copy of a CIFAR
+image as adversarial (local "1.0"). After each refusal it changed the id format — `adv-test/x.x`, bare `x.x`,
+`data/adv-test/x.x` — and the platform refused all three with the same "2990 superfluous IDs" (no attempt
+counted); the task stopped after 3 refusals (exit 3, `submit-failed`). Every format refused with only
+"superfluous" (never "missing") suggests the lab-test grader has no ground truth for this task; unverified.
+Model observations: an external-dataset lookup is exactly the kind of shortcut this baseline is meant to
+surface (the unit forbids external detection systems); to infer the id format it read the run's own console
+log and earlier tasks' prediction files in `agent/submissions/`, which `reset` did not clean (harness gap, fixed
+in the next commit). The CIFAR-10 download stays cached in `~/.keras/datasets` on the VM, outside the repo.
