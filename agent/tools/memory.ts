@@ -34,15 +34,13 @@ interface TaskMemory {
 	tries_used: number;
 	tries_left: number;
 	failed_approaches: string[];
-	eval_decision: string | null;
-	eval_notes: string;
 	checkpoint?: string | Record<string, unknown>;
 }
 
 interface SessionEntry {
 	timestamp: string;
 	task_id: string;
-	phase: "solve" | "eval";
+	phase: "solve";
 	approach: string;
 	val_score: number | null;
 	notes: string;
@@ -106,7 +104,7 @@ function deepMerge(target: Record<string, unknown>, patch: Record<string, unknow
 /** Fields maintained by the orchestrator from the platform; agents must not overwrite them. */
 const ORCHESTRATOR_FIELDS = new Set(["tries_used", "tries_left", "best_score"]);
 const NUMBER_OR_NULL = new Set(["last_val_score"]);
-const STRING_FIELDS = new Set(["last_submission_csv", "best_approach", "approach", "eval_decision", "eval_notes"]);
+const STRING_FIELDS = new Set(["last_submission_csv", "best_approach", "approach"]);
 const STRING_ARRAY_FIELDS = new Set(["failed_approaches"]);
 const TOP_LEVEL = new Set(["tasks", "global_notes"]);
 
@@ -196,8 +194,6 @@ export default function memoryExtension(pi: ExtensionAPI) {
 				best_approach: Type.Optional(Type.String({ description: "One-line description of the best approach so far" })),
 				failed_approaches: Type.Optional(Type.Array(Type.String(), { description: "Approaches that did not work, one line each (replaces the stored list)" })),
 				checkpoint: Type.Optional(Type.String({ description: "Free-text state for resuming after a restart or context compaction" })),
-				eval_decision: Type.Optional(Type.String({ description: "APPROVE or REJECT (eval agent)" })),
-				eval_notes: Type.Optional(Type.String({ description: "One-sentence rationale (eval agent)" })),
 				global_notes: Type.Optional(Type.String({ description: "Store-wide notes (replaces the stored text)" })),
 			}),
 			async execute(_toolCallId, params, _signal) {
@@ -233,11 +229,11 @@ export default function memoryExtension(pi: ExtensionAPI) {
 			description: "Append a session log entry to the sessions history array.",
 			promptSnippet: "Append a session entry to memory",
 			promptGuidelines: [
-				"Call memory_append_session at the end of a solve or eval session to log what was done.",
+				"Call memory_append_session at the end of a solve session to log what was done.",
 			],
 			parameters: Type.Object({
 				task_id: Type.String({ description: "Task identifier, e.g. spam1" }),
-				phase: Type.Union([Type.Literal("solve"), Type.Literal("eval")], { description: "Session phase" }),
+				phase: Type.Literal("solve", { description: "Session phase" }),
 				approach: Type.Optional(Type.String({ description: "Brief description of the approach used" })),
 				val_score: Type.Optional(Type.Number({ description: "Local validation score (the task's metric)" })),
 				notes: Type.Optional(Type.String({ description: "Any additional notes or observations" })),

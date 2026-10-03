@@ -19,8 +19,6 @@ export interface TaskMemory {
 	tries_used: number;
 	tries_left: number;
 	failed_approaches: string[];
-	eval_decision: string | null;
-	eval_notes: string;
 }
 
 export interface MemoryStore {
@@ -52,8 +50,6 @@ export function getTaskMemory(taskId: string): TaskMemory {
 		tries_used: (saved as TaskMemory).tries_used ?? 0,
 		tries_left: (saved as TaskMemory).tries_left ?? 3,
 		failed_approaches: (saved as TaskMemory).failed_approaches ?? [],
-		eval_decision: (saved as TaskMemory).eval_decision ?? null,
-		eval_notes: (saved as TaskMemory).eval_notes ?? "",
 	};
 }
 

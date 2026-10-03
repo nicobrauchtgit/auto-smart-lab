@@ -97,7 +97,7 @@ function rows(): Row[] {
 			out.push({
 				source, stamp, task: r.id, model: String(model).replace(/^(gwdg|google-vertex)\//, ""),
 				commit: c?.git?.commit ? `${c.git.commit}${c.git.dirty?.length ? "+" : ""}` : "?",
-				evalMode: c?.caps ? (c.caps.eval === false ? "off" : "on") : "?",
+				evalMode: c?.caps ? (c.caps.eval === true ? "on" : "off") : "?",
 				outcome: r.outcome, attempts: a ? `${a.attemptsUsed ?? "?"}/${a.attemptsMax}` : "?",
 				best: a?.bestScore ?? null,
 				submissions: subs.map(s => `${fmt(s.local, 3)}→${fmt(s.platform, 3)}`).join(" "),

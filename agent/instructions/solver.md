@@ -38,13 +38,18 @@ contains no advice on how to solve tasks.
   (seconds) and no default. Your first message states the host OS and whether a `timeout` shell
   command exists.
 - **Memory:** `memory_read` / `memory_write` / `memory_append_session` persist a JSON store across
-  sessions. The eval agent and the orchestrator read the keys listed under Protocol below.
+  sessions. The orchestrator reads the keys listed under Protocol below.
 - **Web:** `web_search` is available (if configured).
-- **Submission:** you have no submission tool. The orchestrator submits after a separate eval agent
-  approves your output. The eval agent approves at a validation score of 0.97 or higher for
-  accuracy-like metrics and may reject lower scores with feedback, which comes back to you as a new
-  session. Only real submissions count against the task's 3-attempt limit. Consecutive rejections
-  and consecutive identical results are capped; the feedback states the count.
+- **Submission:** you have no submission tool. Your `SOLVER_DONE` line is the decision to submit:
+  the orchestrator submits what it names right away, which spends one of the task's 3 attempts.
+  Before that, a mechanical check (no judgement of quality) refuses output it cannot accept: a
+  missing or empty file, lines that are not `<id>;<integer label>`, duplicate ids, or, when the
+  task has a `*-test.zip`, ids that differ from that archive's file names. Refused output spends no
+  attempt; the defects come back to you as a new session. Your first message states the attempts
+  used and every platform result so far. After a submission the platform score comes back to you
+  while attempts remain and the score is below the target. Output identical to the last submission
+  is not re-submitted. Consecutive sessions without a submittable result and consecutive identical
+  results are capped; the feedback states the count.
 
 ## Tools
 
@@ -81,7 +86,8 @@ The orchestrator depends on the following. Everything else is your call.
    SOLVER_DONE val_score=<X> token=<token> approach=<one line>      (token tasks)
    ```
    `val_score` is your local estimate of the task's metric, or `none` if you have no way to compute
-   one. Without this line the orchestrator cannot continue.
+   one. Without this line nothing is submitted: a session that ends without it, or is killed at its
+   time cap, is reported to the next session as such.
 
 ## Rules
 

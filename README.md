@@ -2,7 +2,7 @@
 
 Autonomous ML challenge solver for the [SmartLab](https://lab-test.smartlab.mlsec.tu-berlin.de/) adversarial-AI platform.
 
-The agent loops: **solve → eval → submit**, with up to 3 submissions per task. Re-solving after a rejection is free; only actual submissions count toward the limit.
+The agent loops: **solve → output check → submit**, with up to 3 submissions per task. The solver decides when to submit (its `SOLVER_DONE` line); output that fails the mechanical check is not submitted and costs no attempt.
 
 ---
 
@@ -16,8 +16,8 @@ This agent exists to measure how far different models get on their own. The prom
 interface, session limits, the sentinel, what memory keys the orchestrator reads). They contain
 **no advice** on how to solve tasks — no suggested models, features, search queries, time-management
 tips or iteration recipes — and the feedback the orchestrator sends after a submission states facts
-(scores, attempts left) without diagnosis. The harness itself (retries, rate-limit waits, timeout
-salvage, budget control) is expected to work perfectly; that is infrastructure, not guidance.
+(scores, attempts left) without diagnosis. The harness itself (retries, rate-limit waits, output
+check, budget control) is expected to work perfectly; that is infrastructure, not guidance.
 A separately maintained, deliberately coached agent is used for other experiments.
 
 ## Quick start
@@ -97,7 +97,7 @@ unattended, one task at a time:
 ```bash
 npm run solve-units                                     # solve all open tasks, real submissions
 npm run solve-units -- --plan                # only show what would run
-npm run solve-units -- --no-submit           # solver + eval for every task, no uploads
+npm run solve-units -- --no-submit           # solver + output check for every task, no uploads
 npm run solve-units -- --only spam1,spam3    # subset
 npm run solve-units -- --max-attempts 1      # spend at most 1 attempt per task this run
 ```
@@ -128,7 +128,7 @@ npm run solve spam1
 # Choose a specific model
 npm run solve spam1 -- --model gwdg/devstral-2-123b-instruct-2512
 
-# Test solver + eval without spending one of the 3 submissions
+# Test the solver + output check without spending one of the 3 submissions
 npm run solve spam1 -- --no-submit
 
 # Results of every batch run (local + pulled from the VM), with run conditions
@@ -141,19 +141,19 @@ npm run solve spam1 -- --task-url 'https://lab-test.../units/.../tasks/.../'
 
 The orchestrator will:
 1. Scaffold a solver at `agent/smartlab/tasks/<task_id>.py` if missing
-2. Run the **solver agent** (researches, implements, validates locally)
-3. Run the **eval agent** (reviews quality, decides approve/reject)
-4. On approval: **submit directly** (HTTP upload + poll for score)
-5. On rejection: re-solve with feedback (no submission consumed); after 3 rejections in a row
-   (`--max-rejections`) the task stops without submitting. `--no-eval` skips the eval agent.
-6. If the **platform score is below `--target`** (default 0.97) and submissions remain, the real
+2. Run the **solver agent** (researches, implements, validates locally). Its first message states
+   the attempts used and the platform results so far; its `SOLVER_DONE` line is the decision to submit.
+3. **Check the output** mechanically: file exists, `<id>;<integer label>` lines, no duplicates, and
+   ids equal to the file names in the task's `*-test.zip` when there is one. Failing output is not
+   submitted; the defects go back to a new solver session (no attempt spent).
+4. **Submit directly** (HTTP upload or token form + poll for score)
+5. If the **platform score is below `--target`** (default 0.97) and submissions remain, the real
    score is fed back to the solver and the loop continues. Identical predictions are never
    re-submitted; after 3 identical results in a row (`--max-unchanged`) the task stops and keeps
    its remaining attempts. The run stops at the target or when all 3 submissions are spent.
-7. If a solver session hits its time cap (`--solver-timeout`, default 30 min) or ends without a CSV,
-   the orchestrator **salvages** the solver module it left behind (runs `validate` + `solve`
-   directly, no LLM) and continues; if there is nothing to salvage it re-runs the solver once
-   with finish-first instructions.
+6. A session killed at its time cap (`--solver-timeout`, default 30 min), aborted in a tool loop or
+   ending without `SOLVER_DONE` submits nothing; the next session is told so. After 3 sessions in a
+   row without a submittable result the task stops (exit 2).
 
 ---
 
@@ -177,7 +177,7 @@ VM's `logs/` to `logs/vm/`), `shell`, `check`.
 
 **What `status` shows** (also available locally as `npm run status [-- --watch|--json]`): the batch
 table with each task's outcome, attempts and best platform score; the running task's phase
-(solver, salvage, eval, submit), iteration, local and platform scores; the current LLM session
+(solver, submit), iteration, local and platform scores; the current LLM session
 with elapsed time against its cap, tool-call count, the call in progress and for how long, and the
 model's last message; remaining API quota per minute/hour/day/month; the last events; and the tail
 of the live log. It flags a **dead process** and a **stale heartbeat** (no sign of life for over two
@@ -213,14 +213,14 @@ the task/batch cleanly (exit code 5) when reached.
 
 ```
 agent/
-├── instructions/        System prompts for solver, eval, and submit agents
+├── instructions/        System prompt for the solver agent
 ├── memory/              Persistent memory across sessions (gitignored)
 ├── run/                 Orchestrator and session runners (TypeScript)
 │   ├── solve_units.ts   Batch driver: fetch → reset → every open task (npm run solve-units)
 │   ├── status.ts / status_cli.ts  Live status files + `npm run status`
 │   ├── orchestrate.ts   Per-task entry point (npm run solve <task>)
 │   ├── solver_session.ts
-│   ├── eval_session.ts
+│   ├── output_check.ts  Deterministic check of the declared output before submission
 │   └── submit_session.ts  Direct HTTP submit (no LLM)
 ├── setup/               Lab auth + data fetch scripts (not run by agent)
 │   ├── fetch_lab.py     Login/cookie helper

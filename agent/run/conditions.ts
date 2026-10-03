@@ -43,7 +43,7 @@ function sha12(path: string): string {
 
 export function collectConditions(caps: RunConditions["caps"]): RunConditions {
 	const prompts: Record<string, string> = {};
-	for (const f of ["solver.md", "eval.md"]) {
+	for (const f of ["solver.md"]) {
 		const p = join(INSTRUCTIONS_DIR, f);
 		if (existsSync(p)) prompts[f] = sha12(p);
 	}

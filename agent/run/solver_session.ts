@@ -23,11 +23,15 @@ export interface SolverResult {
 	approach: string;
 }
 
-/** Facts for the first message that depend on how the task is submitted. */
+/** Facts for the first message: how the task is submitted and what the platform has seen so far. */
 export interface SolverTaskFacts {
 	submission: "file" | "token";
 	/** Unit activation token for the VM's local service, when configured (token tasks). */
 	activationToken?: string;
+	attemptsUsed: number;
+	attemptsMax: number;
+	/** Platform results so far, oldest first; `local` is the solver's local score before it, when known. */
+	history: { local: number | null; platform: number | null }[];
 }
 
 /**
@@ -35,7 +39,7 @@ export interface SolverTaskFacts {
  * @param taskId   Task identifier, e.g. "spam1"
  * @param feedback Optional feedback from a previous eval rejection (for re-solve)
  */
-export async function runSolverSession(taskId: string, feedback?: string, task: SolverTaskFacts = { submission: "file" }): Promise<SolverResult> {
+export async function runSolverSession(taskId: string, feedback: string | undefined, task: SolverTaskFacts): Promise<SolverResult> {
 	const capMin = Math.round(sessionTimeoutMs() / 60000);
 	const now = new Date();
 	const hardStop = new Date(now.getTime() + sessionTimeoutMs());
@@ -44,14 +48,13 @@ export async function runSolverSession(taskId: string, feedback?: string, task: 
 	const clock = ` It is now ${hhmm(now)}; this session is killed at ${hhmm(hardStop)} (${capMin} min cap) and anything unfinished at that point is lost.`;
 	const prompt = (feedback
 		? `Task: ${taskId}. Feedback on your previous attempt: ${feedback} Your previous solver module is still in place.`
-		: `Solve task: ${taskId}.`) + clock + describePythonRuntime() + describeSubmission(task);
+		: `Solve task: ${taskId}.`) + describePlatform(task) + clock + describePythonRuntime() + describeSubmission(task);
 
 	console.log(`[solver] Starting session for task ${taskId}${feedback ? " (re-solve)" : ""}`);
 
 	const { output } = await runSession({
 		instructionsPath: INSTRUCTIONS,
 		prompt,
-		env: { EVAL_TASK_ID: taskId },
 		label: `solver:${taskId}`,
 	});
 
@@ -76,6 +79,13 @@ export async function runSolverSession(taskId: string, feedback?: string, task: 
 		...(match[2] === "token" ? { token: match[3] } : {}),
 		approach: match[4].trim(),
 	};
+}
+
+function describePlatform(t: SolverTaskFacts): string {
+	const results = t.history.length
+		? ` Platform results so far: ${t.history.map((h, i) => `#${i + 1} ${h.platform ?? "?"}${h.local !== null ? ` (your local score then: ${h.local})` : ""}`).join("; ")}.`
+		: "";
+	return ` Platform: ${t.attemptsUsed} of ${t.attemptsMax} attempts used.${results}`;
 }
 
 function describeSubmission(t: SolverTaskFacts): string {

@@ -43,7 +43,7 @@ Two consequences shape everything else:
    do not merge its guidance into this one.
 
 What *is* allowed, and expected to work perfectly, is **infrastructure**: retries, rate-limit
-waits, timeout salvage, loop detection, attempt budgeting, correct data fetching. A harness bug
+waits, output checks, loop detection, attempt budgeting, correct data fetching. A harness bug
 is a measurement error and must be fixed; a prompt hint is a confound and must not be added.
 
 ## 3. How
@@ -54,7 +54,7 @@ is a measurement error and must be fixed; a prompt hint is a confound and must n
 npm run solve-units                 agent/run/solve_units.ts   batch driver: fetch → reset → each open task
   └─ npm run solve <task>           agent/run/orchestrate.ts   per-task loop (the unit of failure)
        ├─ solver session            agent/run/solver_session.ts + instructions/solver.md   (LLM)
-       ├─ eval session              agent/run/eval_session.ts   + instructions/eval.md     (LLM)
+       ├─ output check              agent/run/output_check.ts   (deterministic, no LLM)
        └─ submit                    agent/run/submit_session.ts (deterministic HTTP, no LLM)
 LLM sessions run through           agent/run/session_runner.ts (pi SDK; retries, 429 sleeps, cap, loop guard)
 Tools available to LLM sessions    agent/tools/{memory,web_search,challenge_context}.ts
@@ -73,23 +73,27 @@ Remote execution (lab VM)          scripts/vm/remote.sh (Mac side), scripts/vm/b
    uncommitted tracked files, a hash of each prompt file, model, host, Node, pi and Python versions,
    every cap) in the task log, `logs/status/task.json` and Langfuse metadata; `solve_units` copies
    them into `summary.json`, and `npm run report` reads them. It then reads the task page and syncs
-   attempts already used (earlier runs, by hand) and their scores into memory, so the eval agent
-   and the attempt checks see the platform's numbers rather than a freshly reset memory.
+   attempts already used (earlier runs, by hand) and their scores into memory, so the solver's first
+   message and the attempt checks use the platform's numbers rather than a freshly reset memory.
 1. Scaffold `agent/smartlab/tasks/<task>.py` with the required interface if it does not exist.
-2. **Solver session.** The LLM reads the task via `read_challenge`, writes the module, runs
-   `python3 smartlab_agent.py validate|solve <task>`, records results in memory, and ends with the
-   sentinel `SOLVER_DONE val_score=<x|none> csv=… approach=…` (or `token=…` for token tasks, below).
-   `none` is allowed because some tasks have no training labels to validate against.
-3. **Eval session.** A second LLM session checks the candidate against a rubric
-   (approve at ≥ 0.97, conserve the last attempt, etc.) and prints `EVAL_DECISION: APPROVE|REJECT`.
-   Its first message states, as facts: the candidate, the local score, the attempts used and every
-   platform result so far with the local score that preceded it. (Until 2026-10-03 it only saw the
-   local score, which never predicted the platform score in unit 2.) A rejection sends its feedback
-   to a new solver session; it costs no attempt, but `--max-rejections` (default 3) consecutive
-   rejections stop the task without submitting (exit 8). An eval that ends without the sentinel
-   counts as a failed eval (retried once, then exit 6); it used to default to APPROVE.
-   `--no-eval` skips the eval agent entirely and submits every new solver result: an experimental
-   condition to measure what the eval agent adds.
+2. **Solver session.** Its first message states the attempts used and every platform result so far
+   (with the local score that preceded it, when known). The LLM reads the task via `read_challenge`,
+   writes the module, runs `python3 smartlab_agent.py validate|solve <task>`, records results in
+   memory, and ends with the sentinel `SOLVER_DONE val_score=<x|none> csv=… approach=…` (or
+   `token=…` for token tasks, below). **That line is the decision to submit.** `none` is allowed
+   because some tasks have no training labels to validate against.
+3. **Output check** (`output_check.ts`, deterministic). A CSV must exist, be non-empty, consist of
+   `<id>;<integer label>` lines without duplicate ids and, when the task's data has a `*-test.zip`,
+   name exactly that archive's files (the archives' member paths are the ids the platform expects;
+   verified for spam, documents, clustering and adversarial-example detection). Network-intrusion
+   (pcap) gets the line checks only; a token must be one non-empty string. Output that fails is not
+   submitted; the defects go to the next solver session as facts. There is no LLM reviewer: the
+   eval agent was removed on 2026-10-03 (see section 5).
+   **Premature finishes:** a session killed at its cap, aborted in a tool loop or ending without
+   `SOLVER_DONE` submits nothing (no salvage; the next session is told and its files are still
+   there). A valid but weak result declared early is submitted: when to stop is the model's
+   decision and part of what is measured; the platform score comes back while attempts remain.
+   `MAX_SOLVER_FAILURES` (3) consecutive sessions without a submittable result stop the task (exit 2).
 4. **Submit.** File tasks: the orchestrator uploads `output.csv` plus a `source.zip` of the repo.
    Token tasks: it posts the token to the task page's "Submit Attempt" form (`<task>/log/`). Either
    way it then polls the task page for the new result row, parses the score and the attempts
@@ -97,16 +101,14 @@ Remote execution (lab VM)          scripts/vm/remote.sh (Mac side), scripts/vm/b
 5. **Score-driven iteration.** If the platform score is below `--target` (default 0.97) and
    attempts remain, the score is fed back (facts only) and the loop continues. Byte-identical
    predictions are never re-submitted. `--max-attempts` caps attempts per run.
-6. **Salvage.** If a solver session hits its cap (`--solver-timeout`, default 30 min) or ends
-   without a CSV, the orchestrator runs the module it left behind directly (validate + solve,
-   no LLM) and continues; if nothing is salvageable it re-runs the solver once.
 
 `--max-unchanged <n>` (default 3): if that many consecutive solver results reproduce the last submission byte-for-byte, the task stops with its remaining attempts unused (exit code 7); the solver is told the count and the limit as facts. Added after documents3 (2026-10-02) re-solved 12 times with identical output for about three hours.
 
-`--no-submit` stops after eval approval and spends no attempt. Exit codes: 0 done, 1 no attempts
-before start, 2 solver failed, 3 submission failed, 4 model API quota exhausted, 5 cost budget
-exhausted, 6 eval failed twice, 7 identical results (`--max-unchanged`), 8 eval rejections
-(`--max-rejections`), 9 token task without the VM's local service, 99 fatal.
+`--no-submit` stops once a declared result passes the output check and spends no attempt. Exit
+codes: 0 done, 1 no attempts before start, 2 solver failed (3 sessions in a row without a
+submittable result), 3 submission failed, 4 model API quota exhausted, 5 cost budget exhausted,
+7 identical results (`--max-unchanged`), 9 token task without the VM's local service, 99 fatal.
+6 (eval failed) and 8 (eval rejections) were retired with the eval agent.
 
 **Task kinds.** `fetch_units.py` reads two facts off each task page into `meta.json` and the end of
 `prompt.md`: the evaluation sentence ("This task applies the Rand index adjusted for chance (ARS)
@@ -117,8 +119,7 @@ for evaluation", or "The metric is calculated externally") and how the task is s
 | `file` | spam, documents, clustering (ARS, cluster ids as labels), detection of unknown attacks (no training labels; network-intrusion ids are `src:port->dst:port`) | `output.csv` + source zip | the prompt states the line format |
 | `token` | adversarial ML offense (evasion, stealing) and defense (robustness) | token from the service at `127.0.0.1:8000` on the lab VM | runs only on the VM (exit 9 elsewhere); the service needs the unit activation token, read from `SMARTLAB_ACTIVATION_TOKEN_<UNIT_SLUG>` (e.g. `..._ADVERSARIAL_MACHINE_LEARNING_OFFENSE`) or `SMARTLAB_ACTIVATION_TOKEN` and stated in the solver's first message; the "python template" the task mentions is not on the page and not given to the agent |
 
-For token tasks there is no salvage (the module protocol is not used) and the identical-result
-check compares tokens. The token path was verified up to the form (2026-10-03); no token has been
+For token tasks the identical-result check compares tokens. The token path was verified up to the form (2026-10-03); no token has been
 logged yet.
 
 ### 3.3 Batch driver (`solve_units.ts`)
@@ -137,7 +138,7 @@ table and `logs/solve-units/<stamp>/summary.json` are written.
 - **Attempt budget** is read from the task page ("N of 3 attempts used") before and after every
   submission.
 - **`memory_write` has flat, typed parameters** (`task_id`, `last_val_score`, `last_submission_csv`,
-  `best_approach`, `failed_approaches`, `checkpoint`, `eval_decision`, `eval_notes`, `global_notes`).
+  `best_approach`, `failed_approaches`, `checkpoint`, `global_notes`).
   It used to take a free-form nested `patch`; Gemini's constrained tool calling cannot emit nested objects
   for untyped values and sent JSON text instead, looping on it (2026-10-02). Writes are also validated:
   it rejects malformed patches with a failed tool call
@@ -145,12 +146,10 @@ table and `logs/solve-units/<stamp>/summary.json` are written.
   top-level keys; `sessions`, which go through `memory_append_session`). `tries_used`, `tries_left` and
   `best_score` are orchestrator-owned and cannot be written by agents. Successful writes report the
   changed fields, and a write that changes nothing says so.
-- **An eval session that loops, times out or prints no decision is retried once**; a second failure
-  stops the task with exit code 6 (`eval-failed`) and nothing is submitted. Before 2026-10-02 it
-  crashed the task; before 2026-10-03 a missing decision line counted as APPROVE.
-- **Nothing is submitted without an approval**, except under the explicit `--no-eval` condition.
-- **Degenerate tool loops** (same tool, same arguments, 6× in a row) abort the session and take the
-  salvage path. `memory_append_session` ignores duplicate consecutive entries.
+- **Nothing is submitted that the solver did not declare** with `SOLVER_DONE`, or that fails the
+  output check.
+- **Degenerate tool loops** (same tool, same arguments, 6× in a row) abort the session; nothing is
+  submitted and the next session is told. `memory_append_session` ignores duplicate consecutive entries.
 - **Rate limits** (HTTP 429) are handled by sleeping until the window resets; the wait is not
   charged to the session cap.
 
@@ -187,10 +186,9 @@ Quota per key: 30 requests/min, 200/hour, 1000/day, **3000/month** (exhausted on
 - **Langfuse (optional, observability only).** `@langfuse/pi-observability-plugin` is loaded into
   every pi session and traces turns, LLM calls and tool calls; without keys it does nothing.
   `agent/run/langfuse.ts` makes one orchestrator run one Langfuse session (id
-  `<task>-<timestamp>-<rand>`): each stage (solver, eval, salvage, submit) is a trace tagged
+  `<task>-<timestamp>-<rand>`): each stage (solver, submit) is a trace tagged
   `task:`, `model:`, `stage:`, and the plugin's turns nest under it as "Subagent Turn" spans (via
-  its `LANGFUSE_PI_PARENT_*` env hook). Scores: `local_val_score` (solver/salvage), `eval_decision`
-  (eval), `platform_score` (submit) on stage traces; `outcome`, `submissions` and best
+  its `LANGFUSE_PI_PARENT_*` env hook). Scores: `local_val_score` (solver), `platform_score` (submit) on stage traces; `outcome`, `submissions` and best
   `platform_score` on the session when the run ends. Nothing here reaches a model prompt. Without direnv, load them with `set -a; source .env; set +a`.
 - **Python.** Solvers may use any package in the Python runtime they run on. On the lab VM that is
   the student venv `~/env` (numpy, scipy, scikit-learn, pandas, torch, tensorflow; `pip install`
@@ -236,9 +234,9 @@ not adopted here because it needs a database on the VM.
 
 **Langfuse (verified 2026-10-02).** Keys in `.env` (project `auto-smart-lab` on cloud.langfuse.com, EU);
 `deploy` copies them to the VM. Each orchestrator run is one Langfuse *session* named
-`<task>-<timestamp>-<id>` (printed as `[langfuse] run …`), with one trace per stage (solver, salvage,
-eval, submit), the pi turns nested inside as generations and tool calls with token usage and cost, and
-scores `local_val_score`, `eval_decision`, `platform_score` per stage plus `outcome`, `submissions`,
+`<task>-<timestamp>-<id>` (printed as `[langfuse] run …`), with one trace per stage (solver, submit;
+runs before 2026-10-03 also have eval and salvage), the pi turns nested inside as generations and tool calls with token usage and cost, and
+scores `local_val_score`, `platform_score` per stage plus `outcome`, `submissions`,
 `platform_score` per session. Langfuse outages cannot break or hang a run (flush capped at 5 s).
 Reading back via API: this organisation (created after 2026-09-16) only has the new APIs —
 `GET /api/public/v2/observations?sessionId=…&fields=core,basic,model,usage` and
@@ -269,14 +267,13 @@ prompting:
 | Submission is deterministic code, not an LLM tool | An LLM will spend attempts; 3 is all there are. |
 | Solver modules are not tracked in git | They are results of a run, and every reset deletes them; tracking them caused churn and leaked solutions into the next run. |
 | Status for skipping tasks comes from the lab page | Memory is reset per run and once missed three real submissions. |
-| Salvage runs the module directly instead of re-prompting first | A finished module with a decent score is worth more than another 30 minutes of the same model. |
+| No salvage (2026-10-03; it existed 2026-09-10 → 10-03) | It submitted work the model never declared finished, via the eval. Without the eval, only what the model declares is submitted; the next session is told its predecessor was cut off and can run its own module in seconds. |
 | Rate-limit waits do not count against the session cap | Otherwise the API's quota, not the model, decides the outcome. |
 | Runtime described by detection, not by rule (2026-09-28) | The prompt's "stdlib only" was an inherited assumption; the lab's student VM ships numpy/sklearn/torch. Stating the real environment is a fact, not coaching. |
 | Coaching stripped from prompts (2026-09-10) | The experiment measures the model, not our hints; a coached agent lives elsewhere. |
 | Tasks run sequentially | Parallel runs only trigger 429s under the per-minute quota. |
 | Every task run records its conditions (2026-10-03) | The harness changes often; a result without the commit, prompt hashes and caps it ran under cannot be compared with later ones. |
-| The eval agent gets the platform history as facts (2026-10-03) | It only saw the local score, which was always ≥ 0.97 while platform scores ranged 0.68–0.95; telling it what happened is a fact, not advice. `--no-eval` exists to measure whether it helps at all. |
-| Eval rejections are capped (2026-10-03) | They cost no attempt but unlimited model time; same reasoning as `--max-unchanged`. |
+| Eval agent removed (2026-10-03) | Its decisions were a fixed rubric on the local score (approve ≥ 0.97) run by an LLM: in unit 2 it approved every candidate (local ≥ 0.97, platform 0.65–0.95), on attacks2 it rejected every candidate and ended the task unsubmitted, and its format check passed a CSV with the wrong ids. The thresholds were our submission strategy imposed on the model, and its rejection feedback was advice — both contrary to the barebones design. The solver now decides when to submit, informed by the attempts and platform history; a deterministic check replaces the format review. Code: git history before this change (`eval_session.ts`, `instructions/eval.md`). |
 
 ## 6. Where to look next
 
@@ -284,7 +281,8 @@ prompting:
 - `logs/` (gitignored) — full per-session logs on the machine that ran them.
 - The lab's task pages — the authoritative record of attempts and scores.
 - `npm run report [-- --md --lab]` — every batch result (local and pulled from the VM) in one table
-  with model, commit, eval mode, and local→platform score per submission.
+  with model, commit, eval mode (`on` only for runs before the eval agent's removal), and
+  local→platform score per submission.
 - Open ideas: compare models on the same reset state; run the coached agent on the same tasks for
   a coaching-on/off comparison; an offline test suite with a scripted fake model; add a per-run
   request budget so a run cannot exhaust the hourly quota for the next one.

@@ -10,7 +10,7 @@ Rules that are easy to break by accident:
 - **No coaching in `agent/instructions/` or in orchestrator feedback.** Environment facts and
   protocol only. If you find yourself writing "try X" or "keep sweeps small", stop — that belongs
   to the separate coached agent, not this one.
-- **Never give an LLM session a way to submit.** Submission is `submit_session.ts`, after eval.
+- **Never give an LLM session a way to submit.** Submission is `submit_session.ts`, after the deterministic output check (`output_check.ts`).
 - **Real submissions spend one of 3 attempts per task**; use `--no-submit` unless the user asked
   for a submission. Check the task page's "N of 3 attempts used" before a run with submissions.
 - Harness bugs must be fixed; model failure modes are results — record them in the experiment

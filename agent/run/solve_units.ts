@@ -36,7 +36,7 @@ const ORCHESTRATE = join(HERE, "orchestrate.ts");
 const TSX = join(PROJECT_ROOT, "node_modules", ".bin", "tsx");
 const DEFAULT_TARGET = 0.97;
 
-type Outcome = "eval-rejected" | "needs-vm-service" | "no-new-predictions" | "eval-failed" | "budget-exhausted" | "quota-exhausted" | "solved" | "attempts-exhausted" | "attempt-cap" | "below-target" | "dry-run" | "solver-failed" | "submit-failed" | "fatal" | "skipped";
+type Outcome = "needs-vm-service" | "no-new-predictions" | "budget-exhausted" | "quota-exhausted" | "solved" | "attempts-exhausted" | "attempt-cap" | "below-target" | "dry-run" | "solver-failed" | "submit-failed" | "fatal" | "skipped";
 
 interface TaskResult {
 	id: string;
@@ -66,8 +66,6 @@ function usage(): never {
   --retry-solved  run tasks whose best platform score already meets --target
   --max-attempts  attempts one task may spend in this run (default 3)
   --max-unchanged consecutive solver results identical to the last submission before a task stops (default 3)
-  --max-rejections consecutive eval rejections before a task stops without submitting (default 3)
-  --no-eval       skip the eval agent; every solver result is submitted
   --max-cost      total model spend in USD for the whole batch (paid providers, e.g. google-vertex)
   --secure        verify the lab's TLS certificate (off by default: the lab is self-signed)
 Other flags are passed through to the per-task orchestrator.`);
@@ -100,15 +98,13 @@ function runOrchestrator(taskId: string, args: string[], logPath: string): Promi
 
 function classify(before: TaskStatus | null, after: TaskStatus | null, exitCode: number | null, target: number, noSubmit: boolean, maxAttempts: number): [Outcome, string] {
 	if (exitCode === 9) return ["needs-vm-service", "token task: the local service on 127.0.0.1:8000 is not running here (run on the lab VM)"];
-	if (exitCode === 8) return ["eval-rejected", "eval rejected the solver's results too often in a row; not submitted"];
 	if (exitCode === 7) return ["no-new-predictions", "solver kept reproducing the last submission; remaining attempts unused"];
-	if (exitCode === 6) return ["eval-failed", "eval session ended early twice; not submitted"];
 	if (exitCode === 5) return ["budget-exhausted", "--max-cost budget spent (see task log)"];
 	if (exitCode === 4) return ["quota-exhausted", "model API daily/monthly quota used up (see task log)"];
 	if (exitCode === 99 || exitCode === null) return ["fatal", "orchestrator crashed"];
-	if (exitCode === 2) return ["solver-failed", "solver produced no usable predictions"];
+	if (exitCode === 2) return ["solver-failed", "solver sessions in a row without a submittable result"];
 	if (exitCode === 3) return ["submit-failed", "upload or result polling failed"];
-	if (noSubmit) return ["dry-run", "eval approved, submission skipped (--no-submit)"];
+	if (noSubmit) return ["dry-run", "solver declared a result that passed the output check; not submitted (--no-submit)"];
 	const best = after?.bestScore ?? null;
 	const spent = (after?.attemptsUsed ?? 0) - (before?.attemptsUsed ?? 0);
 	if (best !== null && best >= target) return ["solved", `best platform score ${fmtScore(best)} >= ${target}`];
@@ -138,8 +134,6 @@ async function main() {
 	const target = targetArg !== undefined ? Number(targetArg) : DEFAULT_TARGET;
 	const solverTimeout = takeArg("--solver-timeout");
 	const maxUnchanged = takeArg("--max-unchanged");
-	const maxRejections = takeArg("--max-rejections");
-	const noEval = takeFlag("--no-eval");
 	const maxCostArg = takeArg("--max-cost");
 	const maxCost = maxCostArg !== undefined ? Number(maxCostArg) : undefined;
 	if (maxCost !== undefined && !(maxCost > 0)) usage();
@@ -161,8 +155,6 @@ async function main() {
 	if (solverTimeout) passthrough.push("--solver-timeout", solverTimeout);
 	passthrough.push("--max-attempts", String(maxAttempts));
 	if (maxUnchanged) passthrough.push("--max-unchanged", maxUnchanged);
-	if (maxRejections) passthrough.push("--max-rejections", maxRejections);
-	if (noEval) passthrough.push("--no-eval");
 
 	// 1. Fetch
 	if (refresh || !existsSync(INDEX_PATH)) {
