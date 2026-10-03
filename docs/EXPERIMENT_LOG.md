@@ -170,3 +170,15 @@ because the solver reported `csv=submissions/…` relative to `agent/` (harness 
 Model observations: the CSV lines are `name.x;label` while the task prompt's example is
 `adv-test/name.x;label`, and the eval agent called the format valid; the solver also wrote a
 `SOLVER_DONE.txt` into the repo root.
+
+**2026-10-03, eval agent removed (f8b8db7); smoke test of the new flow (not a measured result):**
+attacks2, `solve-units --only attacks2 --no-submit --model gwdg/qwen3-coder-next --solver-timeout 25`, Mac,
+working tree before f8b8db7. Session 1 never printed `SOLVER_DONE` as plain text (it echoed it through
+`bash` and wrote "the solution is complete" summaries), used 246 tool calls, hit the hourly GWDG quota and
+was killed at its cap: nothing submitted, the next session was told so (new flow works). Session 2 (354 tool
+calls, two hourly-quota waits of ~29 and ~45 min) was still running when the background job hit its 2-hour
+limit and was stopped; no result reached the orchestrator. Both CSVs the solver left behind
+(`agent/submissions/` and `submissions/`) fail the new output check the same way: ids are bare file names
+(`iaucoouqje-4.x`) instead of the archive paths the platform expects (`adv-test/iaucoouqje-4.x`) — the same
+defect the removed eval agent called valid. Observation: qwen spends 150–350 tool calls per session, so the
+200/hour GWDG quota, not the session cap, sets the pace.
