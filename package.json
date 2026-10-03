@@ -8,7 +8,8 @@
     "reset": "python3 agent/setup/reset_state.py",
     "solve-units": "tsx agent/run/solve_units.ts",
     "status": "tsx agent/run/status_cli.ts",
-    "probe-model": "tsx agent/run/probe_model.ts"
+    "probe-model": "tsx agent/run/probe_model.ts",
+    "report": "tsx agent/run/report.ts"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "*",

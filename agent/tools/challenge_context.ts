@@ -32,9 +32,9 @@ interface ChallengeEntry {
 	prompt_preview: string;
 }
 
-function readMeta(taskDir: string): { short_id?: string } {
+function readMeta(taskDir: string): { short_id?: string; submission?: string; metric?: string } {
 	try {
-		return JSON.parse(readFileSync(join(taskDir, "meta.json"), "utf8")) as { short_id?: string };
+		return JSON.parse(readFileSync(join(taskDir, "meta.json"), "utf8")) as { short_id?: string; submission?: string; metric?: string };
 	} catch {
 		return {};
 	}
@@ -180,9 +180,13 @@ export default function challengeContextExtension(pi: ExtensionAPI) {
 					? readdirSync(dataDir).filter((f) => !f.startsWith(".")).map((f) => join(dataDir, f))
 					: [];
 
+				const meta = readMeta(taskDir);
 				const result = {
 					task_path: taskDir.slice(CHALLENGES_DIR.length + 1),
-					short_id: readMeta(taskDir).short_id ?? null,
+					short_id: meta.short_id ?? null,
+					// "file": prediction CSV + source upload; "token": token from the lab VM's local service
+					submission: meta.submission ?? "file",
+					metric: meta.metric ?? null,
 					data_dir: existsSync(dataDir) ? dataDir : null,
 					data_files: dataFiles,
 					unit_intro: unitIntroText || null,

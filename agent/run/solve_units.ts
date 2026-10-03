@@ -36,7 +36,7 @@ const ORCHESTRATE = join(HERE, "orchestrate.ts");
 const TSX = join(PROJECT_ROOT, "node_modules", ".bin", "tsx");
 const DEFAULT_TARGET = 0.97;
 
-type Outcome = "no-new-predictions" | "eval-failed" | "budget-exhausted" | "quota-exhausted" | "solved" | "attempts-exhausted" | "attempt-cap" | "below-target" | "dry-run" | "solver-failed" | "submit-failed" | "fatal" | "skipped";
+type Outcome = "eval-rejected" | "needs-vm-service" | "no-new-predictions" | "eval-failed" | "budget-exhausted" | "quota-exhausted" | "solved" | "attempts-exhausted" | "attempt-cap" | "below-target" | "dry-run" | "solver-failed" | "submit-failed" | "fatal" | "skipped";
 
 interface TaskResult {
 	id: string;
@@ -50,6 +50,9 @@ interface TaskResult {
 	minutes: number;
 	costUsd: number;
 	log: string | null;
+	/** From the task's status file: the run conditions and each submission's local/platform score. */
+	conditions?: unknown;
+	submissions?: { iteration: number; local: number | null; platform: number | null; triesLeft: number | null }[];
 }
 
 function usage(): never {
@@ -63,6 +66,8 @@ function usage(): never {
   --retry-solved  run tasks whose best platform score already meets --target
   --max-attempts  attempts one task may spend in this run (default 3)
   --max-unchanged consecutive solver results identical to the last submission before a task stops (default 3)
+  --max-rejections consecutive eval rejections before a task stops without submitting (default 3)
+  --no-eval       skip the eval agent; every solver result is submitted
   --max-cost      total model spend in USD for the whole batch (paid providers, e.g. google-vertex)
   --secure        verify the lab's TLS certificate (off by default: the lab is self-signed)
 Other flags are passed through to the per-task orchestrator.`);
@@ -94,6 +99,8 @@ function runOrchestrator(taskId: string, args: string[], logPath: string): Promi
 }
 
 function classify(before: TaskStatus | null, after: TaskStatus | null, exitCode: number | null, target: number, noSubmit: boolean, maxAttempts: number): [Outcome, string] {
+	if (exitCode === 9) return ["needs-vm-service", "token task: the local service on 127.0.0.1:8000 is not running here (run on the lab VM)"];
+	if (exitCode === 8) return ["eval-rejected", "eval rejected the solver's results too often in a row; not submitted"];
 	if (exitCode === 7) return ["no-new-predictions", "solver kept reproducing the last submission; remaining attempts unused"];
 	if (exitCode === 6) return ["eval-failed", "eval session ended early twice; not submitted"];
 	if (exitCode === 5) return ["budget-exhausted", "--max-cost budget spent (see task log)"];
@@ -131,6 +138,8 @@ async function main() {
 	const target = targetArg !== undefined ? Number(targetArg) : DEFAULT_TARGET;
 	const solverTimeout = takeArg("--solver-timeout");
 	const maxUnchanged = takeArg("--max-unchanged");
+	const maxRejections = takeArg("--max-rejections");
+	const noEval = takeFlag("--no-eval");
 	const maxCostArg = takeArg("--max-cost");
 	const maxCost = maxCostArg !== undefined ? Number(maxCostArg) : undefined;
 	if (maxCost !== undefined && !(maxCost > 0)) usage();
@@ -152,6 +161,8 @@ async function main() {
 	if (solverTimeout) passthrough.push("--solver-timeout", solverTimeout);
 	passthrough.push("--max-attempts", String(maxAttempts));
 	if (maxUnchanged) passthrough.push("--max-unchanged", maxUnchanged);
+	if (maxRejections) passthrough.push("--max-rejections", maxRejections);
+	if (noEval) passthrough.push("--no-eval");
 
 	// 1. Fetch
 	if (refresh || !existsSync(INDEX_PATH)) {
@@ -227,13 +238,15 @@ async function main() {
 		}
 		r.exitCode = await runOrchestrator(id, taskArgs, logPath);
 		// Only trust task.json if this task wrote it (a task that exits early leaves the previous one's file).
-		const ts = readJson<{ task?: string; startedAt?: string; usage?: { costUsd?: number } }>(TASK_STATUS);
-		r.costUsd = ts?.task === id && ts.startedAt && Date.parse(ts.startedAt) >= t0 - 1000 ? Number(ts.usage?.costUsd ?? 0) || 0 : 0;
+		const ts = readJson<{ task?: string; startedAt?: string; usage?: { costUsd?: number }; conditions?: unknown; submissions?: TaskResult["submissions"] }>(TASK_STATUS);
+		const own = ts?.task === id && ts.startedAt && Date.parse(ts.startedAt) >= t0 - 1000;
+		r.costUsd = own ? Number(ts!.usage?.costUsd ?? 0) || 0 : 0;
+		if (own) { r.conditions = ts!.conditions; r.submissions = ts!.submissions ?? []; }
 		r.minutes = Math.round((Date.now() - t0) / 6000) / 10;
 		try { r.after = await fetchTaskStatus(r.url, insecure, client); } catch { /* keep before */ }
 		[r.outcome, r.reason] = classify(r.before, r.after, r.exitCode, target, noSubmit, maxAttempts);
 		console.log(`\n[units] ${id} finished in ${r.minutes} min: ${r.outcome} — ${r.reason}`);
-		writeFileSync(join(logDir, "summary.json"), JSON.stringify({ stamp, target, noSubmit, results }, null, 2));
+		writeFileSync(join(logDir, "summary.json"), JSON.stringify({ stamp, target, noSubmit, model: model ?? null, args: process.argv.slice(2), results }, null, 2));
 		publishRun({ current: null });
 		if (r.outcome === "quota-exhausted" || r.outcome === "budget-exhausted") {
 			console.error(`[units] ${r.outcome === "budget-exhausted" ? "cost budget" : "model API quota"} exhausted — stopping the batch; remaining tasks were not started.`);

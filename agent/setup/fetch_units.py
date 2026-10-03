@@ -79,6 +79,37 @@ def _main_content(page: str) -> str:
     return m.group(1) if m else page
 
 
+def _page_facts(page: str) -> dict:
+    """Facts from the task page outside the description block, as a student sees them there.
+
+    - ``submission``: ``"token"`` when the page logs an attempt with a code returned by the VM's
+      local service (an ``activationcode`` form), else ``"file"`` (output.csv + source archive upload).
+    - ``metric``: the "This task applies <metric> for evaluation" (or "The metric is calculated
+      externally") sentence, when present.
+    - ``submission_text``: the upload dialog's instruction text, when present.
+    """
+    text = re.sub(r"\s+", " ", html.unescape(_strip_tags(re.sub(r"<script.*?</script>", " ", page, flags=re.S | re.I))))
+    facts: dict = {"submission": "token" if re.search(r'name="activationcode"', page) else "file"}
+    m = re.search(r"(This task applies .+? for evaluation\.?|The metric is calculated externally\.?)", text)
+    if m:
+        facts["metric"] = m.group(1).rstrip(".") + "."
+    m = re.search(r"Submit New Attempt\s*(?:×|&times;)?\s*(Please provide .+?)\s+(?:Files|Close)\b", text)
+    if m:
+        facts["submission_text"] = m.group(1)
+    return facts
+
+
+def _facts_md(facts: dict) -> str:
+    lines = []
+    if facts.get("metric"):
+        lines.append(f"Evaluation: {facts['metric']}")
+    if facts["submission"] == "token":
+        lines.append("Submission: an attempt is logged on the task page with the token the local service returns.")
+    elif facts.get("submission_text"):
+        lines.append(f"Submission: {facts['submission_text']}")
+    return ("\n\n## From the task page\n\n" + "\n\n".join(lines)) if lines else ""
+
+
 def _html_to_md(fragment: str) -> str:
     """Very light HTML→Markdown conversion (stdlib-only, good-enough for task prompts)."""
     text = fragment
@@ -273,9 +304,10 @@ def fetch_all(refresh: bool = False, insecure: bool | None = None, fetch_data: b
 
             # Write prompt.md
             prompt_md = _html_to_md(_main_content(task_page))
+            facts = _page_facts(task_page)
             prompt_path = task_dir / "prompt.md"
             prompt_path.write_text(
-                f"# {task_title}\n\nSource: {task_url}\n\n{prompt_md}\n",
+                f"# {task_title}\n\nSource: {task_url}\n\n{prompt_md}{_facts_md(facts)}\n",
                 encoding="utf-8",
             )
             print(f"    [prompt] -> {prompt_path.relative_to(REPO_ROOT)}")
@@ -289,6 +321,7 @@ def fetch_all(refresh: bool = False, insecure: bool | None = None, fetch_data: b
                 "url": task_url,
                 # 1-based position of the task on the unit page (the lab lists tasks in order)
                 "task_order": task_order,
+                **facts,
             }
             (task_dir / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
 

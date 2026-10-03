@@ -54,6 +54,9 @@ python3 agent/setup/fetch_units.py
 ```
 
 This also writes `units/index.json` — a short-ID → URL mapping used by the orchestrator.
+`prompt.md` ends with the evaluation metric and submission instructions read off the task page, and
+`meta.json` records `submission: file|token`. To add these to units fetched before 2026-10-03
+without downloading data again: `python3 agent/setup/fetch_units.py --no-data`.
 
 ### 3. List available tasks
 
@@ -128,6 +131,10 @@ npm run solve spam1 -- --model gwdg/devstral-2-123b-instruct-2512
 # Test solver + eval without spending one of the 3 submissions
 npm run solve spam1 -- --no-submit
 
+# Results of every batch run (local + pulled from the VM), with run conditions
+npm run report
+npm run report -- --md --lab      # Markdown, plus the lab's current attempts/scores
+
 # Override task URL manually (bypasses index.json lookup)
 npm run solve spam1 -- --task-url 'https://lab-test.../units/.../tasks/.../'
 ```
@@ -137,7 +144,8 @@ The orchestrator will:
 2. Run the **solver agent** (researches, implements, validates locally)
 3. Run the **eval agent** (reviews quality, decides approve/reject)
 4. On approval: **submit directly** (HTTP upload + poll for score)
-5. On rejection: re-solve with feedback (free, no submission consumed)
+5. On rejection: re-solve with feedback (no submission consumed); after 3 rejections in a row
+   (`--max-rejections`) the task stops without submitting. `--no-eval` skips the eval agent.
 6. If the **platform score is below `--target`** (default 0.97) and submissions remain, the real
    score is fed back to the solver and the loop continues. Identical predictions are never
    re-submitted; after 3 identical results in a row (`--max-unchanged`) the task stops and keeps

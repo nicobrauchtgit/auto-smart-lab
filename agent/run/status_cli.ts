@@ -90,6 +90,11 @@ function render(): string {
 		if (taskAlive && task.phase !== "exited" && hb !== null && hb > 120 && task.session?.state !== "rate-limited") health += `  ⚠ no heartbeat for ${fmtDur(hb)}`;
 		out.push("", `TASK    ${task.task}   phase ${task.phase}   iteration ${task.iteration ?? "-"}   ${health}`);
 		if (task.python) out.push(`        python ${task.python.version}${task.python.virtualenv ? " (venv)" : ""}, ${task.python.packages} packages — ${task.python.executable}`);
+		const c = task.conditions;
+		if (c) {
+			const caps = Object.entries(c.caps ?? {}).filter(([, v]) => v !== null && v !== undefined).map(([k, v]) => `${k}=${v}`).join(" ");
+			out.push(`        commit ${c.git?.commit ?? "?"}${c.git?.dirty?.length ? ` +${c.git.dirty.length} uncommitted` : ""}   ${caps}`);
+		}
 		out.push(`        started ${ago(task.startedAt)}${task.localScore != null ? `   local ${task.localScore}` : ""}${task.result ? `   platform ${task.result.platformScore} (${task.result.triesLeft} left)` : ""}`);
 		const s = task.session;
 		if (s && task.phase !== "exited") {

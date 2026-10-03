@@ -174,7 +174,9 @@ export function parseTriesUsed(v: string|null): number|null {
 	if (!v) return null; const m=v.match(/(\d+)\s+of\s+\d+\s+attempts\s+used/i); return m?Number(m[1]):null;
 }
 interface Attempt { number: string; date: string; comment: string; result: string; info: string; }
-export interface TaskInfo { title: string; taskUrl: string; uploadUrl: string|null; csrfToken: string|null; attemptsUsed: string|null; attempts: Attempt[]; }
+export interface TaskInfo { title: string; taskUrl: string; uploadUrl: string|null; csrfToken: string|null; attemptsUsed: string|null; attempts: Attempt[];
+	/** Token tasks: the URL the "Submit Attempt" form posts the activation code (token) to. */
+	logUrl: string|null; }
 
 export function parseTaskPage(taskUrl: string, page: string, baseUrl: string): TaskInfo {
 	const tm=page.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
@@ -186,6 +188,15 @@ export function parseTaskPage(taskUrl: string, page: string, baseUrl: string): T
 		const cm=fm[2].match(/<input[^>]+name="csrfmiddlewaretoken"[^>]+value="([^"]+)"/i);
 		if (cm) csrfToken=decodeEntities(cm[1]);
 	}
+	// Token tasks: <form class="subform"> with activationcode + hidden activation_url, posted via AJAX.
+	let logUrl: string|null=null;
+	const sm=page.match(/<form[^>]*class="subform"[^>]*>([\s\S]*?)<\/form>/i);
+	if (sm) {
+		const am=sm[1].match(/<input[^>]+value="([^"]+)"[^>]+name="activation_url"/i) ?? sm[1].match(/<input[^>]+name="activation_url"[^>]+value="([^"]+)"/i);
+		if (am) logUrl=new URL(decodeEntities(am[1]),baseUrl).toString();
+		const cm=sm[1].match(/<input[^>]+name="csrfmiddlewaretoken"[^>]+value="([^"]+)"/i);
+		if (cm&&!csrfToken) csrfToken=decodeEntities(cm[1]);
+	}
 	const um=page.match(/(\d+\s+of\s+\d+\s+attempts\s+used)/i);
 	const attempts: Attempt[] = [];
 	const rr=/<tr>([\s\S]*?)<\/tr>/gi; let rm: RegExpExecArray|null;
@@ -194,7 +205,7 @@ export function parseTaskPage(taskUrl: string, page: string, baseUrl: string): T
 		if (cells.length>=5&&!cleanHtml(rm[1]).toLowerCase().includes("currently no valid attempts"))
 			attempts.push({number:cleanHtml(cells[0]),date:cleanHtml(cells[1]),comment:cleanHtml(cells[2]),result:cleanHtml(cells[3]),info:cleanHtml(cells[4])});
 	}
-	return {title, taskUrl, uploadUrl, csrfToken, attemptsUsed: um?um[1]:null, attempts};
+	return {title, taskUrl, uploadUrl, csrfToken, attemptsUsed: um?um[1]:null, attempts, logUrl};
 }
 
 // ---------------------------------------------------------------------------
@@ -275,32 +286,67 @@ function updateMemory(taskId: string, triesUsed: number|null, score: number|null
 // Main export
 // ---------------------------------------------------------------------------
 
-export async function runSubmitSession(taskId: string, csvPath: string): Promise<SubmitResult> {
+/** What to submit: a prediction CSV (uploaded with the source archive) or a token from the VM's local service. */
+export type SubmitArtifact = { csvPath: string } | { token: string };
+
+export async function runSubmitSession(taskId: string, artifact: SubmitArtifact): Promise<SubmitResult> {
 	const insecure = truthy(process.env.LAB_INSECURE_TLS);
 	const taskUrl = process.env.SMARTLAB_TASK_URL;
 	if (!taskUrl) { console.error("[submit] SMARTLAB_TASK_URL not set"); return {ok:false,score:null,triesLeft:null,error:"SMARTLAB_TASK_URL not set"}; }
 
-	const abscsv = isAbsolute(csvPath) ? csvPath : resolve(PROJECT_ROOT, csvPath);
-	if (!existsSync(abscsv)) { console.error(`[submit] CSV not found: ${abscsv}`); return {ok:false,score:null,triesLeft:null,error:`CSV not found: ${abscsv}`}; }
-
-	console.log(`[submit] Submitting ${abscsv} to ${taskUrl}`);
-
 	const client = new SimpleClient(insecure);
-
 	// Fetch task page (login if needed)
 	const taskRes = await client.get(taskUrl);
 	const before = parseTaskPage(taskRes.url, taskRes.text, client.baseUrl);
 	console.log(`[submit] Task: ${before.title}, attempts so far: ${before.attempts.length}`);
-
-	if (!before.uploadUrl) return {ok:false,score:null,triesLeft:null,error:"No upload form found on task page"};
 	if (!before.csrfToken) return {ok:false,score:null,triesLeft:null,error:"No CSRF token found"};
+
+	const sent = "token" in artifact
+		? await logToken(client, before, artifact.token)
+		: await uploadCsv(client, before, artifact.csvPath);
+	if (!sent.ok) {
+		updateMemory(taskId, null, null);
+		return {ok:false, score:null, triesLeft:null, error:sent.error};
+	}
+	return pollResult(client, taskId, taskUrl, before);
+}
+
+/** Token tasks: POST the token as "activationcode" to the task's log URL, as the page's AJAX form does. */
+async function logToken(client: SimpleClient, before: TaskInfo, token: string): Promise<{ok:boolean; error?:string}> {
+	if (!before.logUrl) return {ok:false, error:"No token form (activation_url) found on task page"};
+	console.log(`[submit] Logging token (${token.length} chars) at ${before.logUrl} ...`);
+	const res = await client.request(before.logUrl, {
+		method:"POST",
+		body:Buffer.from(new URLSearchParams({activationcode: token}).toString(),"utf8"),
+		headers:{
+			"Content-Type":"application/x-www-form-urlencoded; charset=UTF-8",
+			Accept:"application/json, text/javascript, */*; q=0.01",
+			Referer: before.taskUrl,
+			"X-Requested-With":"XMLHttpRequest",
+			"X-CSRFToken": before.csrfToken!,
+		},
+	});
+	const msg = cleanHtml(res.text);
+	console.log(`[submit] Token response: HTTP ${res.status} — ${msg.slice(0,200)}`);
+	// The page treats {redirect: ...} as success and shows {msg: ...} as an error.
+	let data: {redirect?: string; msg?: string} = {};
+	try { data = JSON.parse(res.text); } catch { /* not JSON */ }
+	if (res.status >= 200 && res.status < 300 && data.redirect) return {ok:true};
+	return {ok:false, error:`Token rejected HTTP ${res.status}: ${data.msg ?? msg.slice(0,300)}`};
+}
+
+async function uploadCsv(client: SimpleClient, before: TaskInfo, csvPath: string): Promise<{ok:boolean; error?:string}> {
+	const abscsv = isAbsolute(csvPath) ? csvPath : resolve(PROJECT_ROOT, csvPath);
+	if (!existsSync(abscsv)) { console.error(`[submit] CSV not found: ${abscsv}`); return {ok:false, error:`CSV not found: ${abscsv}`}; }
+	if (!before.uploadUrl) return {ok:false, error:"No upload form found on task page"};
+	console.log(`[submit] Submitting ${abscsv} to ${before.taskUrl}`);
 
 	const csvData = readFileSync(abscsv);
 	const zipData = buildZip(PROJECT_ROOT);
 	console.log(`[submit] CSV: ${csvData.length} bytes, source.zip: ${zipData.length} bytes`);
 
 	const {body, boundary} = buildMultipart(
-		{csrfmiddlewaretoken: before.csrfToken, comment: "auto-agent submission"},
+		{csrfmiddlewaretoken: before.csrfToken!, comment: "auto-agent submission"},
 		[
 			{field:"file[0]", filename:"output.csv", ct:"text/csv", data:csvData},
 			{field:"file[1]", filename:"source.zip", ct:"application/zip", data:zipData},
@@ -315,7 +361,7 @@ export async function runSubmitSession(taskId: string, csvPath: string): Promise
 			Accept:"application/json,text/html,*/*;q=0.8",
 			Referer: before.taskUrl,
 			"X-Requested-With":"XMLHttpRequest",
-			"X-CSRFToken": before.csrfToken,
+			"X-CSRFToken": before.csrfToken!,
 		}
 	});
 	const uploadMsg = cleanHtml(uploadRes.text);
@@ -327,13 +373,14 @@ export async function runSubmitSession(taskId: string, csvPath: string): Promise
 		(!uploadMsg.toLowerCase().includes("error") && !uploadMsg.toLowerCase().includes("invalid") && !uploadMsg.toLowerCase().includes("fail"))
 	);
 
-	if (!uploadOk) {
-		updateMemory(taskId, null, null);
-		return {ok:false, score:null, triesLeft:null, error:`Upload failed HTTP ${uploadRes.status}: ${uploadMsg}`};
-	}
+	if (!uploadOk) return {ok:false, error:`Upload failed HTTP ${uploadRes.status}: ${uploadMsg}`};
+	return {ok:true};
+}
 
+/** After a successful upload / token log: poll the task page until the new attempt row has a result. */
+async function pollResult(client: SimpleClient, taskId: string, taskUrl: string, before: TaskInfo): Promise<SubmitResult> {
 	// Poll for the result row
-	console.log("[submit] Upload ok, polling for result...");
+	console.log("[submit] Sent, polling for result...");
 	const pollTimeout = Date.now() + 600_000; // grading can take a while; the try is spent either way
 	let after = before;
 	while (Date.now() < pollTimeout) {

@@ -7,6 +7,7 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { release, type } from "node:os";
 
 export interface PythonRuntime {
 	executable: string;
@@ -41,13 +42,19 @@ export function detectPythonRuntime(): PythonRuntime | null {
 	return cached;
 }
 
+/** Host OS and whether the coreutils `timeout` command exists (it does not on macOS). */
+export function describeHost(): string {
+	const hasTimeout = spawnSync("sh", ["-c", "command -v timeout"], { encoding: "utf8" }).status === 0;
+	return ` Host: ${type()} ${release()}; the \`timeout\` shell command is ${hasTimeout ? "available" : "not available"}.`;
+}
+
 /** One paragraph for the solver's first message. */
 export function describePythonRuntime(): string {
 	const rt = detectPythonRuntime();
-	if (!rt) return " Python runtime: `python3` could not be probed on this host.";
+	if (!rt) return describeHost() + " Python runtime: `python3` could not be probed on this host.";
 	const pkgs = rt.packages.length ? `${rt.packages.length} third-party distributions installed: ${rt.packages.join(", ")}` : "no third-party packages installed (standard library only)";
 	const pip = rt.inVirtualenv && rt.pipAvailable
 		? "It is a virtualenv; installing more packages with `python3 -m pip install` is allowed."
 		: "It is not a virtualenv; do not install packages into it.";
-	return ` Python runtime for your commands: \`python3\` = ${rt.executable} (Python ${rt.version}). ${pip} ${pkgs}.`;
+	return describeHost() + ` Python runtime for your commands: \`python3\` = ${rt.executable} (Python ${rt.version}). ${pip} ${pkgs}.`;
 }

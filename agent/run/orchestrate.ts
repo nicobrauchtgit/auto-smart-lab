@@ -3,8 +3,8 @@
  * SmartLab ML Challenge Orchestrator
  *
  * Drives the solver → eval → submit loop for a single task.
- * Only final submissions (smartlab_submit calls) count toward the 3-try limit.
- * Re-solving after a REJECT is free.
+ * Only platform submissions count toward the 3-try limit. Re-solving after a REJECT costs no
+ * attempt, but is capped (--max-rejections) because it costs model time.
  *
  * Usage:
  *   npx tsx agent/run/orchestrate.ts <task_id>
@@ -147,10 +147,45 @@ function findTaskUrl(taskId: string): string | undefined {
 	return undefined;
 }
 
+/** meta.json of a task (written by fetch_units.py), found by short id. */
+function findTaskMeta(taskId: string): { unit_slug?: string; submission?: "file" | "token"; dir: string } | null {
+	if (!existsSync(UNITS_DIR)) return null;
+	for (const unit of readdirSync(UNITS_DIR)) {
+		const unitDir = join(UNITS_DIR, unit);
+		if (!statSync(unitDir).isDirectory()) continue;
+		for (const task of readdirSync(unitDir)) {
+			const metaPath = join(unitDir, task, "meta.json");
+			if (!existsSync(metaPath)) continue;
+			try {
+				const meta = JSON.parse(readFileSync(metaPath, "utf8"));
+				if (meta.short_id === taskId) return { ...meta, dir: join(unitDir, task) };
+			} catch { /* skip */ }
+		}
+	}
+	return null;
+}
+
+/** Unit activation token for the VM's local service: SMARTLAB_ACTIVATION_TOKEN_<UNIT_SLUG> or SMARTLAB_ACTIVATION_TOKEN. */
+function activationToken(unitSlug: string | undefined): string | undefined {
+	const key = `SMARTLAB_ACTIVATION_TOKEN_${(unitSlug ?? "").toUpperCase().replace(/[^A-Z0-9]+/g, "_")}`;
+	return process.env[key] || process.env.SMARTLAB_ACTIVATION_TOKEN || undefined;
+}
+
+/** Token tasks talk to the lab VM's local service; check it answers before spending a session on it. */
+async function localServiceReachable(): Promise<boolean> {
+	return new Promise((res) => {
+		const req = httpRequest({ hostname: "127.0.0.1", port: 8000, path: "/", method: "GET", timeout: 5000 }, (r) => { r.resume(); res(true); });
+		req.on("error", () => res(false));
+		req.on("timeout", () => { req.destroy(); res(false); });
+		req.end();
+	});
+}
+
 import { ensureSolverScaffold } from "./scaffold.js";
 import { runSolverSession } from "./solver_session.js";
-import { runEvalSession } from "./eval_session.js";
-import { runSubmitSession } from "./submit_session.js";
+import { EvalNoDecisionError, runEvalSession } from "./eval_session.js";
+import { fetchTaskStatus, runSubmitSession } from "./submit_session.js";
+import { collectConditions, describeConditions } from "./conditions.js";
 import { getTaskMemory, updateTaskMemory } from "./memory_utils.js";
 import { taskEvent, taskStatus } from "./status.js";
 import { detectPythonRuntime } from "./runtime_env.js";
@@ -167,9 +202,27 @@ const DEFAULT_TARGET = 0.97;
  * Override with --max-unchanged.
  */
 const DEFAULT_MAX_UNCHANGED = 3;
+/**
+ * How many consecutive eval rejections before the task stops without submitting. A rejection costs
+ * no attempt, so without a cap a strict eval and a solver that cannot reach its bar loop forever.
+ * Override with --max-rejections.
+ */
+const DEFAULT_MAX_REJECTIONS = 3;
 /** How many solver sessions may time out / fail to produce a CSV before we give up on the task. */
 const MAX_SOLVER_FAILURES = 2;
 const AGENT_DIR = join(PROJECT_ROOT, "agent");
+
+/**
+ * Resolve a path an agent reported. Relative paths are ambiguous: the solver's shell starts in the
+ * repo root, but `smartlab_agent.py` runs in agent/, so a module's relative DEFAULT_SUBMISSION lands
+ * under agent/. Prefer whichever exists (attacks2 smoke test, 2026-10-03: a valid CSV was missed).
+ */
+function resolveReported(p: string): string {
+	if (!p || isAbsolute(p)) return p;
+	const fromRoot = resolve(PROJECT_ROOT, p);
+	const fromAgent = resolve(AGENT_DIR, p);
+	return existsSync(fromRoot) || !existsSync(fromAgent) ? fromRoot : fromAgent;
+}
 
 /** Run `smartlab_agent.py <cmd> <task>` and return stdout+stderr (or null on failure/timeout). */
 function runCli(cmd: string, taskId: string, timeoutMs: number): string | null {
@@ -211,8 +264,9 @@ function salvageSolver(taskId: string): SolverResult | null {
 }
 
 function usage(): never {
-	console.error("Usage: npx tsx agent/run/orchestrate.ts <task_id|list> [--model <id>] [--task-url <url>] [--secure] [--no-submit] [--target <score>] [--solver-timeout <minutes>] [--max-attempts <n>] [--max-cost <usd>] [--max-unchanged <n>]");
-	console.error("Exit codes: 0 done (target reached, no attempts left, dry run or attempt cap), 1 no attempts before start, 2 solver failed, 3 submission failed, 4 model API daily/monthly quota exhausted, 5 cost budget (--max-cost USD) exhausted, 6 eval session failed twice, 7 solver kept reproducing the last submission (--max-unchanged, default 3), 99 fatal");
+	console.error("Usage: npx tsx agent/run/orchestrate.ts <task_id|list> [--model <id>] [--task-url <url>] [--secure] [--no-submit] [--target <score>] [--solver-timeout <minutes>] [--max-attempts <n>] [--max-cost <usd>] [--max-unchanged <n>] [--max-rejections <n>] [--no-eval]");
+	console.error("Exit codes: 0 done (target reached, no attempts left, dry run or attempt cap), 1 no attempts before start, 2 solver failed, 3 submission failed, 4 model API daily/monthly quota exhausted, 5 cost budget (--max-cost USD) exhausted, 6 eval session failed twice, 7 solver kept reproducing the last submission (--max-unchanged, default 3), 8 eval rejected too often in a row (--max-rejections, default 3), 9 token task without the VM's local service, 99 fatal");
+	console.error("--no-eval: skip the eval agent; every solver result is submitted (experimental condition).");
 	console.error("Required env: LAB_USER, LAB_PASS");
 	console.error("Examples:");
 	console.error("  npm run solve list                    # show all available task IDs");
@@ -258,6 +312,10 @@ async function main() {
 		if (!Number.isFinite(mins) || mins <= 0) usage();
 		process.env.PI_SESSION_TIMEOUT_MS = String(Math.round(mins * 60 * 1000));
 	}
+	const noEval = takeFlag("--no-eval");
+	const maxRejectionsArg = takeArg("--max-rejections");
+	const maxRejections = maxRejectionsArg !== undefined ? Number(maxRejectionsArg) : DEFAULT_MAX_REJECTIONS;
+	if (!Number.isInteger(maxRejections) || maxRejections < 1) usage();
 	const maxUnchangedArg = takeArg("--max-unchanged");
 	const maxUnchanged = maxUnchangedArg !== undefined ? Number(maxUnchangedArg) : DEFAULT_MAX_UNCHANGED;
 	if (!Number.isInteger(maxUnchanged) || maxUnchanged < 1) usage();
@@ -350,11 +408,39 @@ async function main() {
 	console.log(`\n[orchestrate] Starting ML challenge loop for task: ${taskId}`);
 	console.log(`[orchestrate] Max submissions: ${MAX_SUBMISSIONS}`);
 
-	// Check submission budget from memory
+	// Attempts already made on the platform (earlier runs, or by hand): sync them into memory so the
+	// eval agent and the attempt checks see the platform's numbers, not a freshly reset memory.
+	/** Platform results for this task, oldest first; `local` is known only for submissions of this run. */
+	const history: { local: number | null; platform: number | null }[] = [];
+	try {
+		const st = await fetchTaskStatus(process.env.SMARTLAB_TASK_URL!, /^(1|true|yes|on)$/i.test(process.env.LAB_INSECURE_TLS ?? ""));
+		if (st.attemptsUsed !== null) {
+			const m = getTaskMemory(taskId);
+			if (st.attemptsUsed > m.tries_used || st.bestScore !== null) {
+				updateTaskMemory(taskId, { tries_used: Math.max(st.attemptsUsed, m.tries_used), tries_left: MAX_SUBMISSIONS - Math.max(st.attemptsUsed, m.tries_used), ...(st.bestScore !== null ? { best_score: st.bestScore } : {}) });
+			}
+			for (const sc of [...st.scores].reverse()) history.push({ local: null, platform: sc });
+			console.log(`[orchestrate] Platform: ${st.attemptsUsed}/${st.attemptsMax} attempts used${st.scores.length ? `, scores ${st.scores.join(", ")}` : ""}`);
+		}
+	} catch (err) {
+		console.warn(`[orchestrate] Could not read the task page for prior attempts (${err instanceof Error ? err.message : err}); using memory.`);
+	}
 	const initialMem = getTaskMemory(taskId);
 	if (initialMem.tries_used >= MAX_SUBMISSIONS) {
 		console.error(`[orchestrate] No submissions left for task ${taskId} (${initialMem.tries_used}/${MAX_SUBMISSIONS} used).`);
 		process.exit(1);
+	}
+
+	// How the task is submitted (from the task page, via fetch_units.py): a CSV upload or a token.
+	const meta = findTaskMeta(taskId);
+	const submission: "file" | "token" = meta?.submission === "token" ? "token" : "file";
+	const unitToken = submission === "token" ? activationToken(meta?.unit_slug) : undefined;
+	if (submission === "token") {
+		console.log(`[orchestrate] Token task: solved against the local service at 127.0.0.1:8000; unit activation token ${unitToken ? "configured" : "NOT configured"}`);
+		if (!(await localServiceReachable())) {
+			console.error(`[orchestrate] ${taskId} is a token task but nothing answers on 127.0.0.1:8000. It needs the lab VM (scripts/vm/remote.sh). Stopping.`);
+			process.exit(9);
+		}
 	}
 
 	// Step 0: Ensure a solver module exists (scaffold if needed)
@@ -366,17 +452,33 @@ async function main() {
 	let attemptsThisRun = 0;
 	let lastSubmittedHash: string | undefined;
 	let unchangedStreak = 0;
+	let rejectStreak = 0;
 	let lastPlatformScore: number | null = null;
 	console.log(`[orchestrate] Target platform score: ${target}`);
 	const py = detectPythonRuntime();
 	console.log(`[orchestrate] Python runtime: ${py ? `${py.executable} ${py.version}, ${py.packages.length} third-party packages${py.inVirtualenv ? ", virtualenv" : ""}` : "not detected"}`);
+	const conditions = collectConditions({
+		target, maxAttempts: maxAttemptsThisRun, maxUnchanged, maxRejections, eval: !noEval, noSubmit, submission,
+		solverTimeoutMin: Math.round(Number(process.env.PI_SESSION_TIMEOUT_MS || 0) / 60000) || null,
+		maxCostUsd: process.env.PI_MAX_COST_USD ? Number(process.env.PI_MAX_COST_USD) : null,
+	});
+	console.log(`[orchestrate] Conditions: ${describeConditions(conditions)}`);
 	taskStatus({ task: taskId, model: process.env.PI_MODEL ?? null, target, noSubmit, startedAt: new Date().toISOString(), phase: "starting", iteration: 0, events: [], session: null, result: null,
-		python: py ? { executable: py.executable, version: py.version, packages: py.packages.length, virtualenv: py.inVirtualenv } : null }, { reset: true });
+		python: py ? { executable: py.executable, version: py.version, packages: py.packages.length, virtualenv: py.inVirtualenv } : null,
+		conditions, submissions: [] }, { reset: true });
 	// Record how the process ended, whatever the path (process.exit is used throughout).
 	process.on("exit", (code) => taskStatus({ phase: "exited", exitCode: code, endedAt: new Date().toISOString() }));
 
 	// Langfuse (optional): this run is one session; each stage below is a trace in it.
-	startRun({ taskId, model: process.env.PI_MODEL, metadata: { target: String(target), no_submit: String(noSubmit) } });
+	startRun({ taskId, model: process.env.PI_MODEL, metadata: {
+		target: String(target), no_submit: String(noSubmit), eval: String(!noEval), submission,
+		commit: conditions.git.commit ?? "?", dirty: String(conditions.git.dirty.length),
+		...Object.fromEntries(Object.entries(conditions.prompts).map(([k, v]) => [`prompt_${k.replace(/\.md$/, "")}`, v])),
+		host: conditions.host, python: conditions.python?.version ?? "none",
+		caps: JSON.stringify(conditions.caps),
+	} });
+	/** This run's submissions, for the status file and the batch summary. */
+	const submissions: { iteration: number; local: number | null; platform: number | null; triesLeft: number | null }[] = [];
 	let bestPlatformScore: number | null = null;
 	/** End the run: session-level scores, flush traces, then exit. */
 	async function exitRun(code: number, outcome: string): Promise<never> {
@@ -406,9 +508,9 @@ async function main() {
 		try {
 			taskStatus({ phase: "solver" });
 			solverResult = await stage("solver", { iteration, input: { task: taskId, feedback: feedback ?? null } }, async (t) => {
-				const r = await runSolverSession(taskId, feedback);
+				const r = await runSolverSession(taskId, feedback, { submission, activationToken: unitToken });
 				t.output(r);
-				t.score("local_val_score", r.valScore);
+				if (r.valScore !== null) t.score("local_val_score", r.valScore);
 				return r;
 			});
 			console.log(`[orchestrate] Solver done: val_score=${solverResult.valScore}, csv=${solverResult.csvPath}`);
@@ -421,25 +523,35 @@ async function main() {
 			if (!/timed out|degenerate tool loop/i.test(msg)) throw err;
 			console.warn(`[orchestrate] Solver session ended early: ${msg}`);
 			solverProblem = /timed out/i.test(msg) ? "timed out" : "was aborted (degenerate tool loop)";
-			solverResult = { valScore: 0, csvPath: "", approach: "" };
+			solverResult = { valScore: null, csvPath: "", approach: "" };
 		}
 
-		let csvAbsPath = solverResult.csvPath
-			? isAbsolute(solverResult.csvPath) ? solverResult.csvPath : resolve(PROJECT_ROOT, solverResult.csvPath)
-			: "";
-		if (!csvAbsPath || !existsSync(csvAbsPath)) {
+		let csvAbsPath = resolveReported(solverResult.csvPath);
+		if (submission === "token" && !solverResult.token) {
+			// No module protocol to salvage from: the token only exists if the session reported it.
+			solverProblem ??= "ended without a token";
+			solverFailures++;
+			taskEvent(`solver ${solverProblem}`);
+			if (solverFailures >= MAX_SOLVER_FAILURES) {
+				console.error(`[orchestrate] Solver ${solverProblem} ${solverFailures} time(s). Stopping.`);
+				await exitRun(2, "solver_failed");
+			}
+			feedback = `Your previous session ${solverProblem}. This is the last session for this task.`;
+			continue;
+		}
+		if (submission === "file" && (!csvAbsPath || !existsSync(csvAbsPath))) {
 			solverProblem ??= "ended without a prediction CSV";
 			taskStatus({ phase: "salvage" });
 			taskEvent(`solver ${solverProblem}; salvaging`);
 			const salvaged = await stage("salvage", { iteration, input: { reason: solverProblem } }, async (t) => {
 				const r = salvageSolver(taskId);
 				t.output(r ?? { salvaged: false });
-				if (r) t.score("local_val_score", r.valScore);
+				if (r && r.valScore !== null) t.score("local_val_score", r.valScore);
 				return r;
 			});
 			if (salvaged) {
 				solverResult = salvaged;
-				csvAbsPath = isAbsolute(salvaged.csvPath) ? salvaged.csvPath : resolve(PROJECT_ROOT, salvaged.csvPath);
+				csvAbsPath = resolveReported(salvaged.csvPath);
 			} else {
 				solverFailures++;
 				if (solverFailures >= MAX_SOLVER_FAILURES) {
@@ -453,16 +565,23 @@ async function main() {
 		}
 		solverResult.csvPath = csvAbsPath;
 
-		// Step 2: Eval
-		taskStatus({ phase: "eval", localScore: solverResult.valScore });
-		taskEvent(`solver done: local ${solverResult.valScore}`);
-		let evalResult: Awaited<ReturnType<typeof runEvalSession>> | undefined;
-		// An eval session that loops or times out must not crash the task: retry it once, then stop
-		// the task without submitting (never submit without an approval).
+		// Step 2: Eval (skipped with --no-eval: every solver result goes to submission)
+		const artifact = submission === "token" ? solverResult.token! : csvAbsPath;
+		taskStatus({ phase: noEval ? "submit" : "eval", localScore: solverResult.valScore });
+		taskEvent(`solver done: local ${solverResult.valScore ?? "none"}`);
+		let evalResult: Awaited<ReturnType<typeof runEvalSession>> | undefined = noEval ? { decision: "APPROVE", csvPath: "", feedback: "" } : undefined;
+		const memNow = getTaskMemory(taskId);
+		const evalFacts = {
+			submission, artifact, localScore: solverResult.valScore,
+			promptPath: meta ? join(meta.dir, "prompt.md").replace(PROJECT_ROOT + "/", "") : null,
+			triesUsed: memNow.tries_used, triesMax: MAX_SUBMISSIONS, history,
+		};
+		// An eval session that loops, times out or ends without a decision must not crash the task:
+		// retry it once, then stop the task without submitting (never submit without an approval).
 		for (let evalTry = 1; evalTry <= 2 && !evalResult; evalTry++) {
 			try {
-				evalResult = await stage("eval", { iteration, input: { task: taskId, local_val_score: solverResult.valScore, attempt: evalTry } }, async (t) => {
-					const r = await runEvalSession(taskId);
+				evalResult = await stage("eval", { iteration, input: { task: taskId, ...evalFacts, attempt: evalTry } }, async (t) => {
+					const r = await runEvalSession(taskId, evalFacts);
 					t.output(r);
 					t.score("eval_decision", r.decision, r.feedback || undefined);
 					return r;
@@ -470,8 +589,8 @@ async function main() {
 			} catch (err) {
 				const msg = err instanceof Error ? err.message : String(err);
 				if (/cost budget exhausted/i.test(msg)) { console.error(`[orchestrate] ${msg}. Stopping this task.`); await exitRun(5, "cost_budget_exhausted"); }
-				if (!/timed out|degenerate tool loop/i.test(msg)) throw err;
-				taskEvent(`eval ended early (${/timed out/i.test(msg) ? "timeout" : "tool loop"}), try ${evalTry}/2`);
+				if (!(err instanceof EvalNoDecisionError) && !/timed out|degenerate tool loop/i.test(msg)) throw err;
+				taskEvent(`eval ended early (${err instanceof EvalNoDecisionError ? "no decision" : /timed out/i.test(msg) ? "timeout" : "tool loop"}), try ${evalTry}/2`);
 				if (evalTry === 2) {
 					console.error(`[orchestrate] Eval session ended early twice (${msg}). Stopping this task without submitting.`);
 					await exitRun(6, "eval_failed");
@@ -480,17 +599,22 @@ async function main() {
 			}
 		}
 		if (!evalResult) throw new Error("unreachable: eval produced no result");
-		console.log(`[orchestrate] Eval decision: ${evalResult.decision}`);
-		taskEvent(`eval: ${evalResult.decision}${evalResult.feedback ? ` — ${evalResult.feedback.slice(0, 120)}` : ""}`);
+		if (!noEval) {
+			console.log(`[orchestrate] Eval decision: ${evalResult.decision}`);
+			taskEvent(`eval: ${evalResult.decision}${evalResult.feedback ? ` — ${evalResult.feedback.slice(0, 120)}` : ""}`);
+		}
 
 		if (evalResult.decision === "APPROVE") {
-			const csvPath = evalResult.csvPath || solverResult.csvPath;
+			rejectStreak = 0;
+			const evalCsv = resolveReported(evalResult.csvPath);
+			const csvPath = submission === "file" ? (evalCsv && existsSync(evalCsv) ? evalCsv : solverResult.csvPath) : "";
+			const what = submission === "token" ? "token" : csvPath;
 			if (noSubmit) {
-				console.log(`\n[orchestrate] DRY RUN (--no-submit) — eval approved ${csvPath}; skipping submission.`);
+				console.log(`\n[orchestrate] DRY RUN (--no-submit) — ${noEval ? "solver produced" : "eval approved"} ${what}; skipping submission.`);
 				await exitRun(0, "dry_run_approved");
 			}
 			// Never spend a try on predictions identical to the last submission.
-			const csvHash = createHash("sha256").update(readFileSync(csvPath)).digest("hex");
+			const csvHash = createHash("sha256").update(submission === "token" ? solverResult.token! : readFileSync(csvPath)).digest("hex");
 			if (lastSubmittedHash && csvHash === lastSubmittedHash) {
 				unchangedStreak++;
 				taskEvent(`predictions identical to last submission (${unchangedStreak}/${maxUnchanged})`);
@@ -506,21 +630,23 @@ async function main() {
 			unchangedStreak = 0;
 
 			if (attemptsThisRun >= maxAttemptsThisRun) {
-				console.log(`\n[orchestrate] DONE — attempt cap for this run reached (${attemptsThisRun}/${maxAttemptsThisRun}); eval approved ${csvPath} but not submitting.`);
+				console.log(`\n[orchestrate] DONE — attempt cap for this run reached (${attemptsThisRun}/${maxAttemptsThisRun}); ${what} approved but not submitting.`);
 				await exitRun(0, "attempt_cap_reached");
 			}
-			console.log(`[orchestrate] Submitting: ${csvPath}`);
+			console.log(`[orchestrate] Submitting: ${what}`);
 
 			// Step 3: Submit (this consumes a try)
 			taskStatus({ phase: "submit" });
-			const submitResult = await stage("submit", { iteration, input: { csv: csvPath } }, async (t) => {
-				const r = await runSubmitSession(taskId, csvPath);
+			const submitResult = await stage("submit", { iteration, input: submission === "token" ? { token: solverResult.token } : { csv: csvPath } }, async (t) => {
+				const r = await runSubmitSession(taskId, submission === "token" ? { token: solverResult.token! } : { csvPath });
 				t.output(r);
 				if (r.score !== null) t.score("platform_score", r.score);
 				return r;
 			});
 			if (submitResult.score !== null && (bestPlatformScore === null || submitResult.score > bestPlatformScore)) bestPlatformScore = submitResult.score;
-			taskStatus({ result: { platformScore: submitResult.score, triesLeft: submitResult.triesLeft, ok: submitResult.ok } });
+			submissions.push({ iteration, local: solverResult.valScore, platform: submitResult.score, triesLeft: submitResult.triesLeft });
+			if (submitResult.ok) history.push({ local: solverResult.valScore, platform: submitResult.score });
+			taskStatus({ result: { platformScore: submitResult.score, triesLeft: submitResult.triesLeft, ok: submitResult.ok }, submissions });
 			taskEvent(`submitted: platform ${submitResult.score}, ${submitResult.triesLeft} attempt(s) left`);
 			console.log(`[orchestrate] Submission result: ok=${submitResult.ok}, score=${submitResult.score}, tries_left=${submitResult.triesLeft}`);
 
@@ -546,14 +672,19 @@ async function main() {
 
 			// Step 4: platform score below target — feed the real result back and re-solve.
 			// Facts only — no advice on what to change (this agent is deliberately un-coached).
-			feedback = `Submission ${MAX_SUBMISSIONS - triesLeft} scored ${score} on the SmartLab platform; your local validation score was ${solverResult.valScore}. ` +
+			feedback = `Submission ${MAX_SUBMISSIONS - triesLeft} scored ${score} on the SmartLab platform; your local validation score was ${solverResult.valScore ?? "not reported"}. ` +
 				`The target is >= ${target}. ${triesLeft} submission(s) left; identical predictions will not be re-submitted.`;
 			console.log(`[orchestrate] Platform score ${score} < target ${target}. Re-solving with feedback.`);
 			continue;
 		}
 
-		// REJECT — re-solve is free (only submissions count)
-		feedback = evalResult.feedback;
+		// REJECT — re-solving costs no attempt, but is capped (--max-rejections).
+		rejectStreak++;
+		if (rejectStreak >= maxRejections) {
+			console.log(`\n[orchestrate] DONE — eval rejected ${rejectStreak} solver results in a row; stopping without submitting.`);
+			await exitRun(8, "eval_rejected");
+		}
+		feedback = `${evalResult.feedback} (Eval rejection ${rejectStreak} of ${maxRejections} in a row; at ${maxRejections} the task stops without submitting.)`;
 		console.log(`[orchestrate] Re-solving with feedback: "${feedback}"`);
 	}
 }
