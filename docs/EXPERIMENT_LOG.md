@@ -232,3 +232,41 @@ Model observations: an external-dataset lookup is exactly the kind of shortcut t
 surface (the unit forbids external detection systems); to infer the id format it read the run's own console
 log and earlier tasks' prediction files in `agent/submissions/`, which `reset` did not clean (harness gap, fixed
 in the next commit). The CIFAR-10 download stays cached in `~/.keras/datasets` on the VM, outside the repo.
+
+---
+
+## 2026-10-03/04 — All remaining units on the VM, Gemini 3.7 Flash (adversarial ML defense/offense, clustering)
+
+`remote.sh start --only defense1,offense1,offense2,code1,code2,code3 --model google-vertex/gemini-3.7-flash`, real
+submissions, no cost cap, commit 49fc08f (clean), lab venv, from scratch. 19:46 → 03:35 (7.8 h), $16.26.
+Logs `logs/vm/stud03@…/solve-units/2026-10-03T19-46-58/`. Preparation: the documents unit's data (15 GB,
+all its tasks done) was deleted on the VM to fit clustering (11 GB); the first clustering fetch hung the VM
+(harness bug: downloads were held in memory and decoded as text; 3.2 GB android-train.zip; VM restarted by
+the user; fixed in 49fc08f by streaming to disk). The adversarial-ML tasks ran without a configured unit
+activation token: the VM's local service was already activated. First real token submissions — the
+token path works.
+
+| task | kind | outcome | attempts | best | local→platform per submission | min | $ |
+|---|---|---|---|---|---|---|---|
+| defense1 (robustness, FashionMNIST) | token | solver-failed | 1/3 | 0.7898 | 0.750→0.790 | 140.4 | 2.33 |
+| offense1 (stealing) | token | attempts-exhausted | 3/3 | 0.8643 | 0.890→0.864, 1.000→0.824, 1.000→0.835 | 40.9 | 1.85 |
+| offense2 (evasion) | token | attempts-exhausted | 3/3 | 0.5077 | 1.000→0.508, 1.000→0.487, 1.000→0.497 | 97.6 | 3.16 |
+| code1 (PHP/Perl bots, ARS) | file | attempts-exhausted | 3/3 | 0.7147 | 0.951→0.715, 0.951→0.678, 0.932→0.613 | 56.1 | 2.33 |
+| code2 (Android, ARS) | file | attempts-exhausted | 3/3 | 0.6908 | 0.435→0.345, 0.784→0.691, 0.785→0.628 | 87.2 | 4.05 |
+| code3 (Windows PE, ARS) | file | attempts-exhausted | 3/3 | **0.9096** | 0.982→0.904, 0.995→0.910, 0.995→0.890 | 41.7 | 2.54 |
+
+- No harness errors: no crashes, platform refusals, tool loops or rate limits in any task log.
+- defense1: after the first submission three consecutive sessions hit the 30-min cap without declaring a
+  token (training robust models on CPU), so the task stopped with 2 attempts unused.
+- Local scores again overestimate the platform, most extremely on offense2 (local 1.0, platform ≈ 0.5). On
+  clustering, later attempts were not better than the first (code1 declined 0.715 → 0.678 → 0.613; code3's
+  third was its lowest): the platform feedback did not lead to improvements; the local ARS, measured on the
+  labelled training families, does not transfer to the unknown test families.
+- Approaches (static only, no sandboxing): hierarchical agglomerative clustering (PHP), multi-view static PE
+  features (Windows), multi-view static APK features (Android).
+
+**State of every lab-test task after this run** (`npm run report -- --lab`): spam1 0.9735 (1/3), spam2 0.9601
+(3/3), spam3 0.9906 (1/3), documents1 0.9760 (1/3), documents2 0.6776, documents3 0.9498, documents4 0.8334,
+attacks1 0.7750, **attacks2 failed** (platform refuses every id format, "2990 superfluous IDs", 0/3 used),
+code1 0.7147, code2 0.6908, code3 0.9096, offense1 0.8643, offense2 0.5077, defense1 0.7898 (1/3). Every task
+has now been attempted; only spam1, spam3 and documents1 reached the 0.97 target.
