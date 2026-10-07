@@ -3,7 +3,8 @@ import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { collectTrainingResults } from "../training/results.js";
+import { collectTrainingResults, collectTrainingTrial } from "../training/results.js";
+import { championSelection, recordedRepository } from "../training/development_selection.js";
 import { readPythonEnvironment } from "../run/python_environment.js";
 import type { StageArtifact } from "../pipeline/types.js";
 
@@ -21,10 +22,13 @@ export function selectedArtifact(upstream: StageArtifact[]): StageArtifact {
 export async function prepareEvidence(upstream: StageArtifact[], signal: AbortSignal, taskId: string) {
  const selected = selectedArtifact(upstream);
  const directory = dirname(resolve(selected.path));
- // Reuse the training contract and selection rule, including manifest/seed checks.
- const collection = await collectTrainingResults(dirname(directory));
+ // Reuse the training contract and the champion tag as the only selection
+ // rule, including manifest/seed checks; the repository is the one the trial
+ // recorded as its source.
+ const repository = recordedRepository(await collectTrainingTrial(directory));
+ const collection = await championSelection(await collectTrainingResults(dirname(directory)), repository, taskId);
  const trial = collection.selected;
- if (!trial || trial.directory !== directory) throw new Error("Selected training evidence is invalid or selection has changed; run solve again");
+ if (!trial || trial.directory !== directory) throw new Error("Selected training evidence is not the current champion; run solve again");
  const sources = trial.artifacts.map(a => {
   const recorded = upstream.find(u => resolve(u.path) === resolve(a.path) && u.sha256 === a.sha256);
   if (!recorded) throw new Error(`Missing or changed upstream evidence: ${a.kind}`);

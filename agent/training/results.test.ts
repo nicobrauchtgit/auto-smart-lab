@@ -116,7 +116,7 @@ async function writeTrial(root: string, id: string, options: TrialFixtureOptions
 }
 
 describe("collectTrainingResults", () => {
-	test("keeps pilots visible and deterministically selects the best completed promotion", async () => {
+	test("keeps pilots visible and selects nothing by raw score", async () => {
 		const root = await mkdtemp(join(tmpdir(), "training-results-"));
 		await writeTrial(root, "pilot", { scope: "pilot", score: 1, promotionEligible: false });
 		await writeTrial(root, "z-promotion", { score: 0.91 });
@@ -131,9 +131,9 @@ describe("collectTrainingResults", () => {
 			"a-promotion", "lower-promotion", "pilot", "z-promotion",
 		]);
 		expect(collection.trials.find((trial) => trial.experimentId === "pilot")?.eligible).toBe(false);
-		expect(collection.selected?.experimentId).toBe("a-promotion");
-		expect(collection.selected?.request?.scope.kind).toBe("promotion");
-		expect(collection.selected?.result?.metrics?.balancedAccuracy).toBe(0.91);
+		expect(collection.trials.filter((trial) => trial.eligible).map((trial) => trial.experimentId)).toEqual(["a-promotion", "lower-promotion", "z-promotion"]);
+		// Only the champion tag selects (championSelection), never the highest mean.
+		expect(collection.selected).toBeUndefined();
 	});
 
 	test("returns hashes and byte sizes for every authoritative artifact", async () => {
@@ -171,7 +171,7 @@ describe("collectTrainingResults", () => {
 		const collection = await collectTrainingResults(root);
 
 		expect(collection.valid).toBe(true);
-		expect(collection.selected?.experimentId).toBe("good");
+		expect(collection.trials.filter((trial) => trial.eligible).map((trial) => trial.experimentId)).toEqual(["good"]);
 		expect(collection.trials).toHaveLength(3);
 		expect(collection.trials.find((trial) => trial.experimentId === "corrupt")?.errors)
 			.toContainEqual(expect.objectContaining({ code: "invalid_json", file: "trial-result.json" }));
@@ -198,7 +198,7 @@ describe("collectTrainingResults", () => {
 		const collection = await collectTrainingResults(root);
 		const codes = collection.trials[0].errors.map((entry) => entry.code);
 
-		expect(collection.selected).toBeUndefined();
+		expect(collection.valid).toBe(false);
 		expect(codes).toContain("identity_mismatch");
 		expect(codes).toContain("scope_mismatch");
 		expect(codes).toContain("seed_mismatch");
@@ -218,7 +218,6 @@ describe("collectTrainingResults", () => {
 
 		const collection = await collectTrainingResults(root);
 
-		expect(collection.selected).toBeUndefined();
 		expect(collection.valid).toBe(false);
 		for (const trial of collection.trials) {
 			expect(trial.eligible).toBe(false);
@@ -242,7 +241,7 @@ describe("collectTrainingResults", () => {
 		const collection = await collectTrainingResults(root);
 
 		expect(collection.valid).toBe(true);
-		expect(collection.selected?.experimentId).toBe("winner");
+		expect(collection.trials.filter((trial) => trial.eligible).map((trial) => trial.experimentId)).toEqual(["winner"]);
 		expect(collection.trials.map((trial) => trial.experimentId)).toEqual(["pilot", "stopped", "winner"]);
 		expect(collection.trials.find((trial) => trial.experimentId === "pilot")?.eligible).toBe(false);
 		expect(collection.trials.find((trial) => trial.experimentId === "stopped")?.eligible).toBe(false);

@@ -5,7 +5,7 @@ import { temporaryProject, trainingEnvironment, PYTHON, WORKER, until } from "./
 import { createHarnessTraining } from "./index.js";
 import { tagMessage } from "./git.js";
 import { candidateIdentity, terminalPath } from "./terminal.js";
-import { developmentSelection } from "./development_selection.js";
+import { championSelection } from "./development_selection.js";
 import { collectTrainingResults } from "./results.js";
 import { initialState, StateStore } from "../orchestrator/state.js";
 import { Coordinator } from "../orchestrator/coordinator.js";
@@ -35,7 +35,7 @@ test("a terminal champion stays frozen while a changed candidate earns fresh sta
   const pilot = await training.service.start({ ...request, hypothesis: "pilot cannot replace a terminal champion", pipeline: { ...request.pipeline, parameters: { c: 0.3 } }, scope: { kind: "pilot", maxFolds: 1 } });
   expect(await until(() => training.supervisor.status(pilot.id).status !== "running")).toBe(true); await training.service.finalize(pilot.id);
   expect(JSON.parse(tagMessage(project.solutionsRoot, "champion")!.message).experimentId).toBe(baseline.id);
-  expect(developmentSelection(await collectTrainingResults(root), project.solutionsRoot, "fixture").valid).toBe(false);
+  expect((await championSelection(await collectTrainingResults(root), project.solutionsRoot, "fixture")).valid).toBe(false);
   await expect(training.service.start({ ...request, pipeline: { ...request.pipeline, parameters: { c: 0.4 } }, cv: { ...request.cv, folds: 1 } })).rejects.toThrow();
   const changed = { ...request, hypothesis: "new fixed parameters independently measured", pipeline: { ...request.pipeline, parameters: { c: 0.5 } } };
   const next = await training.service.start(changed);
@@ -43,10 +43,44 @@ test("a terminal champion stays frozen while a changed candidate earns fresh sta
   expect(await until(() => training.supervisor.status(next.id).status !== "running")).toBe(true); await training.service.finalize(next.id);
   const result = JSON.parse(readFileSync(join(next.directory, "trial-result.json"), "utf8")); expect(result.promotionEligible).toBe(true); expect(result.championComparison).toBeUndefined();
   expect(JSON.parse(tagMessage(project.solutionsRoot, "champion")!.message).experimentId).toBe(next.id);
-  const selected = developmentSelection(await collectTrainingResults(root), project.solutionsRoot, "fixture"); expect(selected.selected?.experimentId).toBe(next.id); expect(selected.trials.length).toBe(3);
+  const selected = await championSelection(await collectTrainingResults(root), project.solutionsRoot, "fixture"); expect(selected.selected?.experimentId).toBe(next.id); expect(selected.trials.length).toBe(3);
   expect(coordinator.state.bestOfficial).toMatchObject({ score: 0.91, candidateId: identity, artifactId: "prior-receipt" }); coordinator.close();
   expect(readFileSync(path, "utf8")).toBe(marker); expect(events.some(e => e.type === "training_terminal_champion_retained_as_history")).toBe(true);
   writeFileSync(path, "{}");
-  expect(() => developmentSelection(selected, project.solutionsRoot, "fixture")).toThrow("Corrupt terminal");
+  await expect(championSelection(selected, project.solutionsRoot, "fixture")).rejects.toThrow("Corrupt terminal");
  } finally { await training.close(); }
 }, 60000);
+
+test("solve hands over the tagged champion, even from an earlier run, never an unpromoted trial with an equal or higher mean", async () => {
+ const project = temporaryProject("champion-selection-"), runs = join(project.root, "runs", "fixture", "solve", "training");
+ const events: { type: string; payload: Record<string, unknown> }[] = [];
+ const harness = (root: string) => createHarnessTraining({ root, projectRoot: project.root, solutionsRoot: project.solutionsRoot, taskId: "fixture", pythonExecutable: PYTHON,
+  env: trainingEnvironment(), datasetSha256: project.datasetSha256, rootSeed: 13, zipPath: project.zipPath, labelsPath: project.labelsPath, workerPath: WORKER,
+  prompts: loadPromptSnapshot(), record: (type, payload) => events.push({ type, payload }), limits: { sampleIntervalMs: 25, stopGraceMs: 100 } });
+ const request = { schemaVersion: 2, hypothesis: "first champion", pipeline: { module: "solutions/tasks/fixture.py", factory: "build_pipeline", parameters: { c: 1 } }, cv: { kind: "builtin", scheme: "stratified_kfold", folds: 2, repeats: 1 }, scope: { kind: "promotion" } };
+ const first = harness(join(runs, "run-1"));
+ let champion;
+ try {
+  champion = await first.service.start(request);
+  expect(await until(() => first.supervisor.status(champion.id).status !== "running")).toBe(true); await first.service.finalize(champion.id);
+ } finally { await first.close(); }
+ expect(JSON.parse(tagMessage(project.solutionsRoot, "champion")!.message).experimentId).toBe(champion.id);
+ const second = harness(join(runs, "run-2"));
+ try {
+  const challenger = await second.service.start({ ...request, hypothesis: "a challenger without a lead beyond noise", pipeline: { ...request.pipeline, parameters: { c: 0.5 } } });
+  expect(await until(() => second.supervisor.status(challenger.id).status !== "running")).toBe(true); await second.service.finalize(challenger.id);
+  const result = JSON.parse(readFileSync(join(challenger.directory, "trial-result.json"), "utf8"));
+  expect(result.promotionEligible).toBe(true); expect(result.championComparison.leadExceedsNoise).toBe(false);
+  expect(events.some(e => e.type === "training_champion_retained" && e.payload.experiment_id === challenger.id)).toBe(true);
+  const collection = await collectTrainingResults(join(runs, "run-2"));
+  expect(collection.trials.map(t => t.experimentId)).toEqual([challenger.id]);
+  const championScore = JSON.parse(readFileSync(join(champion.directory, "trial-result.json"), "utf8")).metrics.balancedAccuracy;
+  expect(collection.trials[0].result!.metrics!.balancedAccuracy).toBeGreaterThanOrEqual(championScore);
+  const selected = await championSelection(collection, project.solutionsRoot, "fixture");
+  expect(selected.valid).toBe(true);
+  expect(selected.selected?.experimentId).toBe(champion.id);
+  expect(selected.selected?.directory).toBe(champion.directory);
+  // The earlier run's evidence joins the hand-off so evaluate can verify it.
+  expect(selected.artifacts.some(a => a.experimentId === champion.id && a.kind === "training_trial_result")).toBe(true);
+ } finally { await second.close(); }
+}, 90000);

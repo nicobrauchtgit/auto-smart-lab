@@ -75,6 +75,7 @@ with this file, this file wins.
 | D10 | Keep the generic `experiment_*` tools (`agent/experiments/`, `argv`-based) as the escape hatch for work that fits no harness kind. | 2026-10-07 |
 | D11 | Order: cleanup first (done), then the modular harness (H1). Experiments, and the agents, run on the SmartLab VM. | 2026-10-07 |
 | D12 | Devbox is replaced by mise because the SmartLab VM has no Nix. `./dev` keeps mise (pinned, checksum-verified), its tools, uv's managed Python and all caches under `.tools/`: nothing goes into the user's home, shell configuration or Nix profile. uv owns Python (`.python-version`, `python-preference = "only-managed"`). | 2026-10-07 |
+| D13 | The champion tag is the only definition of "best". A higher CV mean counts only after the paired check against the champion shows it exceeds noise; solve, evaluate and refit all follow the tag, also across solve runs. | 2026-10-07 |
 
 ## Open decisions (ask the user)
 
@@ -104,13 +105,19 @@ tools, **L** later.
   training start-tool prompt states the rule. Tests:
   `agent/training/promotion.test.ts` (rule only; no live-worker test of a noisy
   lead, since the fixture corpus is perfectly separable).
-- [ ] **Q2 Two selection rules disagree.** `developmentSelection`
-  (`agent/training/development_selection.ts`) and `collectTrainingResults`
-  (`agent/training/results.ts`) pick the highest raw CV mean; the champion tag
-  uses the paired rule. Solve can hand refit a `training_selected_result` that is
-  not the champion, and refit then rejects it ("Chosen champion differs from
-  controller-supplied reviewed evidence"). Make selection read the champion tag.
-  Test: higher-mean but not promoted trial -> solve selects the champion.
+- [x] **Q2 Two selection rules disagree (D13).** Done: `collectTrainingResults`
+  no longer selects; `championSelection`
+  (`agent/training/development_selection.ts`, replacing `developmentSelection`)
+  reads the champion tag, including a champion from an earlier solve run (its
+  evidence is read from the training root the tag records and its artifacts join
+  solve's hand-off). Solve, evaluate (`evaluation/evidence.ts`, repository taken
+  from the trial's recorded source) and `evaluate-stage` use it. Champion
+  tagging in `training/service.ts` now compares only the finishing trial
+  against an existing champion; before, it always picked the highest raw mean,
+  so one unpromoted high-mean trial blocked every later challenger. Tests:
+  `development_selection.test.ts` (earlier-run champion handed over, not an
+  unpromoted trial with an equal mean), `evidence.test.ts` (evaluate rejects a
+  non-champion), `results.test.ts`.
 - [ ] **Q3 `solve-stage` selector.** `agent/solve_cli.ts:32` passes
   `{unitNumber, taskNumber}` to `resolveTask`, which expects `{unit, task}`;
   `unit 1 task 1` fails as ambiguous.
@@ -198,6 +205,18 @@ Lab facts are in [Lab tasks](#lab-tasks-verified-2026-10-07).
   not shown); convergence (`reachedLimit`) and fit time. The removed
   `smartlab_eval.metrics` implementations are recoverable with
   `git show 6496825:libs/smartlab-eval/smartlab_eval/metrics.py`.
+
+- [ ] **C4 Champion vs. unpromoted pipelines, across runs.** The goal is
+  knowing what works pipeline-wise: the best pipeline (the champion) plus the
+  delta of every other pipeline against it. Each promotion trial already stores
+  its paired comparison against the champion (`championComparison`: mean and
+  per-fold deltas, noise verdict, corrected/introduced errors), but
+  `TrainingService.leaderboard` lists only the current solve run's trials, so
+  a later run does not see earlier attempts that lost. Show the history, and add
+  an agent that analyses the code and parameter differences between the
+  champion and the unpromoted pipelines (from their commits and comparisons)
+  and records what helped and what did not, e.g. as knowledge for later solve
+  runs.
 
 ### W. Wiring and tools
 

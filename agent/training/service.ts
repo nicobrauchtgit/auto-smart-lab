@@ -39,7 +39,8 @@ import { createSeedPlan, deriveTrialSeed, writeSeedPlan } from "./seeds.js";
 import type { ExperimentRequest, JsonValue, ValidationIssue } from "./types.js";
 
 const PYTHON_ROOT = join(dirname(fileURLToPath(import.meta.url)), "python");
-export const CHAMPION_TAG = "champion";
+import { CHAMPION_TAG } from "./development_selection.js";
+export { CHAMPION_TAG };
 
 export interface SearchSettings {
 	confirmAboveSeconds: number;
@@ -671,7 +672,7 @@ export class TrainingService {
 
 	/**
 	 * After the worker exits: remove its worktrees, tag a completed promotion,
-	 * and move `champion` to the best eligible trial. Idempotent per trial.
+	 * and move `champion` to it when its paired lead over the current champion exceeds noise (or to the best open trial when there is none). Idempotent per trial.
 	 */
 	async workerFinished(id: string): Promise<void> {
         if (!this.closed) {
@@ -703,15 +704,19 @@ export class TrainingService {
 			if (!tagMessage(root, `trial/${id}`)) tagCommit(root, `trial/${id}`, trial.source.commit,
 				JSON.stringify({ experimentId: id, balancedAccuracy: own.result?.metrics?.balancedAccuracy, subject: trial.source.subject }));
 			this.options.record?.("training_trial_tagged", { experiment_id: id, tag: `trial/${id}`, commit: trial.source.commit });
-			// Frozen identities remain historical evidence and cannot win a new
-			// development selection or be used in a paired rerun after full refit.
-			const selected = collection.trials.filter(entry => entry.eligible && entry.invocation?.source?.commit
+			// With a champion in place, only the finishing trial is a challenger:
+			// its paired comparison ran against that champion, and a higher raw
+			// mean from an unpromoted trial must not block it (D7). Without one,
+			// the best open trial starts the line. Frozen identities remain
+			// historical evidence and cannot win a new development selection or
+			// be used in a paired rerun after full refit.
+			const current = this.champion();
+			const selected = current ? own : collection.trials.filter(entry => entry.eligible && entry.invocation?.source?.commit
 				&& entry.request && !isTerminalCandidate(root, this.options.taskId, entry.invocation.source.commit as string, entry.request.pipeline))
 				.sort((a, b) => (b.result?.metrics?.balancedAccuracy ?? -Infinity) - (a.result?.metrics?.balancedAccuracy ?? -Infinity))[0];
 			const selectedTrial = selected ? this.trials.get(selected.experimentId) : undefined;
 			if (!selected || !selectedTrial?.source) return;
             assertDevelopmentCandidate(root, this.options.taskId, selectedTrial.source.commit, selectedTrial.request.pipeline);
-			const current = this.champion();
 			if (current?.experimentId === selected.experimentId) return;
 			if (current) {
 				const decision = pairedPromotion(selected.result?.championComparison as Record<string, unknown> | undefined, current.commit);

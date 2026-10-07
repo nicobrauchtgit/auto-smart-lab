@@ -1,14 +1,49 @@
+import { join, resolve } from "node:path";
+import { isRepositoryRoot, tagMessage } from "./git.js";
 import { isTerminalCandidate } from "./terminal.js";
-import type { TrainingCollection } from "./results.js";
-/** Retain all historical measurements; select only identities still open to development. */
-export function developmentSelection(collection: TrainingCollection, repository: string, taskId: string): TrainingCollection {
- const eligible = collection.trials.filter(trial => {
-  if (!trial.eligible || !trial.request) return false;
-  const source = trial.invocation?.source as { commit?: string } | undefined;
-  // Legacy/non-versioned test adapters have no source identity. The registered
-  // harness always supplies it and verifies git evidence independently.
-  return !source?.commit || !isTerminalCandidate(repository, taskId, source.commit, trial.request.pipeline);
- }).sort((a, b) => (b.result?.metrics?.balancedAccuracy ?? -Infinity) - (a.result?.metrics?.balancedAccuracy ?? -Infinity) || a.experimentId.localeCompare(b.experimentId));
- const selected = eligible[0];
- return { ...collection, selected, valid: !!selected, errors: selected || collection.errors.some(error => error.code === "no_eligible_result") ? collection.errors : [...collection.errors, { code: "no_eligible_result", message: "No independently validated candidate remains open for development; frozen evidence is historical only" } as any] };
+import { collectTrainingTrial, type TrainingCollection, type TrainingResultError, type TrainingTrialResult } from "./results.js";
+
+export const CHAMPION_TAG = "champion";
+
+/** The solutions repository a versioned trial recorded as its source. */
+export function recordedRepository(trial: TrainingTrialResult | undefined): string | undefined {
+ const repository = (trial?.invocation?.source as { repository?: unknown } | undefined)?.repository;
+ return typeof repository === "string" ? repository : undefined;
+}
+
+/**
+ * The champion tag is the only selection rule: a trial becomes champion only
+ * when its paired lead over the previous champion exceeds noise (D7), so a
+ * higher raw CV mean alone never selects a trial. The champion may come from
+ * an earlier solve run; its evidence is then read from the training root the
+ * tag records and its artifacts join the collection.
+ */
+export async function championSelection(collection: TrainingCollection, repository: string | undefined, taskId: string): Promise<TrainingCollection> {
+ const { selected: _, ...rest } = collection;
+ // Surface corrupt terminal markers of any open-looking trial, not just the champion's.
+ if (repository) for (const trial of collection.trials) {
+  const commit = (trial.invocation?.source as { commit?: string } | undefined)?.commit;
+  if (trial.eligible && trial.request && commit) isTerminalCandidate(repository, taskId, commit, trial.request.pipeline);
+ }
+ const fail = (message: string): TrainingCollection => ({ ...rest, valid: false,
+  errors: collection.errors.some(error => error.code === "no_eligible_result") ? collection.errors
+   : [...collection.errors, { code: "no_eligible_result", message } as TrainingResultError] });
+ if (!repository || !isRepositoryRoot(repository)) return fail("No solutions repository records a champion");
+ const tag = tagMessage(repository, CHAMPION_TAG);
+ if (!tag) return fail("No champion: no completed promotion has been tagged");
+ let message: { experimentId?: unknown; trainingRoot?: unknown };
+ try { message = JSON.parse(tag.message); } catch { return fail("Malformed champion tag"); }
+ if (typeof message.experimentId !== "string") return fail("Malformed champion tag");
+ const experimentId = message.experimentId;
+ const local = collection.trials.find(trial => trial.experimentId === experimentId);
+ const champion = local ?? (typeof message.trainingRoot === "string"
+  ? await collectTrainingTrial(join(message.trainingRoot, experimentId)) : undefined);
+ if (!champion?.eligible || !champion.request) return fail(`Champion ${experimentId} has no valid eligible evidence`);
+ const source = champion.invocation?.source as { commit?: string } | undefined;
+ if (source?.commit !== tag.commit || resolve(recordedRepository(champion) ?? "") !== resolve(repository))
+  return fail(`Champion ${experimentId} evidence does not match the champion tag`);
+ if (isTerminalCandidate(repository, taskId, tag.commit, champion.request.pipeline))
+  return fail("No independently validated candidate remains open for development; frozen evidence is historical only");
+ return { ...rest, selected: champion, valid: true,
+  artifacts: local ? collection.artifacts : [...collection.artifacts, ...champion.artifacts] };
 }

@@ -19,7 +19,7 @@ import {
 	ensureSolutionsRepository,
 	type TrainingCollection,
 } from "../training/index.js";
-import { developmentSelection } from "../training/development_selection.js";
+import { championSelection } from "../training/development_selection.js";
 import { GIT_BLOCK_PROMPT_IDS } from "../training/git_guard.js";
 import { readPythonEnvironment, type PythonEnvironment } from "./python_environment.js";
 import { runSession } from "./session_runner.js";
@@ -305,7 +305,7 @@ export async function runHarnessSolveSession(
 		await training.close();
 	}
 
-	const collection = developmentSelection(await dependencies.collectResults(trainingRoot), workspace.solutionsRoot, taskId);
+	const collection = await championSelection(await dependencies.collectResults(trainingRoot), workspace.solutionsRoot, taskId);
 	const errors = collection.valid ? [] : collection.errors.map((error) => error.message);
 	if (!collection.valid && stopReason === "agent_finished") stopReason = "no_promotion";
 	report?.event("training_results_validated", {

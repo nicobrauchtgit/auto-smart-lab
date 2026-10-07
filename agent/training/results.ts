@@ -71,6 +71,7 @@ export interface TrainingTrialResult {
 
 export interface TrainingCollection {
 	trials: TrainingTrialResult[];
+	/** Set only by `championSelection` (development_selection.ts): the tagged champion. */
 	selected?: TrainingTrialResult;
 	valid: boolean;
 	errors: TrainingResultError[];
@@ -474,22 +475,18 @@ export async function collectTrainingResults(root: string): Promise<TrainingColl
 		trials.push(await collectTrial(join(trainingRoot, experimentId), experimentId));
 	}
 
-	const eligible = trials.filter((trial) => trial.eligible).sort((left, right) => {
-		const scoreDifference = right.result!.metrics!.balancedAccuracy - left.result!.metrics!.balancedAccuracy;
-		if (scoreDifference !== 0) return scoreDifference;
-		return left.experimentId < right.experimentId ? -1 : left.experimentId > right.experimentId ? 1 : 0;
-	});
-	const selected = eligible[0];
+	// No selection here: the champion tag is the only selection rule
+	// (`championSelection`); a higher raw CV mean alone selects nothing.
+	const eligible = trials.some((trial) => trial.eligible);
 	const errors = trials.flatMap((trial) => trial.errors);
-	if (selected === undefined) {
+	if (!eligible) {
 		error(errors, undefined, "no_eligible_result", "no valid completed promotion is eligible for selection");
 	}
 	return {
 		trials,
-		...(selected === undefined ? {} : { selected }),
 		// Invalid historical trials remain evidence, but do not veto a separate
 		// promotion whose own artifacts and eligibility validate cleanly.
-		valid: selected !== undefined,
+		valid: eligible,
 		errors,
 		artifacts: trials.flatMap((trial) => trial.artifacts),
 	};

@@ -6,6 +6,9 @@ import { spawnSync } from "node:child_process";
 import { createSeedPlan, deriveTrialSeed, serializeSeedPlan } from "../training/seeds.js";
 import { collectTrainingResults } from "../training/results.js";
 import { artifact, prepareEvidence } from "./evidence.js";
+import { championSelection } from "../training/development_selection.js";
+import { git, tagCommit } from "../training/git.js";
+import { commitAll } from "../training/testing.js";
 import { curveSvg } from "./curves.js";
 
 // Actual harness fits a tiny fixed dummy model; evaluation itself never fits.
@@ -18,6 +21,9 @@ test("real harness trial becomes verified review evidence; changed artifacts and
   mkdirSync(directory, { recursive: true });
   mkdirSync(join(root, 'solutions'));
   writeFileSync(join(root, 'solutions/model.py'), 'from sklearn.dummy import DummyClassifier\ndef build_pipeline():\n return DummyClassifier(strategy="most_frequent")\n');
+  const repository = join(root, 'solutions');
+  git(repository, ['init', '--quiet', '-b', 'main']); git(repository, ['config', 'user.email', 'fixture@example.invalid']); git(repository, ['config', 'user.name', 'fixture']);
+  const commit = commitAll(repository, 'Fixture pipeline'), tree = git(repository, ['rev-parse', 'HEAD^{tree}']).stdout.trim();
   const zip = join(root, 'train.zip'), labels = join(root, 'dev.labels');
   writeFileSync(labels, Array.from({ length: 8 }, (_, i) => `row-${i};${i % 2}\n`).join(''));
   const made = spawnSync(python, ['-c', 'import zipfile,sys\nwith zipfile.ZipFile(sys.argv[1], "w") as z:\n for i in range(8): z.writestr(f"row-{i}", f"text {i}")', zip], { encoding: 'utf8' });
@@ -27,11 +33,14 @@ test("real harness trial becomes verified review evidence; changed artifacts and
   writeFileSync(join(directory, 'seed-plan.json'), serializeSeedPlan(seeds));
   writeFileSync(join(directory, 'request.json'), JSON.stringify(request));
   writeFileSync(join(directory, 'invocation.json'), JSON.stringify({ schemaVersion: 1, experimentId: 'fixture', request,
-   inputs: { projectRoot: root, zipPath: zip, labelsPath: labels, outputDir: directory },
+   inputs: { projectRoot: root, zipPath: zip, labelsPath: labels, outputDir: directory }, source: { commit, tree, repository },
    seeds: { experiment: seeds.experimentSeed, trial: deriveTrialSeed(seeds, 0) } }));
   const trained = spawnSync(python, [worker, '--invocation', join(directory, 'invocation.json')], { encoding: 'utf8', timeout: 30_000 });
   if (trained.status !== 0) throw new Error(trained.stderr);
-  const collection = await collectTrainingResults(join(root, 'training'));
+  // Evaluation reviews only the tagged champion.
+  await expect(prepareEvidence([artifact('training_selected_result', join(directory, 'trial-result.json'))], new AbortController().signal, 'fixture-task')).rejects.toThrow('not the current champion');
+  tagCommit(repository, 'champion', commit, JSON.stringify({ experimentId: 'fixture', pipeline: request.pipeline, trainingRoot: join(root, 'training') }), true);
+  const collection = await championSelection(await collectTrainingResults(join(root, 'training')), repository, 'fixture-task');
   expect(collection.selected?.experimentId).toBe('fixture');
   const upstream = [...collection.artifacts, artifact('training_selected_result', join(directory, 'trial-result.json'))];
   const evidence = await prepareEvidence(upstream, new AbortController().signal, 'fixture-task');
