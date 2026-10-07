@@ -36,7 +36,7 @@ with this file, this file wins.
 
 ## Current state (2026-10-07)
 
-- **Branch** `solve-stage-hardening`, 11 commits ahead of
+- **Branch** `solve-stage-hardening`, ahead of
   `origin/solve-stage-hardening` (not pushed). Remote:
   `git@github.com:nicobrauchtgit/auto-smart-lab.git`.
 - **Tests:** locally 419 TypeScript tests pass (4 skipped), all Python suites
