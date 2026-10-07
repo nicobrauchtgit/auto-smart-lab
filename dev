@@ -28,6 +28,8 @@ export MISE_TRUSTED_CONFIG_PATHS="$ROOT"
 export UV_CACHE_DIR="$TOOLS/uv/cache"
 export UV_PYTHON_INSTALL_DIR="$TOOLS/uv/python"
 export BUN_INSTALL_CACHE_DIR="$TOOLS/bun/cache"
+# So `./dev mise run <task>` finds mise inside its own environment.
+export PATH="$TOOLS/bin:$PATH"
 
 if [[ ! -x "$MISE" ]]; then
 	# Pinned release, verified against its published SHA-256 before use.
