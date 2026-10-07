@@ -8,8 +8,7 @@ import type { InvocationFeedback } from "../pipeline/feedback.js";
 
 import { HARNESS_CONFIG } from "../harness/config.js";
 import { createHash, randomUUID } from "node:crypto";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 
 import {
 	createAgentSession,
@@ -27,16 +26,6 @@ import { SmartContextSession } from "../context/session.js";
 import type { Wakeable } from "../experiments/index.js";
 import type { SuppliedInput } from "../pipeline/types.js";
 import { TaskKnowledge, createKnowledgeTools, selectedKnowledge, knowledgeInput, type KnowledgeOptions } from "../knowledge/service.js";
-
-const HERE = dirname(fileURLToPath(import.meta.url));
-const AGENT_DIR = resolve(HERE, ".."); // agent/run/ → agent/
-const TOOLS_DIR = join(AGENT_DIR, "tools");
-
-const EXTENSION_PATHS = [
-	join(TOOLS_DIR, "smartlab.ts"),
-	join(TOOLS_DIR, "web_search.ts"),
-	join(TOOLS_DIR, "challenge_context.ts"),
-];
 
 /** How long one agent session may run. The cost signal is measured against it. */
 export const SESSION_TIMEOUT_MS = HARNESS_CONFIG.session.timeoutMs;
@@ -64,9 +53,9 @@ export interface RunSessionOptions {
 	customTools?: ToolDefinition[];
 	/** Bind services after observation, including every replacement. Use identity to rebind subagent parents. */
 	onSessionReady?: (session: Wakeable, identity: { agentRunId?: string; piSessionId: string }) => void | Promise<void>;
-	/** Whether project extensions should be loaded. Defaults to true. */
+	/** Whether explicitly selected file extensions should be loaded. Defaults to true. */
 	extensions?: boolean;
-	/** Optional extension allowlist. Defaults to the normal pipeline extensions. */
+	/** Explicit extension allowlist. Defaults to empty; settings never add extensions. */
 	extensionPaths?: string[];
 	/**
 	 * In-process extensions such as tool-call guards. Loaded even when file
@@ -143,13 +132,12 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 		const pipeline = await loadPipelineConfig();
 		const { cwd, agentDir } = pipeline;
 		const sessionCwd = options.cwd ? resolve(options.cwd) : cwd;
-		const extensionPaths = options.extensionPaths ?? EXTENSION_PATHS;
+		const extensionPaths = options.extensionPaths ?? [];
 
 		const resourceLoader = createPipelineResourceLoader({
 			cwd: sessionCwd,
 			agentDir,
 			additionalExtensionPaths: options.extensions === false ? [] : extensionPaths,
-			noExtensions: options.extensions === false,
 			extensionFactories: [...(options.extensionFactories ?? []), ...(options.observe?.executionGuard ? [{ name: "controller-budget", factory(pi: any) { pi.on("tool_call", () => { try { options.observe!.executionGuard!.beforeToolCall(); } catch { return { block: true, reason: "Controller tool budget exhausted" }; } }); } }] : [])],
 			systemPrompt,
 		});

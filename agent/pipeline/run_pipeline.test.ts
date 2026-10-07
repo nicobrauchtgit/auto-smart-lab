@@ -245,13 +245,14 @@ describe("seeded upstream artifacts", () => {
 });
 
 test("a missing later-stage prerequisite blocks every stage and records the failure", async () => {
+ expect(realStages.solve.setupRequirements).toContain("web-search");
  const before = process.env.TAVILY_API_KEY;
  process.env.TAVILY_API_KEY = "";
  let ran = false;
  const runsDir = workspace();
  try {
   STAGE_REGISTRY.research = stage("research", "solve", async () => { ran = true; return { artifacts: [] }; });
-  STAGE_REGISTRY.solve = { ...stage("solve", undefined, async () => { ran = true; return { artifacts: [] }; }), setupRequirements: ["web-search"] };
+  STAGE_REGISTRY.solve = { ...stage("solve", undefined, async () => { ran = true; return { artifacts: [] }; }), setupRequirements: realStages.solve.setupRequirements?.filter(requirement => requirement === "web-search") };
   const configPath = configFile(runsDir, { research: { enabled: true }, solve: { enabled: true } });
   await expect(runPipeline({ taskId: "spam1", runsDir, configPath })).rejects.toThrow("TAVILY_API_KEY");
   expect(ran).toBe(false);

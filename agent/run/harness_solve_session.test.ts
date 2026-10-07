@@ -78,7 +78,7 @@ describe("agent-driven harness solve session", () => {
 			runAgentSession: async (options) => {
 				expect(options.prompt).toContain("SOLVE_GUIDANCE");
                 expect(options.promptReferences.map(p => p.id)).toContain("shared.stage-guidance");
-                expect(options.extensionPaths).toEqual([]);
+                expect(options.extensionPaths).toEqual([join(import.meta.dir, "..", "tools", "web_search.ts")]);
 				expect(options.customTools?.map((tool) => tool.name)).toEqual(toolNames);
 				expect(options.customTools?.some((tool) => tool.name === "experiments_start")).toBe(false);
 				await options.onSessionReady?.({} as never, { agentRunId: "agent-test", piSessionId: "session-test" });

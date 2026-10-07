@@ -85,3 +85,35 @@ test("selected runtime knowledge skills join every module without ambient develo
 test("assembled orchestrator system prompt excludes development guidance and retains its selected decision instructions", async () => {
     await assertGuidanceExcluded(loadPromptSnapshot().render("orchestrator.system", {}).text);
 });
+
+
+test("pipeline extensions exclude project/global settings and load only explicit paths and guards", async () => {
+ const root = mkdtempSync(join(tmpdir(), "pipeline-extensions-"));
+ const cwd = join(root, "workspace");
+ const agentDir = join(root, "agent");
+ mkdirSync(join(cwd, ".pi"), { recursive: true });
+ mkdirSync(agentDir);
+ const ambient = join(root, "ambient.ts");
+ const explicit = join(root, "explicit.ts");
+ writeFileSync(ambient, "export default function(pi) {}\n");
+ writeFileSync(explicit, "export default function(pi) {}\n");
+ for (const settings of [join(cwd, ".pi", "settings.json"), join(agentDir, "settings.json")]) {
+  writeFileSync(settings, JSON.stringify({ extensions: [ambient] }));
+ }
+ try {
+  for (const paths of [undefined, [], [explicit]]) {
+   const loader = createPipelineResourceLoader({
+    cwd, agentDir, noExtensions: false, additionalExtensionPaths: paths,
+    extensionFactories: [{ name: "guard", factory(pi) {} }],
+   });
+   await loader.reload();
+   assert.deepEqual(loader.getExtensions().errors, []);
+   const loaded = loader.getExtensions().extensions.map(extension => extension.path);
+   assert.ok(!loaded.includes(ambient));
+   assert.equal(loaded.includes(explicit), paths?.includes(explicit) ?? false);
+   assert.equal(loaded.length, paths?.length ? 2 : 1);
+  }
+ } finally {
+  rmSync(root, { recursive: true, force: true });
+ }
+});

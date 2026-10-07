@@ -169,7 +169,7 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
   });
  }
  if (needs.has("web-search")) {
-  add("TAVILY_API_KEY", "local", "Set a non-empty TAVILY_API_KEY in .env; research requires web citations.", () => {
+  add("TAVILY_API_KEY", "local", "Set a non-empty TAVILY_API_KEY in .env; enabled web-search tools require it.", () => {
    if (!process.env.TAVILY_API_KEY?.trim()) throw new Error("Missing key");
   });
   add("tavily-access", "remote", "Verify TAVILY_API_KEY, Tavily connectivity and remaining credits.", async signal => {

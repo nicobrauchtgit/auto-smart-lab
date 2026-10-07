@@ -289,7 +289,7 @@ export async function runHarnessSolveSession(
 			tools: ["read", "grep", "find", "ls", "edit", "write", "bash"],
 			customTools: training.tools,
 			onSessionReady: training.bindSession,
-			extensionPaths: [],
+			extensionPaths: [join(PROJECT_ROOT, "agent", "tools", "web_search.ts")],
 			extensionFactories: [createGitHistoryGuard(prompts, (eventType, payload) => report?.event(eventType, payload))],
 			...(options.signal ? { signal: options.signal } : {}),
 			...(report ? { observe: report.observation(1) } : {}),

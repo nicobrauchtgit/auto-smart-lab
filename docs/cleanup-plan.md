@@ -80,10 +80,10 @@ with this file, this file wins.
 ## Open decisions (ask the user)
 
 - [ ] `agent/subagents/` (~770 lines, used only by its own smoke test): wire into the orchestrator, or delete? The `context.*probe*` prompts go with it.
-- [ ] `agent/tools/smartlab.ts` (an upload tool that bypasses the submission ledger) and `agent/tools/challenge_context.ts`: only loaded by `.pi/settings.json` for interactive `pi` and by the default extension list. Keep or delete? (`web_search.ts` is live and stays.)
+- [ ] `agent/tools/smartlab.ts` (an upload tool that bypasses the submission ledger) and `agent/tools/challenge_context.ts`: only loaded by `.pi/settings.json` for interactive `pi`. Keep or delete? (`web_search.ts` is live and stays.)
 - [ ] `agent/instructions/`: nothing references it. Delete?
 - [ ] Older docs in `docs/` (HANDOVER, WIP, design notes) describe earlier generations. Consolidate or archive?
-- [ ] Tool sets (W1): should solve get `web_search`? Should the orchestrator get read-only knowledge search? Who gets a tool for the lab service on the VM?
+- [ ] Tool sets (W1): should the orchestrator get read-only knowledge search? Who gets a tool for the lab service on the VM?
 - [ ] Run the agents on the VM with a copy of `.env` there? (The VM checkout has no `.env` yet; see "Environment and access".)
 - [ ] `~/.local/bin/herdr` on the VM: origin unknown, not from this project. Keep or remove?
 - [ ] Recommended, not yet confirmed: build the canary (C1), held-back confirmation (C2) and quality signals (C3) inside the modular harness (H1) rather than before it, so they are not written twice for binary classification only.
@@ -128,10 +128,17 @@ tools, **L** later.
   handed over only while that file matches the selected trial's commit; once
   edited, solve's summary records `entrypoint_mismatch` instead (the champion
   may come from an earlier run, D13). Test: `stages/solve.test.ts`.
-- [ ] **Q5 Empty default tool list.** `EXTENSION_PATHS` in
-  `agent/run/session_runner.ts` gives any session that does not override it the
-  upload, challenge and web-search tools. No live caller relies on it; make the
-  default empty. Test: a session without `extensionPaths` gets no extensions.
+- [x] **Q5 Empty default tool list.** Done: the session runner defaults to
+  no file extensions, and `createPipelineResourceLoader` always disables ambient
+  extension discovery (project/global settings were loading the upload and
+  challenge tools even with `extensionPaths: []`). Only explicit paths and
+  in-process guards load. User approved keeping `web_search` explicitly for
+  solve as well as research; solve now declares its web-search preflight.
+  Interactive `pi` settings stay unchanged. Tests: `session_resources.test.ts`
+  covers settings exclusion, empty/omitted/explicit paths and retained guards;
+  `harness_solve_session.test.ts` checks solve's path; `run_pipeline.test.ts`
+  proves a missing prerequisite from solve's actual requirement list blocks
+  the chain before execution.
 - [ ] **Q6 Ledger vs. lab attempt counting.** Check that `agent/submission/`
   counts attempts the way the lab does: FAILURE rows do not count even when they
   show a score (spam1's two rows from 2026-08-18), SUCCESS rows do (task 4.1's
@@ -230,7 +237,7 @@ Lab facts are in [Lab tasks](#lab-tasks-verified-2026-10-07).
   | Agent | Built-in | Custom | Extensions |
   |---|---|---|---|
   | research | read, grep, find, ls, edit, write, bash | knowledge_search/read/capture | web_search |
-  | solve | read, grep, find, ls, edit, write, bash | experiment_start/status/output/stop/resume, knowledge_* | none (+ in-process git history guard) |
+  | solve | read, grep, find, ls, edit, write, bash | experiment_start/status/output/stop/resume, knowledge_* | web_search (+ in-process git history guard) |
   | evaluate | none | evaluation_detail/report/code, knowledge_* (only with a seed plan) | none |
   | orchestrator | none | pipeline_status, pipeline_wait, pipeline_finish, stage_start/status/feedback/cancel, artifact_inspect | none |
 
