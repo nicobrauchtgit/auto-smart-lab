@@ -102,3 +102,26 @@ test("the solve opening carries the fit policy as its own identified template", 
 	assert.match(prepared.prompt, /A pilot should deliberately reduce work/);
 	assert.equal(snapshot.render("solve.observable-fits", {}).reference.rendered_sha256, policy.rendered_sha256);
 });
+
+test("research always supplies the separate test-input pass and its evidence limits", () => {
+ const prompts = loadPromptSnapshot();
+ const prepared = prepareResearchPrompts(prompts, { taskId: 'spam1', contextHash: 'fixed-fixture' });
+ const guide = prompts.render('research.test-distribution', {});
+ assert.ok(prepared.promptReferences.some(ref => ref.id === 'research.test-distribution' && ref.rendered_sha256 === guide.reference.rendered_sha256));
+ assert.ok(prepared.prompt.includes(guide.text));
+ assert.match(guide.text, /after releasing the training\s+data/);
+ assert.match(guide.text, /Do not\s+discard a useful training finding/);
+ assert.match(guide.text, /check it in both\s+splits/);
+ assert.match(guide.text, /do not treat absence from a sample as absence\s+from the whole split/);
+ assert.match(guide.text, /Never\s+infer targets from them/);
+ assert.match(guide.text, /split: "training".*split: "test"/);
+});
+
+test("opening guidance is optional with explicit empty compatibility, rejects unknown/non-string variables and preserves literal braces", () => {
+ const prompts = loadPromptSnapshot();
+ const base = { taskId: "fixture", contextHash: "hash", startupContext: "" };
+ expect(prompts.render("research.start", base).text).toBe(prompts.render("research.start", { ...base, guidance: "" }).text);
+ expect(prompts.render("research.start", { ...base, guidance: "Literal {{unknown}}" }).text).toContain("Literal {{unknown}}");
+ expect(() => prompts.render("research.start", { ...base, guidance: 1 } as any)).toThrow();
+ expect(() => prompts.render("research.start", { ...base, unexpected: "x" } as any)).toThrow();
+});

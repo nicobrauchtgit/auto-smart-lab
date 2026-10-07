@@ -26,7 +26,7 @@ export function createSubagents(options: PiChildOptions & {
 	const record = (eventType: string, payload: Record<string, unknown>) => sink.record({
 		agentRunId: moduleRunId, piSessionId: null, sequence: sequence++,
 		eventType, observedAt: new Date().toISOString(), identity,
-		payload: { ...payload, parentAgentRunId },
+		payload: { parentAgentRunId, ...payload, currentParentAgentRunId: parentAgentRunId },
 	});
 	const createSession = createPiChildFactory(options);
 	const limits = { ...options.limits };
@@ -42,9 +42,15 @@ export function createSubagents(options: PiChildOptions & {
 	let closing: Promise<void> | undefined;
 	const bindParent = (id: string) => {
 		if (closing) throw new Error("Subagent scope is closed");
-		if (manager) throw new Error("Subagent scope already has a parent");
 		if (!id.trim()) throw new Error("Parent agent run ID is required");
+		if (parentAgentRunId === id) return;
+		const previousParentAgentRunId = parentAgentRunId;
 		parentAgentRunId = id;
+		if (manager) {
+			manager.bindParent(id);
+			record("subagent_parent_rebound", { previousParentAgentRunId });
+			return;
+		}
 		manager = new SubagentManager({ parentAgentRunId: id, prompts: options.prompts, createSession, limits, record });
 		record("subagent_scope_started", { version: 1, limits: manager.limits, toolPrompts });
 	};

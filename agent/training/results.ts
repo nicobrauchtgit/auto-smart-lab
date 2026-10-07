@@ -32,7 +32,7 @@ export interface TrainingArtifact {
 }
 
 export interface TrainingInvocation {
-	schemaVersion: 1;
+	schemaVersion: 1 | 2;
 	experimentId: string;
 	request: ExperimentRequest;
 	inputs: Record<string, unknown>;
@@ -190,7 +190,7 @@ async function collectTrial(directory: string, experimentId: string): Promise<Tr
 
 	const read = async (
 		file: string,
-		requiredArtifact?: (typeof REQUIRED_ARTIFACTS)[number][0],
+		requiredArtifact?: string,
 		deferMissing = false,
 	): Promise<Buffer | undefined> => {
 		const path = join(directory, file);
@@ -269,10 +269,10 @@ async function collectTrial(directory: string, experimentId: string): Promise<Tr
 		} catch (cause) {
 			error(errors, experimentId, "invalid_invocation", `invocation.json request is invalid: ${cause instanceof Error ? cause.message : String(cause)}`, "invocation.json");
 		}
-		if (raw.schemaVersion !== 1 || typeof raw.experimentId !== "string" || !isObject(raw.inputs) || !isObject(raw.seeds)) {
+		if ((raw.schemaVersion !== 1 && raw.schemaVersion !== 2) || typeof raw.experimentId !== "string" || !isObject(raw.inputs) || !isObject(raw.seeds)) {
 			error(errors, experimentId, "invalid_invocation", "invocation.json has an invalid schema, identity, inputs, or seeds", "invocation.json");
 		} else if (invocationRequest !== undefined) {
-			invocation = { ...raw, schemaVersion: 1, experimentId: raw.experimentId, request: invocationRequest, inputs: raw.inputs, seeds: raw.seeds };
+			invocation = { ...raw, schemaVersion: raw.schemaVersion, experimentId: raw.experimentId, request: invocationRequest, inputs: raw.inputs, seeds: raw.seeds };
 		}
 	}
 
@@ -404,7 +404,29 @@ async function collectTrial(directory: string, experimentId: string): Promise<Tr
 		error(errors, experimentId, "invalid_result", "trial-result.json metrics.balancedAccuracy must be between 0 and 1", "trial-result.json");
 	}
 
-	const completePromotion = scope === "promotion"
+	// A search winner was selected on the folds that scored it; only a
+	// confirmation trial on a fresh manifest can become eligible.
+	const isSearch = request?.search !== undefined || invocation?.request.search !== undefined;
+	if (isSearch && result?.status !== "failed") {
+		for (const [kind, file] of [["training_search_configs", "configs.jsonl"], ["training_search_report", "search-report.json"],
+			["training_search_journal", "study.journal"]]) {
+			const bytes = await read(file, kind);
+			if (file === "search-report.json" && bytes) {
+				const report = parseJsonObject(bytes.toString("utf8"), file, experimentId, errors);
+				if (report?.experimentId !== experimentId || report?.manifestSha256 !== loaded.manifest?.sha256) {
+					error(errors, experimentId, "identity_mismatch", "search report identity/manifest differs from the trial", file);
+				}
+				for (const key of ["leaderboard", "parameterImportance", "parameterEffects", "comparison", "progress", "cost", "caveats", "nextStep"]) {
+					if (report?.[key] === undefined) error(errors, experimentId, "invalid_search_report", `search report is missing ${key}`, file);
+				}
+			}
+		}
+		await read("oof_runner_up.csv", "training_search_runner_up", true);
+	}
+	if (isSearch && result?.promotionEligible === true) {
+		error(errors, experimentId, "invalid_promotion_eligibility", "a search trial is never promotion-eligible", "trial-result.json");
+	}
+	const completePromotion = !isSearch && scope === "promotion"
 		&& result?.scope === "promotion"
 		&& result.status === "completed"
 		&& nonNegativeInteger(requestedFolds)
@@ -471,4 +493,10 @@ export async function collectTrainingResults(root: string): Promise<TrainingColl
 		errors,
 		artifacts: trials.flatMap((trial) => trial.artifacts),
 	};
+}
+
+/** Validate one controller-selected durable trial without scanning unrelated runs. */
+export async function collectTrainingTrial(directory: string): Promise<TrainingTrialResult> {
+	const path = resolve(directory);
+	return collectTrial(path, basename(path));
 }

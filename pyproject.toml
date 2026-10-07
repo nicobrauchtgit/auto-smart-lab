@@ -15,9 +15,11 @@ version = "0.1.0"
 description = "Local ML environment for the SmartLab pipeline agents"
 requires-python = "==3.13.*"
 dependencies = [
+    "cloudpickle>=3.1.2",
     "joblib>=1.6.0",
     "matplotlib>=3.11.1",
     "numpy>=2.5.3",
+    "optuna>=5.0.0",
     "pandas>=3.0.5",
     "scikit-learn>=1.9.0",
     "scipy>=1.18.1",

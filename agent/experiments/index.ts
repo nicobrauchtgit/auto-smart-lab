@@ -38,6 +38,7 @@ export function createExperiments(options: Omit<SupervisorOptions, "deliver"> & 
 }) {
 	options.signal?.throwIfAborted();
 	let session = options.session;
+    const pending: { text: string; update: Update }[] = [];
 	const supervisor = new ExperimentSupervisor({
 		...options,
 		deliver: (text, update) => deliver(text, update),
@@ -53,6 +54,8 @@ export function createExperiments(options: Omit<SupervisorOptions, "deliver"> & 
 	 */
 	async function deliver(text: string, update: Update): Promise<void> {
 		if (!session) {
+			pending.push({ text, update });
+            if (pending.length > 100) pending.shift();
 			options.record?.("experiment_update_undelivered", { experiment_id: update.id, kind: update.kind });
 			return;
 		}
@@ -81,7 +84,13 @@ export function createExperiments(options: Omit<SupervisorOptions, "deliver"> & 
 		tools,
 		toolPrompts,
 		/** Attach after the session is observed, before its first prompt. */
-		bindSession(target: Wakeable) { session = target; },
+		bindSession(target: Wakeable) {
+            session = target;
+            // Startup recovery data joins the opening turn, without an extra model call.
+            for (const item of pending.splice(0)) void target.sendCustomMessage(
+                { customType: "experiment_update", content: item.text, display: true, details: { id: item.update.id, kind: item.update.kind } },
+                { triggerTurn: false, deliverAs: "nextTurn" }).catch(() => undefined);
+        },
 		close: async () => {
 			options.signal?.removeEventListener("abort", onAbort);
 			await close();

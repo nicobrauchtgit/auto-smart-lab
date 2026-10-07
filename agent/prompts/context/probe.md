@@ -1,0 +1,3 @@
+This is a synthetic session-continuity test in an isolated workspace, not a training or submission run. Use only read and write tools.
+
+Read packet.txt once. It contains a large synthetic activity log; do not summarize or copy its log rows. Then read state.json to recover the selected trial and pending action. Follow that action by writing result.json with exactly the selected trial ID and status "verified". Return PROBE_DONE after writing it. Do not rewrite state.json or repeat completed steps after a session handoff. If a handoff occurs, use existing artifacts to orient and finish this same task.

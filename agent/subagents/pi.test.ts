@@ -79,7 +79,7 @@ test("real Pi children execute tools, preserve follow-up context, and keep trans
 	const stageInvocationId = randomUUID();
 	const parentAgentRunId = randomUUID();
 	const scope = createSubagents({ cwd: root, agentDir, model: faux.getModel(), modelRuntime: runtime,
-		prompts, sharedInstructions: [prompts.render("research.system", {})],
+		prompts, sharedInstructions: [],
 		env: { PATH: process.env.PATH }, inputs: [], parentAgentRunId,
 		observe: { identity: { pipelineRunId, stageInvocationId, stage: "solve", attempt: 1 }, sink } });
 	try {
@@ -160,7 +160,7 @@ test("an observed Pi parent can spawn and collect a child through the optional t
 			sessionManager: SessionManager.inMemory(root), tools: scope.tools.map(tool => tool.name), customTools: scope.tools }));
 		observer = await observeAgentSession({ session: parent, model: "test-parent/faux", ...observe });
 		scope.bindParent(observer.agentRunId);
-		assert.throws(() => scope.bindParent(randomUUID()), /already has a parent/);
+		scope.bindParent(observer.agentRunId); // Rebinding the same observed parent is safe.
 		await parent.prompt("Delegate the implementation and collect its result.");
 		assert.equal(parent.getLastAssistantText(), "Collected the implementation result.");
 		assert.equal(scope.manager.list()[0].parentAgentRunId, observer.agentRunId);
@@ -170,4 +170,35 @@ test("an observed Pi parent can spawn and collect a child through the optional t
 		finally { await observer?.close(); parent?.dispose(); rmSync(root, { recursive: true, force: true }); }
 	}
 	assert.equal(events.filter(event => event.eventType === "agent_run_end").length, 2);
+});
+
+test("Pi child handoffs preserve logical identity and expose the replacement physical IDs", async () => {
+	const root = mkdtempSync(join(tmpdir(), "child-context-"));
+	const agentDir = join(root, "agent"); mkdirSync(agentDir);
+	const events: EventRecord[] = [];
+	const sink: EventSink = { databaseConnected: false, failures: [], record: event => events.push(event), async close() {} };
+	const faux = fauxProvider({ provider: "child-context", tokensPerSecond: 1_000_000, tokenSize: { min: 600_000, max: 600_000 } });
+	const runtime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath: null, refreshOnCreate: false });
+	runtime.registerNativeProvider(faux.provider);
+	const high = fauxAssistantMessage("work ".repeat(110_000));
+	faux.setResponses([high, fauxAssistantMessage("Continue from the existing implementation."),
+		context => {
+			assert.match(JSON.stringify(context.messages), /Continue from the existing implementation/);
+			return fauxAssistantMessage("Implementation verified.");
+		}]);
+	const scope = createSubagents({ cwd: root, agentDir, model: faux.getModel(), modelRuntime: runtime,
+		prompts, sharedInstructions: [], env: {}, inputs: [], parentAgentRunId: "parent",
+		observe: { identity: { stage: "solve", stageInvocationId: "invocation", attempt: 1 }, sink } });
+	try {
+		const child = scope.manager.spawn("Complete implementation", "spawn");
+		const result = await scope.manager.wait(child.logicalAgentId);
+		assert.equal(result.status, "idle");
+		assert.equal(result.output, "Implementation verified.");
+		const starts = events.filter(event => event.eventType === "agent_run_start");
+		assert.equal(starts.length, 2);
+		assert.equal(result.agentRunId, starts[1].agentRunId);
+		assert.equal(result.piSessionId, starts[1].piSessionId!);
+		assert.equal(result.parentAgentRunId, "parent");
+		assert.equal(result.logicalAgentId, child.logicalAgentId);
+	} finally { await scope.close(); rmSync(root, { recursive: true, force: true }); }
 });

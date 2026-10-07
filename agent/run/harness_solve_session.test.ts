@@ -1,3 +1,4 @@
+import { guidanceHash } from "../pipeline/guidance.js";
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -80,10 +81,12 @@ describe("agent-driven harness solve session", () => {
 				} as never;
 			},
 			runAgentSession: async (options) => {
-				expect(options.extensionPaths).toEqual([]);
+				expect(options.prompt).toContain("SOLVE_GUIDANCE");
+                expect(options.promptReferences.map(p => p.id)).toContain("shared.stage-guidance");
+                expect(options.extensionPaths).toEqual([]);
 				expect(options.customTools?.map((tool) => tool.name)).toEqual(toolNames);
 				expect(options.customTools?.some((tool) => tool.name === "experiments_start")).toBe(false);
-				await options.onSessionReady?.({} as never);
+				await options.onSessionReady?.({} as never, { agentRunId: "agent-test", piSessionId: "session-test" });
 				return { output: "done", agentRunId: "agent-1" };
 			},
 			collectResults: async () => ({
@@ -94,7 +97,8 @@ describe("agent-driven harness solve session", () => {
 		};
 
 		const result = await runHarnessSolveSession("task", undefined, {
-			runId: "stage-1", report: observed.report, dependencies,
+			guidance: (() => { const body = { id: "solve-note", version: 1, stage: "solve" as const, taskId: "task", content: "SOLVE_GUIDANCE", evidence: [] }; return { ...body, contentSha256: guidanceHash(body) }; })(),
+            runId: "stage-1", report: observed.report, dependencies,
 			experimentUpdateIntervalSeconds: 45,
 		});
 		expect(bound).toBe(true);

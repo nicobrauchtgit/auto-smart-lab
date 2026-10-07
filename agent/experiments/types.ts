@@ -7,6 +7,7 @@
  * streamed into a blocking tool call can wake it.
  */
 
+import { HARNESS_CONFIG } from "../harness/config.js";
 export type ExperimentStatus = "running" | "exited" | "stopped" | "failed";
 
 /** What the caller asks for. Persisted before the process is spawned. */
@@ -110,18 +111,7 @@ export interface SupervisorLimits {
 	stopGraceMs: number;
 }
 
-export const DEFAULT_LIMITS: Readonly<SupervisorLimits> = Object.freeze({
-	updateIntervalMs: 5_000,
-	linesPerUpdate: 5,
-	minStallMs: 15_000,
-	stallGapMultiple: 4,
-	// Measured at 1.6-1.9 s warm; a cold first run of the day took 8.6 s.
-	importPreludeMs: 12_000,
-	idleCpuPercent: 5,
-	sampleIntervalMs: 250,
-	maxConcurrent: 2,
-	stopGraceMs: 2_000,
-});
+export const DEFAULT_LIMITS: Readonly<SupervisorLimits> = HARNESS_CONFIG.supervisor;
 
 /**
  * Output that should reach the agent ahead of routine progress.

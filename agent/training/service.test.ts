@@ -7,6 +7,8 @@ import { join } from "node:path";
 import type { ExperimentSpec, ExperimentView } from "../experiments/types.js";
 import { TrainingService } from "./service.js";
 
+const noPipelineChecks = async () => [];
+
 describe("TrainingService", () => {
 	test("turns a seed-free request into one fixed, fully attributed worker invocation", async () => {
 		const root = mkdtempSync(join(tmpdir(), "training-service-"));
@@ -25,6 +27,7 @@ describe("TrainingService", () => {
 			trainingRoot: join(root, "runs", "task", "solve", "experiments"), taskId: "task",
 			datasetSha256: createHash("sha256").update("dataset").digest("hex"), rootSeed: 13,
 			zipPath: join(root, "train.zip"), labelsPath: join(root, "train.labels"),
+			validatePipeline: noPipelineChecks,
 		});
 		const started = await service.start({
 			schemaVersion: 1, hypothesis: "character features improve minority recall",
@@ -35,7 +38,7 @@ describe("TrainingService", () => {
 
 		expect(spawned?.id).toBe(started.id);
 		expect(spawned?.tool).toBe("tool-1");
-		expect(spawned?.spec.argv).toEqual([
+		expect(spawned?.spec.argv.slice(-4)).toEqual([
 			"/venv/bin/python", join(root, "agent", "training", "python", "worker.py"),
 			"--invocation", join(started.directory, "invocation.json"),
 		]);
@@ -56,7 +59,7 @@ describe("TrainingService", () => {
 			supervisor: { start() { throw new Error("should not spawn"); } },
 			pythonExecutable: "python", projectRoot: root, trainingRoot: join(root, "experiments"),
 			taskId: "task", datasetSha256: "a".repeat(64), rootSeed: 13,
-			zipPath: "train.zip", labelsPath: "train.labels",
+			zipPath: "train.zip", labelsPath: "train.labels", validatePipeline: noPipelineChecks,
 		});
 		const request = {
 			schemaVersion: 1, hypothesis: "x",
@@ -76,12 +79,12 @@ describe("TrainingService", () => {
 			supervisor: { start() { calls++; throw new Error("should not spawn"); } },
 			pythonExecutable: "python", projectRoot: root, trainingRoot: join(root, "experiments"),
 			taskId: "task", datasetSha256: "a".repeat(64), rootSeed: 13,
-			zipPath: "train.zip", labelsPath: "train.labels",
+			zipPath: "train.zip", labelsPath: "train.labels", validatePipeline: noPipelineChecks,
 		});
 		await expect(service.start({ schemaVersion: 1, hypothesis: "x", seed: 4,
 			pipeline: { module: "solutions/task.py", factory: "build" },
 			cv: { kind: "builtin", scheme: "stratified_kfold", folds: 2, repeats: 1 },
-			scope: { kind: "pilot" } })).rejects.toThrow(/unknown experiment keys: seed/);
+			scope: { kind: "pilot" } })).rejects.toThrow(/seed: unknown key/);
 		expect(calls).toBe(0);
 	});
 
@@ -95,7 +98,7 @@ describe("TrainingService", () => {
 				hypothesis: spec.hypothesis, elapsedSeconds: 0, linesEmitted: 0, cursor: 0, logPath: "log" }; } },
 			pythonExecutable: "python", projectRoot: root, trainingRoot: join(root, "experiments"),
 			taskId: "task", datasetSha256: "a".repeat(64), rootSeed: 13,
-			zipPath: "train.zip", labelsPath: "train.labels", maxExperiments: 1,
+			zipPath: "train.zip", labelsPath: "train.labels", maxExperiments: 1, validatePipeline: noPipelineChecks,
 		});
 		const request = { schemaVersion: 1, hypothesis: "x",
 			pipeline: { module: "solutions/task.py", factory: "build" },

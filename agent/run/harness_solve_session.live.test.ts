@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 
 import { PROJECT_ROOT } from "../pipeline/resolve_task.js";
 import type { PythonEnvironment } from "./python_environment.js";
@@ -39,12 +39,14 @@ test("an agent-authored pipeline deliberately starts the harness-owned promotion
 	writeFileSync(taskPath, "Classify spam with balanced accuracy.\n");
 	writeFileSync(join(researchDir, "research.md"), "# Research\n");
 
-	const unique = basename(root).replace(/[^a-zA-Z0-9_]/g, "_");
-	const module = `solutions/tasks/${unique}.py`;
-	const modulePath = join(PROJECT_ROOT, module);
-	mkdirSync(join(PROJECT_ROOT, "solutions/tasks"), { recursive: true });
+	// A temporary project: the session versions solutions/ and must never touch the real one.
+	const projectRoot = join(root, "project");
+	const solutionsRoot = join(projectRoot, "solutions");
+	const module = "solutions/tasks/synthetic.py";
+	const modulePath = join(projectRoot, module);
+	mkdirSync(join(solutionsRoot, "tasks"), { recursive: true });
 	const workspace = {
-		root, solutionsRoot: join(PROJECT_ROOT, "solutions"), entrypointPath: modulePath, taskPath, researchDir,
+		root, solutionsRoot, entrypointPath: modulePath, taskPath, researchDir,
 		devLabelsPath: labelsPath, fullLabelsPath: labelsPath, devZip: zipPath,
 		sealedPath: join(root, "sealed.txt"), trainZip: zipPath, datasetPaths: [zipPath],
 		split: { sealedIds: [], devRows: [], fraction: 0.1, seed: 13, sha256: "d".repeat(64) },
@@ -59,6 +61,10 @@ test("an agent-authored pipeline deliberately starts the harness-owned promotion
 		runAgentSession: async (options) => {
 			// This write represents the model agent authoring the implementation.
 			writeFileSync(modulePath, `from sklearn.feature_extraction.text import TfidfVectorizer\nfrom sklearn.linear_model import LogisticRegression\nfrom sklearn.pipeline import FunctionTransformer, Pipeline\n\ndef build_pipeline(context):\n    return Pipeline([("text", FunctionTransformer(lambda frame: frame["text"], validate=False)), ("tfidf", TfidfVectorizer()), ("model", LogisticRegression(max_iter=200))])\n`);
+			// The agent commits its work: the harness rejects uncommitted code.
+			execFileSync("git", ["-C", solutionsRoot, "add", "-A"]);
+			execFileSync("git", ["-C", solutionsRoot, "commit", "--quiet", "-m", "Word tf-idf with logistic regression"]);
+			expect(options.extensionFactories).toHaveLength(1);
 			const start = options.customTools?.find((tool) => tool.name === "experiment_start");
 			const status = options.customTools?.find((tool) => tool.name === "experiment_status");
 			expect(start).toBeDefined();
@@ -90,7 +96,8 @@ test("an agent-authored pipeline deliberately starts the harness-owned promotion
 		expect(result.collection.selected?.request?.pipeline.module).toBe(module);
 		expect(result.collection.selected?.result?.promotionEligible).toBe(true);
 		expect(result.collection.selected?.result?.completedFolds).toBe(2);
+		expect((result.collection.selected?.result as any).source.subject).toBe("Word tf-idf with logistic regression");
 	} finally {
-		try { unlinkSync(modulePath); } catch {}
+		rmSync(root, { recursive: true, force: true });
 	}
 }, 40_000);

@@ -1,3 +1,6 @@
+import type { StageGuidance, EvidenceReference } from "./guidance.js";
+import type { InvocationFeedback } from "./feedback.js";
+import type { SetupRequirement } from "./setup.js";
 /**
  * Typed contract shared by every pipeline stage.
  *
@@ -9,7 +12,7 @@
 import type { AgentObservation, EventIdentity } from "../observability.js";
 import type { PromptSnapshot } from "../prompts/loader.js";
 
-export type StageName = "research" | "solve" | "evaluate" | "submit";
+export type StageName = "research" | "solve" | "evaluate" | "refit" | "submit";
 
 export type StageOutcome = "success" | "failure" | "cancelled";
 
@@ -28,6 +31,7 @@ export interface SuppliedInput {
 
 export interface StageArtifact {
 	kind: string;
+	provenance?: EvidenceReference;
 	path: string;
 	sha256?: string;
 	bytes?: number;
@@ -39,7 +43,11 @@ export interface StageValidation {
 }
 
 export interface StageInput {
+	/** Immutable controller policy. Stage/model option overrides cannot grant upload permission. */
+	submissionPolicy?: { version: 1; authorized: boolean; maxSubmissions: number; pipelineRunId: string; controllerInvocationId: string };
 	taskId: string;
+	guidance?: StageGuidance;
+	evidenceCatalog?: StageArtifact[];
 	/** Artifacts produced by earlier stages of the same pipeline run. */
 	upstream: StageArtifact[];
 	/** Model override from the caller, if any. */
@@ -60,6 +68,7 @@ export interface StageReporter {
 
 export interface StageContext<Options> {
 	prompts: PromptSnapshot;
+	feedback?: InvocationFeedback;
 	input: StageInput;
 	options: Options;
 	report: StageReporter;
@@ -75,6 +84,11 @@ export interface StageResult {
 }
 
 export interface StageDefinition<Options> {
+	/** Deterministic restart reconciliation; must never repeat uncertain external effects. */
+	reconcile?(context: StageContext<Options>): Promise<StageResult>;
+	recoverySetupRequirements?: readonly SetupRequirement[];
+	/** Prerequisites checked for the entire scheduled chain before any stage runs. */
+	setupRequirements?: readonly SetupRequirement[];
 	name: StageName;
 	version: number;
 	description: string;
@@ -88,6 +102,7 @@ export interface StageDefinition<Options> {
 }
 
 export interface StageInvocation {
+	summary?: Record<string, unknown>;
 	stage: StageName;
 	invocationId: string;
 	stageVersion: number;

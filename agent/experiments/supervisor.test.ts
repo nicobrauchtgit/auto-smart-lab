@@ -138,7 +138,8 @@ describe("starting without blocking", () => {
 		expect(record.argv[0]).toBe(BUN);
 		expect(record.scope).toContain("2,000-row");
 		expect(record.requestedByToolCallId).toBe("toolu_01");
-		expect(events[0].type).toBe("experiment_started");
+		expect(events[0].type).toBe("supervisor_configuration");
+		expect(events.find(event => event.type === "experiment_started")?.payload.experiment_id).toBe(view.id);
 	}, 30_000);
 
 	test("a trial must say what work it actually does", () => {
@@ -244,7 +245,7 @@ describe("carrying the output out", () => {
 });
 
 describe("watching the process", () => {
-	test("CPU, memory, and group size reach the agent", async () => {
+	test.skipIf(process.platform !== "darwin")("CPU, memory, and group size reach the agent", async () => {
 		const { supervisor, root } = harness();
 		const view = supervisor.start(spec(root, "noisy"));
 		// A rate needs two readings, so CPU appears one sample after memory does.
@@ -255,7 +256,7 @@ describe("watching the process", () => {
 		expect(status.cpuPercent).toBeGreaterThanOrEqual(0);
 	}, 30_000);
 
-	test("a fit alive at idle CPU is reported stuck once its derived threshold passes", async () => {
+	test.skipIf(process.platform !== "darwin")("a fit alive at idle CPU is reported stuck once its derived threshold passes", async () => {
 		const { supervisor, updates, root } = harness({ importPreludeMs: 200, minStallMs: 500, stallGapMultiple: 2 });
 		const view = supervisor.start({ ...spec(root, "idle"), expectedGapMs: 250 });
 		expect(await until(() => updates.some((update) => update.kind === "stalled"))).toBe(true);

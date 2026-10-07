@@ -8,63 +8,29 @@ metrics, persistence, and lifecycle events.
 from __future__ import annotations
 
 import argparse
-import csv
-import hashlib
-import importlib.util
-import inspect
 import json
-import os
 import signal
 import sys
-import tempfile
 import time
 import traceback
-from dataclasses import dataclass
 from pathlib import Path
-from types import ModuleType
-from typing import Any, Iterable, Sequence
+from typing import Any, Sequence
 
 import numpy as np
-from sklearn.metrics import balanced_accuracy_score, confusion_matrix, recall_score
-from sklearn.model_selection import StratifiedKFold, train_test_split
 from smartlab_eval import load_labelled
 
+from smartlab_trial.agent_code import (
+    _call_pipeline_factory, _factory, _inject_random_states, _load_module, expose_project,
+)
+from smartlab_trial.artifacts import EventWriter, _atomic_json, _write_oof, append_fold_result, write_summary
+from smartlab_trial.folds import ConcreteFold, _manifest, _materialize_folds, _pilot_indices
+from smartlab_trial.invocation import SCHEMA_VERSION, InvocationError, Invocation, parse_invocation
+from smartlab_trial.metrics import _measure, _scores
+from smartlab_trial.seeds import _derive_seed
+from smartlab_trial.recovery import persisted_folds, save_checkpoint, load_checkpoint, validate_single
+from smartlab_trial.convergence import capture_convergence_warnings, summarise_convergence
 
-SCHEMA_VERSION = 1
 _stop_requested = False
-
-
-class InvocationError(ValueError):
-    """The invocation or agent-provided factory violates the worker contract."""
-
-
-@dataclass(frozen=True)
-class ConcreteFold:
-    repeat: int
-    fold: int
-    train: tuple[int, ...]
-    validation: tuple[int, ...]
-    seed: int
-
-
-class EventWriter:
-    def __init__(self, output_dir: Path, experiment_id: str) -> None:
-        self.path = output_dir / "events.jsonl"
-        self.experiment_id = experiment_id
-
-    def emit(self, kind: str, **data: Any) -> None:
-        event = {
-            "schemaVersion": SCHEMA_VERSION,
-            "experimentId": self.experiment_id,
-            "type": kind,
-            "timestamp": time.time(),
-            **_jsonable(data),
-        }
-        line = json.dumps(event, sort_keys=True, separators=(",", ":"), allow_nan=False)
-        with self.path.open("a", encoding="utf-8") as stream:
-            stream.write(line + "\n")
-            stream.flush()
-        print(line, flush=True)
 
 
 def _handle_stop(_signum: int, _frame: Any) -> None:
@@ -72,440 +38,93 @@ def _handle_stop(_signum: int, _frame: Any) -> None:
     _stop_requested = True
 
 
-def _derive_seed(domain: str, components: Sequence[object]) -> int:
-    """Match the persisted TypeScript seed plan's domain-separated derivation."""
-    material = json.dumps({
-        "namespace": "auto-smart-lab.seed",
-        "version": 1,
-        "derivation": "sha256-domain-separated-uint32-v1",
-        "domain": domain,
-        "components": list(components),
-    }, separators=(",", ":")).encode("utf-8")
-    return int.from_bytes(hashlib.sha256(material).digest()[:4], "big")
-
-
-def _jsonable(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {str(key): _jsonable(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_jsonable(item) for item in value]
-    if isinstance(value, (np.integer,)):
-        return int(value)
-    if isinstance(value, (np.floating,)):
-        return float(value)
-    if isinstance(value, np.ndarray):
-        return value.tolist()
-    return value
-
-
-def _atomic_json(path: Path, document: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            json.dump(_jsonable(document), stream, indent=2, sort_keys=True, allow_nan=False)
-            stream.write("\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, path)
-    except BaseException:
-        try:
-            os.unlink(temporary)
-        except FileNotFoundError:
-            pass
-        raise
-
-
-def _object(document: dict[str, Any], key: str) -> dict[str, Any]:
-    value = document.get(key)
-    if not isinstance(value, dict):
-        raise InvocationError(f"{key} must be an object")
-    return value
-
-
-def _validate_invocation(document: dict[str, Any]) -> None:
-    if document.get("schemaVersion") != SCHEMA_VERSION:
-        raise InvocationError(f"schemaVersion must be {SCHEMA_VERSION}")
-    if not isinstance(document.get("experimentId"), str) or not document["experimentId"]:
-        raise InvocationError("experimentId must be a non-empty string")
-    request = _object(document, "request")
-    if request.get("schemaVersion") != SCHEMA_VERSION:
-        raise InvocationError(f"request.schemaVersion must be {SCHEMA_VERSION}")
-    if not isinstance(request.get("hypothesis"), str) or not request["hypothesis"].strip():
-        raise InvocationError("request.hypothesis must be a non-empty string")
-    pipeline = _object(request, "pipeline")
-    if not isinstance(pipeline.get("module"), str) or not pipeline["module"].endswith(".py"):
-        raise InvocationError("request.pipeline.module must name a project-relative .py file")
-    if not isinstance(pipeline.get("factory"), str) or not pipeline["factory"]:
-        raise InvocationError("request.pipeline.factory must be a non-empty string")
-    cv = _object(request, "cv")
-    if cv.get("kind") == "builtin" and cv.get("scheme") == "stratified_kfold":
-        if not isinstance(cv.get("folds"), int) or cv["folds"] < 2:
-            raise InvocationError("built-in stratified_kfold requires folds >= 2")
-    elif cv.get("kind") == "factory":
-        if not isinstance(cv.get("module"), str) or not cv["module"].endswith(".py"):
-            raise InvocationError("custom CV requires a project-relative .py module")
-        if not isinstance(cv.get("factory"), str) or not cv["factory"]:
-            raise InvocationError("custom CV requires a factory name")
-    else:
-        raise InvocationError("request.cv must select kind=builtin with scheme=stratified_kfold or kind=factory")
-    if not isinstance(cv.get("repeats", 1), int) or cv.get("repeats", 1) < 1:
-        raise InvocationError("request.cv.repeats must be >= 1")
-    scope = _object(request, "scope")
-    if scope.get("kind") not in {"pilot", "promotion"}:
-        raise InvocationError("request.scope.kind must be pilot or promotion")
-    for name in ("maxRows", "maxFolds"):
-        if name in scope and (not isinstance(scope[name], int) or scope[name] < 1):
-            raise InvocationError(f"request.scope.{name} must be a positive integer")
-    inputs = _object(document, "inputs")
-    for name in ("projectRoot", "zipPath", "labelsPath", "outputDir"):
-        if not isinstance(inputs.get(name), str) or not inputs[name]:
-            raise InvocationError(f"inputs.{name} must be a non-empty path")
-    seeds = _object(document, "seeds")
-    if not isinstance(seeds.get("experiment"), int) or not 0 <= seeds["experiment"] < 2**32:
-        raise InvocationError("seeds.experiment must be an unsigned 32-bit integer")
-    if "trial" in seeds and (not isinstance(seeds["trial"], int) or not 0 <= seeds["trial"] < 2**32):
-        raise InvocationError("seeds.trial must be an unsigned 32-bit integer")
-
-
-def _inside_project(project_root: Path, relative: str) -> Path:
-    candidate = (project_root / relative).resolve()
-    try:
-        candidate.relative_to(project_root)
-    except ValueError as error:
-        raise InvocationError(f"module escapes project root: {relative!r}") from error
-    if not candidate.is_file():
-        raise InvocationError(f"module does not exist: {relative!r}")
-    return candidate
-
-
-def _load_module(project_root: Path, relative: str) -> ModuleType:
-    path = _inside_project(project_root, relative)
-    identity = hashlib.sha256(str(path).encode("utf-8")).hexdigest()[:16]
-    spec = importlib.util.spec_from_file_location(f"smartlab_agent_{identity}", path)
-    if spec is None or spec.loader is None:
-        raise InvocationError(f"cannot load module {relative!r}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def _factory(module: ModuleType, name: str) -> Any:
-    value = getattr(module, name, None)
-    if not callable(value):
-        raise InvocationError(f"factory {name!r} is missing or not callable")
-    return value
-
-
-def _call_pipeline_factory(factory: Any, context: dict[str, Any]) -> Any:
-    signature = inspect.signature(factory)
-    try:
-        signature.bind(context)
-    except TypeError:
-        try:
-            signature.bind()
-        except TypeError as error:
-            raise InvocationError("pipeline factory must accept either zero arguments or one context") from error
-        estimator = factory()
-    else:
-        estimator = factory(context)
-    if not callable(getattr(estimator, "fit", None)) or not callable(getattr(estimator, "predict", None)):
-        raise InvocationError("pipeline factory must return an estimator with fit() and predict()")
-    return estimator
-
-
-def _inject_random_states(estimator: Any, seed: int) -> list[str]:
-    """Make exposed sklearn randomness harness-owned, including nested steps."""
-    if not callable(getattr(estimator, "get_params", None)) or not callable(getattr(estimator, "set_params", None)):
-        return []
-    keys = sorted(key for key in estimator.get_params(deep=True) if key == "random_state" or key.endswith("__random_state"))
-    values = {key: _derive_seed("estimator_parameter", [seed, key]) for key in keys}
-    if values:
-        estimator.set_params(**values)
-    return keys
-
-
-def _pilot_indices(y: Sequence[int], maximum: int, seed: int) -> list[int]:
-    if maximum >= len(y):
-        return list(range(len(y)))
-    if maximum < 2:
-        raise InvocationError("pilot maxRows must leave enough rows to represent both classes")
-    all_indices = np.arange(len(y))
-    labels, counts = np.unique(y, return_counts=True)
-    stratify = y if len(labels) > 1 and maximum >= len(labels) and np.all(counts >= 2) else None
-    selected, _ = train_test_split(
-        all_indices,
-        train_size=maximum,
-        random_state=seed,
-        shuffle=True,
-        stratify=stratify,
-    )
-    return sorted(int(index) for index in selected)
-
-
-def _as_indices(values: Iterable[Any], name: str, row_count: int) -> tuple[int, ...]:
-    try:
-        indices = tuple(int(value) for value in values)
-    except (TypeError, ValueError) as error:
-        raise InvocationError(f"{name} indices must be an iterable of integers") from error
-    if not indices:
-        raise InvocationError(f"{name} indices must not be empty")
-    if len(set(indices)) != len(indices):
-        raise InvocationError(f"{name} indices contain duplicates")
-    if min(indices) < 0 or max(indices) >= row_count:
-        raise InvocationError(f"{name} indices are outside the {row_count}-row corpus")
-    return indices
-
-
-def _normalise_splits(raw: Any, frame: Any, y: Sequence[int]) -> list[tuple[Iterable[Any], Iterable[Any]]]:
-    if callable(getattr(raw, "split", None)):
-        raw = raw.split(frame, y)
-    try:
-        return list(raw)
-    except TypeError as error:
-        raise InvocationError("CV factory must return a splitter or iterable of (train, validation) pairs") from error
-
-
-def _materialize_folds(
-    request: dict[str, Any], frame: Any, y: Sequence[int], project_root: Path, base_seed: int
-) -> list[ConcreteFold]:
-    cv = request["cv"]
-    repeats = cv.get("repeats", 1)
-    materialized: list[ConcreteFold] = []
-    custom_factory = None
-    if cv["kind"] == "factory":
-        custom_factory = _factory(_load_module(project_root, cv["module"]), cv["factory"])
-    for repeat in range(repeats):
-        repeat_seed = _derive_seed("repeat", [base_seed, repeat])
-        if cv["kind"] == "builtin":
-            splitter = StratifiedKFold(n_splits=cv["folds"], shuffle=True, random_state=repeat_seed)
-            pairs = list(splitter.split(frame, y))
-        else:
-            raw = custom_factory({
-                "frame": frame.copy(),
-                "y": list(y),
-                "seed": repeat_seed,
-                "repeat": repeat,
-                "options": cv.get("options", {}),
-            })
-            pairs = _normalise_splits(raw, frame, y)
-        if not pairs:
-            raise InvocationError(f"CV repeat {repeat} produced no folds")
-        for fold_number, pair in enumerate(pairs):
-            if not isinstance(pair, (list, tuple)) or len(pair) != 2:
-                raise InvocationError("each CV split must be a (train, validation) pair")
-            train = _as_indices(pair[0], "train", len(frame))
-            validation = _as_indices(pair[1], "validation", len(frame))
-            overlap = set(train).intersection(validation)
-            if overlap:
-                raise InvocationError(f"repeat {repeat} fold {fold_number} train/validation overlap")
-            materialized.append(ConcreteFold(
-                repeat=repeat,
-                fold=fold_number,
-                train=train,
-                validation=validation,
-                seed=_derive_seed("fold", [repeat_seed, fold_number]),
-            ))
-    max_folds = request["scope"].get("maxFolds")
-    if request["scope"]["kind"] == "pilot" and max_folds is not None:
-        materialized = materialized[:max_folds]
-    _validate_coverage(materialized, len(frame), repeats, request["scope"]["kind"] == "promotion")
-    return materialized
-
-
-def _validate_coverage(folds: Sequence[ConcreteFold], row_count: int, repeats: int, promotion: bool) -> None:
-    by_repeat: dict[int, list[int]] = {repeat: [] for repeat in range(repeats)}
-    for fold in folds:
-        by_repeat[fold.repeat].extend(fold.validation)
-    if promotion:
-        expected = list(range(row_count))
-        for repeat, observed in by_repeat.items():
-            if sorted(observed) != expected:
-                raise InvocationError(
-                    f"promotion repeat {repeat} must validate every row exactly once; "
-                    f"received {len(observed)} assignments for {row_count} rows"
-                )
-
-
-def _manifest(experiment_id: str, frame: Any, folds: Sequence[ConcreteFold], request: dict[str, Any], seed: int) -> dict[str, Any]:
-    rows = [
-        {"id": str(frame.iloc[index]["id"]), "index": index, "repeat": fold.repeat, "fold": fold.fold}
-        for fold in folds
-        for index in fold.validation
-    ]
-    payload = {
-        "schemaVersion": SCHEMA_VERSION,
-        "experimentId": experiment_id,
-        "scope": request["scope"]["kind"],
-        "seed": seed,
-        "rowCount": len(frame),
-        "foldCount": len(folds),
-        "assignments": rows,
-        "folds": [
-            {
-                "repeat": fold.repeat,
-                "fold": fold.fold,
-                "seed": fold.seed,
-                "trainIndices": list(fold.train),
-                "validationIndices": list(fold.validation),
-            }
-            for fold in folds
-        ],
-    }
-    digest_payload = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    payload["sha256"] = hashlib.sha256(digest_payload.encode("utf-8")).hexdigest()
-    return payload
-
-
-def _scores(estimator: Any, validation: Any) -> list[float] | None:
-    if callable(getattr(estimator, "predict_proba", None)):
-        probabilities = np.asarray(estimator.predict_proba(validation))
-        if probabilities.ndim == 2 and probabilities.shape[1] == 2:
-            return [float(value) for value in probabilities[:, 1]]
-    if callable(getattr(estimator, "decision_function", None)):
-        values = np.asarray(estimator.decision_function(validation))
-        if values.ndim == 1:
-            return [float(value) for value in values]
-    return None
-
-
-def _measure(truth: Sequence[int], predicted: Sequence[int]) -> dict[str, Any]:
-    labels = sorted(set(int(value) for value in truth))
-    recalls = recall_score(truth, predicted, labels=labels, average=None, zero_division=0)
-    return {
-        "balancedAccuracy": float(balanced_accuracy_score(truth, predicted)),
-        "perClassRecall": {str(label): float(value) for label, value in zip(labels, recalls)},
-        "confusionMatrix": confusion_matrix(truth, predicted, labels=labels).tolist(),
-        "labels": labels,
-    }
-
-
-def _write_oof(path: Path, rows: Sequence[dict[str, Any]]) -> None:
-    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as stream:
-            writer = csv.DictWriter(
-                stream,
-                fieldnames=["id", "repeat", "fold", "prediction", "score"],
-                delimiter=";",
-                lineterminator="\n",
-            )
-            writer.writeheader()
-            writer.writerows(rows)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, path)
-    except BaseException:
-        try:
-            os.unlink(temporary)
-        except FileNotFoundError:
-            pass
-        raise
-
-
-def execute(document: dict[str, Any]) -> dict[str, Any]:
-    global _stop_requested
-    _stop_requested = False
-    _validate_invocation(document)
-    experiment_id = document["experimentId"]
-    request = document["request"]
-    inputs = document["inputs"]
-    # The experiment seed is the only entropy root.  Every repeat/fold/estimator
-    # seed is derived locally, so callers cannot accidentally provide a
-    # contradictory collection of per-fit seeds.
-    experiment_seed = document["seeds"]["experiment"]
-    # Old hand-authored fixtures may omit the trial coordinate; durable service
-    # invocations persist it explicitly so replay never has to reconstruct it.
-    base_seed = document["seeds"].get("trial", _derive_seed("trial", [experiment_seed, 0]))
-    project_root = Path(inputs["projectRoot"]).resolve()
-    if not project_root.is_dir():
-        raise InvocationError("inputs.projectRoot must be an existing directory")
-    # Agent entrypoints routinely import reusable helpers elsewhere under
-    # solutions/. A dedicated worker process may safely expose the declared
-    # project root for those imports without injecting harness internals.
-    if str(project_root) not in sys.path:
-        sys.path.insert(0, str(project_root))
-    output_dir = Path(inputs["outputDir"]).resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
-    events = EventWriter(output_dir, experiment_id)
-    started = time.monotonic()
-    events.emit("trial_started", scope=request["scope"]["kind"], hypothesis=request.get("hypothesis", ""))
-
-    frame, y = load_labelled(inputs["zipPath"], inputs["labelsPath"])
+def _prepare_data(invocation: Invocation) -> tuple[Any, list[int], list[str]]:
+    frame, y = load_labelled(invocation.zip_path, invocation.labels_path)
     # Stable input order makes folds independent of labels-file ordering.
     order = np.argsort(frame["id"].astype(str).to_numpy(), kind="stable")
     frame = frame.iloc[order].reset_index(drop=True)
     y = [int(y[index]) for index in order]
-    scope = request["scope"]
-    if scope["kind"] == "pilot" and scope.get("maxRows") is not None:
-        selected = _pilot_indices(y, min(scope["maxRows"], len(y)), _derive_seed("pilot", [base_seed]))
+    scope = invocation.scope
+    if scope.kind == "pilot" and scope.max_rows is not None:
+        selected = _pilot_indices(y, min(scope.max_rows, len(y)), _derive_seed("pilot", [invocation.trial_seed]))
         frame = frame.iloc[selected].reset_index(drop=True)
         y = [y[index] for index in selected]
-    events.emit("data_loaded", rows=len(frame), classCounts={str(label): y.count(label) for label in sorted(set(y))})
+    return frame, y, [str(value) for value in frame["id"]]
 
-    folds = _materialize_folds(request, frame, y, project_root, base_seed)
-    manifest = _manifest(experiment_id, frame, folds, request, base_seed)
-    _atomic_json(output_dir / "fold-manifest.json", manifest)
-    events.emit("folds_materialized", folds=len(folds), manifestSha256=manifest["sha256"])
 
-    pipeline_spec = request["pipeline"]
-    pipeline_factory = _factory(_load_module(project_root, pipeline_spec["module"]), pipeline_spec["factory"])
-    completed: list[dict[str, Any]] = []
-    oof_rows: list[dict[str, Any]] = []
-    result_path = output_dir / "fold-results.jsonl"
-    for fold in folds:
-        if _stop_requested:
-            break
-        events.emit("fold_started", repeat=fold.repeat, fold=fold.fold, trainRows=len(fold.train), validationRows=len(fold.validation))
-        fold_started = time.monotonic()
-        estimator_seed = _derive_seed("estimator", [fold.seed, 0])
-        context = {"parameters": pipeline_spec.get("parameters", {}), "seed": estimator_seed}
-        estimator = _call_pipeline_factory(pipeline_factory, context)
-        seeded_parameters = _inject_random_states(estimator, estimator_seed)
-        train_frame = frame.iloc[list(fold.train)].reset_index(drop=True)
-        validation_frame = frame.iloc[list(fold.validation)].reset_index(drop=True)
-        train_y = [y[index] for index in fold.train]
-        validation_y = [y[index] for index in fold.validation]
+def _run_fold(invocation: Invocation, pipeline_factory: Any, fold: ConcreteFold,
+              frame: Any, y: Sequence[int], ids: Sequence[str], *,
+              factory_parameters: Any = None, estimator_params: dict[str, Any] | None = None,
+              estimator_index: int = 0, config_id: str | None = None,
+              convergence: bool = False) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Fit one fold. Search configurations pass their own parameters and index.
+
+    Configuration 0 uses exactly the single-trial seeds, so a fixed-parameter
+    rerun of a search's first configuration reproduces it on the same folds.
+    """
+    fold_started = time.monotonic()
+    estimator_seed = _derive_seed("estimator", [fold.seed, estimator_index])
+    parameters = invocation.pipeline.parameters if factory_parameters is None else factory_parameters
+    context = {"parameters": parameters, "seed": estimator_seed}
+    estimator = _call_pipeline_factory(pipeline_factory, context)
+    applied = {**invocation.pipeline.estimator_params, **(estimator_params or {})}
+    if applied:
+        estimator.set_params(**applied)
+    # Seeds last: agent values never override harness-owned randomness.
+    seeded_parameters = _inject_random_states(estimator, estimator_seed)
+    train_frame = frame.iloc[list(fold.train)].reset_index(drop=True)
+    validation_frame = frame.iloc[list(fold.validation)].reset_index(drop=True)
+    train_y = [y[index] for index in fold.train]
+    validation_y = [y[index] for index in fold.validation]
+    fit_started = time.monotonic()
+    if convergence:
+        with capture_convergence_warnings() as raised:
+            estimator.fit(train_frame, train_y)
+    else:
         estimator.fit(train_frame, train_y)
-        predictions = [int(value) for value in estimator.predict(validation_frame)]
-        if len(predictions) != len(validation_y):
-            raise InvocationError("pipeline predict() returned the wrong number of rows")
-        scores = _scores(estimator, validation_frame)
-        measurement = _measure(validation_y, predictions)
-        result = {
-            "schemaVersion": SCHEMA_VERSION,
-            "experimentId": experiment_id,
+    fit_seconds = time.monotonic() - fit_started
+    predictions = [int(value) for value in estimator.predict(validation_frame)]
+    if len(predictions) != len(validation_y):
+        raise InvocationError("pipeline predict() returned the wrong number of rows")
+    scores = _scores(estimator, validation_frame)
+    measurement = _measure(validation_y, predictions)
+    result = {
+        "schemaVersion": SCHEMA_VERSION,
+        "experimentId": invocation.experiment_id,
+        "repeat": fold.repeat,
+        "fold": fold.fold,
+        "seed": fold.seed,
+        "trainRows": len(fold.train),
+        "validationRows": len(fold.validation),
+        "durationSeconds": time.monotonic() - fold_started,
+        "seededParameters": seeded_parameters,
+        "metrics": measurement,
+    }
+    if config_id is not None:
+        result["configId"] = config_id
+        result["fitSeconds"] = fit_seconds
+    if convergence:
+        result["convergence"] = summarise_convergence(estimator, raised)
+    rows: list[dict[str, Any]] = []
+    for offset, index in enumerate(fold.validation):
+        rows.append({
+            "id": ids[index],
             "repeat": fold.repeat,
             "fold": fold.fold,
-            "seed": fold.seed,
-            "trainRows": len(fold.train),
-            "validationRows": len(fold.validation),
-            "durationSeconds": time.monotonic() - fold_started,
-            "seededParameters": seeded_parameters,
-            "metrics": measurement,
-        }
-        with result_path.open("a", encoding="utf-8") as stream:
-            stream.write(json.dumps(result, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        completed.append(result)
-        for offset, index in enumerate(fold.validation):
-            oof_rows.append({
-                "id": str(frame.iloc[index]["id"]),
-                "repeat": fold.repeat,
-                "fold": fold.fold,
-                "prediction": predictions[offset],
-                "score": "" if scores is None else scores[offset],
-            })
-        _write_oof(output_dir / "oof_predictions.csv", oof_rows)
-        events.emit("fold_completed", repeat=fold.repeat, fold=fold.fold, metrics=measurement, durationSeconds=result["durationSeconds"])
+            "prediction": predictions[offset],
+            "score": "" if scores is None else scores[offset],
+        })
+    return result, rows
 
-    interrupted = _stop_requested
+
+def _summarise(invocation: Invocation, folds: Sequence[ConcreteFold], completed: Sequence[dict[str, Any]],
+               oof_rows: Sequence[dict[str, Any]], ids: Sequence[str], y: Sequence[int],
+               manifest: dict[str, Any], started: float, interrupted: bool) -> dict[str, Any]:
     complete = len(completed) == len(folds) and not interrupted
-    promotion_eligible = scope["kind"] == "promotion" and complete
+    promotion_eligible = invocation.scope.kind == "promotion" and complete
     aggregate = None
     if oof_rows:
-        labels_by_id = {str(frame.iloc[index]["id"]): int(y[index]) for index in range(len(frame))}
+        labels_by_id = {ids[index]: int(y[index]) for index in range(len(ids))}
         aggregate = _measure(
             [labels_by_id[row["id"]] for row in oof_rows],
             [int(row["prediction"]) for row in oof_rows],
@@ -513,20 +132,124 @@ def execute(document: dict[str, Any]) -> dict[str, Any]:
     status = "interrupted" if interrupted else ("completed" if complete else "partial")
     summary = {
         "schemaVersion": SCHEMA_VERSION,
-        "experimentId": experiment_id,
+        "experimentId": invocation.experiment_id,
         "status": status,
-        "scope": scope["kind"],
+        "scope": invocation.scope.kind,
         "promotionEligible": promotion_eligible,
         "requestedFolds": len(folds),
         "completedFolds": len(completed),
-        "rows": len(frame),
+        "rows": len(ids),
         "manifestSha256": manifest["sha256"],
         "durationSeconds": time.monotonic() - started,
         "metrics": aggregate,
     }
-    _atomic_json(output_dir / "metrics.json", summary)
-    _atomic_json(output_dir / "trial-result.json", summary)
-    events.emit("trial_finished", status=status, promotionEligible=promotion_eligible, completedFolds=len(completed), requestedFolds=len(folds), metrics=aggregate)
+    if invocation.source:
+        # Commit, tree, branch, and subject: a score traces back to exact code.
+        summary["source"] = {key: invocation.source[key] for key in ("commit", "tree", "branch", "subject")
+                             if invocation.source.get(key) is not None}
+    return summary
+
+
+def execute(document: dict[str, Any]) -> dict[str, Any]:
+    global _stop_requested
+    _stop_requested = False
+    invocation = parse_invocation(document)
+    # Agent code always comes from the trial's own source: a worktree of the
+    # recorded commit for versioned trials, never the live, mutable folder.
+    project_root = invocation.code_root
+    expose_project(project_root)
+    output_dir = invocation.output_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
+    events = EventWriter(output_dir, invocation.experiment_id)
+    started = time.monotonic()
+    events.emit("trial_started", scope=invocation.scope.kind, hypothesis=invocation.hypothesis,
+                **({"source": invocation.source} if invocation.source else {}))
+    events.emit("action_completed", stage="invocation", scope=invocation.scope.kind,
+                cvKind=invocation.cv.kind, repeats=invocation.cv.repeats)
+    events.emit("action_completed", stage="seeds", experimentSeed=invocation.experiment_seed,
+                trialSeed=invocation.trial_seed)
+
+    with events.stage("data"):
+        frame, y, ids = _prepare_data(invocation)
+        events.emit("data_loaded", rows=len(frame), classCounts={str(label): y.count(label) for label in sorted(set(y))})
+    with events.stage("folds"):
+        saved = persisted_folds(invocation, ids)
+        if saved:
+            folds, manifest = saved
+        else:
+            folds = _materialize_folds(invocation.cv, invocation.scope, frame, y, project_root, invocation.trial_seed)
+            manifest = _manifest(invocation.experiment_id, ids, folds, invocation.scope, invocation.trial_seed)
+            _atomic_json(output_dir / "fold-manifest.json", manifest)
+        events.emit("folds_materialized", folds=len(folds), manifestSha256=manifest["sha256"])
+    with events.stage("agent_code"):
+        pipeline = invocation.pipeline
+        pipeline_factory = _factory(_load_module(project_root, pipeline.module), pipeline.factory)
+
+    completed: list[dict[str, Any]] = []
+    oof_rows: list[dict[str, Any]] = []
+    if invocation.search is not None:
+        from smartlab_trial.search import run_search, write_search_outputs
+        from smartlab_trial.champion import rerun
+        with events.stage("search"):
+            outcome = run_search(invocation, events, output_dir, pipeline_factory, folds, frame, y, ids,
+                                 lambda: _stop_requested, _run_fold)
+        best = outcome["best"]
+        champion = None
+        if invocation.champion and best is not None and not outcome["stopReason"] and not _stop_requested:
+            with events.stage("champion"):
+                champion = rerun(document, invocation, Path(__file__).resolve(), events)
+        with events.stage("artifacts"):
+            outputs = write_search_outputs(invocation, output_dir, outcome, manifest, dict(zip(ids, y)), champion)
+            summary = _summarise(invocation, folds, best.folds if best else [], best.oof if best else [],
+                                 ids, y, manifest, started, bool(outcome["stopReason"]))
+            summary["promotionEligible"] = False
+            if not outcome["stopReason"]:
+                summary["status"] = "completed" if best else "failed"
+            summary["search"] = {**outputs["report"]["configs"], "bestConfigId": best.config_id if best else None,
+                                 "reportPath": str(output_dir / "search-report.json")}
+            if outcome["guard"]:
+                summary["runtimeGuard"] = outcome["guard"]
+            write_summary(output_dir, summary)
+        events.emit("trial_finished", status=summary["status"], promotionEligible=False,
+                    completedFolds=summary["completedFolds"], requestedFolds=len(folds), metrics=summary["metrics"])
+        return summary
+    checkpoint = output_dir / "single-checkpoint.json"
+    if checkpoint.exists():
+        previous = load_checkpoint(checkpoint)
+        completed, oof_rows = validate_single(previous, invocation, manifest, folds, ids)
+        events.emit("single_resumed", completedFolds=len(completed), requestedFolds=len(folds),
+                    note="Atomic completed folds retained; incomplete opaque fit repeated with original seed")
+        # Rebuild derived artifacts if a crash interrupted their publication.
+        (output_dir / "fold-results.jsonl").write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in completed))
+        _write_oof(output_dir / "oof_predictions.csv", oof_rows)
+    elif (output_dir / "fold-results.jsonl").exists():
+        raise InvocationError("Legacy single-trial fold results lack atomic prediction checkpoint; cannot safely resume; start a new trial")
+    for fold in folds[len(completed):]:
+        if _stop_requested:
+            break
+        events.emit("fold_started", repeat=fold.repeat, fold=fold.fold, trainRows=len(fold.train), validationRows=len(fold.validation))
+        with events.stage("fit", repeat=fold.repeat, fold=fold.fold):
+            result, rows = _run_fold(invocation, pipeline_factory, fold, frame, y, ids)
+        with events.stage("artifacts", repeat=fold.repeat, fold=fold.fold):
+            completed.append(result)
+            oof_rows.extend(rows)
+            save_checkpoint(checkpoint, {"experimentId": invocation.experiment_id, "manifestSha256": manifest["sha256"],
+                                         "completed": completed, "oof": oof_rows})
+            append_fold_result(output_dir / "fold-results.jsonl", result)
+            _write_oof(output_dir / "oof_predictions.csv", oof_rows)
+        events.emit("fold_completed", repeat=fold.repeat, fold=fold.fold, metrics=result["metrics"], durationSeconds=result["durationSeconds"])
+
+    with events.stage("metrics"):
+        summary = _summarise(invocation, folds, completed, oof_rows, ids, y, manifest, started, _stop_requested)
+    if invocation.champion and summary["status"] == "completed" and not _stop_requested:
+        from smartlab_trial.champion import rerun, compare
+        with events.stage("champion"):
+            champion = rerun(document, invocation, Path(__file__).resolve(), events)
+            summary["championComparison"] = compare(completed, oof_rows, champion, dict(zip(ids, y)), output_dir)
+    with events.stage("artifacts"):
+        write_summary(output_dir, summary)
+    events.emit("trial_finished", status=summary["status"], promotionEligible=summary["promotionEligible"],
+                completedFolds=len(completed), requestedFolds=len(folds), metrics=summary["metrics"])
     return summary
 
 
@@ -555,10 +278,16 @@ def _failure_result(document: dict[str, Any], error: BaseException) -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--invocation", required=True, type=Path)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--invocation", type=Path)
+    mode.add_argument("--champion-rerun", type=Path)
     arguments = parser.parse_args(argv)
     signal.signal(signal.SIGTERM, _handle_stop)
     signal.signal(signal.SIGINT, _handle_stop)
+    if arguments.champion_rerun:
+        from smartlab_trial.champion import run_child
+        return run_child(arguments.champion_rerun, _prepare_data, _run_fold, lambda: _stop_requested,
+                         lambda root, module, factory: _factory(_load_module(root, module), factory), expose_project)
     document: dict[str, Any] = {}
     try:
         document = json.loads(arguments.invocation.read_text(encoding="utf-8"))

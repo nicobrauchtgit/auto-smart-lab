@@ -76,3 +76,6 @@ logs/
 /train_*.py
 /verify_*.py
 /run_iteration*.py
+
+# Durable runtime knowledge, separate from model code and final artifacts.
+/knowledge/

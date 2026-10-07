@@ -2,7 +2,7 @@
 
 Status: partially implemented, updated 2026-09-09. The shared executor, stage
 configuration, trace identity, and the research and solve stages exist.
-Evaluation and submission are not registered stages yet, and the dashboard shows
+Evaluation and deterministic terminal refit are registered; submission is not registered yet. The dashboard shows
 pipeline runs. Dashboard filtering is outside the current scope.
 
 ## Running the pipeline
@@ -51,8 +51,9 @@ non-zero when it does not.
 - `pipeline.config.json` carries a `pipeline` block with the entry stage,
   scheduling mode, and per-stage enablement and options.
 - `agent/pi_sdk.ts` remains a standalone experiment for the observability stack.
-- Evaluation and submission still run through `orchestrate.ts` outside the
-  executor. They are unregistered stages until they meet this contract. The
+- Legacy evaluation and submission still run through `orchestrate.ts` outside the
+  executor. The new `evaluate` stage uses the review contract documented below;
+  submission remains unregistered. The
   legacy `runSolverSession` path there is unchanged and separate from the
   registered `solve` stage.
 
@@ -320,6 +321,222 @@ iterations without a delta clearing its interval), `budget`, `cancelled`, or
 that never produced one returns its artifacts and a failed validation rather
 than throwing, so the iteration history stays in the trace.
 
-Remaining work: register evaluation and submission stages; carry a champion across pipeline runs;
+Remaining work: register the submission stage; carry a champion across pipeline runs;
 add autonomous scheduling and the decision agent's `invoke_stage` tool through
 the same executor.
+
+### Context continuity within an attempt
+
+The shared runner monitors Pi context through `agent/context/session.ts`. At
+the configured context threshold (currently 5k for testing; normally 120k), it completes the current tool batch, collects a tool-free handoff,
+and creates another observed Pi session under the same stage invocation and
+attempt. `context_usage` and `context_handoff_*` events link the physical
+sessions; this transition does not complete or restart the stage. Stage-owned
+training and optional subagent scopes survive it. The runner's `onSessionReady`
+callback receives every new agent-run ID so optional subagent scopes can rebind
+future spawns. See [smart context sessions](../agent/context/README.md).
+
+### Setup preflight
+
+Before any stage runs, the executor checks the prerequisites declared by every
+stage on the requested path, respecting `--stage` and `--stop-after`. Standalone
+research/solve commands use this same check. Run checks only with:
+
+```bash
+bun agent/pipeline_cli.ts unit 1 task 1 --stop-after solve --check-setup
+```
+
+Checks cover selected model credentials and a tiny live completion, research's
+Tavily credential and read-only usage endpoint, local unit metadata/prompt,
+labels and archive integrity, Python lock/environment health, training imports,
+and the `zip` executable. All local failures are collected before remote probes;
+a failed setup prevents every stage from starting. The model probe may incur a
+small API charge; it uses no tools or dataset content. `setup.timeoutMs` and
+`setup.modelMaxTokens` live in `harness.config.json`. `--dry-run` remains plan-only.
+
+Setup events record check IDs, outcomes and fixed remediation text under the
+pipeline identity (or invocation identity for direct stage calls). Credentials
+and raw remote errors are never recorded. Successful probes are reused only
+within one run. The trace database remains optional with an explicit degradation
+warning and local JSONL fallback; Langfuse is not a required dependency until its
+exporter is integrated. Add prerequisite declarations and failure tests with
+new features; see AGENTS.md.
+
+## Short evaluation stage
+
+`evaluate` is now registered and enabled after solve. It reviews the selected
+harness trial's OOF metrics and implementation, returning an advisory submission
+readiness score out of 5 with evidence-linked issues and limitations. It cannot
+submit or promote a model. `submit` remains unregistered. See
+[model evaluation](../agent/evaluation/README.md) for tools, artifacts, the
+scoring rubric, setup checks and standalone usage.
+
+### Research test-input comparison
+
+Research stage v2 explicitly identifies training features, training labels and
+unlabeled test features in its context and supplied-input events. A dedicated
+`research.test-distribution` prompt directs a sequential second pass over the
+test inputs, comparing candidate availability and investigating more transferable
+features when literal patterns shift. The report needs cited split-specific
+training and test evidence when test inputs are available. This uses the existing
+filesystem/bash tools and shared archive preflight, and adds no model sessions
+or dependencies. See [research workflow](../agent/research/README.md).
+
+### Training restart recovery
+
+Solve and standalone solve invoke the same training-service startup recovery
+before the agent session. Recovery keeps the originating training root and
+budget, while events retain origin run/invocation fields alongside the current
+reporter's identity. Recovered source is declared through the same typed
+`training_source` input callback. Tool instructions for `experiment_resume`
+come from the per-run prompt snapshot. Kernel locking/process identity and
+worker files are scoped prerequisites of `training` in shared preflight; no
+provider credentials are added. See the [durable recovery contract](training-search-and-versioning.md#durable-interrupted-experiment-recovery).
+
+## Terminal refit stage
+
+`agent/pipeline/stages/refit.ts` registers deterministic terminal training;
+`agent/pipeline/run_refit.ts` and `agent/refit_cli.ts` provide the standalone
+executor path (`npm run refit-stage -- <task-id> [--check-setup]`). The configured
+chain is research → solve → evaluate → refit. Submission stays unregistered and
+disabled. Refit has no successor or model session. Evaluation remains advisory.
+
+Refit resolves the chosen champion tag rather than the generic score-sorted
+selection artifact. It records typed freeze/evidence inputs, supervised process
+events and validated final predictions/model/result artifacts under shared
+pipeline/invocation IDs. Setup declares `python`, `task` and `refit`, without any
+model or web credentials. Whole-chain preflight checks data/runtime availability
+before solve; candidate evidence is checked at refit invocation when solve is its
+producer. Standalone checks include chosen candidate integrity up front.
+
+See [terminal freeze, execution, artifacts and retry semantics](harness-owned-training.md#implemented-terminal-refit).
+
+## Invocation guidance and live feedback
+
+The module context interface is available without an orchestrator agent. Research,
+solve and evaluate accept optional `StageGuidance` run data. Refit and submission
+refuse guidance and feedback. No providers or dependencies are added by this
+interface; stage-specific prerequisites and the entire configured chain still
+use shared setup before workers start. Local evidence and note validation run
+before that chain starts, including `--check-setup`.
+
+```ts
+import { runPipeline, startStageInvocation } from "../agent/pipeline/executor.js";
+import { guidanceHash } from "../agent/pipeline/guidance.js";
+
+const body = {
+  id: "solve-transfer-risk", version: 1, stage: "solve" as const,
+  taskId: "spam1", content: "Investigate the observed vocabulary shift.",
+  objective: "Check whether OOF evidence supports transfer to test inputs.",
+  author: { name: "caller", logicalSessionId: "logical-owner", physicalSessionId: "session-1" },
+  evidence: [],
+};
+const guidance = { ...body, contentSha256: guidanceHash(body) };
+await runPipeline({
+  taskId: "spam1", stopAfter: "solve", guidance: { solve: guidance },
+  // An optional research note can be supplied separately in the same map.
+  onInvocation(handle) {
+    // Keep handles to send factual feedback or cancel; result is artifact validation.
+    console.log(handle.invocationId, handle.state());
+  },
+});
+
+// With an existing run-owned trace and resolved enabled configuration:
+const handle = startStageInvocation({
+  stage: "solve", config, trace,
+  input: { taskId: "spam1", upstream, guidance, evidenceCatalog },
+});
+const facts = { id: "feedback-1", stage: "solve" as const, taskId: "spam1",
+  content: "A new reviewed artifact identifies a coverage gap.", evidence: [] };
+const receipt = await handle.feedback({ ...facts, contentSha256: guidanceHash(facts) });
+// receipt.status: queued, delivered, or refused. Reuse the same ID to query its receipt.
+handle.cancel();
+const invocation = await handle.result;
+```
+
+`invokeStage` remains the awaitable compatibility API. `runResearchStage`,
+`runSolveStage` and `runEvaluateStage` forward optional `guidance` maps and
+`evidenceCatalog` to `runPipeline`. Solve-through-research accepts separate notes
+for both stages. The pipeline CLI also accepts `--guidance notes.json`, with
+exact top-level keys `{ "guidance": { "solve": { ... } }, "evidenceCatalog": [] }`.
+`--stage` and `--stop-after` support standalone use of this same path. A note for
+an unrequested stage is rejected, as are unknown note fields and prompt variables.
+
+The caller owns the trusted provenance catalog. Evidence references contain
+`artifactId`, `taskId`, `pipelineRunId`, producer `invocationId`, `sha256`, and
+optional `datasetSha256`/`candidateId`. Each reference must match exactly one
+catalog artifact's `provenance` and `sha256`, have the invocation's task binding,
+and still hash to the cited bytes on disk. Optional dataset hashes must be SHA-256
+values and match the catalog. The executor adds producer provenance to outputs
+with valid SHA-256 hashes. Legacy artifacts without producer provenance remain
+usable upstream but cannot be cited as guidance evidence until the caller supplies
+verified provenance. A path or note hash alone does not establish ownership.
+This is a trusted caller interface, not a cryptographic artifact registry.
+
+Guidance hashes cover the canonical sorted-key JSON body, excluding
+`contentSha256` itself. Notes allow 8 KiB content, 2 KiB objective, 16 evidence
+references, 256-byte identity fields and 24 KiB total serialized content.
+Referenced files are hash-checked with a 64 MiB size bound. Guidance is deeply
+snapshotted before the invocation's first await; all planned notes are validated
+before any earlier worker starts. A later revision needs a new invocation.
+Research repair attempts and physical context replacements use the same note.
+Opening templates expose an optional `guidance` variable whose absent value is
+empty, preserving unguided rendered text. Base contracts remain authoritative.
+
+Guidance metadata uses `stage_guidance` supplied inputs and an invocation-specific
+JSON artifact beside the trace. Note content and artifact hashes are distinct
+from authored template and rendered-message hashes. Live feedback uses separate
+`stage_feedback` inputs and an append-only, flushed receipt journal beside the
+trace, including accepted note payloads and shared run/invocation identities.
+Accepted IDs are retained without eviction; each invocation allows at most 64
+receipts, each under the same message/evidence byte bounds as guidance. Reusing
+an ID with different content is rejected. Duplicate requests return the existing
+receipt without rereading evidence that may since have changed.
+
+Handle states are `preparing`, `active`, `between-attempts`, `finishing` and
+`terminal`. The runner binds one logical facade per attempt, preserving existing
+training-service bindings on every physical session. Feedback is queued through
+handoff and injected as identity-bearing custom messages only when the SDK
+naturally assembles another model request. `delivered` means included in that
+request context, not successful remote receipt or model agreement. It never starts
+an extra turn after a final answer. Already delivered IDs are not replayed as live
+feedback on replacement. Remaining queued IDs get a durable refusal at cancellation
+or invocation completion; late feedback explicitly asks for the next invocation.
+A finished session remains separate from the stage's artifact validation result.
+
+The journals are durable receipts, not host-crash recovery or a coordinator state
+store. This interface adds no scheduling loop, caller shell/tool access, provider
+calls, submission permission, promotion evidence, sealed-data access, or ability
+to change the frozen refit candidate. Factual feedback is caller-supplied data;
+workers must inspect evidence and the harness still validates their artifacts.
+
+## Dynamic agent scheduling and recovery
+
+`agent/orchestrator/run.ts` replaces scheduling policy while retaining this executor.
+The explicit `orchestrate` CLI authorizes an immutable controller submission policy;
+configured scheduling and the generic pipeline API never grant uploads merely by
+enabling submit. `scheduling: "agent"` is opt-in; the generic API uses no-submit mode.
+All available enabled capabilities receive shared preflight before the first agent.
+Official recovery and already-complete goals can terminate before model prerequisites.
+
+`InvokeStageOptions.invocationId` reserves a durable identity before effects.
+`executionGuard` supplies durable physical-session/request/tool budgets through the
+existing reporter observation. `StageInvocation.summary` retains stage-authored
+measurements separate from validation/outcome. Content-hashed provenance IDs
+version changed receipts when the same invocation reconciles later.
+
+`StageInput.submissionPolicy` is controller data:
+`{version:1,authorized,maxSubmissions,pipelineRunId,controllerInvocationId}`. The cap
+is an absolute total task cap in 0..3, less consumed official and unknown reserved
+attempts. `controllerInvocationId` is the reserved submission work ID; root control
+ownership is stored separately. No model or stage option supplies authorization.
+
+`StageDefinition.reconcile` and `recoverySetupRequirements` declare deterministic
+restart recovery. Executor `mode: "reconcile"` runs only the registered reconciliation
+handler and never falls back to `run`. Unknown submission outcomes use read-only
+network reconciliation/receipt writes; absent intents refuse fresh uploads. Physical
+agent sessions cannot be reattached after host death. Guidance/feedback remain
+bounded typed inputs under the original controller/executor identities.
+
+See [orchestrator runtime](../agent/orchestrator/README.md) for state/journal APIs,
+notification acknowledgment, action deduplication, budgets and current limitations.

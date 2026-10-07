@@ -37,7 +37,20 @@ weigh equally regardless of their counts.
 Prior work:
 {{researchState}}
 
-Read the research document before choosing features. It was produced against
+Read the research document before choosing features. The goal is performance
+on the test inputs, and validation on training data cannot reveal the cost of
+relying on something the test inputs lack or represent differently. If research
+compared training and test inputs and found a difference that matters to your
+approach, you may drop, replace, or normalize what is affected, even at some
+validation cost; an ablation can show that cost. If it found no material
+difference, or made no comparison, proceed as usual. Whatever you choose, apply
+the same transformations to training and test inputs and validate them on
+labeled training data. Test inputs carry no targets: never infer targets from
+them, and treat proposed equivalences between training and test forms as
+hypotheses. State in the experiment hypothesis which choices test-input
+inspection informed.
+
+Read the research evidence critically. It was produced against
 this exact dataset and its `[D###]` citations are measurements on it, including
 any target leakage it found. You may rerun its analysis scripts or make small
 local checks while designing the pipeline, but local agent-run fits are only
@@ -49,3 +62,5 @@ reproduce harness plumbing. Start a new idea with a
 deliberately reduced pilot unless you can state why a larger first run is worth
 the cost. Inspect its lifecycle and bounded output, then expand validation or
 request promotion only when the observed evidence justifies it.
+
+{{guidance}}

@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "setup": {
+    "timeoutMs": 30000,
+    "modelMaxTokens": 16
+  },
+  "session": {
+    "timeoutMs": 1800000
+  },
+  "context": {
+    "handoffTokens": 5000,
+    "maxHandoffBytes": 65536
+  },
+  "research": {
+    "injectStartupContext": true,
+    "maxAttempts": 2,
+    "webSearchCalls": 3,
+    "webSearchResults": 4,
+    "maxReportBytes": 40960,
+    "maxAnalysisArtifactBytes": 65536,
+    "maxFeatureRecommendations": 10
+  },
+  "solve": {
+    "maxIterations": 6,
+    "sealedFraction": 0.1,
+    "seed": 13,
+    "foldPolicy": "auto",
+    "experimentUpdateIntervalSeconds": 30
+  },
+  "search": {
+    "confirmAboveSeconds": 900,
+    "overrunFactor": 1.5,
+    "maxSeconds": 7200,
+    "validationTimeoutSeconds": 60
+  },
+  "foldRecommendations": [
+    {
+      "belowRows": 500,
+      "folds": 10,
+      "repeats": 5
+    },
+    {
+      "belowRows": 2000,
+      "folds": 10,
+      "repeats": 3
+    },
+    {
+      "belowRows": 10000,
+      "folds": 10,
+      "repeats": 1
+    },
+    {
+      "belowRows": null,
+      "folds": 5,
+      "repeats": 1
+    }
+  ],
+  "supervisor": {
+    "updateIntervalMs": 5000,
+    "linesPerUpdate": 5,
+    "minStallMs": 15000,
+    "stallGapMultiple": 4,
+    "importPreludeMs": 12000,
+    "idleCpuPercent": 5,
+    "sampleIntervalMs": 250,
+    "maxConcurrent": 2,
+    "stopGraceMs": 2000
+  },
+  "subagents": {
+    "turnTimeoutMs": 1800000,
+    "waitTimeoutMs": 30000,
+    "maxWaitTimeoutMs": 60000,
+    "limits": {
+      "maxConcurrent": 4,
+      "maxChildren": 32,
+      "maxQueuedMessages": 8,
+      "maxMessageBytes": 32768,
+      "maxResultBytes": 8192
+    }
+  },
+  "orchestrator": {
+    "maxSessions": 32,
+    "maxModelRequests": 256,
+    "maxToolCalls": 1024,
+    "maxStages": 24,
+    "maxTrials": 36,
+    "maxRetries": 3,
+    "maxWallMs": 21600000,
+    "maxSummaryBytes": 16384,
+    "maxDetailBytes": 8192,
+    "maxNotifications": 64,
+    "maxWaitMs": 60000
+  }
+}

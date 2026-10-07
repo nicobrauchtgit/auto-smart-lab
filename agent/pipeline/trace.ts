@@ -16,7 +16,7 @@ export interface PipelineTrace {
 	readonly sink: EventSink;
 	readonly localPath: string;
 	event(eventType: string, payload: Record<string, unknown>): void;
-	stage(stage: StageName, invocationId: string): StageReporter & { inputs(): SuppliedInput[] };
+	stage(stage: StageName | "orchestrator", invocationId: string): StageReporter & { inputs(): SuppliedInput[] };
 	degraded(): boolean;
 	failures(): string[];
 	close(): Promise<void>;

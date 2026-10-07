@@ -1,3 +1,4 @@
+import type { RunPipelineOptions } from "./executor.js";
 /**
  * Research through the pipeline executor.
  *
@@ -10,6 +11,7 @@ import { runPipeline } from "./executor.js";
 import type { PipelineRunResult } from "./types.js";
 
 export interface RunResearchStageOptions {
+	guidance?: RunPipelineOptions["guidance"]; evidenceCatalog?: RunPipelineOptions["evidenceCatalog"];
 	taskId: string;
 	model?: string;
 	injectStartupContext?: boolean;
@@ -26,6 +28,7 @@ export interface ResearchStageRunResult extends PipelineRunResult {
 
 export async function runResearchStage(options: RunResearchStageOptions): Promise<ResearchStageRunResult> {
 	const result = await runPipeline({
+		guidance: options.guidance, evidenceCatalog: options.evidenceCatalog,
 		taskId: options.taskId,
 		model: options.model,
 		entryStage: "research",

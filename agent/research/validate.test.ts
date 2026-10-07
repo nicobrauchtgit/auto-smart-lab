@@ -97,3 +97,38 @@ describe("validateResearchFile", () => {
 		}
 	});
 });
+
+describe("train/test comparison evidence", () => {
+ test("requires cited evidence from both passes, with separate populations and truthful sample scope", () => {
+  const workspace = mkdtempSync(join(tmpdir(), 'research-transfer-'));
+  const comparedContext: ResearchContext = { ...context, dataset: { ...context.dataset, research_inputs: {
+   training: { path: 'train.zip', bytes: 1, sha256: 'a'.repeat(64) },
+   training_labels: { path: 'train.labels', bytes: 1, sha256: 'b'.repeat(64) },
+   test: { path: 'test.zip', bytes: 1, sha256: 'c'.repeat(64) },
+  } } };
+  // Fixed lexical-shift example: a literal disappears but the broader feature persists.
+  const record = (split: string, population: number, values: unknown) => ({ split, scope: 'full', population, method: 'Case-folded document frequency; one archive per pass.', values });
+  const training = record('training', 100, { winner: 20, url: 50 });
+  const testInput = record('test', 50, { winner: 0, url: 25 });
+  const document = validDocument.replace(researchContextHash(context), researchContextHash(comparedContext))
+   .replace('There are two documents.', 'Training winner frequency is 20/100 and URL frequency is 50/100.')
+   .replace('## Guidance for the solver', '**Measured:** Test winner frequency is 0/50 and URL frequency is 25/50. [D002]\n\n## Guidance for the solver')
+   .replace('Test word tokens as a baseline. [D001] [S001]', 'Retain URL presence as a candidate with 50% prevalence in both splits; validate its label association on training folds. The exact winner token is absent in this full test scan. [D001] [D002] [S001]')
+   .replace('- Test distribution is unknown.', '- Test labels and conditional performance remain unknown.')
+   .replace('- [S001]', '- [D002] Test pass — script: `analysis/analyze.py`; artifact: `analysis/summary.json`\n- [S001]');
+  try {
+   mkdirSync(join(workspace, 'analysis'));
+   writeFileSync(join(workspace, 'analysis/analyze.py'), '# sequential split analysis fixture\n');
+   writeFileSync(join(workspace, 'research.md'), document);
+   const save = (records: unknown) => writeFileSync(join(workspace, 'analysis/summary.json'), JSON.stringify({ dataset_snapshot_sha256: context.dataset.snapshot_sha256, evidence: records }));
+   save({ D001: training, D002: testInput });
+   expect(validateResearchFile(join(workspace, 'research.md'), comparedContext)).toEqual({ valid: true, errors: [] });
+   save({ D001: training, D002: { ...testInput, split: 'training' } });
+   expect(validateResearchFile(join(workspace, 'research.md'), comparedContext).errors.join('\n')).toContain('cited test evidence');
+   save({ D001: training, D002: { ...testInput, scope: 'sampled' } });
+   expect(validateResearchFile(join(workspace, 'research.md'), comparedContext).errors.join('\n')).toContain('Measured without citing full-scope');
+   save({ D001: training, D002: { ...testInput, split: 'invented' } });
+   expect(validateResearchFile(join(workspace, 'research.md'), comparedContext).valid).toBe(false);
+  } finally { rmSync(workspace, { recursive: true, force: true }); }
+ });
+});

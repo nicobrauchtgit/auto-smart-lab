@@ -1,3 +1,4 @@
+import type { RunPipelineOptions } from "./executor.js";
 /**
  * Solve through the pipeline executor.
  *
@@ -15,6 +16,7 @@ import { PROJECT_ROOT } from "./resolve_task.js";
 import type { PipelineRunResult, StageArtifact } from "./types.js";
 
 export interface RunSolveStageOptions {
+	guidance?: RunPipelineOptions["guidance"]; evidenceCatalog?: RunPipelineOptions["evidenceCatalog"];
 	taskId: string;
 	model?: string;
 	maxIterations?: number;
@@ -57,6 +59,7 @@ export interface SolveStageRunResult extends PipelineRunResult {
 export async function runSolveStage(options: RunSolveStageOptions): Promise<SolveStageRunResult> {
 	const seeded = options.useExistingResearch ? [existingResearchArtifact(options.taskId)] : undefined;
 	const result = await runPipeline({
+		guidance: options.guidance, evidenceCatalog: options.evidenceCatalog,
 		taskId: options.taskId,
 		model: options.model,
 		entryStage: seeded ? "solve" : "research",

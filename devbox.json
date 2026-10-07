@@ -9,7 +9,8 @@
     "fd@latest",
     "unzip@latest",
     "uv@latest",
-    "google-cloud-sdk@latest"
+    "google-cloud-sdk@latest",
+    "zip@latest"
   ],
   "env_from": ".env",
   "env": {

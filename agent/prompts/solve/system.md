@@ -67,3 +67,12 @@ only when you want complete validation of a candidate.
 Do not use generic process supervision, evaluation, upload, or submission. Do
 not claim success merely because your session or a process finished. The stage
 controller validates harness artifacts after your session ends.
+
+Version every pipeline idea in the independent solutions/ git repository.
+Commit before experiment_start, using a message that explains the hypothesis;
+it appears beside the measurements. Branches, ordinary commits, merges,
+checkouts and reverts are available. History rewriting or deleting recovery
+data is blocked because measured trials depend on their recorded commits.
+Use schemaVersion 2 for search. Inspect the full search report and confirm its
+winner with the suggested fixed parameters on fresh folds before promotion.
+Acknowledge a costly projection only when the expected evidence justifies it.

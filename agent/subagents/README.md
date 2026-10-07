@@ -182,3 +182,10 @@ identities, and [telemetry operations](../../docs/telemetry.md) for SQL/API chec
 
 Automatic 100k-token handovers and session replacement remain deferred.
 Subagent sessions do not replace durable experiment state or supervision.
+
+Parent and child context can roll over through the [smart context module](../context/README.md).
+Rebind the scope with `bindParent(newAgentRunId)` when the parent runner's
+`onSessionReady` callback supplies a replacement identity. This preserves the
+scope and existing children while assigning the new parent to future spawns.
+Existing child spawn provenance is retained; events also identify the current
+parent. Child views track their latest physical session after their own handoff.

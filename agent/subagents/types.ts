@@ -1,7 +1,9 @@
+import { HARNESS_CONFIG } from "../harness/config.js";
 import type { RenderedPrompt } from "../prompts/loader.js";
 
 export interface ChildIdentity {
 	logicalAgentId: string;
+	/** Physical parent at spawn time; preserved through parent and child handoffs. */
 	parentAgentRunId: string;
 	spawnToolCallId: string;
 }
@@ -40,13 +42,7 @@ export interface SubagentLimits {
 	maxResultBytes: number;
 }
 
-export const DEFAULT_LIMITS: Readonly<SubagentLimits> = Object.freeze({
-	maxConcurrent: 4,
-	maxChildren: 32,
-	maxQueuedMessages: 8,
-	maxMessageBytes: 32 * 1024,
-	maxResultBytes: 8 * 1024,
-});
+export const DEFAULT_LIMITS: Readonly<SubagentLimits> = HARNESS_CONFIG.subagents.limits;
 
 export function boundedText(text: string, bytes: number): { text: string; truncated: boolean } {
 	const buffer = Buffer.from(text);

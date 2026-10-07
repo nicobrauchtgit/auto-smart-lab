@@ -7,6 +7,7 @@
  * trace records the settings the run actually used.
  */
 
+import { HARNESS_CONFIG, HARNESS_CONFIG_SHA256 } from "../harness/config.js";
 import { createHash } from "node:crypto";
 
 import { loadPipelineConfig, type PipelineConfig } from "../pipeline_config.js";
@@ -21,7 +22,7 @@ export interface StageSettings {
 export interface PipelineSettings {
 	version: 1;
 	entryStage: StageName;
-	scheduling: "configured";
+	scheduling: "configured" | "agent";
 	stages: Record<string, StageSettings>;
 }
 
@@ -68,7 +69,7 @@ export function resolvePipelineSettings(config: PipelineConfig): ResolvedPipelin
 		throw new Error(`Unsupported pipeline config version: ${String(block.version)}`);
 	}
 	const scheduling = block.scheduling ?? "configured";
-	if (scheduling !== "configured") {
+	if (scheduling !== "configured" && scheduling !== "agent") {
 		throw new Error(`Unsupported pipeline scheduling mode: ${String(scheduling)}`);
 	}
 
@@ -110,6 +111,8 @@ export function resolvePipelineSettings(config: PipelineConfig): ResolvedPipelin
 	// The snapshot carries settings and model identity only; no credentials.
 	const snapshot = canonical({
 		pipeline: settings,
+		harness: HARNESS_CONFIG,
+		harness_sha256: HARNESS_CONFIG_SHA256,
 		effectiveOptions,
 		defaultModel: config.defaultModel,
 		stageVersions: Object.fromEntries(enabledStages.map((name) => [name, getStage(name).version])),

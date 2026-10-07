@@ -1,3 +1,9 @@
+import { createHash } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+import { validateGuidance, type StageGuidance, type StageFeedback } from "./guidance.js";
+import { InvocationFeedback, type FeedbackReceipt } from "./feedback.js";
+import { SetupSession, setupChecks } from "./setup.js";
 /**
  * The one execution path for pipeline stages.
  *
@@ -25,6 +31,13 @@ import type {
 const MAX_STAGE_INVOCATIONS = 8;
 
 export interface InvokeStageOptions {
+	mode?: "execute" | "reconcile";
+	/** Reserved by a durable coordinator before invoking; never supplied by a model. */
+	invocationId?: string;
+	executionGuard?: import("../observability.js").AgentObservation["executionGuard"];
+	/** Shared only within one run, to avoid repeating successful prerequisite probes. */
+	setupSession?: SetupSession;
+	configPath?: string;
 	prompts?: PromptSnapshot;
 	stage: StageName;
 	input: StageInput;
@@ -37,10 +50,41 @@ export interface InvokeStageOptions {
 	signal?: AbortSignal;
 }
 
+export interface StageInvocationHandle {
+ invocationId: string;
+ result: Promise<StageInvocation>;
+ state(): InvocationFeedback["state"];
+ cancel(): void;
+ feedback(note: StageFeedback): Promise<FeedbackReceipt>;
+}
+export function startStageInvocation(options: InvokeStageOptions): StageInvocationHandle {
+ const invocationId = options.invocationId ?? crypto.randomUUID();
+ const input = structuredClone(options.input);
+ const baseReport = options.trace.stage(options.stage, invocationId);
+ const report = { ...baseReport, observation: (attempt: number) => ({ ...baseReport.observation(attempt), executionGuard: options.executionGuard }) };
+ let prompts: PromptSnapshot;
+ try { prompts = options.prompts ?? loadPromptSnapshot(); }
+ catch (error) { report.event("stage_input_rejected", { message: error instanceof Error ? error.message : String(error) }); throw error; }
+ const controller = new AbortController();
+ const abort = () => controller.abort();
+ options.signal?.addEventListener("abort", abort, { once: true });
+ if (options.signal?.aborted) abort();
+ const feedback = new InvocationFeedback({ stage: options.stage, taskId: input.taskId,
+  catalog: [...input.upstream, ...(input.evidenceCatalog ?? [])], prompts, report,
+  journalPath: `${options.trace.localPath}.${invocationId}.feedback.jsonl` });
+ controller.signal.addEventListener("abort", () => { void feedback.finish().catch(error => report.event("stage_feedback_error", { message: String(error) })); }, { once: true });
+ if (controller.signal.aborted) void feedback.finish();
+ const result = executeStage({ ...options, input, prompts, signal: controller.signal }, invocationId, report, feedback)
+  .finally(async () => { await feedback.finish(); options.signal?.removeEventListener("abort", abort); });
+ return { invocationId, result, state: () => feedback.state, cancel: abort, feedback: note => feedback.send(note) };
+}
 export async function invokeStage(options: InvokeStageOptions): Promise<StageInvocation> {
+ return startStageInvocation(options).result;
+}
+async function executeStage(options: InvokeStageOptions, invocationId: string,
+ report: ReturnType<PipelineTrace["stage"]>, feedback: InvocationFeedback): Promise<StageInvocation> {
 	const { config, trace, input } = options;
-	const invocationId = crypto.randomUUID();
-	const report = trace.stage(options.stage, invocationId);
+
 	const settings = config.settings.stages[options.stage];
 	if (!settings?.enabled) {
 		// Availability is enforced for every caller, and the refusal is part of the
@@ -71,7 +115,7 @@ export async function invokeStage(options: InvokeStageOptions): Promise<StageInv
 
 	function finish(
 		outcome: StageOutcome,
-		extra: { artifacts?: StageArtifact[]; validation?: StageInvocation["validation"]; error?: string; attempts?: number },
+		extra: { artifacts?: StageArtifact[]; validation?: StageInvocation["validation"]; error?: string; attempts?: number; summary?: Record<string, unknown> },
 	): StageInvocation {
 		const invocation: StageInvocation = {
 			stage: options.stage,
@@ -81,10 +125,11 @@ export async function invokeStage(options: InvokeStageOptions): Promise<StageInv
 			startedAt,
 			finishedAt: new Date().toISOString(),
 			outcome,
-			artifacts: extra.artifacts ?? [],
+			artifacts: (extra.artifacts ?? []).map(artifact => ({ ...artifact, ...(/^[a-f0-9]{64}$/.test(artifact.sha256 ?? "") ? { provenance: { artifactId: `${invocationId}:${artifact.kind}:${createHash("sha256").update(artifact.path).update(artifact.sha256!).digest("hex")}`, taskId: input.taskId, pipelineRunId: trace.pipelineRunId, invocationId, sha256: artifact.sha256! } } : {}) })),
 			validation: extra.validation,
 			attempts: extra.attempts ?? 0,
 			error: extra.error,
+			summary: extra.summary,
 		};
 		report.event("stage_finished", {
 			outcome,
@@ -101,11 +146,26 @@ export async function invokeStage(options: InvokeStageOptions): Promise<StageInv
 	try {
 		// Contract failures happen before any agent session exists, and are recorded
 		// against the invocation rather than lost.
+		const prompts = options.prompts!;
+        if (input.guidance !== undefined) {
+            input.guidance = validateGuidance(input.guidance, options.stage, input.taskId, [...input.upstream, ...(input.evidenceCatalog ?? [])]);
+            const path = `${trace.localPath}.${invocationId}.guidance.json`;
+            mkdirSync(dirname(path), { recursive: true });
+            const snapshot = JSON.stringify({ schemaVersion: 1, pipelineRunId: trace.pipelineRunId, stageInvocationId: invocationId, note: input.guidance }, null, 2) + "\n";
+            writeFileSync(path, snapshot, { flag: "wx", flush: true });
+            report.input({ kind: "stage_guidance", version: 1, delivery: "initial_prompt", status: "available", artifact: path,
+                content_sha256: input.guidance.contentSha256, snapshot_sha256: createHash("sha256").update(snapshot).digest("hex"), note_id: input.guidance.id, note_version: input.guidance.version,
+                stage: input.guidance.stage, task_id: input.taskId, author: input.guidance.author, evidence: input.guidance.evidence });
+        }
+		await (options.setupSession ?? new SetupSession()).check(
+			setupChecks(options.mode === "reconcile" ? stage.recoverySetupRequirements ?? [] : stage.setupRequirements ?? [], { taskId: input.taskId, model: input.model, configPath: options.configPath, prompts, submissionPolicy: input.submissionPolicy, refitTrainingRoot: options.stage === "refit" ? (effective as { trainingRoot?: string })?.trainingRoot : undefined }),
+			options.signal ?? new AbortController().signal, report.event,
+		);
 		stage.checkInput(input);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		report.event("stage_input_rejected", { message });
-		return finish("failure", { error: message });
+		return finish(options.signal?.aborted ? "cancelled" : "failure", { error: message });
 	}
 
 	const controller = new AbortController();
@@ -114,8 +174,12 @@ export async function invokeStage(options: InvokeStageOptions): Promise<StageInv
 	if (options.signal?.aborted) controller.abort();
 
 	try {
-		const result = await stage.run({ input, options: effective, report, signal: controller.signal,
-			prompts: options.prompts ?? loadPromptSnapshot() });
+		controller.signal.throwIfAborted();
+		const runner = options.mode === "reconcile" ? stage.reconcile : stage.run;
+		if (!runner) throw new Error(`Stage ${options.stage} has no registered reconciliation path`);
+		const result = await runner({ input, options: effective, report, feedback, signal: controller.signal,
+			prompts: options.prompts! });
+        if (controller.signal.aborted) return finish("cancelled", { artifacts: result.artifacts, validation: result.validation, attempts: result.attempts });
 		const attempts = result.attempts ?? 0;
 		if (result.summary) report.event("stage_summary", result.summary);
 		if (result.validation && !result.validation.valid) {
@@ -123,10 +187,11 @@ export async function invokeStage(options: InvokeStageOptions): Promise<StageInv
 				artifacts: result.artifacts,
 				validation: result.validation,
 				attempts,
+				summary: result.summary,
 				error: `artifact validation failed: ${result.validation.errors.join("; ")}`,
 			});
 		}
-		return finish("success", { artifacts: result.artifacts, validation: result.validation, attempts });
+		return finish("success", { artifacts: result.artifacts, validation: result.validation, attempts, summary: result.summary });
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		const outcome: StageOutcome = controller.signal.aborted ? "cancelled" : "failure";
@@ -138,6 +203,12 @@ export async function invokeStage(options: InvokeStageOptions): Promise<StageInv
 }
 
 export interface RunPipelineOptions {
+	/** Verify prerequisites without executing any stage. */
+	checkSetupOnly?: boolean;
+ guidance?: Partial<Record<StageName, StageGuidance>>;
+ /** Observe ownership of each configured invocation without adding a coordinator. */
+ onInvocation?: (handle: StageInvocationHandle) => void;
+ evidenceCatalog?: StageArtifact[];
 	taskId: string;
 	model?: string;
 	configPath?: string;
@@ -167,7 +238,16 @@ export interface RunPipelineOptions {
  * each stage's successor while it stays enabled.
  */
 export async function runPipeline(options: RunPipelineOptions): Promise<PipelineRunResult> {
+	const requestedGuidance = structuredClone(options.guidance === undefined ? {} : options.guidance);
+ const seededArtifacts = structuredClone(options.seedArtifacts ?? []);
+ const evidenceCatalog = structuredClone(options.evidenceCatalog ?? []);
 	const { resolved } = await loadResolvedPipelineConfig(options.configPath);
+	if (resolved.settings.scheduling === "agent") {
+		const { runOrchestrator } = await import("../orchestrator/run.js");
+		// The generic chain API never grants uploading; autonomous CLI/API invocation
+		// must explicitly choose an immutable submission policy.
+		return runOrchestrator({ taskId: options.taskId, model: options.model, configPath: options.configPath, noSubmit: true, checkSetupOnly: options.checkSetupOnly, signal: options.signal, runsDir: options.runsDir });
+	}
 	for (const warning of resolved.warnings) console.warn(`[pipeline] ${warning}`);
 
 	const pipelineRunId = crypto.randomUUID();
@@ -179,7 +259,7 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
 	});
 
 	const invocations: StageInvocation[] = [];
-	const upstream: StageArtifact[] = [...(options.seedArtifacts ?? [])];
+	const upstream: StageArtifact[] = [...seededArtifacts];
 	let outcome: StageOutcome = "success";
 	let stoppedBecause = "";
 
@@ -196,9 +276,38 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
 	});
 
 	try {
-		const prompts = loadPromptSnapshot();
+		if (!requestedGuidance || typeof requestedGuidance !== "object" || Array.isArray(requestedGuidance)) throw new Error("Guidance map must be an object");
+        if (!Array.isArray(evidenceCatalog)) throw new Error("Evidence catalog must be an array");
+        const prompts = loadPromptSnapshot();
 		trace.event("pipeline_prompt_snapshot", { prompt_snapshot_sha256: prompts.fingerprint });
-		let next: StageName | undefined = options.entryStage ?? resolved.settings.entryStage;
+		const setupSession = new SetupSession();
+		const planned: StageName[] = [];
+		let plannedStage: StageName | undefined = options.entryStage ?? resolved.settings.entryStage;
+		while (plannedStage) {
+			if (plannedStage === "submit") break; // Enablement alone cannot authorize uploads.
+			if (planned.includes(plannedStage)) throw new Error("Pipeline stage cycle detected during setup");
+			if (!resolved.settings.stages[plannedStage]?.enabled) throw new Error(`Stage "${plannedStage}" is not enabled`);
+			planned.push(plannedStage);
+			if (plannedStage === options.stopAfter) break;
+			const successor = getStage(plannedStage).next;
+			plannedStage = successor && resolved.settings.stages[successor]?.enabled ? successor : undefined;
+		}
+		for (const [name, note] of Object.entries(requestedGuidance)) {
+            if (!planned.includes(name as StageName)) throw new Error(`Guidance supplied for unrequested stage ${name}`);
+            requestedGuidance[name as StageName] = validateGuidance(note!, name as StageName, options.taskId, [...upstream, ...evidenceCatalog]);
+        }
+        // Validate all effective options before the first session, including later stages.
+		for (const name of planned) {
+			getStage(name).parseOptions({ ...(resolved.settings.stages[name].options as Record<string, unknown> ?? {}),
+				...(options.optionOverrides?.[name] as Record<string, unknown> ?? {}) });
+		}
+		await setupSession.check(setupChecks(planned.flatMap(name => [...(getStage(name).setupRequirements ?? [])]), {
+			taskId: options.taskId, model: options.model, configPath: options.configPath, prompts,
+            candidateProducedUpstream: planned.includes("solve"), refitTrainingRoot: (options.optionOverrides?.refit as { trainingRoot?: string })?.trainingRoot ?? (resolved.effectiveOptions.refit as { trainingRoot?: string })?.trainingRoot,
+		}), options.signal ?? new AbortController().signal, trace.event);
+		if (trace.degraded()) console.warn("[setup] Trace database unavailable; local JSONL recording remains active.");
+		let next: StageName | undefined = options.checkSetupOnly ? undefined : planned[0];
+		if (options.checkSetupOnly) stoppedBecause = "setup checks passed; no stages executed";
 		while (next) {
 			if (options.signal?.aborted) {
 				outcome = "cancelled";
@@ -211,16 +320,21 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
 				break;
 			}
 			const current: StageName = next;
-			const invocation = await invokeStage({
+			const handle = startStageInvocation({
 				stage: current,
+				setupSession,
+				configPath: options.configPath,
 				prompts,
-				input: { taskId: options.taskId, upstream: [...upstream], model: options.model },
+				input: { taskId: options.taskId, upstream: [...upstream], model: options.model, guidance: requestedGuidance[current], evidenceCatalog },
 				config: resolved,
 				trace,
 				optionOverrides: options.optionOverrides?.[current],
 				reason: invocations.length === 0 ? "entry_stage" : "configured_successor",
 				signal: options.signal,
 			});
+			try { options.onInvocation?.(handle); }
+            catch (error) { handle.cancel(); await handle.result; throw error; }
+            const invocation = await handle.result;
 			invocations.push(invocation);
 			upstream.push(...invocation.artifacts);
 
@@ -238,6 +352,7 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
 				stoppedBecause = `${current} is the last stage in the chain`;
 				break;
 			}
+			if (successor === "submit") { stoppedBecause = "configured chain completed; submission requires explicit autonomous run policy"; break; }
 			if (!resolved.settings.stages[successor]?.enabled) {
 				stoppedBecause = `${current} finished; next stage "${successor}" is not enabled`;
 				break;

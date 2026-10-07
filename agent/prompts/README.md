@@ -1,5 +1,13 @@
 # Pipeline prompts
 
+The repository-maintained knowledge skills live under `knowledge/*/SKILL.md`.
+`knowledge.task` and `knowledge.refresh` are explicitly selected runtime snapshot
+resources, with `knowledge.tool` supplying their controlled tool description.
+They do not enable ambient skills or development context. See
+[`agent/knowledge/README.md`](../knowledge/README.md) for the API, evidence rules,
+storage and child-session selection, and `knowledge/PROVENANCE.md` for the pinned
+Every adaptation and retained MIT license.
+
 Edit authored instructions here. Markdown files contain module prompts;
 `tools.json` contains descriptions, guidelines, and parameter descriptions for
 the project tools. TypeScript callers supply typed task data and select stable
@@ -59,3 +67,24 @@ opening prompt from `pipeline.config.json`.
 Run `bun test agent/prompts agent/run/session_resources.test.ts agent/research
 agent/pipeline`. These tests use temporary workspaces and do not run a model,
 submit predictions, or write to the live research workspace.
+
+The [smart context module](../context/README.md) uses `context.handoff` and
+`context.resume` from the same immutable snapshot. `context.task` identifies a
+composed opening request without moving module instructions into application
+code. Handoff and resume references and message contents are recorded with the
+physical session's trace.
+
+Research also receives `research.test-distribution` on every attempt. It defines
+an explicit second pass over unlabeled test inputs to check training-pattern
+applicability and possible replacement features. The context provides separate
+hashed train/test references; the agent uses its existing inspection tools and
+saves split-specific cited evidence. See [research workflow](../research/README.md).
+
+Research, solve and advisory review opening templates declare one optional
+`guidance` variable. The loader treats an omitted value as empty; callers render
+`shared.stage-guidance` from the invocation's validated typed note. Literal braces
+inside note content are never recursively expanded. `shared.stage-feedback` is a
+separate live factual message template. Neither edits prompts at runtime. Note
+hashes and artifact snapshots use supplied-input metadata, while template and
+rendered hashes keep their prompt identities. See the pipeline integration guide
+for provenance, bounds, feedback receipt semantics and deterministic-stage refusal.

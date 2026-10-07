@@ -1,3 +1,4 @@
+import { HARNESS_CONFIG } from "../harness/config.js";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import type { PromptSnapshot } from "../prompts/loader.js";
@@ -33,7 +34,7 @@ export function createSubagentTools(source: SubagentManager | (() => SubagentMan
 		defineTool({
 			name: "subagent_wait", label: "Wait for child",
 			description: prompts.render("subagents.wait-tool", {}).text,
-			parameters: Type.Object({ id, timeoutMs: Type.Optional(Type.Integer({ minimum: 0, maximum: 60_000 })) }),
+			parameters: Type.Object({ id, timeoutMs: Type.Optional(Type.Integer({ minimum: 0, maximum: HARNESS_CONFIG.subagents.maxWaitTimeoutMs })) }),
 			async execute(_toolCallId, args, signal) { return result(await manager().wait(args.id, args.timeoutMs, signal)); },
 		}),
 		defineTool({

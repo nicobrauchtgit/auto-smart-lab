@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { resolvePipelineSettings } from "./config.js";
+import { STAGE_REGISTRY } from "./registry.js";
 import type { PipelineConfig } from "../pipeline_config.js";
 
 function config(pipeline: unknown): PipelineConfig {
@@ -25,12 +26,14 @@ describe("resolvePipelineSettings", () => {
 		expect(resolved.fingerprint).toMatch(/^[0-9a-f]{64}$/);
 	});
 
-	test("configuration cannot enable an unimplemented stage", () => {
-		expect(() => resolvePipelineSettings(config({
-			entryStage: "research",
-			stages: { research: { enabled: true }, evaluate: { enabled: true } },
-		}))).toThrow(/not implemented/);
-	});
+	test("configuration cannot enable an unregistered known stage, and registered submission is available", () => {
+        const submit = STAGE_REGISTRY.submit;
+        try {
+            delete STAGE_REGISTRY.submit;
+            expect(() => resolvePipelineSettings(config({ entryStage: "research", stages: { research: { enabled: true }, submit: { enabled: true } } }))).toThrow(/not implemented/);
+        } finally { STAGE_REGISTRY.submit = submit; }
+        expect(resolvePipelineSettings(config({ entryStage: "research", scheduling: "agent", stages: { research: { enabled: true }, submit: { enabled: true } } })).enabledStages).toContain("submit");
+    });
 
 	test("rejects unknown stages and unknown stage options", () => {
 		expect(() => resolvePipelineSettings(config({

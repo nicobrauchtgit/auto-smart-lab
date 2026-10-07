@@ -8,9 +8,12 @@ under shared pipeline and invocation IDs. Standalone module commands must use
 the same instrumented execution path as the pipeline.
 
 The shared executor exists: `agent/pipeline/executor.ts` invokes registered
-stages, and `agent/pipeline/registry.ts` lists the implemented ones. Research and
-solve are implemented; `evaluate` and `submit` are known names that configuration
-cannot enable until they are registered.
+stages, and `agent/pipeline/registry.ts` lists the implemented ones. Research,
+solve, evaluate, refit, and deterministic submit are registered. Configuration
+enables submission as an available capability; only an explicit controller
+submission policy authorizes uploads. Configured stage chains stop before submit.
+Evaluation is an advisory
+model/code review with a readiness score; it does not authorize submission.
 
 The solve stage is a training framework, not a prescribed model. The agent
 writes its own scikit-learn pipeline under `solutions/`, chooses its own
@@ -35,6 +38,23 @@ Never treat a finished agent session as stage success: return the artifact
 validation result and let the executor decide.
 
 `agent/pi_sdk.ts` is an observability experiment, not the main pipeline.
+
+## Setup checks for new features
+
+Every new stage, tool, provider, or integration must declare its prerequisites
+in the shared preflight (`agent/pipeline/setup.ts` and the stage's
+`setupRequirements`). Check required credentials, service access, unit/task
+files, executables, and Python dependencies before any agent session starts.
+Check the entire requested stage chain, including later stages, and use the same
+path for standalone commands. Do not require credentials for unused features.
+
+Keep checks bounded, non-destructive, and observable with the run/invocation
+IDs. Report all local failures together with actionable setup instructions;
+never log credential values, request headers, or raw provider errors. Prefer
+read-only service probes; keep any model probe tiny and explicit. Add regression
+tests proving missing/invalid prerequisites prevent stage execution. Update
+these checks when adding a dependency rather than relying on a runtime agent
+to discover missing setup. `--check-setup` runs the checks without starting agents.
 
 ## Pipeline Python dependencies
 

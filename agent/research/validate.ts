@@ -9,6 +9,7 @@ export interface ResearchValidationResult {
 }
 
 interface DatasetEvidenceRecord {
+	split?: "training" | "test";
 	scope: "full" | "sampled";
 	population: number;
 	method: string;
@@ -181,6 +182,7 @@ export function validateResearchFile(
 					result.errors.push(`[${id}] has no matching record in artifact: ${match[2]}`);
 				} else if (
 					!(["full", "sampled"] as const).includes(record.scope)
+					|| (record.split !== undefined && !["training", "test"].includes(record.split))
 					|| !Number.isInteger(record.population)
 					|| record.population < 1
 					|| typeof record.method !== "string"
@@ -205,6 +207,13 @@ export function validateResearchFile(
 		}
 		if (/\bSampled\b/i.test(block) && !citedRecords.some((record) => record.scope === "sampled")) {
 			result.errors.push(`paragraph ${blockNumber + 1} labels a claim Sampled without citing sampled evidence`);
+		}
+	}
+	if (context.dataset.research_inputs?.test) {
+		for (const split of ["training", "test"] as const) {
+			if (![...evidenceRecords.values()].some(record => record.split === split)) {
+				result.errors.push(`Test-input comparison requires a cited ${split} evidence record with split: "${split}"`);
+			}
 		}
 	}
 	const analysisDir = resolve(workspace, "analysis");

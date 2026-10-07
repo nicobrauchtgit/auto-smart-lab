@@ -6,6 +6,8 @@ type LoaderOptions = ConstructorParameters<typeof DefaultResourceLoader>[0];
 export function createPipelineResourceLoader(options: LoaderOptions) {
 	return new DefaultResourceLoader({
 		...options,
+		noSkills: true,
+		noPromptTemplates: true,
 		noContextFiles: true,
 		agentsFilesOverride: () => ({ agentsFiles: [] }),
 	});

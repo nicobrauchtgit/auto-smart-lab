@@ -16,6 +16,8 @@ import {
 	writeSeedPlan,
 } from "./seeds.js";
 
+import seedVector from "./seed-vectors.json";
+
 const DATASET_SHA256 = "a".repeat(64);
 const directories: string[] = [];
 
@@ -33,6 +35,16 @@ afterEach(async () => {
 });
 
 describe("seed plan derivation", () => {
+	test("matches the shared Python worker seed vector", () => {
+		const value = { ...plan(), experimentSeed: seedVector.experimentSeed };
+		expect([
+			deriveTrialSeed(value, seedVector.trial),
+			deriveRepeatSeed(value, seedVector.trial, seedVector.repeat),
+			deriveFoldSeed(value, seedVector.trial, seedVector.repeat, seedVector.fold),
+			deriveEstimatorSeed(value, seedVector.trial, seedVector.repeat, seedVector.fold, seedVector.estimator),
+		]).toEqual(seedVector.expected);
+	});
+
 	test("is deterministic and keeps every seed in uint32 bounds", () => {
 		const first = plan();
 		const again = plan();

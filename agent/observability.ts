@@ -256,6 +256,8 @@ export async function observeAgentSession(options: ObservabilityOptions) {
 
 /** Everything a session runner needs to attach the shared observer to a session. */
 export interface AgentObservation {
+	/** Controller-owned durable budget hooks, shared across physical replacements. */
+	executionGuard?: { beforeSession(): void; beforeModelRequest(): void; beforeToolCall(): void };
 	identity: EventIdentity;
 	sink: EventSink;
 }

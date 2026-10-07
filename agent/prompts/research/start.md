@@ -7,3 +7,5 @@ where needed, and leave sound existing work unchanged. Produce a research.md
 that meets the contract and check it before stopping.
 
 Task ID: {{taskId}}. Context SHA-256: {{contextHash}}.
+
+{{guidance}}

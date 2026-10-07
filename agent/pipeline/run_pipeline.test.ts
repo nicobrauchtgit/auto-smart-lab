@@ -243,3 +243,49 @@ describe("seeded upstream artifacts", () => {
 		expect(start.payload.seeded_artifacts).toEqual([]);
 	});
 });
+
+test("a missing later-stage prerequisite blocks every stage and records the failure", async () => {
+ const before = process.env.TAVILY_API_KEY;
+ process.env.TAVILY_API_KEY = "";
+ let ran = false;
+ const runsDir = workspace();
+ try {
+  STAGE_REGISTRY.research = stage("research", "solve", async () => { ran = true; return { artifacts: [] }; });
+  STAGE_REGISTRY.solve = { ...stage("solve", undefined, async () => { ran = true; return { artifacts: [] }; }), setupRequirements: ["web-search"] };
+  const configPath = configFile(runsDir, { research: { enabled: true }, solve: { enabled: true } });
+  await expect(runPipeline({ taskId: "spam1", runsDir, configPath })).rejects.toThrow("TAVILY_API_KEY");
+  expect(ran).toBe(false);
+  const dir = join(runsDir, "spam1", "pipeline");
+  const records = readFileSync(join(dir, readdirSync(dir)[0]), "utf8").trim().split("\n").map(line => JSON.parse(line));
+  expect(records.some(record => record.event_type === "setup_finished" && record.payload.valid === false)).toBe(true);
+  expect(records.some(record => record.event_type === "stage_started")).toBe(false);
+  expect(records.at(-1).payload.outcome).toBe("failure");
+ } finally {
+  if (before === undefined) delete process.env.TAVILY_API_KEY; else process.env.TAVILY_API_KEY = before;
+ }
+});
+
+test("setup-only runs do not execute stages; stop-after excludes later requirements", async () => {
+ let ran = false;
+ STAGE_REGISTRY.research = stage("research", "solve", async () => { ran = true; return { artifacts: [] }; });
+ STAGE_REGISTRY.solve = { ...stage("solve", undefined, async () => ({ artifacts: [] })), setupRequirements: ["web-search"] };
+ const runsDir = workspace();
+ const configPath = configFile(runsDir, { research: { enabled: true }, solve: { enabled: true } });
+ const result = await runPipeline({ taskId: "spam1", runsDir, configPath, stopAfter: "research", checkSetupOnly: true });
+ expect(result.outcome).toBe("success");
+ expect(result.invocations).toHaveLength(0);
+ expect(ran).toBe(false);
+});
+
+test("invalid later guidance prevents every stage before any session, including setup-only", async () => {
+ const { guidanceHash } = await import('./guidance.js');
+ let ran = 0;
+ STAGE_REGISTRY.research = stage("research", "solve", async () => { ran++; return { artifacts: [] }; });
+ STAGE_REGISTRY.solve = stage("solve", undefined, async () => { ran++; return { artifacts: [] }; });
+ const runsDir = workspace();
+ const body = { id: "later", version: 1, taskId: "other-task", stage: "solve" as const, content: "Investigate shift", evidence: [] };
+ const guidance = { solve: { ...body, contentSha256: guidanceHash(body) } };
+ await expect(runPipeline({ taskId: "spam1", runsDir, guidance,
+  configPath: configFile(runsDir, { research: { enabled: true }, solve: { enabled: true } }) })).rejects.toThrow(/binding/);
+ expect(ran).toBe(0);
+});

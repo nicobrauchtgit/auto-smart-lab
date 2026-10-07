@@ -89,6 +89,8 @@ export function createSeedPlan(input: {
 	taskId: string;
 	datasetSha256: string;
 	experimentId: string;
+	/** Stable harness coordinate for reproducible searches; identity remains unique. */
+	experimentCoordinate?: string;
 }): SeedPlanV1 {
 	assertUint32(input.rootSeed, "rootSeed");
 	assertNonEmptyString(input.taskId, "taskId");
@@ -106,7 +108,7 @@ export function createSeedPlan(input: {
 		datasetSha256: input.datasetSha256,
 		experimentId: input.experimentId,
 		sealedSeed: deriveUint32("sealed", common),
-		experimentSeed: deriveUint32("experiment", [...common, input.experimentId]),
+		experimentSeed: deriveUint32("experiment", [...common, input.experimentCoordinate ?? input.experimentId]),
 	};
 	return freezePlan(payload, payloadSha256(payload));
 }

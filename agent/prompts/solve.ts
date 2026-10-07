@@ -1,6 +1,8 @@
+import { guidanceBlock, type StageGuidance } from "../pipeline/guidance.js";
 import type { PromptSnapshot } from "./loader.js";
 
 export interface SolveStartInput {
+	guidance?: StageGuidance;
 	taskId: string;
 	workspace: string;
 	datasetPaths: string[];
@@ -14,9 +16,11 @@ export interface SolveStartInput {
 
 /** The opening request. Workspace state does not change what is asked for. */
 export function prepareSolvePrompts(prompts: PromptSnapshot, input: SolveStartInput) {
+	const guidance = guidanceBlock(prompts, input.guidance);
 	const system = prompts.render("solve.system", { taskId: input.taskId });
 	const start = prompts.render("solve.start", {
 		taskId: input.taskId,
+        guidance: guidance?.text ?? "",
 		workspace: input.workspace,
 		datasetPaths: input.datasetPaths.map((path) => `- ${path}`).join("\n"),
 		labelsPath: input.labelsPath,
@@ -31,8 +35,8 @@ export function prepareSolvePrompts(prompts: PromptSnapshot, input: SolveStartIn
 	const fitPolicy = prompts.render("solve.observable-fits", {});
 	return {
 		system,
-		prompt: `${start.text}\n\n${fitPolicy.text}`,
-		promptReferences: [system.reference, start.reference, fitPolicy.reference],
+		prompt: [start.text, fitPolicy.text].filter(Boolean).join("\n\n"),
+		promptReferences: [system.reference, start.reference, fitPolicy.reference, ...(guidance ? [guidance.reference] : [])],
 	};
 }
 

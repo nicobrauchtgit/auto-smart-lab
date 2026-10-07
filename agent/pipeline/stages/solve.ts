@@ -7,6 +7,7 @@
  * artifacts and a failed validation rather than throwing.
  */
 
+import { HARNESS_CONFIG } from "../../harness/config.js";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
@@ -28,7 +29,8 @@ export interface SolveOptions {
 }
 
 function parseFoldPolicy(raw: unknown): SolveOptions["foldPolicy"] {
-	if (raw === undefined || raw === "auto") return "auto";
+	if (raw === undefined) return HARNESS_CONFIG.solve.foldPolicy;
+	if (raw === "auto") return "auto";
 	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
 		throw new Error('solve.foldPolicy must be "auto" or an object with folds and repeats');
 	}
@@ -46,6 +48,7 @@ function parseFoldPolicy(raw: unknown): SolveOptions["foldPolicy"] {
 
 export const solveStage: StageDefinition<SolveOptions> = {
 	name: "solve",
+	setupRequirements: ["knowledge", "model", "python", "task", "training"],
 	version: 1,
 	description: "Build and iteratively improve a model, judged on recomputed out-of-fold measurements",
 	next: "evaluate",
@@ -59,17 +62,17 @@ export const solveStage: StageDefinition<SolveOptions> = {
 		const unknown = Object.keys(options).filter((key) => !known.has(key));
 		if (unknown.length > 0) throw new Error(`unknown solve options: ${unknown.join(", ")}`);
 
-		const maxIterations = options.maxIterations ?? 6;
+		const maxIterations = options.maxIterations ?? HARNESS_CONFIG.solve.maxIterations;
 		if (!Number.isInteger(maxIterations) || (maxIterations as number) < 1) {
 			throw new Error("solve.maxIterations must be a positive integer");
 		}
-		const sealedFraction = options.sealedFraction ?? 0.1;
+		const sealedFraction = options.sealedFraction ?? HARNESS_CONFIG.solve.sealedFraction;
 		if (typeof sealedFraction !== "number" || !(sealedFraction > 0 && sealedFraction < 0.5)) {
 			throw new Error("solve.sealedFraction must be a number above 0 and below 0.5");
 		}
-		const seed = options.seed ?? 13;
+		const seed = options.seed ?? HARNESS_CONFIG.solve.seed;
 		if (!Number.isInteger(seed)) throw new Error("solve.seed must be an integer");
-		const experimentUpdateIntervalSeconds = options.experimentUpdateIntervalSeconds ?? 30;
+		const experimentUpdateIntervalSeconds = options.experimentUpdateIntervalSeconds ?? HARNESS_CONFIG.solve.experimentUpdateIntervalSeconds;
 		if (!Number.isInteger(experimentUpdateIntervalSeconds) || (experimentUpdateIntervalSeconds as number) < 1) {
 			throw new Error("solve.experimentUpdateIntervalSeconds must be a positive integer");
 		}
@@ -106,6 +109,7 @@ export const solveStage: StageDefinition<SolveOptions> = {
 			experimentUpdateIntervalSeconds: context.options.experimentUpdateIntervalSeconds,
 			upstream: context.input.upstream,
 			prompts: context.prompts,
+ guidance: context.input.guidance, feedback: context.feedback,
 			report: context.report,
 			signal: context.signal,
 			// Fold seeds rotate from the invocation id, so two runs of the same
@@ -115,6 +119,10 @@ export const solveStage: StageDefinition<SolveOptions> = {
 		const artifacts = result.collection.artifacts.map(({ kind, path, bytes, sha256 }) => ({
 			kind, path, bytes, sha256,
 		}));
+		if (result.collection.selected) {
+			const selected = result.collection.selected.artifacts.find(entry => entry.kind === "training_trial_result")!;
+			artifacts.push({ kind: "training_selected_result", path: selected.path, bytes: selected.bytes, sha256: selected.sha256 });
+		}
 		if (result.collection.selected?.request?.pipeline.module) {
 			const path = join(PROJECT_ROOT, result.collection.selected.request.pipeline.module);
 			if (existsSync(path)) artifacts.push({ kind: "solve_entrypoint", path });

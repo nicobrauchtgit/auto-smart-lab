@@ -8,6 +8,7 @@
  * from its own out-of-fold estimate.
  */
 
+import { HARNESS_CONFIG } from "../harness/config.js";
 import { createHash } from "node:crypto";
 
 import { createStratifiedFolds } from "../pipeline/feature_audit.js";
@@ -28,10 +29,8 @@ export interface FoldRecommendation {
  */
 export function recommendFolds(rows: number): FoldRecommendation {
 	if (!Number.isInteger(rows) || rows < 1) throw new Error("recommendFolds needs a positive integer row count");
-	const shape = rows < 500 ? { folds: 10, repeats: 5 }
-		: rows < 2_000 ? { folds: 10, repeats: 3 }
-		: rows < 10_000 ? { folds: 10, repeats: 1 }
-		: { folds: 5, repeats: 1 };
+	const { folds, repeats } = HARNESS_CONFIG.foldRecommendations.find(row => row.belowRows === null || rows < row.belowRows)!;
+	const shape = { folds, repeats };
 	return {
 		scheme: "stratified_kfold",
 		...shape,
@@ -63,8 +62,8 @@ export function sealConfirmationSet(
 	rows: readonly TrainingLabelRow[],
 	options: { fraction?: number; seed?: number } = {},
 ): SealedSplit {
-	const fraction = options.fraction ?? 0.1;
-	const seed = options.seed ?? 13;
+	const fraction = options.fraction ?? HARNESS_CONFIG.solve.sealedFraction;
+	const seed = options.seed ?? HARNESS_CONFIG.solve.seed;
 	if (!(fraction > 0 && fraction < 1)) throw new Error("sealed fraction must be between 0 and 1");
 	const parts = Math.round(1 / fraction);
 	if (parts < 2) throw new Error("sealed fraction must leave at least half the rows for development");

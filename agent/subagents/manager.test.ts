@@ -176,3 +176,21 @@ test("queue and total handle limits bound retained state", async () => {
 		assert.throws(() => f.manager.spawn("Another", "spawn"), /handle limit/);
 	} finally { await f.manager.close(); }
 });
+
+test("parent handoff updates future spawns without changing existing children or losing results", async () => {
+	const f = fixture();
+	try {
+		const first = f.manager.spawn("Implement A", "old-spawn");
+		await tick();
+		f.manager.bindParent("replacement-parent");
+		assert.equal(f.manager.check(first.logicalAgentId).parentAgentRunId, "parent");
+		f.turns[0].resolve("A complete");
+		assert.equal((await f.manager.wait(first.logicalAgentId)).output, "A complete");
+		const second = f.manager.spawn("Implement B", "new-spawn");
+		assert.equal(second.parentAgentRunId, "replacement-parent");
+		await tick();
+		f.turns[1].resolve("B complete");
+		assert.equal((await f.manager.wait(second.logicalAgentId)).output, "B complete");
+		assert.equal(f.events.filter(event => event.type === "subagent_spawn")[1].data.parentAgentRunId, "replacement-parent");
+	} finally { await f.manager.close(); }
+});

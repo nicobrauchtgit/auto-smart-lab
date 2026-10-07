@@ -1,5 +1,26 @@
 /** Stable prompt IDs and their required string inputs. Prose belongs in files. */
 export const PROMPTS = {
+ "orchestrator.system": { file: "orchestrator/system.md", variables: [] },
+ "orchestrator.start": { file: "orchestrator/start.md", variables: ["task", "context"] },
+ "orchestrator.tool": { file: "orchestrator/tool.md", variables: [] },
+	"knowledge.task": { file: "knowledge/task-knowledge/SKILL.md", variables: [] },
+	"knowledge.refresh": { file: "knowledge/refresh-task-knowledge/SKILL.md", variables: [] },
+	"knowledge.tool": { file: "knowledge/tool.md", variables: [] },
+ "shared.stage-guidance": { file: "shared/stage-guidance.md", variables: ["note"] },
+ "shared.stage-feedback": { file: "shared/stage-feedback.md", variables: ["note"] },
+	"review.system": { file: "review/system.md", variables: [] },
+	"review.guide": { file: "review/guide.md", variables: [] },
+	"review.start": { file: "review/start.md", variables: ["taskId", "experimentId", "evidence", "code"] , optionalVariables: ["guidance"] },
+	"review.code-tool": { file: "review/code-tool.md", variables: [] },
+	"review.detail-tool": { file: "review/detail-tool.md", variables: [] },
+	"review.report-tool": { file: "review/report-tool.md", variables: [] },
+	"context.subagent-probe": { file: "context/subagent-probe.md", variables: [] },
+	"context.subagent-probe-child": { file: "context/subagent-probe-child.md", variables: [] },
+	"context.probe": { file: "context/probe.md", variables: [] },
+	"setup.model-check": { file: "setup/model-check.md", variables: [] },
+	"context.task": { file: "context/task.md", variables: ["task"] },
+	"context.handoff": { file: "context/handoff.md", variables: [] },
+	"context.resume": { file: "context/resume.md", variables: ["task", "request", "handoff", "updates"] },
 	"subagents.parent": { file: "subagents/parent.md", variables: [] },
 	"subagents.smoke-start": { file: "subagents/smoke-start.md", variables: ["workspace"] },
 	"subagents.smoke-task": { file: "subagents/smoke-task.md", variables: ["python"] },
@@ -16,19 +37,32 @@ export const PROMPTS = {
 	"experiments.status-tool": { file: "experiments/status-tool.md", variables: [] },
 	"experiments.output-tool": { file: "experiments/output-tool.md", variables: [] },
 	"experiments.stop-tool": { file: "experiments/stop-tool.md", variables: [] },
+	"training.resume-tool": { file: "training/resume-tool.md", variables: [] },
 	"training.start-tool": { file: "training/start-tool.md", variables: [] },
 	"training.status-tool": { file: "training/status-tool.md", variables: [] },
 	"training.output-tool": { file: "training/output-tool.md", variables: [] },
 	"training.stop-tool": { file: "training/stop-tool.md", variables: [] },
+	"training.request-rejected": { file: "training/request-rejected.md", variables: ["count", "errors"] },
+	"training.search-caveats": { file: "training/search-caveats.md", variables: [] },
+	"training.runtime-guard": { file: "training/runtime-guard.md", variables: [] },
+	"git.block-reset": { file: "git/block-reset.md", variables: [] },
+	"git.block-amend": { file: "git/block-amend.md", variables: [] },
+	"git.block-rebase": { file: "git/block-rebase.md", variables: [] },
+	"git.block-filter": { file: "git/block-filter.md", variables: [] },
+	"git.block-force-push": { file: "git/block-force-push.md", variables: [] },
+	"git.block-delete-ref": { file: "git/block-delete-ref.md", variables: [] },
+	"git.block-recovery": { file: "git/block-recovery.md", variables: [] },
+	"git.block-remove-git": { file: "git/block-remove-git.md", variables: [] },
 	"shared.python-environment": { file: "shared/python-environment.md", variables: ["pythonExecutable", "declaredDependencies", "totalDistributions", "environmentHash", "projectPath", "lockPath", "notesPath", "pythonCommand", "managerCommand"] },
+	"research.test-distribution": { file: "research/test-distribution.md", variables: [] },
 	"research.system": { file: "research/system.md", variables: [] },
-	"research.start": { file: "research/start.md", variables: ["taskId", "contextHash", "startupContext"] },
+	"research.start": { file: "research/start.md", variables: ["taskId", "contextHash", "startupContext"] , optionalVariables: ["guidance"] },
 	"research.validation-feedback": { file: "research/validation-feedback.md", variables: ["errors"] },
 	"research.startup-context": { file: "research/startup-context.md", variables: ["facts"] },
 	"research.launch": { file: "research/launch.md", variables: ["request", "taskId", "contextHash", "startupContext"] },
 	"research.initial-document": { file: "research/initial-document.md", variables: ["title", "taskId", "contextHash"] },
 	"solve.system": { file: "solve/system.md", variables: ["taskId"] },
-	"solve.start": { file: "solve/start.md", variables: ["taskId", "workspace", "datasetPaths", "labelsPath", "rowCount", "classBalance", "foldRecommendation", "researchState", "maxIterations"] },
+	"solve.start": { file: "solve/start.md", variables: ["taskId", "workspace", "datasetPaths", "labelsPath", "rowCount", "classBalance", "foldRecommendation", "researchState", "maxIterations"] , optionalVariables: ["guidance"] },
 	"solve.iteration": { file: "solve/iteration.md", variables: ["signal", "guidance"] },
 	"solve.observable-fits": { file: "solve/observable-fits.md", variables: [] },
 	// The `solver.*` prompts below drive the pre-executor orchestrate.ts path and
@@ -43,6 +77,7 @@ export const PROMPTS = {
 
 export type PromptId = keyof typeof PROMPTS;
 type VariableName<Id extends PromptId> = (typeof PROMPTS)[Id]["variables"][number];
-export type PromptVariables<Id extends PromptId> = [VariableName<Id>] extends [never]
+type OptionalName<Id extends PromptId> = (typeof PROMPTS)[Id] extends { optionalVariables: readonly (infer V extends string)[] } ? V : never;
+export type PromptVariables<Id extends PromptId> = ([VariableName<Id>] extends [never]
 	? Record<string, never>
-	: Record<VariableName<Id>, string>;
+	: Record<VariableName<Id>, string>) & Partial<Record<OptionalName<Id>, string>>;

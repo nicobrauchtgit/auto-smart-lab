@@ -1,3 +1,6 @@
+import type { StageGuidance } from "../pipeline/guidance.js";
+import type { InvocationFeedback } from "../pipeline/feedback.js";
+import { HARNESS_CONFIG } from "../harness/config.js";
 import { createHash } from "node:crypto";
 import {
 	appendFileSync,
@@ -36,6 +39,8 @@ export interface ResearchResult {
 }
 
 export interface RunResearchOptions {
+ guidance?: StageGuidance;
+ feedback?: InvocationFeedback;
 	injectStartupContext?: boolean;
 	prompts?: PromptSnapshot;
 	/**
@@ -60,7 +65,7 @@ function traceRun(
 }
 
 export async function runResearchSession(taskId: string, model?: string, options: RunResearchOptions = {}): Promise<ResearchResult> {
-	const injectStartupContext = options.injectStartupContext ?? true;
+	const injectStartupContext = options.injectStartupContext ?? HARNESS_CONFIG.research.injectStartupContext;
 	const report = options.report;
 	const prompts = options.prompts ?? loadPromptSnapshot();
 	const { context, prompt } = buildResearchContext(taskId);
@@ -105,6 +110,12 @@ export async function runResearchSession(taskId: string, model?: string, options
 		content_sha256: contextSha256,
 		dataset_sha256: context.dataset.snapshot_sha256,
 	});
+	for (const [split, source] of Object.entries(context.dataset.research_inputs ?? {})) {
+		report?.input({ kind: `research_${split}`, version: 1, delivery: source ? "workspace_file" : "none",
+			status: source ? "available" : "unavailable", ...(source ? { artifact: resolve(workspace, source.path), content_sha256: source.sha256 } : {}),
+			dataset_sha256: context.dataset.snapshot_sha256, labels_available: split === "training_labels",
+		});
+	}
 	// The requested injection setting and the profile's actual availability are
 	// recorded separately: enabling injection does not prove context was supplied.
 	report?.input({
@@ -136,11 +147,11 @@ export async function runResearchSession(taskId: string, model?: string, options
 	let sessionError: unknown;
 	let sessionWarning: string | undefined;
 	try {
-		while (attempts < 2) {
+		while (attempts < HARNESS_CONFIG.research.maxAttempts) {
 			if (options.signal?.aborted) break;
 			attempts++;
 			const prepared = prepareResearchPrompts(prompts, {
-				taskId, contextHash: contextSha256,
+				taskId, contextHash: contextSha256, guidance: options.guidance,
 				profile: injectStartupContext ? context.startup_profile : undefined,
 				failedChecks: attempts > 1 ? validation.errors : undefined,
 			});
@@ -154,11 +165,14 @@ export async function runResearchSession(taskId: string, model?: string, options
 				prompts: prepared.promptReferences,
 			});
 			const { output, agentRunId } = await runSession({
+				knowledge: { root: join(PROJECT_ROOT, "knowledge"), origin: { taskId, datasetSha256: context.dataset.snapshot_sha256,
+					pipelineRunId: report?.agentIdentity(attempts).pipelineRunId, stageInvocationId: report?.agentIdentity(attempts).stageInvocationId } },
 				...prepared,
 				prompts,
+				feedback: options.feedback,
 				reportInput: report ? input => report.input(input) : undefined,
 				model,
-				env: { WEB_SEARCH_MAX_CALLS: attempts === 1 ? String(context.limits.web_search_calls) : "0", WEB_SEARCH_MAX_RESULTS: "4" },
+				env: { WEB_SEARCH_MAX_CALLS: attempts === 1 ? String(context.limits.web_search_calls) : "0", WEB_SEARCH_MAX_RESULTS: String(HARNESS_CONFIG.research.webSearchResults) },
 				cwd: workspace,
 				tools: ["read", "grep", "find", "ls", "edit", "write", "bash", "web_search"],
 				extensionPaths: [WEB_SEARCH_EXTENSION],

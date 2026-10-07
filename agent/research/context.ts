@@ -1,3 +1,4 @@
+import { HARNESS_CONFIG } from "../harness/config.js";
 import { createHash } from "node:crypto";
 import {
 	existsSync,
@@ -14,6 +15,24 @@ import { summarizeTrainingLabels, TRAINING_LABEL_FILES, type StartupProfile } fr
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const PROJECT_ROOT = resolve(HERE, "..", "..");
 const UNITS_DIR = join(PROJECT_ROOT, "units");
+
+export interface ResearchSource { path: string; bytes: number; sha256: string }
+export interface ResearchInputs {
+	training: ResearchSource | null;
+	training_labels: ResearchSource | null;
+	test: ResearchSource | null;
+}
+
+/** Identify paired archives from the task's declared label adapter, never from arbitrary files. */
+export function identifyResearchInputs(inputs: ResearchSource[], labelsPath?: string): ResearchInputs {
+	const source = (path?: string) => inputs.find(input => input.path === path) ?? null;
+	if (!labelsPath?.endsWith("-train.labels")) return { training: null, training_labels: null, test: null };
+	return {
+		training: source(labelsPath.replace(/-train\.labels$/, "-train.zip")),
+		training_labels: source(labelsPath),
+		test: source(labelsPath.replace(/-train\.labels$/, "-test.zip")),
+	};
+}
 
 export interface ResearchContext {
 	schema_version: 1;
@@ -32,7 +51,9 @@ export interface ResearchContext {
 		total_files: number;
 		total_bytes: number;
 		file_types: Record<string, { files: number; bytes: number }>;
-		primary_inputs: Array<{ path: string; bytes: number; sha256: string }>;
+		primary_inputs: ResearchSource[];
+		/** Explicit, separately inspected populations; optional for legacy snapshots. */
+		research_inputs?: ResearchInputs;
 		snapshot_sha256: string;
 	};
 	limits: {
@@ -158,13 +179,14 @@ export function buildResearchContext(taskId: string): ResearchContextInput {
 				total_bytes: totalBytes,
 				file_types: Object.fromEntries(Object.entries(fileTypes).sort(([a], [b]) => a.localeCompare(b))),
 				primary_inputs: primaryInputs,
+				research_inputs: identifyResearchInputs(primaryInputs, labelPath ? relative(workspace, labelPath) : undefined),
 				snapshot_sha256: sha256(snapshot),
 			},
 			limits: {
-				web_search_calls: 3,
-				max_report_bytes: 40 * 1024,
-				max_analysis_artifact_bytes: 64 * 1024,
-				max_feature_recommendations: 10,
+				web_search_calls: HARNESS_CONFIG.research.webSearchCalls,
+				max_report_bytes: HARNESS_CONFIG.research.maxReportBytes,
+				max_analysis_artifact_bytes: HARNESS_CONFIG.research.maxAnalysisArtifactBytes,
+				max_feature_recommendations: HARNESS_CONFIG.research.maxFeatureRecommendations,
 			},
 		},
 	};

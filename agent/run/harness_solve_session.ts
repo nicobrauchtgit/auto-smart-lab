@@ -1,8 +1,11 @@
+import type { StageGuidance } from "../pipeline/guidance.js";
+import type { InvocationFeedback } from "../pipeline/feedback.js";
 /** Agent-driven solve session backed exclusively by harness-owned training. */
 
+import { HARNESS_CONFIG } from "../harness/config.js";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { delimiter, join, relative } from "node:path";
+import { existsSync, readFileSync, statSync, readdirSync } from "node:fs";
+import { delimiter, dirname, join, relative } from "node:path";
 
 import { PROJECT_ROOT } from "../pipeline/resolve_task.js";
 import type { StageArtifact, StageReporter } from "../pipeline/types.js";
@@ -11,10 +14,14 @@ import { prepareSolvePrompts } from "../prompts/solve.js";
 import { prepareSolveWorkspace, type SolveWorkspace } from "../solve/workspace.js";
 import {
 	collectTrainingResults,
+	createGitHistoryGuard,
 	createHarnessTraining,
+	ensureSolutionsRepository,
 	resolveCppRuntimeLibraryPath,
 	type TrainingCollection,
 } from "../training/index.js";
+import { developmentSelection } from "../training/development_selection.js";
+import { GIT_BLOCK_PROMPT_IDS } from "../training/git_guard.js";
 import { readPythonEnvironment, type PythonEnvironment } from "./python_environment.js";
 import { runSession } from "./session_runner.js";
 
@@ -32,6 +39,8 @@ export interface HarnessSolveResult {
 }
 
 export interface RunHarnessSolveOptions {
+ guidance?: StageGuidance;
+ feedback?: InvocationFeedback;
 	/** Advisory experiment budget shown to the agent; the agent decides when fitting is useful. */
 	maxTrials?: number;
 	sealedFraction?: number;
@@ -55,6 +64,7 @@ export interface HarnessSolveDependencies {
 	createTraining: typeof createHarnessTraining;
 	runAgentSession: typeof runSession;
 	collectResults: typeof collectTrainingResults;
+	prepareRepository: typeof ensureSolutionsRepository;
 }
 
 const DEFAULT_DEPENDENCIES: HarnessSolveDependencies = {
@@ -63,6 +73,7 @@ const DEFAULT_DEPENDENCIES: HarnessSolveDependencies = {
 	createTraining: createHarnessTraining,
 	runAgentSession: runSession,
 	collectResults: collectTrainingResults,
+	prepareRepository: ensureSolutionsRepository,
 };
 
 const sha256 = (content: string | Buffer) => createHash("sha256").update(content).digest("hex");
@@ -122,9 +133,35 @@ function reportInputs(
 	});
 	report.input({
 		kind: "training_framework", version: 1, delivery: "tool", status: "available",
-		artifact: trainingRoot, controls: ["experiment_start", "experiment_status", "experiment_output", "experiment_stop"],
+		artifact: trainingRoot, controls: ["experiment_start", "experiment_status", "experiment_output", "experiment_stop", "experiment_resume"],
 		module_root: "solutions/", authoritative_fits: "harness_only",
+		versioning: "git_worktree_per_trial", search: "optuna_ask_tell",
 	});
+}
+
+/** Preserve the originating workspace and its budget on interrupted solve restart. */
+export function recoveryTrainingRoot(parent: string, runId: string): string {
+    const candidates: string[] = [];
+    const paused: { root: string; at: number }[] = [];
+    if (existsSync(parent)) for (const rootName of readdirSync(parent)) {
+        const root = join(parent, rootName);
+        if (!statSync(root).isDirectory()) continue;
+        for (const id of readdirSync(root)) {
+            const path = join(root, id, "recovery.json");
+            if (!existsSync(path)) continue;
+            try {
+                const meta = JSON.parse(readFileSync(path, "utf8"));
+                const read = (name: string) => existsSync(join(root, id, name)) ? JSON.parse(readFileSync(join(root, id, name), "utf8")) : {};
+                if (meta.lifecycle === "active" && !read("supervisor-state.json").stopReason
+                    && !read("search-report.json").stopReason) candidates.push(root);
+                else if (!["completed", "failed"].includes(read("trial-result.json").status)
+                    && read("search-report.json").stopReason !== "max_seconds") paused.push({ root, at: meta.trial?.startedAt ?? 0 });
+            } catch { throw new Error(`Corrupt recovery state at ${path}; restore it before restarting solve.`); }
+        }
+    }
+    const unique = [...new Set(candidates)];
+    if (unique.length > 1) throw new Error(`Multiple interrupted training workspaces: ${unique.join(", ")}. Resume them individually before a new solve session.`);
+    return unique[0] ?? paused.sort((a, b) => b.at - a.at)[0]?.root ?? join(parent, runId);
 }
 
 export async function runHarnessSolveSession(
@@ -141,14 +178,23 @@ export async function runHarnessSolveSession(
 		seed: options.seed,
 		upstream: options.upstream,
 	});
-	const shape = options.foldPolicy && options.foldPolicy !== "auto"
-		? options.foldPolicy
+	const foldPolicy = options.foldPolicy ?? HARNESS_CONFIG.solve.foldPolicy;
+	const shape = foldPolicy !== "auto"
+		? foldPolicy
 		: { folds: workspace.recommendation.folds, repeats: workspace.recommendation.repeats };
 	const python = dependencies.readPython();
-	const trainingRoot = join(workspace.root, "training", runId);
+	const trainingRoot = recoveryTrainingRoot(join(workspace.root, "training"), runId);
 	const fingerprint = datasetFingerprint(workspace);
 
 	reportInputs(report, workspace, python, trainingRoot);
+	// The agent's history is evidence; setup creates the repository if needed
+	// and never touches existing history or uncommitted work.
+	const repository = dependencies.prepareRepository(workspace.solutionsRoot);
+	report?.input({
+		kind: "solutions_repository", version: 1, delivery: "workspace_file", status: "available",
+		artifact: workspace.solutionsRoot, initialized: repository.initialized,
+		head_commit: repository.head, branch: repository.branch,
+	});
 	report?.event("solve_workspace_prepared", {
 		workspace: workspace.root,
 		solutions_root: relative(PROJECT_ROOT, workspace.solutionsRoot),
@@ -160,6 +206,7 @@ export async function runHarnessSolveSession(
 	});
 
 	const opening = prepareSolvePrompts(prompts, {
+ guidance: options.guidance,
 		taskId,
 		workspace: workspace.root,
 		datasetPaths: workspace.datasetPaths,
@@ -168,7 +215,16 @@ export async function runHarnessSolveSession(
 		classBalance: workspace.classBalance,
 		foldRecommendation: `${shape.folds}-fold stratified, ${shape.repeats} repeat(s)`,
 		researchState: workspace.researchState,
-		maxIterations: options.maxTrials ?? 6,
+		maxIterations: options.maxTrials ?? HARNESS_CONFIG.solve.maxIterations,
+	});
+	report?.event("harness_configuration", {
+		version: 1, defaults: HARNESS_CONFIG,
+		solve: { ...HARNESS_CONFIG.solve, maxIterations: options.maxTrials ?? HARNESS_CONFIG.solve.maxIterations,
+			seed: options.seed ?? HARNESS_CONFIG.solve.seed,
+			sealedFraction: options.sealedFraction ?? HARNESS_CONFIG.solve.sealedFraction,
+			foldPolicy: options.foldPolicy ?? HARNESS_CONFIG.solve.foldPolicy,
+			experimentUpdateIntervalSeconds: options.experimentUpdateIntervalSeconds ?? HARNESS_CONFIG.solve.experimentUpdateIntervalSeconds },
+		foldRecommendation: shape,
 	});
 	const identity = report?.agentIdentity(1);
 	const training = dependencies.createTraining({
@@ -179,32 +235,52 @@ export async function runHarnessSolveSession(
 		pipelineRunId: identity?.pipelineRunId,
 		stageInvocationId: identity?.stageInvocationId,
 		pythonExecutable: python.executable,
-		projectRoot: PROJECT_ROOT,
+		// Module paths are relative to the directory holding solutions/, which is
+		// the project root in production and a temporary project in tests.
+		projectRoot: dirname(workspace.solutionsRoot),
+		workerPath: join(PROJECT_ROOT, "agent", "training", "python", "worker.py"),
 		taskId,
 		datasetSha256: fingerprint,
-		rootSeed: options.seed ?? 13,
+		rootSeed: options.seed ?? HARNESS_CONFIG.solve.seed,
 		zipPath: workspace.devZip,
 		labelsPath: workspace.devLabelsPath,
-		maxExperiments: options.maxTrials ?? 6,
-		limits: { updateIntervalMs: (options.experimentUpdateIntervalSeconds ?? 30) * 1_000 },
+		solutionsRoot: workspace.solutionsRoot,
+		search: HARNESS_CONFIG.search,
+		onTrialStarted: (trial) => report?.input({
+			kind: "training_source", version: 1, delivery: "tool", status: "available",
+			artifact: trial.worktrees[0] ?? workspace.solutionsRoot, experiment_id: trial.id,
+			commit: trial.source?.commit, tree: trial.source?.tree, branch: trial.source?.branch,
+			subject: trial.source?.subject, requested_revision: trial.source?.requested,
+			search: trial.request.search !== undefined, scope: trial.request.scope.kind,
+			champion_experiment_id: trial.champion?.experimentId, champion_commit: trial.champion?.commit,
+		}),
+		maxExperiments: options.maxTrials ?? HARNESS_CONFIG.solve.maxIterations,
+		limits: { updateIntervalMs: (options.experimentUpdateIntervalSeconds ?? HARNESS_CONFIG.solve.experimentUpdateIntervalSeconds) * 1_000 },
 		prompts,
 		...(options.signal ? { signal: options.signal } : {}),
 	});
 
+	try { await training.ready?.(); }
+    catch (error) { await training.close(); throw error; }
+
 	let sessionError: string | undefined;
 	let stopReason: HarnessSolveStopReason = "agent_finished";
+	const guardPrompts = GIT_BLOCK_PROMPT_IDS.map((id) => prompts.render(id, {}).reference);
 	report?.event("agent_attempt_start", {
 		attempt: 1, reason: "agent_driven_training", model: model ?? "pipeline-default",
 		prompt_snapshot_sha256: prompts.fingerprint,
-		prompts: [...opening.promptReferences, ...training.toolPrompts],
+		prompts: [...opening.promptReferences, ...training.toolPrompts, ...guardPrompts],
 	});
 	try {
 		const { output, agentRunId } = await dependencies.runAgentSession({
+			knowledge: { root: join(PROJECT_ROOT, "knowledge"), origin: { taskId, datasetSha256: fingerprint,
+				pipelineRunId: identity?.pipelineRunId, stageInvocationId: identity?.stageInvocationId }, trainingRoots: [trainingRoot, join(workspace.root, "training")] },
 			prompts,
 			system: opening.system,
 			prompt: opening.prompt,
-			promptReferences: [...opening.promptReferences, ...training.toolPrompts],
-			reportInput: report ? (input) => report.input(input) : undefined,
+			promptReferences: [...opening.promptReferences, ...training.toolPrompts, ...guardPrompts],
+			feedback: options.feedback,
+				reportInput: report ? (input) => report.input(input) : undefined,
 			model,
 			cwd: PROJECT_ROOT,
 			env: { SOLVE_WORKSPACE: workspace.root },
@@ -212,6 +288,7 @@ export async function runHarnessSolveSession(
 			customTools: training.tools,
 			onSessionReady: training.bindSession,
 			extensionPaths: [],
+			extensionFactories: [createGitHistoryGuard(prompts, (eventType, payload) => report?.event(eventType, payload))],
 			...(options.signal ? { signal: options.signal } : {}),
 			...(report ? { observe: report.observation(1) } : {}),
 		});
@@ -226,7 +303,7 @@ export async function runHarnessSolveSession(
 		await training.close();
 	}
 
-	const collection = await dependencies.collectResults(trainingRoot);
+	const collection = developmentSelection(await dependencies.collectResults(trainingRoot), workspace.solutionsRoot, taskId);
 	const errors = collection.valid ? [] : collection.errors.map((error) => error.message);
 	if (!collection.valid && stopReason === "agent_finished") stopReason = "no_promotion";
 	report?.event("training_results_validated", {

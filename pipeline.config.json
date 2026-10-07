@@ -6,25 +6,21 @@
     "stages": {
       "research": {
         "enabled": true,
-        "options": {
-          "injectStartupContext": true
-        }
+        "options": {}
       },
       "solve": {
         "enabled": true,
-        "options": {
-          "maxIterations": 6,
-          "sealedFraction": 0.1,
-          "seed": 13,
-          "foldPolicy": "auto",
-          "experimentUpdateIntervalSeconds": 30
-        }
+        "options": {}
       },
       "evaluate": {
-        "enabled": false
+        "enabled": true
       },
       "submit": {
-        "enabled": false
+        "enabled": true
+      },
+      "refit": {
+        "enabled": true,
+        "options": {}
       }
     }
   },

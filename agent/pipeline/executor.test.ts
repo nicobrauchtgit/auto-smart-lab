@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,6 +15,8 @@ import type { StageDefinition } from "./types.js";
 process.env.AGENT_DATABASE_PORT = "1";
 
 const workspaces: string[] = [];
+let originalSolve: typeof STAGE_REGISTRY.solve;
+beforeEach(() => { originalSolve = STAGE_REGISTRY.solve; });
 function workspace(): string {
 	const dir = mkdtempSync(join(tmpdir(), "pipeline-trace-"));
 	workspaces.push(dir);
@@ -23,7 +25,8 @@ function workspace(): string {
 
 afterEach(() => {
 	for (const dir of workspaces.splice(0)) rmSync(dir, { recursive: true, force: true });
-	delete STAGE_REGISTRY.solve;
+	if (originalSolve) STAGE_REGISTRY.solve = originalSolve;
+	else delete STAGE_REGISTRY.solve;
 });
 
 function settings(stageOptions: unknown = {}) {
@@ -90,7 +93,7 @@ describe("invokeStage", () => {
 
 		const types = events.map((event) => event.event_type);
 		expect(types).toEqual([
-			"stage_started", "stage_input", "agent_attempt_start", "stage_summary", "stage_finished",
+			"stage_started", "setup_started", "setup_finished", "stage_input", "agent_attempt_start", "stage_summary", "stage_finished",
 		]);
 		// Stage events carry the shared identity and no PI session.
 		for (const event of events) {
@@ -132,7 +135,7 @@ describe("invokeStage", () => {
 		expect(ran).toBe(false);
 		expect(invocation.outcome).toBe("failure");
 		expect(events.map((event) => event.event_type)).toEqual([
-			"stage_started", "stage_input_rejected", "stage_finished",
+			"stage_started", "setup_started", "setup_finished", "stage_input_rejected", "stage_finished",
 		]);
 	});
 

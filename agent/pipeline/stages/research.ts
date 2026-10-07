@@ -6,6 +6,7 @@
  * that needs a repair attempt stays visible as one invocation.
  */
 
+import { HARNESS_CONFIG } from "../../harness/config.js";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 
@@ -31,7 +32,8 @@ function artifact(kind: string, path: string): StageArtifact | undefined {
 
 export const researchStage: StageDefinition<ResearchOptions> = {
 	name: "research",
-	version: 1,
+	setupRequirements: ["knowledge", "model", "python", "task", "web-search"],
+	version: 2,
 	description: "Grounded research for a task, ending in a validated research.md",
 	next: "solve",
 
@@ -43,7 +45,7 @@ export const researchStage: StageDefinition<ResearchOptions> = {
 		const known = new Set(["injectStartupContext"]);
 		const unknown = Object.keys(options).filter((key) => !known.has(key));
 		if (unknown.length > 0) throw new Error(`unknown research options: ${unknown.join(", ")}`);
-		const injectStartupContext = options.injectStartupContext ?? true;
+		const injectStartupContext = options.injectStartupContext ?? HARNESS_CONFIG.research.injectStartupContext;
 		if (typeof injectStartupContext !== "boolean") {
 			throw new Error("research.injectStartupContext must be a boolean");
 		}
@@ -61,6 +63,7 @@ export const researchStage: StageDefinition<ResearchOptions> = {
 		const result = await runResearchSession(context.input.taskId, context.input.model, {
 			injectStartupContext: context.options.injectStartupContext,
 			prompts: context.prompts,
+ guidance: context.input.guidance, feedback: context.feedback,
 			report: context.report,
 			signal: context.signal,
 		});

@@ -1,10 +1,71 @@
 # Training worker structure
 
-`worker.py` runs one harness-owned cross-validation trial. Its main parts are:
+`worker.py` remains the CLI launched by `service.ts`. It coordinates one
+harness-owned cross-validation trial through the internal `smartlab_trial`
+package:
 
-1. **Invocation validation:** Checks the request, paths, scope, and seeds.
-2. **Agent code loading:** Imports the pipeline and optional CV factories.
-3. **Fold preparation:** Selects pilot rows, builds and validates folds, and saves the fold manifest.
-4. **Measurement and output helpers:** Calculates metrics and writes predictions and JSON artifacts.
-5. **Trial execution:** Loads data, fits and scores each fold, emits progress, and handles stop requests.
-6. **Failure handling and CLI:** Records worker errors and starts execution from the invocation file.
+| Module | Responsibility |
+| --- | --- |
+| `seeds.py` | Versioned seed derivation, checked against `../seed-vectors.json` by Python and TypeScript tests. |
+| `invocation.py` | Validation and parsing into frozen `Invocation`, `PipelineSpec`, `CvSpec`, and `Scope` dataclasses. Owns defaults, including repeats and the legacy trial seed fallback. |
+| `agent_code.py` | Project path checks, imports, factory calling conventions, and estimator random states. |
+| `folds.py` | Pilot selection, concrete split materialization, coverage validation, and manifest hashing. |
+| `artifacts.py` | Events, durable fold results, atomic JSON/OOF writes, and summary artifacts. |
+| `metrics.py` | Prediction scores and authoritative measurements. |
+| `validation.py` | Bounded no-fit construction and parameter constraint validation. |
+| `search.py` | Optuna ask/tell, pruning, journal/checkpoint continuation, runtime guard and report. |
+| `champion.py` | Frozen champion rerun in a separate interpreter on the challenger manifest. |
+
+`worker.py` keeps `execute`, `_prepare_data`, `_run_fold`, `_summarise`, signal
+handling, failure handling, and the CLI. Its stop flag stays local to the worker;
+interruption still takes effect at fold boundaries. Compatibility imports retain
+`worker._derive_seed` and `worker._materialize_folds` for existing tests.
+
+The package name prevents collisions with agent helpers such as `metrics.py`
+and `folds.py` when the project root is exposed for solution imports. These path
+checks and import conventions are not a sandbox for agent code.
+
+## Action logging
+
+The existing `events.jsonl` and stdout event stream retain trial and fold events.
+Additional `action_started`, `action_completed`, and `action_failed` records
+identify worker phases through `stage`: `data`, `folds`, `agent_code`, `fit`,
+`metrics`, and `artifacts`. Repeated fold actions carry `repeat` and `fold`;
+terminal action events include duration, and failures include the exception type
+and message. Invocation validation and seed resolution have completion records
+once validated output paths are available. Invalid invocations continue through
+the CLI's existing `trial_failed` path.
+
+All events carry `experimentId`, and include `pipelineRunId` and
+`stageInvocationId` when supplied by the supervisor environment. These are nested
+worker actions; pipeline stage lifecycle remains owned by the shared executor.
+
+Both `metrics.json` and `trial-result.json` remain required summary artifacts and
+contain identical bytes. Version 1 manifest hashes, seed derivation and prediction formats are retained.
+Search trials are always ineligible; fixed-parameter confirmation can provide
+promotion evidence. Versioned trials also retain source identity.
+
+## Verification
+
+Run with the project's Devbox Python environment:
+
+```sh
+"${VENV_DIR:-$PWD/.venv}/bin/python" -m unittest discover -s agent/training/python
+bun test agent/training
+```
+
+Tests pin the pre-refactor manifest hashes for built-in promotion, pilot, and
+custom CV fixtures, and cover stop behavior, typed defaults, shared seeds, action
+success/failure, and agent helper imports through the unchanged CLI entry point.
+
+See [delivery and limitations](../../../docs/training-search-and-versioning.md)
+for versioning, recovery, runtime cap boundaries and acceptance coverage.
+
+`runner.py` owns the durable worker lock, process birth receipt, launch gate,
+exit receipt and cumulative runtime measurements. The supervisor supplies an
+append-only log descriptor; service loss does not close the worker's log.
+`smartlab_trial/recovery.py` validates checksummed checkpoints and loads the
+original concrete fold manifest. Single folds checkpoint their authoritative
+predictions atomically; search recovery retains completed configurations and
+consumes interrupted configurations as failed slots. See
+`docs/training-search-and-versioning.md` for the service lifecycle policy.

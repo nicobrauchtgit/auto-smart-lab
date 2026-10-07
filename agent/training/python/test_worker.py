@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import json
+import os
+import subprocess
+from dataclasses import FrozenInstanceError
 import sys
 import tempfile
 import unittest
@@ -10,6 +15,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import worker
+from smartlab_trial.invocation import parse_invocation
+from smartlab_trial.seeds import _derive_seed
 
 
 PIPELINE = '''
@@ -87,12 +94,12 @@ class Worker(unittest.TestCase):
         return json.loads((self.root / run / name).read_text(encoding="utf-8"))
 
     def test_seed_derivation_matches_the_persisted_typescript_plan(self):
-        trial = worker._derive_seed("trial", [3952469871, 0])
-        repeat = worker._derive_seed("repeat", [trial, 2])
-        fold = worker._derive_seed("fold", [repeat, 3])
-        estimator = worker._derive_seed("estimator", [fold, 0])
-        self.assertEqual((trial, repeat, fold, estimator),
-                         (734274299, 2780632740, 2509106794, 1483726448))
+        fixture = json.loads((Path(__file__).parents[1] / "seed-vectors.json").read_text())
+        trial = _derive_seed("trial", [fixture["experimentSeed"], fixture["trial"]])
+        repeat = _derive_seed("repeat", [trial, fixture["repeat"]])
+        fold = _derive_seed("fold", [repeat, fixture["fold"]])
+        estimator = _derive_seed("estimator", [fold, fixture["estimator"]])
+        self.assertEqual([trial, repeat, fold, estimator], fixture["expected"])
 
     def test_builtin_promotion_is_deterministic_and_complete(self):
         first = worker.execute(self.invocation("first"))
@@ -189,6 +196,69 @@ class Worker(unittest.TestCase):
         self.assertFalse(result["promotionEligible"])
         self.assertTrue((self.root / "stopped" / "fold-manifest.json").is_file())
         self.assertFalse((self.root / "stopped" / "fold-results.jsonl").exists())
+
+    def test_manifest_hashes_match_pre_refactor_fixtures(self):
+        cases = [
+            ("first", {}, "732c7ec2411a1861c16034ff05d8d8b7f973e9794524039d149aa73946574098"),
+            ("pilot", {"scope": {"kind": "pilot", "maxRows": 12, "maxFolds": 1}},
+             "95553c3ef60d2d5f567b24b5394541a308e4af2eeabdd076a4d3c81040c20cf8"),
+            ("custom", {"cv": {"kind": "factory", "module": "solutions/custom_cv.py",
+                               "factory": "make_cv", "repeats": 1, "options": {"anything": True}}},
+             "005c129bf8cacd64b5bcb6f4ad478a0980428b4b8cb77dd1defe38eb600d2dff"),
+        ]
+        for name, options, expected in cases:
+            with self.subTest(name=name), contextlib.redirect_stdout(io.StringIO()):
+                worker.execute(self.invocation(name, **options))
+                self.assertEqual(self.read_json(name, "fold-manifest.json")["sha256"], expected)
+                self.assertEqual((self.root / name / "metrics.json").read_bytes(),
+                                 (self.root / name / "trial-result.json").read_bytes())
+
+    def test_typed_defaults_and_explicit_trial_seed(self):
+        document = self.invocation()
+        del document["request"]["cv"]["repeats"]
+        parsed = parse_invocation(document)
+        self.assertEqual(parsed.cv.repeats, 1)
+        self.assertEqual(parsed.trial_seed, _derive_seed("trial", [1776, 0]))
+        self.assertIsNone(parsed.scope.max_rows)
+        with self.assertRaises(FrozenInstanceError):
+            parsed.cv.repeats = 4
+        document["seeds"]["trial"] = 0
+        self.assertEqual(parse_invocation(document).trial_seed, 0)
+        document["request"]["cv"]["repeats"] = 0
+        with self.assertRaisesRegex(worker.InvocationError, "repeats"):
+            parse_invocation(document)
+
+    def test_cli_preserves_agent_helper_imports_and_logs_actions(self):
+        for name in ("metrics", "folds", "seeds", "artifacts", "invocation", "agent_code"):
+            (self.root / f"{name}.py").write_text("AGENT_HELPER = True\n")
+        imports = "\n".join(f"import {name}\nassert {name}.AGENT_HELPER" for name in
+                            ("metrics", "folds", "seeds", "artifacts", "invocation", "agent_code"))
+        (self.root / "solutions/pipeline.py").write_text(imports + "\n" + PIPELINE)
+        invocation = self.root / "invocation.json"
+        invocation.write_text(json.dumps(self.invocation("cli", scope={"kind": "pilot", "maxFolds": 1})))
+        result = subprocess.run([sys.executable, str(Path(worker.__file__).resolve()),
+                                 "--invocation", str(invocation)], capture_output=True, text=True,
+                                env={**os.environ, "PIPELINE_RUN_ID": "pipeline-fixture",
+                                     "PIPELINE_STAGE_INVOCATION_ID": "invocation-fixture"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        events = [json.loads(line) for line in (self.root / "cli/events.jsonl").read_text().splitlines()]
+        self.assertTrue(all(event["experimentId"] == "cli" for event in events))
+        self.assertTrue(all(event["pipelineRunId"] == "pipeline-fixture" and
+                            event["stageInvocationId"] == "invocation-fixture" for event in events))
+        for stage in ("data", "folds", "agent_code", "fit", "metrics", "artifacts"):
+            actions = [event["type"] for event in events if event.get("stage") == stage]
+            self.assertEqual(actions, ["action_started", "action_completed"] * (2 if stage == "artifacts" else 1))
+        self.assertEqual(events, [json.loads(line) for line in result.stdout.splitlines()])
+
+    def test_failed_action_is_logged_without_promotion_artifacts(self):
+        (self.root / "solutions/pipeline.py").write_text("raise RuntimeError('fixture failure')\n")
+        with self.assertRaisesRegex(RuntimeError, "fixture failure"):
+            worker.execute(self.invocation("failure"))
+        events = [json.loads(line) for line in (self.root / "failure/events.jsonl").read_text().splitlines()]
+        self.assertEqual(events[-1]["type"], "action_failed")
+        self.assertEqual(events[-1]["stage"], "agent_code")
+        self.assertEqual(events[-1]["error"]["message"], "fixture failure")
+        self.assertFalse((self.root / "failure/metrics.json").exists())
 
 
 if __name__ == "__main__":

@@ -1,36 +1,38 @@
 import { createAgentSession, SessionManager } from "@earendil-works/pi-coding-agent";
 
+import { SmartContextSession } from "./context/session.js";
 import { initializeModel } from "./model_provider.ts";
 import { observeAgentSession } from "./observability.ts";
 import { loadPipelineConfig } from "./pipeline_config.ts";
+import { loadPromptSnapshot } from "./prompts/loader.js";
+import { createPipelineResourceLoader } from "./run/session_resources.js";
 
 const { config, cwd, agentDir, initialPrompt } = await loadPipelineConfig();
 const { modelId, modelRuntime, model } = await initializeModel({ config });
-const { session } = await createAgentSession({
-	cwd,
-	agentDir,
-	modelRuntime,
-	model,
-	sessionManager: SessionManager.inMemory(cwd),
+const prompts = loadPromptSnapshot();
+const logical = new SmartContextSession({
+	prompts,
+	create: async () => {
+		const resourceLoader = createPipelineResourceLoader({ cwd, agentDir });
+		await resourceLoader.reload();
+		const { session } = await createAgentSession({ cwd, agentDir, modelRuntime, model,
+			resourceLoader, sessionManager: SessionManager.inMemory(cwd) });
+		try {
+			const observer = await observeAgentSession({ session, model: modelId });
+			return { session, agentRunId: observer.agentRunId, record: observer.record,
+				async close() { try { await observer.close(); } finally { session.dispose(); } } };
+		} catch (error) { session.dispose(); throw error; }
+	},
 });
-const observability = await observeAgentSession({ session, model: modelId });
-
-let shuttingDown = false;
-async function shutdown(): Promise<void> {
-	if (shuttingDown) return;
-	shuttingDown = true;
-	if (session.isStreaming) await session.abort();
-	await observability.close();
-	session.dispose();
-}
-
-process.once("SIGINT", () => void shutdown());
-process.once("SIGTERM", () => void shutdown());
-
+const stop = () => { void logical.abort().catch(error => logical.recordError(error)); };
+process.once("SIGINT", stop);
+process.once("SIGTERM", stop);
 try {
-	await session.prompt(initialPrompt);
+	await logical.prompt(prompts.render("context.task", { task: initialPrompt }));
 } catch (error) {
-	observability.recordError(error);
+	logical.recordError(error);
 } finally {
-	await shutdown();
+	process.removeListener("SIGINT", stop);
+	process.removeListener("SIGTERM", stop);
+	await logical.close();
 }

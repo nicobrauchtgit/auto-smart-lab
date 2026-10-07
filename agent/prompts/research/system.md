@@ -49,18 +49,21 @@ script that produced it is not traceable or reproducible.
    attempt and none in a validation-feedback attempt. Existing sound sources
    may be reused. Prefer primary papers, official documentation, or other
    authoritative technical sources.
-3. Inspect the real local dataset. Determine its format and labels before
-   choosing analyses. Create small, reusable Python functions or scripts under
+3. Inspect the real local dataset, starting with labeled training inputs.
+   Determine its format and labels before choosing analyses. Create small, reusable Python functions or scripts under
    `analysis/` and save compact machine-readable results there. If a suitable
    script already exists, rerun it before trusting its artifact.
 4. Measure only what helps select features or detect evaluation risks. Useful
    questions may include class balance, missing or malformed inputs, length and
    character distributions, duplicates/leakage, class-conditional token or
    structural contrasts, and sampled edge cases. Adapt this list to the task.
-5. Synthesize a short, prioritized set of feature candidates and experiments.
+5. Perform the separate unlabeled test-input pass described in the supplied
+   research comparison guide. Verify which training patterns carry over and
+   investigate adaptable features when their surface forms differ.
+6. Synthesize a short, prioritized set of feature candidates and experiments.
    Explain why each may help, its likely failure mode, and how the solver should
    validate it.
-6. Create or update `research.md` where needed and reread it before stopping.
+7. Create or update `research.md` where needed and reread it before stopping.
    Do not make edits solely because another run started.
 
 Before stopping, perform a claim audit from the report back to the evidence:

@@ -1,3 +1,4 @@
+import { HARNESS_CONFIG } from "../harness/config.js";
 import { randomUUID } from "node:crypto";
 import type { PromptSnapshot, RenderedPrompt } from "../prompts/loader.js";
 import { boundedText, DEFAULT_LIMITS, type ChildIdentity, type ChildResult, type ChildSession,
@@ -38,6 +39,13 @@ export class SubagentManager {
 		}
 	}
 
+	/** Future spawns use the replacement parent; existing child provenance is immutable. */
+	bindParent(parentAgentRunId: string): void {
+		if (this.closed) throw new Error("Subagent manager is closed");
+		if (!parentAgentRunId.trim()) throw new Error("Parent agent run ID is required");
+		this.options = { ...this.options, parentAgentRunId };
+	}
+
 	private entry(id: string): Entry {
 		const entry = this.entries.get(id);
 		if (!entry) throw new Error(`Unknown child: ${id}`);
@@ -76,7 +84,9 @@ export class SubagentManager {
 
 	check(id: string): ChildView {
 		const entry = this.entry(id);
-		return { ...entry.view, queued: entry.queue.length };
+		return { ...entry.view,
+			...(entry.session?.agentRunId ? { agentRunId: entry.session.agentRunId, piSessionId: entry.session.piSessionId } : {}),
+			queued: entry.queue.length };
 	}
 
 	list(): ChildView[] { return [...this.entries.keys()].map(id => this.check(id)); }
@@ -110,6 +120,8 @@ export class SubagentManager {
 			entry.view.piSessionId = entry.session.piSessionId;
 			while (entry.queue.length && !entry.abort.signal.aborted) {
 				const output = await entry.session.prompt(entry.queue.shift()!);
+				entry.view.agentRunId = entry.session.agentRunId;
+				entry.view.piSessionId = entry.session.piSessionId;
 				const bounded = boundedText(output, this.limits.maxResultBytes);
 				entry.output = bounded.text;
 				entry.truncated = bounded.truncated;
@@ -138,8 +150,8 @@ export class SubagentManager {
 		return view.status === "idle" ? { ...view, output: entry.output, truncated: entry.truncated } : view;
 	}
 
-	async wait(id: string, timeoutMs = 30_000, signal?: AbortSignal): Promise<ChildResult> {
-		if (!Number.isInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > 60_000) throw new Error("Invalid wait timeout");
+	async wait(id: string, timeoutMs = HARNESS_CONFIG.subagents.waitTimeoutMs, signal?: AbortSignal): Promise<ChildResult> {
+		if (!Number.isInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > HARNESS_CONFIG.subagents.maxWaitTimeoutMs) throw new Error("Invalid wait timeout");
 		signal?.throwIfAborted();
 		const entry = this.entry(id);
 		if (entry.view.status !== "running" || timeoutMs === 0) return this.result(id);

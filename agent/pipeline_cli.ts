@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { readFileSync } from "node:fs";
 /**
  * Pipeline entry point.
  *
@@ -26,6 +27,7 @@ Selecting a task:
   spam1                      a canonical task ID
 
 Options:
+  --guidance <json-file>      typed { guidance, evidenceCatalog } run inputs
   --model <provider/model>   override the configured model
   --no-startup-context       do not inject the training-label profile
   --stage <name>             start at this stage instead of the configured entry
@@ -33,6 +35,7 @@ Options:
   --no-fetch                 do not download a missing unit
   --secure-tls               verify TLS when fetching a unit
   --echo-events              print every recorded trace event
+  --check-setup              verify setup (including live API access), then exit
   --dry-run                  resolve the task and print the plan only
   --list                     list locally available units and tasks`);
 	process.exit(1);
@@ -79,7 +82,11 @@ async function main(): Promise<void> {
 	const secureTls = takeFlag("--secure-tls");
 	const echoEvents = takeFlag("--echo-events");
 	const dryRun = takeFlag("--dry-run");
-	const model = takeOption("--model");
+	const checkSetupOnly = takeFlag("--check-setup");
+	const guidancePath = takeOption("--guidance");
+ const guidanceInputs = guidancePath ? JSON.parse(readFileSync(guidancePath, "utf8")) : {};
+ if (!guidanceInputs || typeof guidanceInputs !== "object" || Array.isArray(guidanceInputs) || Object.keys(guidanceInputs).some(k => !["guidance", "evidenceCatalog"].includes(k))) throw new Error("Unknown guidance file variables");
+ const model = takeOption("--model");
 	const entryStage = takeOption("--stage") as StageName | undefined;
 	const stopAfter = takeOption("--stop-after") as StageName | undefined;
 
@@ -151,6 +158,8 @@ async function main(): Promise<void> {
 
 	const result = await runPipeline({
 		taskId: resolvedTask.taskId,
+ guidance: guidanceInputs.guidance, evidenceCatalog: guidanceInputs.evidenceCatalog,
+		checkSetupOnly,
 		model,
 		entryStage,
 		stopAfter,
