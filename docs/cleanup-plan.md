@@ -215,9 +215,12 @@ Order: the cleanup (sections 0-2) first, then this.
 - [x] VM cleanup (2026-10-07): removed `~/.cache/pip` (4.5 GB, the lab
   image's pip download cache; free space 13 -> 17 GB). Archived the old clone's
   uncommitted work to `docs/archive/vm-old-clone/` (code) and the gitignored
-  `units/_vm-archive/`, `runs/vm-archive/`. The old clone itself is still on
-  the VM (3.4 GB); `~/env` (9.1 GB, lab-provided, 6 GB of it CUDA libraries the
-  VM cannot use; Jupyter runs from it) is left alone. No GPU: the only display
+  `units/_vm-archive/`, `runs/vm-archive/`. Then removed the old setup: the old
+  clone, `~/.bun`, the old Node for pi, `~/.npm`, the self-built curl, `~/.pi`,
+  and `~/.bash_profile` (old PATH entries and the lab password in plain text;
+  login falls back to the lab's `.profile`). Free space now 21 GB. Kept: `~/env` (9.1 GB, lab-provided, 6 GB of it CUDA libraries the
+  VM cannot use; Jupyter runs from it), `~/.ssh`, and `~/.local/bin/herdr`
+  (origin unknown, not from this project). No GPU: the only display
   device is QEMU's emulated VGA.
 - [ ] Official attempts (2026-10-07): every task shows 0 of 3 used except task
   4.1 (1 of 3, score 0.0). spam1 has two uncounted submissions from 2026-08-18,
