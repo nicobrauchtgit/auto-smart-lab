@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { iterationSeed, recommendFolds, sealConfirmationSet } from "./folds.js";
+import { createStratifiedFolds, recommendFolds, sealConfirmationSet } from "./folds.js";
 import type { TrainingLabelRow } from "../research/startup_context.js";
 
 function rows(count: number): TrainingLabelRow[] {
@@ -70,11 +70,20 @@ describe("sealConfirmationSet", () => {
 	});
 });
 
-describe("iterationSeed", () => {
-	test("rotates per iteration and is reproducible per run", () => {
-		const first = iterationSeed("run-a", 1);
-		expect(iterationSeed("run-a", 1)).toBe(first);
-		expect(iterationSeed("run-a", 2)).not.toBe(first);
-		expect(iterationSeed("run-b", 1)).not.toBe(first);
+describe("createStratifiedFolds", () => {
+	test("is deterministic and keeps both classes in every fold", () => {
+		const labels = [0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1];
+		const first = createStratifiedFolds(labels, 3, 42);
+		const second = createStratifiedFolds(labels, 3, 42);
+
+		expect(first).toEqual(second);
+		expect(first.flat().sort((a, b) => a - b)).toEqual(labels.map((_, index) => index));
+		for (const fold of first) {
+			expect(fold.map((row) => labels[row]).sort()).toEqual([0, 0, 1, 1]);
+		}
+	});
+
+	test("rejects a fold count larger than either class", () => {
+		expect(() => createStratifiedFolds([0, 0, 1], 2, 13)).toThrow("Each class");
 	});
 });

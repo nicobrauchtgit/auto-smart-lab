@@ -28,28 +28,31 @@ records the decisions and tracks the work. Tick items off as they land.
 
 ## Todo
 
-### 0. Prerequisites
-- [ ] Commit the uncommitted current work (orchestrator, evaluate, refit, submission, knowledge, `smartlab_trial/`).
-- [ ] Make Python runnable inside Devbox: add a libstdc++ provider to `devbox.json`; have `resolveCppRuntimeLibraryPath` (`agent/training/environment.ts`) check that the path actually contains `libstdc++.so.6` instead of trusting any existing `LD_LIBRARY_PATH`; have the health check in `agent/setup/python_environment.py` import numpy and sklearn.
-- [ ] Get `bun test` green (47 failures, almost all from the libstdc++ import error).
+### 0. Prerequisites (done 2026-10-07)
+- [x] Commit the uncommitted current work (`6496825`).
+- [x] Make Python runnable inside Devbox (`21a3e8e`): `stdenv.cc.cc.lib` and `zlib` in `devbox.json`, their store directories exported by the Devbox shell; `resolveCppRuntimeLibraryPath` checks that `libstdc++.so.6` and `libz.so.1` are actually reachable; the health check imports the declared compiled packages (numpy, scipy, sklearn, pandas).
+- [x] Tests green: `bun test` and all four `test:py` suites. (`test:py` chains the suites with `&&`, so the first failing suite had hidden the rest; it did not only collect `agent/solve/tests`.)
 
-### 1. Remove dead code (generations 0-2)
-- [ ] `npm run solve` and `agent/run/orchestrate.ts`, `solver_session.ts`, `eval_session.ts`, `submit_session.ts`, `scaffold.ts`, `memory_utils.ts`.
-- [ ] `agent/smartlab_agent.py`, `agent/smartlab/`.
-- [ ] `agent/tools/memory.ts`, its entry in `.pi/settings.json` and in `EXTENSION_PATHS` (`agent/run/session_runner.ts`), and the `agent/memory/memory.json` line in `.gitignore` (D8).
-- [ ] `agent/run/solve_session.ts` (+ test).
-- [ ] `agent/solve/{iteration,canary,champion,corpus,entrypoint}.py`, `agent/solve/results.ts` and their tests; `iterationSeed` in `agent/solve/folds.ts`.
-- [ ] `libs/smartlab-eval`: `metrics.py`, `results.py` (keep `corpus.py`).
-- [ ] Python scripts in `agent/setup/`: `fetch_lab.py`, `fetch_units.py`, `submit.py`, `smartlab_submit.py`, `load_challenge.py`, `inspect_lab_data.py`; the `environment/` folder.
-- [ ] Prompts: `solver.*`, `evaluation.*`, `solve.iteration`, `submission.system`, and the four unreferenced `context.*probe*` IDs.
-- [ ] Stale `devbox.json` scripts (`analyze-unit01-task01*`, placeholder `test`).
-- [ ] Repoint `test:py` at the live Python tests (it currently collects only `agent/solve/tests`).
+### 1. Remove dead code (generations 0-2) (done 2026-10-07)
+- [x] `npm run solve` and `agent/run/orchestrate.ts`, `solver_session.ts`, `eval_session.ts`, `submit_session.ts`, `scaffold.ts`, `memory_utils.ts`.
+- [x] `agent/smartlab_agent.py`, `agent/smartlab/`.
+- [x] `agent/tools/memory.ts`, its prompts in `tools.json`, its entries in `.pi/settings.json` and `EXTENSION_PATHS`, and the `.gitignore` line (D8).
+- [x] `agent/run/solve_session.ts` (+ test).
+- [x] `agent/solve/{iteration,canary,champion,corpus,entrypoint}.py`, `agent/solve/results.ts`, their tests, `iterationSeed`.
+- [x] `libs/smartlab-eval`: `metrics.py`, `results.py` (`corpus.py` kept). `threshold_sweep` is recoverable from `6496825` for item 4b.
+- [x] `agent/setup/`: `fetch_units.py`, `submit.py`, `smartlab_submit.py`, `load_challenge.py`; the `environment/` folder and its `.gitignore` lines.
+- [ ] Deferred: `agent/setup/inspect_lab_data.py` and its dependency `fetch_lab.py` stay until their service/endpoint detection moves into `fetch_unit.ts` (4b).
+- [x] Prompts: `solver.*`, `evaluation.*`, `solve.iteration`, `submission.system`.
+- [ ] Deferred: the `context.*probe*` prompts belong with the open `agent/subagents/` decision.
+- [x] Stale `devbox.json` scripts removed; `devbox run test` runs `bun test` and `bun run test:py`.
+- [x] `test:py` no longer runs the removed `agent/solve/tests`.
+- [x] READMEs updated: `agent/solve`, `agent/setup`, `agent/prompts`.
 
-### 2. Merge duplicates
-- [ ] Move `agent/solve/convergence.py` into `smartlab_trial/` (it is loaded by file path today) and drop the path loader.
+### 2. Merge duplicates (done 2026-10-07)
+- [x] `agent/solve/convergence.py` moved into `smartlab_trial/convergence.py` (no more loading by file path); its tests are `agent/training/python/test_convergence.py`.
 - [x] ~~Remove the unused generic `experiment_*` tools~~ Keep them (D10): they are the escape hatch for work that fits no harness kind. Wiring them into the agents belongs to item 6.
-- [ ] Remove `RUN_OUTPUTS` / `archivePreviousRun` from `agent/solve/workspace.ts` (they move generation-2 output files nobody writes any more).
-- [ ] Reduce `agent/pipeline/feature_audit.ts` to `createStratifiedFolds` (or move that into `agent/solve/folds.ts`).
+- [x] `RUN_OUTPUTS` / `archivePreviousRun` removed from `agent/solve/workspace.ts`.
+- [x] `createStratifiedFolds` moved into `agent/solve/folds.ts`; `agent/pipeline/feature_audit.ts` deleted.
 
 ### 3. ID leakage canary
 - [ ] Implement as described [below](#id-leakage-canary).
@@ -69,7 +72,7 @@ records the decisions and tracks the work. Tick items off as they land.
   paired rule. Solve can return a `training_selected_result` that is not the
   champion, and refit then rejects it ("Chosen champion differs from
   controller-supplied reviewed evidence"). Make selection read the champion tag.
-- [ ] **Threshold diagnostic.** `smartlab_eval.metrics.threshold_sweep` reported
+- [ ] **Threshold diagnostic.** `smartlab_eval.metrics.threshold_sweep` (removed in the cleanup; recover from `6496825`) reported
   balanced accuracy at the best threshold vs. the default. Add this to
   `agent/evaluation/diagnostics.py` as a report-only number (it matters for
   imbalanced tasks such as webspam, ~16% positive); the agent can then build
@@ -192,7 +195,10 @@ canary catches the case where the agent ignores the prompt.
 after the normal validation predictions, predict again on the same fitted
 estimator with the validation frame's IDs rewritten to the neutral test form
 (`smartlab_eval.corpus.NEUTRAL_SUFFIX`) and compare. Cost: one extra `predict`
-per fold. Search folds use the same path.
+per fold. Search folds use the same path. Compare the scores
+(`predict_proba` / `decision_function`) as well as the labels: where the text
+alone already separates the classes, a leaky pipeline can predict the same labels
+while only its scores move (lesson from the removed generation-2 canary).
 
 **On a match:** nothing. No event to the agent, no change to the trial.
 

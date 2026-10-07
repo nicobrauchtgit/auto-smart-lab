@@ -7,7 +7,7 @@
  * withheld measurement, not a hidden one -- the prompt says so plainly.
  */
 
-import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { basename, join, relative } from "node:path";
 
@@ -38,44 +38,6 @@ export interface SolveWorkspace {
 	classBalance: string;
 	researchState: string;
 	researchDocumentSha256?: string;
-	/** Where a previous run's outputs were moved, when this run displaced any. */
-	archivedPrevious?: string;
-}
-
-/**
- * What one run leaves in the workspace that the next must not inherit.
- *
- * The evaluator reads these files by name. A run whose agent writes nothing
- * would otherwise be graded on the previous run's results -- and, if those
- * happened to comply, promoted as champion on work it never did.
- */
-export const RUN_OUTPUTS = [
-	"metrics.json",
-	"oof_predictions.csv",
-	"confirmation_predictions.csv",
-	"curves.json",
-	"notes.md",
-	"iterations.jsonl",
-] as const;
-
-/**
- * Move a previous run's outputs aside so this run starts from an empty contract.
- *
- * Moved rather than deleted: the trace is the durable record, but the files a
- * run produced are worth one generation of retention, and a stale set that
- * silently grades as the current one is the failure being prevented here.
- */
-export function archivePreviousRun(root: string): string | undefined {
-	const files = RUN_OUTPUTS.filter((name) => existsSync(join(root, name)));
-	const snapshots = existsSync(join(root, "iterations"));
-	if (files.length === 0 && !snapshots) return undefined;
-
-	const previous = join(root, "previous");
-	rmSync(previous, { recursive: true, force: true });
-	mkdirSync(previous, { recursive: true });
-	for (const name of files) renameSync(join(root, name), join(previous, name));
-	if (snapshots) renameSync(join(root, "iterations"), join(previous, "iterations"));
-	return previous;
 }
 
 export interface PrepareOptions {
@@ -120,9 +82,7 @@ export function prepareSolveWorkspace(taskId: string, options: PrepareOptions = 
 	const dataOut = join(root, "data");
 	const researchDir = join(root, "research");
 	mkdirSync(root, { recursive: true });
-	// Before anything is recreated, so the sweep sees the previous run intact.
-	const archivedPrevious = archivePreviousRun(root);
-	for (const directory of [dataOut, researchDir, join(root, "iterations")]) {
+	for (const directory of [dataOut, researchDir]) {
 		mkdirSync(directory, { recursive: true });
 	}
 	const { solutionsRoot, entrypointPath } = prepareSolutionsWorkspace(projectRoot, taskId);
@@ -173,7 +133,6 @@ export function prepareSolveWorkspace(taskId: string, options: PrepareOptions = 
 		classBalance: `class 0 ${counts[0]} (${((counts[0] / total) * 100).toFixed(2)}%), class 1 ${counts[1]} (${((counts[1] / total) * 100).toFixed(2)}%)`,
 		researchState,
 		researchDocumentSha256: options.upstream?.find((artifact) => artifact.kind === "research_document")?.sha256,
-		...(archivedPrevious ? { archivedPrevious } : {}),
 	};
 }
 

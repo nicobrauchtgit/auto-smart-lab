@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from sklearn.exceptions import ConvergenceWarning
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -14,7 +14,7 @@ from sklearn.linear_model import LogisticRegression, SGDClassifier
 from sklearn.naive_bayes import MultinomialNB
 from sklearn.pipeline import Pipeline
 
-from solve.convergence import capture_convergence_warnings, inspect_fitted, summarise
+from smartlab_trial.convergence import capture_convergence_warnings, inspect_fitted, summarise_convergence
 
 TEXT = [f"free money offer {index}" if index % 2 else f"meeting notes {index}" for index in range(60)]
 LABELS = [index % 2 for index in range(60)]
@@ -84,15 +84,14 @@ class Warnings(unittest.TestCase):
                 TfidfVectorizer().fit_transform(TEXT), LABELS)
         self.assertEqual(raised, [])
 
-    def test_the_summary_carries_the_scope_it_was_measured_at(self):
+    def test_the_summary_reports_estimators_warnings_and_limit(self):
         with capture_convergence_warnings() as raised:
             model = Pipeline([("tfidf", TfidfVectorizer()),
                               ("clf", LogisticRegression(max_iter=500, random_state=0))]).fit(TEXT, LABELS)
-        summary = summarise(model, "canary_sample", len(TEXT), raised)
-        self.assertEqual(summary["scope"], "canary_sample")
-        self.assertEqual(summary["rows"], len(TEXT))
-        self.assertEqual(summary["convergence_warnings"], [])
+        summary = summarise_convergence(model, raised)
+        self.assertEqual(summary["warnings"], [])
         self.assertTrue(summary["estimators"])
+        self.assertFalse(summary["reachedLimit"])
 
 
 if __name__ == "__main__":

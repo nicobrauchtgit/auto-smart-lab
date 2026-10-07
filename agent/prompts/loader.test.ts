@@ -24,13 +24,13 @@ test("every registered template loads and renders with its declared inputs", () 
 test("rejects unknown IDs, missing inputs, extra inputs, and wrong input types", () => {
 	const snapshot = loadPromptSnapshot();
 	assert.throws(() => snapshot.render("unknown" as PromptId, {} as never), /Unknown prompt/);
-	assert.throws(() => snapshot.render("evaluation.start", {} as never), /missing or non-string/);
-	assert.throws(() => snapshot.render("evaluation.start", { taskId: "spam1", extra: "x" } as never), /unknown \[extra\]/);
-	assert.throws(() => snapshot.render("evaluation.start", { taskId: 1 } as never), /missing or non-string/);
+	assert.throws(() => snapshot.render("solve.system", {} as never), /missing or non-string/);
+	assert.throws(() => snapshot.render("solve.system", { taskId: "spam1", extra: "x" } as never), /unknown \[extra\]/);
+	assert.throws(() => snapshot.render("solve.system", { taskId: 1 } as never), /missing or non-string/);
 });
 
 test("substitutes data once without interpreting braces or replacement tokens", () => {
-	const rendered = loadPromptSnapshot().render("evaluation.start", { taskId: "{{taskId}} $&" });
+	const rendered = loadPromptSnapshot().render("solve.system", { taskId: "{{taskId}} $&" });
 	assert.match(rendered.text, /\{\{taskId\}\} \$&/);
 });
 
@@ -38,14 +38,14 @@ test("snapshots survive file edits and reject missing files or malformed declara
 	const root = mkdtempSync(join(tmpdir(), "prompt-snapshot-"));
 	try {
 		cpSync(new URL("./", import.meta.url), root, { recursive: true });
-		const path = join(root, "evaluation/start.md");
+		const path = join(root, "solve/system.md");
 		const original = readFileSync(path, "utf8");
 		const first = loadPromptSnapshot(root);
 		writeFileSync(path, `${original}\nChanged instructions.\n`);
 		const second = loadPromptSnapshot(root);
 		assert.notEqual(first.fingerprint, second.fingerprint);
-		assert.doesNotMatch(first.render("evaluation.start", { taskId: "spam1" }).text, /Changed instructions/);
-		assert.match(second.render("evaluation.start", { taskId: "spam1" }).text, /Changed instructions/);
+		assert.doesNotMatch(first.render("solve.system", { taskId: "spam1" }).text, /Changed instructions/);
+		assert.match(second.render("solve.system", { taskId: "spam1" }).text, /Changed instructions/);
 		writeFileSync(path, "{{undeclared}}\n");
 		assert.throws(() => loadPromptSnapshot(root), /Invalid template/);
 		rmSync(path);

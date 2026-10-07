@@ -64,7 +64,7 @@ describe("runPipeline", () => {
 			...stage("research", "solve", async () => ({ artifacts: [] })),
 			async run(context) {
 				snapshot = context.prompts;
-				const prompt = snapshot.render("evaluation.start", { taskId: context.input.taskId });
+				const prompt = snapshot.render("solve.system", { taskId: context.input.taskId });
 				context.report.event("prompt_reference_test", { prompt: prompt.reference });
 				return { artifacts: [] };
 			},
@@ -86,7 +86,7 @@ describe("runPipeline", () => {
 		expect(recorded.find(event => event.event_type === "pipeline_prompt_snapshot").payload.prompt_snapshot_sha256)
 			.toBe(snapshot!.fingerprint);
 		const reference = recorded.find(event => event.event_type === "prompt_reference_test");
-		expect(reference.payload.prompt).toEqual(snapshot!.render("evaluation.start", { taskId: "spam1" }).reference);
+		expect(reference.payload.prompt).toEqual(snapshot!.render("solve.system", { taskId: "spam1" }).reference);
 		expect(reference.pipeline_run_id).toBe(result.pipelineRunId);
 		expect(reference.stage_invocation_id).toBe(result.invocations[0].invocationId);
 	});

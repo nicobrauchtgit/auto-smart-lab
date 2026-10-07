@@ -34,7 +34,6 @@ const TOOLS_DIR = join(AGENT_DIR, "tools");
 
 const EXTENSION_PATHS = [
 	join(TOOLS_DIR, "smartlab.ts"),
-	join(TOOLS_DIR, "memory.ts"),
 	join(TOOLS_DIR, "web_search.ts"),
 	join(TOOLS_DIR, "challenge_context.ts"),
 ];

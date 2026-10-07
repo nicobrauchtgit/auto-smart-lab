@@ -63,16 +63,7 @@ export const PROMPTS = {
 	"research.initial-document": { file: "research/initial-document.md", variables: ["title", "taskId", "contextHash"] },
 	"solve.system": { file: "solve/system.md", variables: ["taskId"] },
 	"solve.start": { file: "solve/start.md", variables: ["taskId", "workspace", "datasetPaths", "labelsPath", "rowCount", "classBalance", "foldRecommendation", "researchState", "maxIterations"] , optionalVariables: ["guidance"] },
-	"solve.iteration": { file: "solve/iteration.md", variables: ["signal", "guidance"] },
 	"solve.observable-fits": { file: "solve/observable-fits.md", variables: [] },
-	// The `solver.*` prompts below drive the pre-executor orchestrate.ts path and
-	// are kept unchanged until it is retired.
-	"solver.system": { file: "solver/system.md", variables: [] },
-	"solver.start": { file: "solver/start.md", variables: ["taskId", "researchState"] },
-	"solver.retry": { file: "solver/retry.md", variables: ["taskId", "feedback", "researchState"] },
-	"evaluation.system": { file: "evaluation/system.md", variables: [] },
-	"evaluation.start": { file: "evaluation/start.md", variables: ["taskId"] },
-	"submission.system": { file: "submission/system.md", variables: [] },
 } as const;
 
 export type PromptId = keyof typeof PROMPTS;

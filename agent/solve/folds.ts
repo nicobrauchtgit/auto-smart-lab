@@ -11,7 +11,6 @@
 import { HARNESS_CONFIG } from "../harness/config.js";
 import { createHash } from "node:crypto";
 
-import { createStratifiedFolds } from "../pipeline/feature_audit.js";
 import type { TrainingLabelRow } from "../research/startup_context.js";
 
 export interface FoldRecommendation {
@@ -83,12 +82,34 @@ export function sealConfirmationSet(
 	};
 }
 
-/**
- * Fold seed for one iteration. Rotating it means a gain that exists only on one
- * partition does not survive into the next iteration, which is the cheapest
- * defence against grinding a fixed split across a long improvement loop.
- */
-export function iterationSeed(runId: string, iteration: number): number {
-	const digest = createHash("sha256").update(`${runId}:${iteration}`).digest();
-	return digest.readUInt32BE(0) % 100_000;
+function seededShuffle(values: number[], seed: number): void {
+	let state = seed >>> 0;
+	for (let index = values.length - 1; index > 0; index--) {
+		state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+		const target = state % (index + 1);
+		[values[index], values[target]] = [values[target], values[index]];
+	}
+}
+
+/** Deterministic stratified folds of row indices for binary labels. */
+export function createStratifiedFolds(labels: readonly number[], foldCount: number, seed: number): number[][] {
+	if (labels.length === 0) throw new Error("Stratified folds require at least one row");
+	if (labels.some((label) => label !== 0 && label !== 1)) {
+		throw new Error("Stratified folds currently support binary labels 0 and 1 only");
+	}
+	if (!Number.isInteger(foldCount) || foldCount < 2) {
+		throw new Error("foldCount must be an integer of at least 2");
+	}
+	const byClass: [number[], number[]] = [[], []];
+	labels.forEach((label, index) => byClass[label as 0 | 1].push(index));
+	if (byClass.some((indices) => indices.length < foldCount)) {
+		throw new Error("Each class must have at least foldCount rows");
+	}
+	const folds = Array.from({ length: foldCount }, () => [] as number[]);
+	for (const [label, indices] of byClass.entries()) {
+		seededShuffle(indices, seed + label * 9973);
+		indices.forEach((row, index) => folds[index % foldCount].push(row));
+	}
+	for (const fold of folds) fold.sort((a, b) => a - b);
+	return folds;
 }

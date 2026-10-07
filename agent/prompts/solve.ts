@@ -39,14 +39,3 @@ export function prepareSolvePrompts(prompts: PromptSnapshot, input: SolveStartIn
 		promptReferences: [system.reference, start.reference, fitPolicy.reference, ...(guidance ? [guidance.reference] : [])],
 	};
 }
-
-/**
- * The follow-up request. `signal` is rendered from recomputed measurements; the
- * guidance line states what to do next without suggesting what to try.
- */
-export function prepareIterationPrompt(
-	prompts: PromptSnapshot,
-	input: { signal: string; guidance: string },
-) {
-	return prompts.render("solve.iteration", input);
-}
