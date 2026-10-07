@@ -29,6 +29,28 @@ import tomllib
 from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parents[2]
+NATIVE_LIBRARIES = ROOT / "agent" / "runtime" / "python" / "native-libraries.json"
+# Top-level names some distributions ship that are not meant to be imported.
+NON_IMPORTABLE = {"tests", "test", "testing", "docs", "doc", "examples", "benchmarks"}
+_MISSING_LIBRARY = re.compile(r"(lib[\w.+-]+\.so[\w.]*): cannot open shared object file")
+# Imports each top-level module of the named distributions in one fresh
+# interpreter and reports every failure, not only the first.
+IMPORT_PROBE = """
+import importlib, importlib.metadata as m, json, re, sys
+normalize = lambda name: re.sub(r"[-_.]+", "-", name.lower())
+wanted, skip = set(sys.argv[1].split(",")), set(sys.argv[2].split(","))
+modules = sorted({module for module, dists in m.packages_distributions().items()
+                  if module.isidentifier() and not module.startswith("_") and module not in skip
+                  and any(normalize(d) in wanted for d in dists)})
+results = {}
+for module in modules:
+    try:
+        importlib.import_module(module)
+        results[module] = None
+    except BaseException as error:
+        results[module] = (type(error).__name__ + ": " + str(error)).splitlines()[0][:300]
+print(json.dumps(results))
+"""
 # Compiled packages the pipeline relies on: distribution name -> import name.
 # Only the ones pyproject.toml declares are import-checked.
 NATIVE_IMPORTS = {"numpy": "numpy", "scipy": "scipy", "scikit-learn": "sklearn", "pandas": "pandas"}
@@ -40,6 +62,55 @@ def requirement(value):
     if not re.fullmatch(pattern, value):
         raise argparse.ArgumentTypeError("Use a package name or version constraint, not a URL, path, or pip option")
     return value
+
+
+def native_libraries(path=NATIVE_LIBRARIES):
+    return json.loads(Path(path).read_text())["libraries"]
+
+
+def library_path(environ=os.environ, libraries=None):
+    """LD_LIBRARY_PATH providing every listed native library.
+
+    Mirrors `resolveCppRuntimeLibraryPath` in agent/training/environment.ts:
+    keep what the inherited path already provides, and add only each missing
+    library's own Devbox store directory, never the whole profile `lib/`.
+    """
+    libraries = native_libraries() if libraries is None else libraries
+    existing = [entry for entry in environ.get("LD_LIBRARY_PATH", "").split(os.pathsep) if entry]
+    added = []
+    for library in libraries:
+        name = library["file"]
+        if any((Path(directory) / name).exists() for directory in added + existing):
+            continue
+        packages = environ.get("DEVBOX_PACKAGES_DIR")
+        link = Path(packages) / "lib" / name if packages else None
+        if link is not None and link.exists():
+            added.append(str(link.resolve().parent))
+    return os.pathsep.join(added + existing)
+
+
+def changed_distributions(before, after):
+    """Distributions that are new or changed version between two snapshots."""
+    old = {normalize(p["name"]): p["version"] for p in before["packages"]}
+    return sorted(normalize(p["name"]) for p in after["packages"] if old.get(normalize(p["name"])) != p["version"])
+
+
+def describe_import_problems(packages, problems):
+    lines = [f"{', '.join(packages)} installed, but some modules do not import:"]
+    known = {library["file"]: library["devboxPackage"] for library in native_libraries()}
+    for module, error in sorted(problems.items()):
+        missing = _MISSING_LIBRARY.search(error)
+        if missing:
+            library = missing.group(1)
+            provider = (f"listed for Devbox package {known[library]}, which is not reachable"
+                        if library in known else "not provided by the Devbox environment")
+            lines.append(f"- {module}: missing system library {library} ({provider})")
+        else:
+            lines.append(f"- {module}: {error}")
+    lines.append("The packages stay installed. A Python package cannot provide a system library: a developer has "
+                 "to add it to devbox.json and agent/runtime/python/native-libraries.json. Consider an alternative "
+                 "package that does not need it.")
+    return "\n".join(lines)
 
 
 def normalize(name):
@@ -118,6 +189,22 @@ class Environment:
         lines = [line for line in completed.stderr.strip().splitlines() if line.strip()]
         return lines[-1] if lines else f"import failed with exit code {completed.returncode}"
 
+    def import_problems(self, distributions):
+        """Import the top-level modules of `distributions`; return {module: error}.
+
+        uv unpacks wheels without loading their compiled parts, so a missing
+        system library only shows when a module is imported.
+        """
+        if not distributions:
+            return {}
+        completed = subprocess.run([str(self.python), "-I", "-c", IMPORT_PROBE, ",".join(distributions),
+                                    ",".join(sorted(NON_IMPORTABLE))],
+                                   cwd=self.root, capture_output=True, text=True, check=False, timeout=300)
+        if completed.returncode != 0:
+            lines = [line for line in completed.stderr.strip().splitlines() if line.strip()]
+            return {"(import probe)": lines[-1] if lines else f"exit code {completed.returncode}"}
+        return {module: error for module, error in json.loads(completed.stdout).items() if error}
+
     def uv(self, *args, check=True):
         """Run uv against Devbox's virtualenv, never a uv-managed one."""
         executable = shutil.which("uv")
@@ -189,7 +276,8 @@ class Environment:
                 "project_sha256": self.file_hash(self.project), "lock_sha256": self.file_hash(self.lock),
                 "declared_dependencies": self.declared()}
 
-    def record_change(self, operation_id, action, packages, reason, outcome, before, after=None, error=None):
+    def record_change(self, operation_id, action, packages, reason, outcome, before, after=None, error=None,
+                      import_problems=None):
         """The audit trail uv does not keep: why, and on whose behalf."""
         event = {"schema_version": 1, "operation_id": operation_id,
                  "time": datetime.now(timezone.utc).isoformat(),
@@ -206,6 +294,8 @@ class Environment:
                                         for name in sorted(old.keys() | new.keys()) if old.get(name) != new.get(name)]
         if error:
             event["error"] = error
+        if import_problems:
+            event["import_problems"] = import_problems
         self.state.mkdir(parents=True, exist_ok=True)
         with (self.state / "changes.jsonl").open("a", encoding="utf8") as handle:
             handle.write(json.dumps(event) + "\n")
@@ -234,6 +324,7 @@ class Environment:
         with self.installation_lock():
             operation_id = str(uuid4())
             before = None
+            problem = None
             try:
                 before = self.snapshot()
                 # A durable request survives interruption during uv execution.
@@ -243,8 +334,15 @@ class Environment:
                 inventory = self.inspect(locked=True)
                 if not inventory["healthy"]:
                     raise RuntimeError(f"Environment check failed: {inventory['dependency_errors']}")
-                self.record_change(operation_id, action, packages, reason, "success", before, self.snapshot())
-                return inventory
+                after = self.snapshot()
+                problems = self.import_problems(changed_distributions(before, after)) if action != "setup" else {}
+                if problems:
+                    problem = describe_import_problems(packages, problems)
+                self.record_change(operation_id, action, packages, reason,
+                                   "installed_import_failure" if problems else "success", before, after,
+                                   problem, problems)
+                if not problems:
+                    return inventory
             except Exception as error:
                 # Installation can fail after files or packages changed. Capture
                 # the actual state instead of claiming the request was atomic.
@@ -255,6 +353,8 @@ class Environment:
                     after = None
                 self.record_change(operation_id, action, packages, reason, "failure", before, after, message)
                 raise RuntimeError(message) from error
+            # Installed, but not usable: outside the try so it is not re-recorded as an install failure.
+            raise RuntimeError(problem)
 
     def ensure(self):
         """Check startup without changing packages underneath an ongoing run."""
@@ -276,6 +376,7 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("setup", help="resolve declared dependencies and sync the environment")
     commands.add_parser("ensure", help="check readiness without changing the environment")
+    commands.add_parser("library-path", help="print an LD_LIBRARY_PATH providing the native libraries")
     inspect = commands.add_parser("inspect", help="report the live environment")
     inspect.add_argument("--json", action="store_true")
     add = commands.add_parser("add", help="add a package through uv")
@@ -285,6 +386,9 @@ def main():
     update.add_argument("packages", nargs="+", type=requirement)
     update.add_argument("--reason", required=True)
     args = parser.parse_args()
+    if args.command == "library-path":
+        print(library_path())
+        return 0
     environment = Environment()
     try:
         if args.command == "setup":

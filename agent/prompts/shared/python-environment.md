@@ -44,7 +44,11 @@ within the constraints already declared in `pyproject.toml`:
 ```
 
 The manager lets uv resolve compatibility. Report unsatisfied constraints rather
-than bypassing the resolver. Installation failures can leave partial changes;
+than bypassing the resolver. After installing, the manager imports the new or
+changed packages. If it reports a missing system library, the package is
+installed but unusable in this environment: a Python package cannot supply that
+library. Prefer an alternative package that does not need it, or report the
+blocker. Installation failures can leave partial changes;
 inspect the recorded outcome before retrying. The environment is shared, so
 coordinate changes with other active runs. Do not uninstall packages, create
 another environment, or run a full sync as routine session startup.

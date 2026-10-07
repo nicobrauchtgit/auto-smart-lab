@@ -31,6 +31,7 @@ records the decisions and tracks the work. Tick items off as they land.
 ### 0. Prerequisites (done 2026-10-07)
 - [x] Commit the uncommitted current work (`6496825`).
 - [x] Make Python runnable inside Devbox (`21a3e8e`): `stdenv.cc.cc.lib` and `zlib` in `devbox.json`, their store directories exported by the Devbox shell; `resolveCppRuntimeLibraryPath` checks that `libstdc++.so.6` and `libz.so.1` are actually reachable; the health check imports the declared compiled packages (numpy, scipy, sklearn, pandas).
+- [x] Native libraries listed once in `agent/runtime/python/native-libraries.json`, read by the Devbox hook (`python_environment.py library-path`) and the training environment. `add`/`update` import every new or changed distribution and report a missing system library (`installed_import_failure` in `changes.jsonl`, non-zero exit, package stays installed). Background: the Devbox Python is Nix-built, so the host's nix-ld libraries do not apply to it.
 - [x] Tests green: `bun test` and all four `test:py` suites. (`test:py` chains the suites with `&&`, so the first failing suite had hidden the rest; it did not only collect `agent/solve/tests`.)
 
 ### 1. Remove dead code (generations 0-2) (done 2026-10-07)
@@ -101,6 +102,23 @@ records the decisions and tracks the work. Tick items off as they land.
   inputs are part of the workspace from the start, not "on request". Hidden:
   the full labels file, extracted full training files, the held-back IDs and
   other tasks. The old loader itself is not needed.
+
+- [ ] **Pipeline-quality signals for the solve agent.** Today a finished trial
+  reaches the agent as one `balancedAccuracy` number in the leaderboard
+  (`TrainingService.leaderboard`). Reuse measurements from the removed
+  `smartlab_eval.metrics` (recover from `6496825`) on the harness's own OOF
+  predictions and show them in the trial result and leaderboard:
+  - per-fold spread and the paired interval against the champion
+    (`paired_bootstrap`): is the lead real (shares the rule with D7);
+  - per-class recall and confusion: which class it fails on;
+  - ROC AUC / average precision: ranking quality independent of the threshold;
+  - `threshold_sweep`: balanced accuracy at the best threshold vs. the default
+    (report only, per D4);
+  - `calibration`: whether scores mean what they say;
+  - corrected vs. introduced errors against the champion (already computed in
+    `smartlab_trial/champion.py`, not shown to the agent);
+  - convergence (`reachedLimit`, already collected) and fit time.
+  Binary-only today; the modular harness (item 6) selects which apply per kind.
 
 ### 4c. Tracing: dashboard vs. Langfuse
 - [ ] Langfuse is not wired into the pipeline yet: the only Langfuse code is a

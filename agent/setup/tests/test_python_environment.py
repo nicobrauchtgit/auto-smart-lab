@@ -47,6 +47,9 @@ class EnvironmentTests(unittest.TestCase):
         imports = patch.object(self.env, "import_check", return_value=None)
         self.imports = imports.start()
         self.addCleanup(imports.stop)
+        new_imports = patch.object(self.env, "import_problems", return_value={})
+        self.new_imports = new_imports.start()
+        self.addCleanup(new_imports.stop)
 
     def records(self):
         return [json.loads(line) for line in (self.env.state / "changes.jsonl").read_text().splitlines()]
@@ -137,6 +140,34 @@ class EnvironmentTests(unittest.TestCase):
         self.assertFalse(inventory["healthy"])
         self.assertFalse(inventory["imports_ok"])
         self.assertIn("libstdc++.so.6", inventory["dependency_errors"])
+
+    def test_added_package_that_cannot_load_a_system_library_is_reported_not_hidden(self):
+        def uv(*args, **kwargs):
+            if args[0] == "add":
+                self.live["packages"] = [*self.live["packages"], {"name": "opencv_python", "version": "4.11"}]
+            return subprocess.CompletedProcess([], 0, "", "")
+
+        self.new_imports.return_value = {
+            "cv2": "ImportError: libGL.so.1: cannot open shared object file: No such file or directory"}
+        with patch.object(self.env, "uv", side_effect=uv), \
+                self.assertRaisesRegex(RuntimeError, "cv2: missing system library libGL.so.1") as raised:
+            self.env.add(["opencv-python"], "Image features")
+        self.assertIn("not provided by the Devbox environment", str(raised.exception))
+        self.new_imports.assert_called_once_with(["opencv-python"])
+        start, end = self.records()
+        self.assertEqual(end["outcome"], "installed_import_failure")
+        self.assertEqual(end["import_problems"], self.new_imports.return_value)
+        self.assertEqual(end["package_changes"], [{"name": "opencv-python", "before": None, "after": "4.11"}])
+
+    def test_a_listed_but_unreachable_library_names_its_devbox_package(self):
+        message = manager.describe_import_problems(["numpy"], {
+            "numpy": "ImportError: libstdc++.so.6: cannot open shared object file: No such file or directory"})
+        self.assertIn("listed for Devbox package stdenv.cc.cc.lib", message)
+
+    def test_setup_sync_does_not_run_the_import_probe(self):
+        with patch.object(self.env, "uv", return_value=subprocess.CompletedProcess([], 0, "", "")):
+            self.env.sync()
+        self.new_imports.assert_not_called()
 
     def test_ensure_never_repairs_a_running_environment(self):
         with patch.object(self.env, "inspect", return_value={"healthy": False, "dependency_errors": "drift"}), \
@@ -255,6 +286,39 @@ class ResolverIntegrationTests(unittest.TestCase):
                                                             "include-system-site-packages\t=\ttrue"))
                 with self.assertRaisesRegex(RuntimeError, "system site-packages"):
                     env.check_environment()
+
+
+class NativeLibraryTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        self.store = root / "store" / "zlib" / "lib"
+        self.profile = root / "profile"
+        self.store.mkdir(parents=True)
+        (self.profile / "lib").mkdir(parents=True)
+        (self.store / "libz.so.1").touch()
+        (self.profile / "lib" / "libz.so.1").symlink_to(self.store / "libz.so.1")
+        self.libraries = [{"file": "libz.so.1", "devboxPackage": "zlib"}]
+
+    def test_adds_only_the_library_store_directory(self):
+        path = manager.library_path({"DEVBOX_PACKAGES_DIR": str(self.profile)}, self.libraries)
+        self.assertEqual(path, str(self.store.resolve()))
+
+    def test_keeps_an_inherited_path_that_already_provides_it(self):
+        path = manager.library_path({"LD_LIBRARY_PATH": str(self.store), "DEVBOX_PACKAGES_DIR": str(self.profile)},
+                                    self.libraries)
+        self.assertEqual(path, str(self.store))
+
+    def test_the_shared_list_is_the_one_the_training_environment_reads(self):
+        files = [library["file"] for library in manager.native_libraries()]
+        self.assertIn("libstdc++.so.6", files)
+        self.assertIn("libz.so.1", files)
+
+    def test_import_probe_imports_the_modules_of_named_distributions(self):
+        completed = subprocess.run([sys.executable, "-I", "-c", manager.IMPORT_PROBE, "numpy,not-installed", "tests"],
+                                   capture_output=True, text=True, check=True)
+        self.assertEqual(json.loads(completed.stdout), {"numpy": None})
 
 
 if __name__ == "__main__":

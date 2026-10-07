@@ -62,10 +62,29 @@ reading a cached file, and reports two distinct drifts:
 | `lock_current` | `uv.lock` agrees with `pyproject.toml` | manager `setup` |
 | `environment_matches_lock` | installed packages match `uv.lock` | manager `setup` |
 
-`healthy` requires both. A package installed with raw `pip` sets
+| `imports_ok` | the declared compiled packages (numpy, scipy, sklearn, pandas) import | a system library is missing; see below |
+
+`healthy` requires all three. A package installed with raw `pip` sets
 `environment_matches_lock` to false and is removed by the next explicit sync.
 uv evaluates version constraints, extras, and platform markers; the manager does
 not maintain a separate list of required packages.
+
+## Native libraries
+
+uv unpacks wheels without loading their compiled parts, so a missing system
+library only shows when a module is imported. The Devbox interpreter is built
+by Nix and does not search the usual system locations (nix-ld does not apply to
+it), so the libraries binary wheels need are listed in
+`native-libraries.json` with the Devbox package that provides each. The Devbox
+shell hook (`python_environment.py library-path`) and the harness training
+environment (`agent/training/environment.ts`) both add exactly those store
+directories to `LD_LIBRARY_PATH`.
+
+`add` and `update` import the top-level modules of every new or changed
+distribution. A failure is recorded as `installed_import_failure` in
+`changes.jsonl`, with the per-module errors, and the command exits non-zero;
+the package stays installed. To fix a missing library, `devbox add` its package
+and add an entry to `native-libraries.json`.
 
 ## Shared records
 

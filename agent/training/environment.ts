@@ -4,6 +4,8 @@ import { spawnSync } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
 import { delimiter, dirname, isAbsolute, join } from "node:path";
 
+import nativeLibraries from "../runtime/python/native-libraries.json";
+
 const RUNTIME_KEYS = [
 	"PATH",
 	"VENV_DIR",
@@ -33,8 +35,10 @@ export interface TrainingEnvironmentIdentity {
 }
 
 /**
- * Locate the native libraries binary Python wheels expect on Nix hosts
- * (`libstdc++` and `libz`), and return an LD_LIBRARY_PATH that provides them.
+ * Locate the native libraries binary Python wheels expect on Nix hosts, listed
+ * in `agent/runtime/python/native-libraries.json`, and return an
+ * LD_LIBRARY_PATH that provides them. `library_path` in
+ * `agent/setup/python_environment.py` does the same for the Devbox shell.
  */
 export function resolveCppRuntimeLibraryPath(
 	source: Readonly<Record<string, string | undefined>> = process.env,
@@ -54,10 +58,10 @@ export function resolveCppRuntimeLibraryPath(
 }
 
 const CPP_RUNTIME = "libstdc++.so.6";
-const RUNTIME_LIBRARIES = [CPP_RUNTIME, "libz.so.1"] as const;
+const RUNTIME_LIBRARIES: readonly string[] = nativeLibraries.libraries.map((library) => library.file);
 
 /**
- * The store directory of a library Devbox installs (`stdenv.cc.cc.lib`, `zlib`).
+ * The store directory of a library Devbox installs.
  * Only that directory is returned, not the whole profile `lib/`, so other Nix
  * binaries keep resolving their own libraries.
  */
