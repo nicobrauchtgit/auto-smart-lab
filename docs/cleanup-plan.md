@@ -139,10 +139,15 @@ tools, **L** later.
   `harness_solve_session.test.ts` checks solve's path; `run_pipeline.test.ts`
   proves a missing prerequisite from solve's actual requirement list blocks
   the chain before execution.
-- [ ] **Q6 Ledger vs. lab attempt counting.** Check that `agent/submission/`
-  counts attempts the way the lab does: FAILURE rows do not count even when they
-  show a score (spam1's two rows from 2026-08-18), SUCCESS rows do (task 4.1's
-  attempt from 2026-08-13). Add parser fixtures from those pages.
+- [x] **Q6 Ledger vs. lab attempt counting.** Done: read-only official page
+  checks confirm production parsing/accounting already follows the lab's counter,
+  not row count or presence of a score. Added sanitized seven-column fixtures:
+  spam1's two 0.9645 FAILURE rows use 0/3; task 4.1 has one 0.0 SUCCESS and
+  two unscored FAILURE rows, using 1/3. Corrected the mock server, which had
+  counted failures as consumed attempts. Tests: `submission/transport.test.ts`
+  covers both pages; `submission.test.ts` proves a scored failure resolves an
+  unknown reservation without consuming a try across restarts, while external
+  successes still exhaust the task-global budget. No production change needed.
 - [ ] **Q7 Tests that need downloaded course data.** 4 TypeScript tests read
   the real spam1 task from `units/` ("actual context pairs the test archive",
   three "solve stage input contract" tests). Use fixtures, or skip with a clear

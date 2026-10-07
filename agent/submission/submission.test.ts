@@ -15,7 +15,7 @@ function fixture(variant="a") {
  const artifact=JSON.parse(execFileSync(PYTHON,[join(import.meta.dir,"fixture.py"),root,PROJECT_ROOT,variant],{env:trainingEnvironment(),encoding:"utf8"}));
  return {root,artifact};
 }
-function page(attempts:OfficialAttempt[], upload=true) {return `${attempts.length} of 3 attempts used<table><tr><th>#</th><th>Date</th><th>Comment</th><th>Result</th><th>Info</th></tr>${attempts.map(a=>`<tr class="attempt"><td>${a.id}</td><td>today</td><td>${a.comment}</td><td>${a.score??"---"}</td><td>${a.state==="rejected"?"FAILURE":""}</td></tr>`).join("")}</table>${upload?'<form enctype="multipart/form-data" action="/task/upload/"><input value="csrf-fixture" name="csrfmiddlewaretoken"></form>':""}`;}
+function page(attempts:OfficialAttempt[], upload=true) {return `${attempts.filter(a=>a.state!=="rejected").length} of 3 attempts used<table><tr><th>#</th><th>Date</th><th>Comment</th><th>Result</th><th>Info</th></tr>${attempts.map(a=>`<tr class="attempt"><td>${a.id}</td><td>today</td><td>${a.comment}</td><td>${a.score??"---"}</td><td>${a.state==="rejected"?"FAILURE":""}</td></tr>`).join("")}</table>${upload?'<form enctype="multipart/form-data" action="/task/upload/"><input value="csrf-fixture" name="csrfmiddlewaretoken"></form>':""}`;}
 function server(mode:"score"|"unknown"|"pending"|"reject"|"timeout"|"crash"="score", auth=false) {
  const state={attempts:[] as OfficialAttempt[],posts:0,loginPosts:0,getFailure:false,score:0,childPid:0};
  const running=Bun.serve({hostname:"127.0.0.1",port:0,async fetch(req) {
@@ -77,11 +77,12 @@ test("new run status includes task-global unknown reservations without original 
  expect(await readSubmissionAccounting(next)).toMatchObject({officialStatus:{triesUsed:1,triesRemaining:2},reservedUnknown:0,effectiveTriesUsed:1,unresolved:false});
  expect(s.state.posts).toBe(1);
 },30000);
-test("official failures consume tries, external attempts and task-global three-try cap survive new runs",async()=>{
+test("official failures leave budget available; external successes enforce the task-global cap across runs",async()=>{
  const f=fixture(),s=server("reject"),o=options(f,s);s.state.attempts.push({id:"1",comment:"external",state:"scored",score:0.4});
- expect(await submitRefit(o)).toMatchObject({state:"rejected",triesUsed:2,triesRemaining:1});
+ expect(await submitRefit(o)).toMatchObject({state:"rejected",triesUsed:1,triesRemaining:2});
  const f2=fixture("b");const o2={...options(f2,s,"b"),accountingRoot:o.accountingRoot,policy:{...o.policy,pipelineRunId:"other-run",controllerInvocationId:"b"}};
- expect(await submitRefit(o2)).toMatchObject({state:"rejected",triesUsed:3,triesRemaining:0});
+ expect(await submitRefit(o2)).toMatchObject({state:"rejected",triesUsed:1,triesRemaining:2});
+ s.state.attempts.push({id:"4",comment:"external-b",state:"scored",score:0.5},{id:"5",comment:"external-c",state:"scored",score:0});
  await expect(submitRefit({...o2,policy:{...o2.policy,controllerInvocationId:"c"}})).rejects.toThrow("budget");expect(s.state.posts).toBe(2);
 },30000);
 test("pending or ambiguous attempts block uploads until official reconciliation",async()=>{
@@ -126,10 +127,6 @@ test("existing official pending attempts block new upload before artifact valida
  const f=fixture(),s=server(),o=options(f,s);s.state.attempts.push({id:"1",comment:"external",state:"pending",score:null});
  await expect(submitRefit(o)).rejects.toThrow("reconciliation");expect(s.state.posts).toBe(0);
 },30000);
-test("cached production table layout permits failure rows excluded from official consumed count",()=>{
- const html=page([{id:"1",comment:"format feedback",state:"rejected",score:0.9645}]).replace("1 of 3", "0 of 3").replace("<th>Date</th>","<th>Submission Date</th>").replace("<th>Info</th>","<th>Info</th><th></th><th></th>").replace("FAILURE</td>","FAILURE</td><td></td><td></td>");
- const status=parseTaskPage("https://example.test/task/",html);expect(status.triesUsed).toBe(0);expect(status.attempts[0]).toMatchObject({state:"rejected",score:null});
-});
 test("stale supporting evidence and dirty frozen source reject before any upload",async()=>{
  const f=fixture(),s=server(),o=options(f,s);const evidence=join(f.root,"evidence.json"),original=readFileSync(evidence);
  writeFileSync(evidence,"tampered evidence");await expect(submitRefit(o)).rejects.toThrow("validation");writeFileSync(evidence,original);
@@ -161,4 +158,19 @@ test("missing durable intent returns null and cannot upload during recovery",asy
 },30000);
 test("recovery rejects a mismatched task ID without any new upload",async()=>{
  const f=fixture(),s=server(),o=options(f,s);await submitRefit(o);await expect(reconcileSubmission({...o,taskId:"other-task"})).rejects.toThrow("task identity");expect(s.state.posts).toBe(1);
+},30000);
+
+
+test("a scored FAILURE resolves an unknown reservation without consuming a try, including later runs", async () => {
+ const f=fixture(),s=server("unknown"),o=options(f,s);
+ expect(await submitRefit(o)).toMatchObject({state:"unknown",reservedUnknown:1,effectiveTriesUsed:1,triesUsed:0});
+ const scope=join(o.accountingRoot,readdirSync(o.accountingRoot)[0]);
+ const ledger=JSON.parse(readFileSync(join(scope,"ledger.json"),"utf8"));
+ s.state.attempts.push({id:"1",comment:ledger.intents[0].token,state:"rejected",score:0.9645});
+ const next={...o,policy:{...o.policy,pipelineRunId:"new-run",controllerInvocationId:"new-action"}};
+ for (let restart=0;restart<2;restart++) {
+  expect(await readSubmissionAccounting(next)).toMatchObject({officialStatus:{triesUsed:0,triesRemaining:3},reservedUnknown:0,effectiveTriesUsed:0,unresolved:false});
+ }
+ expect(await reconcileSubmission(o)).toMatchObject({state:"rejected",officialScore:null,triesUsed:0,triesRemaining:3,reservedUnknown:0,newAttempt:false});
+ expect(s.state.posts).toBe(1);
 },30000);
