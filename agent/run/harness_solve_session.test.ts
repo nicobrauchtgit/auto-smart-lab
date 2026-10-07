@@ -1,11 +1,10 @@
 import { guidanceHash } from "../pipeline/guidance.js";
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { StageReporter, SuppliedInput } from "../pipeline/types.js";
-import { resolveCppRuntimeLibraryPath } from "../training/environment.js";
 import type { PythonEnvironment } from "./python_environment.js";
 import {
 	runHarnessSolveSession,
@@ -59,16 +58,6 @@ function reporter() {
 }
 
 describe("agent-driven harness solve session", () => {
-	test("preserves an explicitly selected runtime path without inspecting credentials", () => {
-		const runtime = mkdtempSync(join(tmpdir(), "runtime-lib-"));
-		for (const library of ["libstdc++.so.6", "libz.so.1"]) writeFileSync(join(runtime, library), "");
-		try {
-			expect(resolveCppRuntimeLibraryPath({ LD_LIBRARY_PATH: runtime, LAB_PASS: "secret" })).toBe(runtime);
-		} finally {
-			rmSync(runtime, { recursive: true, force: true });
-		}
-	});
-
 	test("exposes only constrained training controls and fails without promotion evidence", async () => {
 		const workspace = fixtureWorkspace();
 		const observed = reporter();

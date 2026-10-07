@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import type { SetupCheck } from "../pipeline/setup.js";
 import { PROJECT_ROOT, resolveTask } from "../pipeline/resolve_task.js";
-import { resolveCppRuntimeLibraryPath, sanitizeTrainingEnvironment } from "../training/environment.js";
+import { sanitizeTrainingEnvironment } from "../training/environment.js";
 import { readPythonEnvironment } from "../run/python_environment.js";
 import { prepareRefit } from "../refit/service.js";
 import { hashFile } from "../refit/service.js";
@@ -27,7 +27,7 @@ export function submissionSetupChecks(options:SubmissionSetupOptions):SetupCheck
    accessSync(join(root,"agent/submission/bundle.py"),constants.R_OK);
    accessSync(join(resolveTask({taskId:options.taskId}).taskDir,"prompt.md"),constants.R_OK);
    const python=readPythonEnvironment().executable;
-   const env=sanitizeTrainingEnvironment(process.env);const runtime=resolveCppRuntimeLibraryPath(env);if(runtime)env.LD_LIBRARY_PATH=runtime;
+   const env=sanitizeTrainingEnvironment(process.env);
    const probe=spawnSync(python,["-I","-c","import csv,zipfile,importlib.metadata,fcntl,smartlab_eval,numpy,pandas,sklearn"],{timeout:5000,stdio:"ignore",env});
    const git=spawnSync("git",["--version"],{timeout:5000,stdio:"ignore"});
    if(probe.error||probe.status!==0||git.error||git.status!==0)throw new Error("Submission runtime unavailable");

@@ -12,7 +12,7 @@ export type ExperimentStatus = "running" | "exited" | "stopped" | "failed";
 
 /** What the caller asks for. Persisted before the process is spawned. */
 export interface ExperimentSpec {
-	/** Executable and arguments. The Devbox Python, not a shell string. */
+	/** Executable and arguments. The project Python, not a shell string. */
 	argv: string[];
 	/** Working directory the process is spawned in. */
 	cwd: string;

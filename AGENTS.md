@@ -58,8 +58,12 @@ to discover missing setup. `--check-setup` runs the checks without starting agen
 
 ## Pipeline Python dependencies
 
-Use this project's Devbox Python environment, exposed as `VENV_DIR` and currently
-stored in `.venv`. Do not create a separate pipeline environment. Dependencies are
+Use this project's Python environment, exposed as `VENV_DIR` and stored in
+`.venv`. Run commands through `./dev`, which keeps the pinned toolchain from
+`mise.toml` (bun, uv, ripgrep, fd), uv's managed Python and all caches under
+`.tools/`; never install tools into the user's home, shell configuration or Nix
+profile. `./dev setup` creates the environment. Do not create a separate
+pipeline environment. Dependencies are
 declared in `pyproject.toml` and locked in `uv.lock`; uv keeps both in step with
 the installed environment, and `uv sync` removes anything not in the lock. Never
 install with raw `pip`. Manage additions through

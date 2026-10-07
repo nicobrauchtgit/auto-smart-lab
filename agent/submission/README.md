@@ -129,5 +129,5 @@ submission. The stage declares `task`, `python`, `submission` setup requirements
 reports typed policy/refit inputs and submission events under its shared reporter,
 and returns artifact validation for executor-owned lifecycle.
 
-Mock suite: `bun test agent/submission`. Use the existing Devbox environment and
-its C++ runtime path on Nix hosts; no dependency installation or remote calls.
+Mock suite: `./dev bun test agent/submission`. Uses the existing project
+environment; no dependency installation or remote calls.

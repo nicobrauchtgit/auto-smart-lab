@@ -47,11 +47,11 @@ promotion evidence. Versioned trials also retain source identity.
 
 ## Verification
 
-Run with the project's Devbox Python environment:
+Run through the project toolchain:
 
 ```sh
-"${VENV_DIR:-$PWD/.venv}/bin/python" -m unittest discover -s agent/training/python
-bun test agent/training
+./dev python -m unittest discover -s agent/training/python
+./dev bun test agent/training
 ```
 
 Tests pin the pre-refactor manifest hashes for built-in promotion, pilot, and

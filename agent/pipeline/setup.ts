@@ -90,7 +90,7 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
   add("knowledge-store", "local", "Make the project knowledge/ directory (or its existing parent) readable/writable. Restore a corrupt index; inspect interrupted writers before removing .write-lock. Do not silently reset notes.", () => {
    new KnowledgeStore(options.knowledgeRoot ?? join(PROJECT_ROOT, "knowledge")).preflight();
   });
-  add("knowledge-evidence-runtime", "local", "Sync the existing Devbox Python environment and native library paths; knowledge evidence checks require numpy, sklearn and smartlab_eval without fitting.", () => {
+  add("knowledge-evidence-runtime", "local", "Run ./dev setup to sync the project Python environment; knowledge evidence checks require numpy, sklearn and smartlab_eval without fitting.", () => {
    const result = spawnSync(readPythonEnvironment().executable, ["-I", "-c", "import numpy, sklearn, smartlab_eval"], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });
    if (result.error || result.status !== 0) throw new Error("Knowledge evidence imports failed");
   });
@@ -109,9 +109,9 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
   const result = spawnSync(python, ["-I", "-c", "import sys, zipfile\nfor p in sys.argv[1:]:\n with zipfile.ZipFile(p) as z:\n  assert z.namelist() and z.testzip() is None", ...archives], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });
   if (result.error || result.status !== 0) throw new Error("Unreadable or corrupt archives");
  });
- if (needs.has("python")) add("python-environment", "local", "Enter the project Devbox environment and run devbox run python-setup; declarations, lockfile and installed packages must agree.", () => { readPythonEnvironment(); });
+ if (needs.has("python")) add("python-environment", "local", "Run ./dev setup; declarations, lockfile and installed packages must agree.", () => { readPythonEnvironment(); });
  if (needs.has("evaluation")) {
-  add("evaluation-diagnostics", "local", "Restore agent/evaluation/diagnostics.py and sync the Devbox Python environment; sklearn and smartlab_eval must import successfully.", () => {
+  add("evaluation-diagnostics", "local", "Restore agent/evaluation/diagnostics.py and run ./dev setup; sklearn and smartlab_eval must import successfully.", () => {
    readable(join(PROJECT_ROOT, "agent/evaluation/diagnostics.py"));
    const result = spawnSync(readPythonEnvironment().executable, ["-c", "from sklearn.metrics import roc_curve, precision_recall_curve, precision_recall_fscore_support; from smartlab_eval import load_labels"], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });
    if (result.error || result.status !== 0) throw new Error("Evaluation imports failed");
@@ -125,28 +125,28 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
    const result = spawnSync(python, ["-c", "import fcntl, tempfile; f = tempfile.TemporaryFile(); fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)"], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });
    if (result.error || result.status !== 0) throw new Error("Kernel file locking unavailable");
   });
-  add("training-imports", "local", "Check the Devbox Python environment and native library paths: numpy, pandas and sklearn must import successfully.", () => {
+  add("training-imports", "local", "Run ./dev setup, and install any missing system library the import error names: numpy, pandas and sklearn must import successfully.", () => {
    const python = readPythonEnvironment().executable;
    const result = spawnSync(python, ["-c", "import numpy, pandas, sklearn"], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });
    if (result.error || result.status !== 0) throw new Error("Imports failed");
   });
-  add("training-optuna", "local", "Sync the Devbox Python environment (devbox run python-setup); optuna is a declared dependency used for harness-owned hyperparameter search.", () => {
+  add("training-optuna", "local", "Run ./dev setup; optuna is a declared dependency used for harness-owned hyperparameter search.", () => {
    const python = options.executables?.python ?? readPythonEnvironment().executable;
    const result = spawnSync(python, ["-c", "import optuna\nfrom optuna.storages.journal import JournalFileBackend"], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });
    if (result.error || result.status !== 0) throw new Error("Optuna unavailable");
   });
-  add("training-git", "local", "Install git in the project Devbox environment; solve versions solutions/ as a git repository and runs every trial from a worktree of its commit.", () => {
+  add("training-git", "local", "Install git (a system package); solve versions solutions/ as a git repository and runs every trial from a worktree of its commit.", () => {
    const result = spawnSync(options.executables?.git ?? "git", ["worktree", "-h"], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });
    // `git worktree -h` exits 129 after printing usage; a missing binary is a spawn error.
    if (result.error || (result.status !== 0 && result.status !== 129)) throw new Error("git unavailable");
   });
-  add("training-zip-command", "local", "Install the zip command in the project Devbox environment; solve uses zip --copy to prepare development data.", () => {
+  add("training-zip-command", "local", "Install the zip command (a system package); solve uses zip --copy to prepare development data.", () => {
    const result = spawnSync("zip", ["-v"], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });
    if (result.error || result.status !== 0) throw new Error("zip unavailable");
   });
  }
  if (needs.has("refit")) {
-  add("refit-runtime", "local", "Restore the terminal worker and runner, git, kernel process identities and Devbox Python dependencies (numpy, pandas, sklearn, smartlab_eval, cloudpickle, fcntl).", () => {
+  add("refit-runtime", "local", "Restore the terminal worker and runner, git, kernel process identities and the project Python dependencies (numpy, pandas, sklearn, smartlab_eval, cloudpickle, fcntl).", () => {
    readable(join(PROJECT_ROOT, "agent/refit/worker.py")); readable(join(PROJECT_ROOT, "agent/training/python/runner.py"));
    if (!processIdentity(process.pid)) throw new Error("Process identity unavailable");
    const python = options.executables?.python ?? readPythonEnvironment().executable;

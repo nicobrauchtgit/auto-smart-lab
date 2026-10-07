@@ -8,7 +8,6 @@ import { fileURLToPath } from "node:url";
 
 import { ExperimentSupervisor } from "../experiments/supervisor.js";
 import { TrainingService } from "./service.js";
-import { resolveCppRuntimeLibraryPath } from "./environment.js";
 import type { Update } from "../experiments/types.js";
 
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -26,8 +25,6 @@ function environment(): Record<string, string> {
 	const values = Object.fromEntries(
 		Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
 	);
-	const runtime = resolveCppRuntimeLibraryPath(values);
-	if (runtime) values.LD_LIBRARY_PATH = runtime;
 	return values;
 }
 

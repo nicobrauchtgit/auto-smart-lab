@@ -87,11 +87,21 @@ class EnvironmentTests(unittest.TestCase):
                 self.env.sync()
             uv.assert_not_called()
 
+    def test_first_setup_creates_the_project_venv_but_never_another_path(self):
+        shutil.rmtree(self.directory)
+        with patch.object(self.env, "uv", return_value=subprocess.CompletedProcess([], 0, "", "")) as uv, \
+                patch.object(self.env, "inspect", return_value={"healthy": True}), \
+                patch.object(self.env, "snapshot", return_value={"packages": []}):
+            self.env.sync()
+            uv.assert_called_once_with("sync")
+        self.assertIsNone(self.records()[0]["before"], "nothing to snapshot before the first setup")
+
     def test_uv_overrides_cannot_redirect_or_skip_installation(self):
         with patch.dict(os.environ, {"UV_PROJECT": "/other", "UV_PROJECT_ENVIRONMENT": "/other",
                                     "UV_PYTHON": "/system/python", "UV_NO_SYNC": "1",
                                     "UV_FROZEN": "1", "UV_CONFIG_FILE": "/other/uv.toml",
-                                    "PYTHONPATH": "/injected", "VIRTUAL_ENV": "/other"}), \
+                                    "PYTHONPATH": "/injected", "VIRTUAL_ENV": "/other",
+                                    "UV_CACHE_DIR": "/project/.tools/uv/cache"}), \
                 patch.object(manager.shutil, "which", return_value="/bin/uv"), \
                 patch.object(manager.subprocess, "run") as run:
             self.env.uv("sync")
@@ -102,9 +112,17 @@ class EnvironmentTests(unittest.TestCase):
             self.assertEqual(env["UV_PROJECT_ENVIRONMENT"], str(self.directory))
             self.assertEqual(env["UV_PYTHON"], str(self.env.python))
             self.assertEqual(env["VIRTUAL_ENV"], str(self.directory))
-            self.assertEqual(env["UV_PYTHON_DOWNLOADS"], "never")
+            self.assertEqual(env["UV_PYTHON_PREFERENCE"], "only-managed")
+            self.assertEqual(env["UV_CACHE_DIR"], "/project/.tools/uv/cache", "./dev's project-local cache passes through")
             for key in ["UV_NO_SYNC", "UV_FROZEN", "UV_CONFIG_FILE", "UV_PROJECT", "PYTHONPATH"]:
                 self.assertNotIn(key, env)
+
+    def test_first_setup_lets_uv_choose_the_managed_python(self):
+        self.env.python.unlink()
+        with patch.object(manager.shutil, "which", return_value="/bin/uv"), \
+                patch.object(manager.subprocess, "run") as run:
+            self.env.uv("sync")
+        self.assertNotIn("UV_PYTHON", run.call_args.kwargs["env"])
 
     def test_probe_ignores_pythonpath_and_user_site(self):
         with patch.object(manager.subprocess, "run", return_value=subprocess.CompletedProcess(
@@ -152,7 +170,7 @@ class EnvironmentTests(unittest.TestCase):
         with patch.object(self.env, "uv", side_effect=uv), \
                 self.assertRaisesRegex(RuntimeError, "cv2: missing system library libGL.so.1") as raised:
             self.env.add(["opencv-python"], "Image features")
-        self.assertIn("not provided by the Devbox environment", str(raised.exception))
+        self.assertIn("installed on the machine", str(raised.exception))
         self.new_imports.assert_called_once_with(["opencv-python"])
         start, end = self.records()
         self.assertEqual(end["outcome"], "installed_import_failure")
@@ -166,11 +184,6 @@ class EnvironmentTests(unittest.TestCase):
             self.env.add(["demo>=1"], "Already installed")
         self.new_imports.assert_called_once_with(["demo"])
         self.assertEqual(self.records()[-1]["outcome"], "installed_import_failure")
-
-    def test_a_listed_but_unreachable_library_names_its_devbox_package(self):
-        message = manager.describe_import_problems(["numpy"], {
-            "numpy": "ImportError: libstdc++.so.6: cannot open shared object file: No such file or directory"})
-        self.assertIn("listed for Devbox package stdenv.cc.cc.lib", message)
 
     def test_setup_sync_does_not_run_the_import_probe(self):
         with patch.object(self.env, "uv", return_value=subprocess.CompletedProcess([], 0, "", "")):
@@ -231,7 +244,7 @@ class EnvironmentTests(unittest.TestCase):
             uv.assert_not_called()
 
 
-UV = shutil.which("uv") or str(MANAGER.parents[2] / ".devbox/nix/profile/default/bin/uv")
+UV = shutil.which("uv") or ""  # Provided by ./dev (mise.toml).
 
 
 @unittest.skipUnless(Path(UV).is_file(), "uv is required for the offline resolver integration test")
@@ -296,33 +309,7 @@ class ResolverIntegrationTests(unittest.TestCase):
                     env.check_environment()
 
 
-class NativeLibraryTests(unittest.TestCase):
-    def setUp(self):
-        temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(temporary.cleanup)
-        root = Path(temporary.name)
-        self.store = root / "store" / "zlib" / "lib"
-        self.profile = root / "profile"
-        self.store.mkdir(parents=True)
-        (self.profile / "lib").mkdir(parents=True)
-        (self.store / "libz.so.1").touch()
-        (self.profile / "lib" / "libz.so.1").symlink_to(self.store / "libz.so.1")
-        self.libraries = [{"file": "libz.so.1", "devboxPackage": "zlib"}]
-
-    def test_adds_only_the_library_store_directory(self):
-        path = manager.library_path({"DEVBOX_PACKAGES_DIR": str(self.profile)}, self.libraries)
-        self.assertEqual(path, str(self.store.resolve()))
-
-    def test_keeps_an_inherited_path_that_already_provides_it(self):
-        path = manager.library_path({"LD_LIBRARY_PATH": str(self.store), "DEVBOX_PACKAGES_DIR": str(self.profile)},
-                                    self.libraries)
-        self.assertEqual(path, str(self.store))
-
-    def test_the_shared_list_is_the_one_the_training_environment_reads(self):
-        files = [library["file"] for library in manager.native_libraries()]
-        self.assertIn("libstdc++.so.6", files)
-        self.assertIn("libz.so.1", files)
-
+class ImportProbeTests(unittest.TestCase):
     def test_import_probe_imports_the_modules_of_named_distributions(self):
         completed = subprocess.run([sys.executable, "-I", "-c", manager.IMPORT_PROBE, "numpy,not-installed", "tests"],
                                    capture_output=True, text=True, check=True)

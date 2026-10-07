@@ -106,7 +106,7 @@ Authored instructions and tool descriptions live under `agent/prompts/subagents`
 and use the shared typed prompt snapshot. Children receive selected shared
 runtime prompts plus `subagents.child`. They receive the parent's assigned task
 and follow-ups, never its full transcript. Shared Python guidance must be passed
-explicitly, using the existing Devbox environment and dependency workflow.
+explicitly, using the existing project environment and dependency workflow.
 
 The child resource loader disables automatic AGENTS.md/CLAUDE.md, skills,
 extensions, prompt templates, and ambient system-prompt additions. Shared runtime
@@ -143,10 +143,10 @@ child observer sequences. Setup failures, queued messages, cancellations, and
 settlement are recorded there. This module does not introduce new stage states
 or claim to validate implementation artifacts.
 
-Run with the project's Devbox Bun:
+Run through the project toolchain:
 
 ```sh
-bun test agent/subagents agent/prompts agent/run/session_resources.test.ts
+./dev bun test agent/subagents agent/prompts agent/run/session_resources.test.ts
 ```
 
 Tests include a scripted Pi provider with real bash execution, context retained
@@ -157,7 +157,7 @@ needed before enabling delegation in solve or research.
 
 ## Live smoke validation
 
-Run `devbox run -- bun agent/subagents/live_smoke.ts` only as an explicit live
+Run `./dev bun agent/subagents/live_smoke.ts` only as an explicit live
 test. It makes paid calls to the configured provider and stops the parent after
 the first independently validated child implementation. It does not enable
 subagents in the registered stages.

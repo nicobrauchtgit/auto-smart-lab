@@ -7,7 +7,6 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { resolveCppRuntimeLibraryPath } from "./environment.js";
 import { ensureSolutionsRepository, git } from "./git.js";
 
 export const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -27,8 +26,6 @@ export function trainingEnvironment(): Record<string, string> {
 	const values = Object.fromEntries(
 		Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
 	);
-	const runtime = resolveCppRuntimeLibraryPath(values);
-	if (runtime) values.LD_LIBRARY_PATH = runtime;
 	return values;
 }
 

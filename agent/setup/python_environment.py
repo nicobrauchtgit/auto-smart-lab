@@ -7,7 +7,7 @@ to uv and adds:
 
 - an audit trail in `changes.jsonl` recording dependency changes, reasons, and which
   pipeline run asked for it, and
-- a guard that refuses to touch anything other than Devbox's `VENV_DIR`.
+- a guard that refuses to touch anything other than this project's `.venv`.
 
 `inspect` still enumerates the live environment rather than reading a cached
 file, and reports whether the lockfile and the installed set still agree.
@@ -29,7 +29,8 @@ import tomllib
 from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parents[2]
-NATIVE_LIBRARIES = ROOT / "agent" / "runtime" / "python" / "native-libraries.json"
+# Where ./dev keeps uv's cache and managed Python; passed through to uv.
+UV_LOCATIONS = {"UV_CACHE_DIR", "UV_PYTHON_INSTALL_DIR"}
 # Top-level names some distributions ship that are not meant to be imported.
 NON_IMPORTABLE = {"tests", "test", "testing", "docs", "doc", "examples", "benchmarks"}
 _MISSING_LIBRARY = re.compile(r"(lib[\w.+-]+\.so[\w.]*): cannot open shared object file")
@@ -64,31 +65,6 @@ def requirement(value):
     return value
 
 
-def native_libraries(path=NATIVE_LIBRARIES):
-    return json.loads(Path(path).read_text())["libraries"]
-
-
-def library_path(environ=os.environ, libraries=None):
-    """LD_LIBRARY_PATH providing every listed native library.
-
-    Mirrors `resolveCppRuntimeLibraryPath` in agent/training/environment.ts:
-    keep what the inherited path already provides, and add only each missing
-    library's own Devbox store directory, never the whole profile `lib/`.
-    """
-    libraries = native_libraries() if libraries is None else libraries
-    existing = [entry for entry in environ.get("LD_LIBRARY_PATH", "").split(os.pathsep) if entry]
-    added = []
-    for library in libraries:
-        name = library["file"]
-        if any((Path(directory) / name).exists() for directory in added + existing):
-            continue
-        packages = environ.get("DEVBOX_PACKAGES_DIR")
-        link = Path(packages) / "lib" / name if packages else None
-        if link is not None and link.exists():
-            added.append(str(link.resolve().parent))
-    return os.pathsep.join(added + existing)
-
-
 def changed_distributions(before, after):
     """Distributions that are new or changed version between two snapshots."""
     old = {normalize(p["name"]): p["version"] for p in before["packages"]}
@@ -97,19 +73,12 @@ def changed_distributions(before, after):
 
 def describe_import_problems(packages, problems):
     lines = [f"{', '.join(packages)} installed, but some modules do not import:"]
-    known = {library["file"]: library["devboxPackage"] for library in native_libraries()}
     for module, error in sorted(problems.items()):
         missing = _MISSING_LIBRARY.search(error)
-        if missing:
-            library = missing.group(1)
-            provider = (f"listed for Devbox package {known[library]}, which is not reachable"
-                        if library in known else "not provided by the Devbox environment")
-            lines.append(f"- {module}: missing system library {library} ({provider})")
-        else:
-            lines.append(f"- {module}: {error}")
-    lines.append("The packages stay installed. A Python package cannot provide a system library: a developer has "
-                 "to add it to devbox.json and agent/runtime/python/native-libraries.json. Consider an alternative "
-                 "package that does not need it.")
+        lines.append(f"- {module}: missing system library {missing.group(1)}" if missing else f"- {module}: {error}")
+    lines.append("The packages stay installed. A Python package cannot provide a system library: it has to be "
+                 "installed on the machine (a system package on the VM; nix-ld's library list on NixOS). Consider "
+                 "an alternative package that does not need it.")
     return "\n".join(lines)
 
 
@@ -142,21 +111,26 @@ class Environment:
             finally:
                 fcntl.flock(handle, fcntl.LOCK_UN)
 
-    def check_environment(self):
+    def check_location(self):
+        """VENV_DIR must be this project's own `.venv`, not a symlink or another path."""
         expected = self.root / ".venv"
         if self.directory.resolve() != expected or expected.is_symlink():
-            raise RuntimeError(f"VENV_DIR must identify this project's Devbox environment: {expected}")
+            raise RuntimeError(f"VENV_DIR must identify this project's environment: {expected}")
+        return expected
+
+    def check_environment(self):
+        expected = self.check_location()
         if not (self.directory / "pyvenv.cfg").is_file():
-            raise RuntimeError("Devbox environment is missing pyvenv.cfg; run devbox run python-setup")
+            raise RuntimeError("The project environment is missing pyvenv.cfg; run ./dev setup")
         if not self.python.exists():
-            raise RuntimeError(f"Devbox Python is not ready at {self.python}; run devbox run python-setup")
+            raise RuntimeError(f"The project Python is not ready at {self.python}; run ./dev setup")
         # Verify the interpreter before uv can install, replace, or remove anything.
         result = self.live_inventory()
         if (Path(result["prefix"]).resolve() != expected
                 or Path(result["base_prefix"]).resolve() == expected):
             raise RuntimeError("Refusing to inspect or modify a different or non-virtual Python environment")
         if result["system_site_packages"]:
-            raise RuntimeError("Devbox Python must not include system site-packages")
+            raise RuntimeError("The project Python must not include system site-packages")
         return result
 
     def live_inventory(self):
@@ -206,20 +180,26 @@ class Environment:
         return {module: error for module, error in json.loads(completed.stdout).items() if error}
 
     def uv(self, *args, check=True):
-        """Run uv against Devbox's virtualenv, never a uv-managed one."""
+        """Run uv against this project's virtualenv.
+
+        Once `.venv` exists uv is pinned to its interpreter, so a sync never swaps
+        Python underneath a running pipeline. Only the first setup lets uv pick
+        (and download) the managed Python named by `.python-version`.
+        """
         executable = shutil.which("uv")
         if not executable:
-            raise RuntimeError("uv is not on PATH; it is a Devbox package, so enter the Devbox shell")
+            raise RuntimeError("uv is not on PATH; run commands through ./dev")
         # Project configuration controls uv. Do not inherit flags that redirect,
         # skip, or broaden a sync, or Python paths from an agent's shell.
         environment = {
             **{key: value for key, value in os.environ.items()
-               if not key.startswith(("UV_", "PYTHON"))},
+               if not key.startswith(("UV_", "PYTHON")) or key in UV_LOCATIONS},
             "UV_PROJECT_ENVIRONMENT": str(self.directory),
-            "UV_PYTHON": str(self.python),
-            "UV_PYTHON_DOWNLOADS": "never",
-            "UV_PYTHON_PREFERENCE": "only-system",
+            "UV_PYTHON_DOWNLOADS": "automatic",
+            # Only uv-managed Python, never a Nix or system interpreter from PATH.
+            "UV_PYTHON_PREFERENCE": "only-managed",
             "VIRTUAL_ENV": str(self.directory),
+            **({"UV_PYTHON": str(self.python)} if self.python.exists() else {}),
         }
         return subprocess.run([executable, *args, "--project", str(self.root)], cwd=self.root, env=environment,
                               capture_output=True, text=True, check=check)
@@ -326,7 +306,12 @@ class Environment:
             before = None
             problem = None
             try:
-                before = self.snapshot()
+                # The first setup creates .venv, so there is no environment to snapshot yet.
+                if action == "setup" and not self.directory.exists():
+                    self.check_location()
+                    before = None
+                else:
+                    before = self.snapshot()
                 # A durable request survives interruption during uv execution.
                 self.record_change(operation_id, action, packages, reason, "started", before)
                 result = self.uv(*command)
@@ -337,9 +322,10 @@ class Environment:
                 after = self.snapshot()
                 # Requested packages are checked even when unchanged: re-adding an
                 # installed but unusable package must not report success.
-                requested = {normalize(re.split(r"[\[<>=!~; @]", value)[0]) for value in packages}
-                checked = sorted(set(changed_distributions(before, after)) | requested)
-                problems = self.import_problems(checked) if action != "setup" else {}
+                problems = {}
+                if action != "setup":
+                    requested = {normalize(re.split(r"[\[<>=!~; @]", value)[0]) for value in packages}
+                    problems = self.import_problems(sorted(set(changed_distributions(before, after)) | requested))
                 if problems:
                     problem = describe_import_problems(packages, problems)
                 self.record_change(operation_id, action, packages, reason,
@@ -364,7 +350,7 @@ class Environment:
         """Check startup without changing packages underneath an ongoing run."""
         inventory = self.inspect()
         if not inventory["healthy"]:
-            raise RuntimeError(f"{inventory['dependency_errors']}\nRun devbox run python-setup when no runs are using the environment")
+            raise RuntimeError(f"{inventory['dependency_errors']}\nRun ./dev setup when no runs are using the environment")
         return inventory
 
 
@@ -380,7 +366,6 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("setup", help="resolve declared dependencies and sync the environment")
     commands.add_parser("ensure", help="check readiness without changing the environment")
-    commands.add_parser("library-path", help="print an LD_LIBRARY_PATH providing the native libraries")
     inspect = commands.add_parser("inspect", help="report the live environment")
     inspect.add_argument("--json", action="store_true")
     add = commands.add_parser("add", help="add a package through uv")
@@ -390,9 +375,6 @@ def main():
     update.add_argument("packages", nargs="+", type=requirement)
     update.add_argument("--reason", required=True)
     args = parser.parse_args()
-    if args.command == "library-path":
-        print(library_path())
-        return 0
     environment = Environment()
     try:
         if args.command == "setup":
@@ -408,7 +390,7 @@ def main():
         if args.command == "inspect" and args.json:
             print(json.dumps(inventory, indent=2))
         else:
-            print(f"[python-environment] Devbox Python {inventory['python_version']}: "
+            print(f"[python-environment] Python {inventory['python_version']}: "
                   f"{len(inventory['packages'])} packages, healthy={inventory['healthy']}. "
                   f"Declared in {environment.project}, locked in {environment.lock}")
     except (RuntimeError, subprocess.SubprocessError, OSError, ValueError) as error:

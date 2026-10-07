@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { collectTrainingTrial } from "../training/results.js";
-import { resolveCppRuntimeLibraryPath, sanitizeTrainingEnvironment } from "../training/environment.js";
+import { sanitizeTrainingEnvironment } from "../training/environment.js";
 import { PROJECT_ROOT } from "../pipeline/resolve_task.js";
 import type { PromptSnapshot } from "../prompts/loader.js";
 import type { SuppliedInput } from "../pipeline/types.js";
@@ -71,7 +71,7 @@ async function harnessEvidence(root: string, id: string, origin: KnowledgeOrigin
  if (trial.artifacts.some(artifact => artifacts.find(a => a.path === resolve(artifact.path))?.sha256 !== artifact.sha256)) throw new Error("Harness evidence changed during collection");
  const verification = spawnSync(join(resolve(PROJECT_ROOT, process.env.VENV_DIR ?? ".venv"), "bin/python"),
   ["-I", join(PROJECT_ROOT, "agent/knowledge/verify_evidence.py"), trial.directory],
-  { env: sanitizeTrainingEnvironment({ ...process.env, LD_LIBRARY_PATH: resolveCppRuntimeLibraryPath() }), encoding: "utf8", timeout: 10000, maxBuffer: 100000 });
+  { env: sanitizeTrainingEnvironment(process.env), encoding: "utf8", timeout: 10000, maxBuffer: 100000 });
  if (verification.error || verification.status !== 0) throw new Error("Harness prediction/checkpoint measurement verification failed");
  const verified = JSON.parse(verification.stdout);
  if (verified.verified !== true || verified.metrics.balancedAccuracy !== trial.result.metrics.balancedAccuracy) throw new Error("Harness measurement verification failed");

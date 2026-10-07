@@ -1,6 +1,6 @@
 # Setup commands
 
-`python_environment.py` manages the shared Devbox Python dependencies. Pipeline
+`python_environment.py` manages the shared project Python dependencies. Pipeline
 agents may run its `inspect`, `add`, and `update` commands. See
 [the Python runtime documentation](../runtime/python/README.md) for setup,
 dependency changes, and audit records.

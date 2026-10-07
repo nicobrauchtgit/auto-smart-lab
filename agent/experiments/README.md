@@ -88,7 +88,7 @@ telemetry rules out hangs; only the loss or validation series rules out waste.
 ## Verification
 
 ```bash
-devbox run -- bun test agent/experiments
+./dev bun test agent/experiments
 ```
 
 Every test spawns real processes and no test calls a model. The paid live check

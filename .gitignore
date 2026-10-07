@@ -15,6 +15,7 @@ __pycache__/
 .ruff_cache/
 
 # Local environments
+.tools/
 .venv/
 agent/runtime/python/.install.lock
 env/

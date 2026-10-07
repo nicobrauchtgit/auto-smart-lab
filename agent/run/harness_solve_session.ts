@@ -17,7 +17,6 @@ import {
 	createGitHistoryGuard,
 	createHarnessTraining,
 	ensureSolutionsRepository,
-	resolveCppRuntimeLibraryPath,
 	type TrainingCollection,
 } from "../training/index.js";
 import { developmentSelection } from "../training/development_selection.js";
@@ -94,7 +93,10 @@ function workerEnvironment(python: PythonEnvironment): Record<string, string> {
 		UV_PYTHON: python.executable,
 		UV_PYTHON_DOWNLOADS: "never",
 		PYTHONNOUSERSITE: "1",
-		LD_LIBRARY_PATH: resolveCppRuntimeLibraryPath(),
+		LD_LIBRARY_PATH: process.env.LD_LIBRARY_PATH,
+		// nix-ld runs uv's standalone Python on NixOS; absent elsewhere.
+		NIX_LD: process.env.NIX_LD,
+		NIX_LD_LIBRARY_PATH: process.env.NIX_LD_LIBRARY_PATH,
 		LANG: process.env.LANG,
 		LC_ALL: process.env.LC_ALL,
 		TMPDIR: process.env.TMPDIR,

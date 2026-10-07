@@ -4,8 +4,9 @@
 # the resolved graph with hashes and platform markers. The environment manager
 # checks the installed environment against both files.
 #
-# Devbox owns the interpreter and the virtualenv. `UV_PROJECT_ENVIRONMENT` points
-# uv at that same `.venv`, so there is still exactly one environment.
+# uv owns the interpreter and the virtualenv: `./dev setup` creates `.venv` with
+# the uv-managed Python named in `.python-version`. `UV_PROJECT_ENVIRONMENT`
+# points uv at that same `.venv`, so there is exactly one environment.
 #
 # Add packages through `agent/setup/python_environment.py add`, which records the
 # reason and the pipeline run that asked for it in `changes.jsonl`.
@@ -35,10 +36,9 @@ dependencies = [
 smartlab-eval = { path = "libs/smartlab-eval", editable = true }
 
 [tool.uv]
-# The interpreter comes from Devbox's python-full package. uv resolves and
-# installs against it and must never download one of its own, or there would be
-# two Pythons and the lock would describe the wrong one.
-python-preference = "only-system"
+# Only uv-managed Python (a standalone build, kept under .tools/ by ./dev), never
+# a Nix or system interpreter from PATH: the same interpreter on every machine.
+python-preference = "only-managed"
 # This file declares an environment; it does not ship a distribution. Without
 # this uv would try to build and install the project itself.
 package = false

@@ -1,14 +1,16 @@
 # Python environment for pipeline agents
 
-Devbox owns the interpreter and the virtualenv. Its Python plugin creates this
-project's `.venv`, exposed as `VENV_DIR`. uv owns the dependencies inside it.
-There is no separate pipeline environment or container.
+uv owns the interpreter and the virtualenv. `./dev setup` creates this
+project's `.venv`, exposed as `VENV_DIR`, with the uv-managed Python named in
+`.python-version`, and installs the dependencies into it. There is no separate
+pipeline environment or container.
 
 - `pyproject.toml` (repo root) declares what the pipeline depends on directly.
 - `uv.lock` (repo root) records the full resolved graph with versions and hashes.
-- `UV_PROJECT_ENVIRONMENT` points uv at Devbox's `.venv`, so uv never creates a
-  second environment, and `UV_PYTHON_DOWNLOADS=never` stops it fetching its own
-  interpreter.
+- `UV_PROJECT_ENVIRONMENT` points uv at `.venv`, so uv never creates a second
+  environment. `python-preference = "only-managed"` keeps a Nix or system
+  interpreter on `PATH` out of it. Once `.venv` exists the manager pins uv to
+  its interpreter, so a sync never swaps Python underneath a running pipeline.
 
 `pyproject.toml` is the single source of declared dependencies. The lock records
 resolved versions; inspection measures what is actually installed. File edits
@@ -16,22 +18,20 @@ and installs outside the manager can cause drift, which startup checks reject.
 Do not maintain package inventories in Markdown or generated requirements files.
 
 ```bash
-devbox run python-setup                       # resolve declarations and sync
+./dev setup                                  # create .venv, resolve declarations and sync
 uv tree --locked                             # read the dependency graph
 python agent/setup/python_environment.py inspect --json
 python agent/setup/python_environment.py add seaborn --reason "Plot feature distributions for spam1"
 python agent/setup/python_environment.py update seaborn --reason "Use a compatible bug fix"
 ```
 
-Inside the Devbox shell the same commands work without `devbox run`. Agents
-receive the interpreter, declared dependencies, and both file paths in their
-runtime prompt.
+Run the other commands through `./dev` (e.g. `./dev python ...`), which sets
+`VENV_DIR`, `VIRTUAL_ENV` and puts `.venv/bin` on `PATH` from `mise.toml`, so it
+works in any shell without an activation script. Agents receive the
+interpreter, declared dependencies, and both file paths in their runtime prompt.
 
-The Devbox startup hook sets `VIRTUAL_ENV` and prepends `$VENV_DIR/bin` to `PATH`
-directly, so it works in Fish, Bash, and Zsh without sourcing a shell-specific
-activation script.
-
-Shell startup runs `ensure`, a read-only readiness check. Run setup explicitly
+`ensure` is a read-only readiness check; the pipeline's setup checks run the
+same inspection before any agent starts. Run setup explicitly
 when the environment needs repair and no ongoing runs are using it. Setup keeps
 existing locked versions where compatible; `update` requests newer resolutions
 for selected packages within the declared constraints. Neither command changes
@@ -72,19 +72,17 @@ not maintain a separate list of required packages.
 ## Native libraries
 
 uv unpacks wheels without loading their compiled parts, so a missing system
-library only shows when a module is imported. The Devbox interpreter is built
-by Nix and does not search the usual system locations (nix-ld does not apply to
-it), so the libraries binary wheels need are listed in
-`native-libraries.json` with the Devbox package that provides each. The Devbox
-shell hook (`python_environment.py library-path`) and the harness training
-environment (`agent/training/environment.ts`) both add exactly those store
-directories to `LD_LIBRARY_PATH`.
+library only shows when a module is imported. The uv-managed interpreter is an
+ordinary Linux binary: on the VM it finds system libraries like any program; on
+NixOS it runs through nix-ld, whose library list must contain what wheels need
+(libstdc++ and zlib for numpy). The training environment passes `NIX_LD` and
+`NIX_LD_LIBRARY_PATH` through to workers.
 
 `add` and `update` import the top-level modules of every new or changed
 distribution. A failure is recorded as `installed_import_failure` in
 `changes.jsonl`, with the per-module errors, and the command exits non-zero;
-the package stays installed. To fix a missing library, `devbox add` its package
-and add an entry to `native-libraries.json`.
+the package stays installed. To fix a missing library, install the system
+package that provides it (or add it to nix-ld's libraries on NixOS).
 
 ## Shared records
 

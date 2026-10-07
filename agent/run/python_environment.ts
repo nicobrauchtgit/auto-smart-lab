@@ -30,12 +30,12 @@ export interface PythonEnvironment {
 export function readPythonEnvironment(requireHealthy = true): PythonEnvironment {
 	const environment = resolve(ROOT, process.env.VENV_DIR ?? ".venv");
 	const python = join(environment, "bin/python");
-	if (!existsSync(python)) throw new Error("Devbox Python is not ready; run devbox run python-setup");
+	if (!existsSync(python)) throw new Error("The project Python is not ready; run ./dev setup");
 	const result = spawnSync(python, ["-I", MANAGER, "inspect", "--json"], {
 		cwd: ROOT, encoding: "utf8", timeout: 30_000,
 	});
 	if (result.error || result.status !== 0) {
-		throw new Error(`Cannot inspect Devbox Python: ${result.error?.message ?? result.stderr}`);
+		throw new Error(`Cannot inspect the project Python: ${result.error?.message ?? result.stderr}`);
 	}
 	return validatePythonEnvironment(JSON.parse(result.stdout), requireHealthy);
 }
@@ -62,7 +62,7 @@ export function validatePythonEnvironment(value: unknown, requireHealthy = true)
 			data.lock_current === false ? "uv.lock does not match pyproject.toml" : "",
 			data.environment_matches_lock === false ? "the installed environment does not match uv.lock" : "",
 		].filter(Boolean);
-		throw new Error(`Devbox Python environment is not ready: ${reasons.join("; ")}. ${data.dependency_errors ?? ""}\nRun devbox run python-setup`);
+		throw new Error(`The project Python environment is not ready: ${reasons.join("; ")}. ${data.dependency_errors ?? ""}\nRun ./dev setup`);
 	}
 	return data;
 }

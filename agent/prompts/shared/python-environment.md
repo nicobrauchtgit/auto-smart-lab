@@ -1,4 +1,4 @@
-## Shared Devbox Python environment
+## Shared project Python environment
 
 Write reusable analysis, feature extraction, and modeling code in Python. Use
 installed libraries instead of reimplementing standard ML and statistics unless
@@ -28,7 +28,7 @@ dependency is available, and do not build on one deliberately.
 The lockfile and usage notes are runtime resources, separate from repository
 development AGENTS.md. Read them when you need package details.
 
-You may add a needed Python library to this same Devbox environment:
+You may add a needed Python library to this same environment:
 
 ```bash
 {{pythonCommand}} {{managerCommand}} add PACKAGE --reason "Why this task needs it"

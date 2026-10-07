@@ -1,7 +1,6 @@
 /** Deterministic upload stage. Configuration enablement is never authorization. */
 import { join } from "node:path";
 import { readPythonEnvironment } from "../../run/python_environment.js";
-import { resolveCppRuntimeLibraryPath } from "../../training/environment.js";
 import { submitRefit, reconcileSubmission, validatePolicy, submissionTransport, type SubmissionPolicy } from "../../submission/index.js";
 import { PROJECT_ROOT, resolveTask } from "../resolve_task.js";
 import type { StageDefinition, StageInput, StageResult } from "../types.js";
@@ -29,7 +28,6 @@ export const submitStage:StageDefinition<SubmitStageOptions>={
  async run(context) {
   const policy=inputPolicy(context.input);
   const env=Object.fromEntries(Object.entries(process.env).filter((entry):entry is [string,string]=>entry[1]!==undefined));
-  const runtime=resolveCppRuntimeLibraryPath(env);if(runtime)env.LD_LIBRARY_PATH=runtime;
   try {
    const environment=readPythonEnvironment();const task=resolveTask({taskId:context.input.taskId});
    const result=await submitRefit({taskId:context.input.taskId,refitArtifact:context.input.upstream.find(a=>a.kind==="terminal_refit_result")!,policy,

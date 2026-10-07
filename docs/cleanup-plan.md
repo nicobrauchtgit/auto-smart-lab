@@ -18,6 +18,7 @@ records the decisions and tracks the work. Tick items off as they land.
 | D9 | No harness data loader. The agent's code reads samples; the harness owns sample identity, folds, fits and scoring. | 2026-10-07 |
 | D10 | Keep the generic `experiment_*` tools as the escape hatch for work that fits no harness kind. | 2026-10-07 |
 | D11 | Order: cleanup (sections 0-2) first, then the modular harness (section 6). Experiments will run on the SmartLab VM. | 2026-10-07 |
+| D12 | Devbox is replaced by mise because the SmartLab VM has no Nix. `./dev` keeps mise (pinned, checksum-verified), its tools, uv's managed Python and all caches under `.tools/`: nothing goes into the user's home, shell configuration or Nix profile. uv owns Python (`.python-version`, `python-preference = "only-managed"`). | 2026-10-07 |
 
 ## Open decisions
 
@@ -30,8 +31,8 @@ records the decisions and tracks the work. Tick items off as they land.
 
 ### 0. Prerequisites (done 2026-10-07)
 - [x] Commit the uncommitted current work (`6496825`).
-- [x] Make Python runnable inside Devbox (`21a3e8e`): `stdenv.cc.cc.lib` and `zlib` in `devbox.json`, their store directories exported by the Devbox shell; `resolveCppRuntimeLibraryPath` checks that `libstdc++.so.6` and `libz.so.1` are actually reachable; the health check imports the declared compiled packages (numpy, scipy, sklearn, pandas).
-- [x] Native libraries listed once in `agent/runtime/python/native-libraries.json`, read by the Devbox hook (`python_environment.py library-path`) and the training environment. `add`/`update` import every new or changed distribution and report a missing system library (`installed_import_failure` in `changes.jsonl`, non-zero exit, package stays installed). Background: the Devbox Python is Nix-built, so the host's nix-ld libraries do not apply to it.
+- [x] ~~Make Python runnable inside Devbox (`21a3e8e`)~~ Superseded by D12: uv's standalone Python needs no library workaround (nix-ld on NixOS, system libraries on the VM). `stdenv.cc.cc.lib` and `zlib` in `devbox.json`, their store directories exported by the Devbox shell; `resolveCppRuntimeLibraryPath` checks that `libstdc++.so.6` and `libz.so.1` are actually reachable; the health check imports the declared compiled packages (numpy, scipy, sklearn, pandas).
+- [x] ~~Native libraries listed once in `agent/runtime/python/native-libraries.json`~~ (removed with D12; the post-install import check stays), read by the Devbox hook (`python_environment.py library-path`) and the training environment. `add`/`update` import every new or changed distribution and report a missing system library (`installed_import_failure` in `changes.jsonl`, non-zero exit, package stays installed). Background: the Devbox Python is Nix-built, so the host's nix-ld libraries do not apply to it.
 - [x] Tests green: `bun test` and all four `test:py` suites. (`test:py` chains the suites with `&&`, so the first failing suite had hidden the rest; it did not only collect `agent/solve/tests`.)
 
 ### 1. Remove dead code (generations 0-2) (done 2026-10-07)
@@ -190,7 +191,7 @@ Order: the cleanup (sections 0-2) first, then this.
   harness-owned robustness measurement (clean, FGSM, PGD accuracy) for unit 6.
   Unit 6 requires a differentiable `torch.nn.Module`.
 - [ ] Runs on the SmartLab VM (the lab service is `127.0.0.1:8000` there).
-  Before designing: inventory the VM (CPU/RAM/GPU/disk, Python, Nix/Devbox,
+  Before designing: inventory the VM (CPU/RAM/GPU/disk, glibc and arch for `./dev`,
   outbound access to the model API, Tavily and Langfuse, ports in use, the lab's
   Python template and its torch version), then choose between everything on the
   VM or agents here with training workers on the VM over SSH.

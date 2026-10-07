@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { SupervisorOptions } from "../experiments/supervisor.js";
 import type { PromptSnapshot } from "../prompts/loader.js";
-import { resolveCppRuntimeLibraryPath, sanitizeTrainingEnvironment } from "./environment.js";
+import { sanitizeTrainingEnvironment } from "./environment.js";
 import { createHarnessTraining } from "./index.js";
 
 const roots: string[] = [];
@@ -42,6 +42,8 @@ const runtimeEnvironment = {
 	TMP: "/runtime/tmp",
 	TEMP: "/runtime/temp",
 	LD_LIBRARY_PATH: "/runtime/lib",
+	NIX_LD: "/runtime/nix-ld/ld.so",
+	NIX_LD_LIBRARY_PATH: "/runtime/nix-ld/lib",
 } as const;
 
 const hostileEnvironment = {
@@ -107,40 +109,3 @@ describe("training worker environment", () => {
 	});
 });
 
-describe("native runtime library path", () => {
-	function runtimeFixture() {
-		const root = mkdtempSync(join(tmpdir(), "cpp-runtime-"));
-		roots.push(root);
-		const store = join(root, "store", "gcc-lib", "lib");
-		const zlib = join(root, "store", "zlib", "lib");
-		const profile = join(root, "profile");
-		for (const directory of [store, zlib, join(profile, "lib")]) mkdirSync(directory, { recursive: true });
-		writeFileSync(join(store, "libstdc++.so.6"), "");
-		writeFileSync(join(zlib, "libz.so.1"), "");
-		symlinkSync(join(store, "libstdc++.so.6"), join(profile, "lib", "libstdc++.so.6"));
-		symlinkSync(join(zlib, "libz.so.1"), join(profile, "lib", "libz.so.1"));
-		return { store, zlib, profile, unrelated: join(root, "unrelated") };
-	}
-
-	test("keeps a library path that already provides every runtime library", () => {
-		const { store, zlib, profile } = runtimeFixture();
-		const path = `${store}:${zlib}`;
-		expect(resolveCppRuntimeLibraryPath({ LD_LIBRARY_PATH: path, DEVBOX_PACKAGES_DIR: profile })).toBe(path);
-	});
-
-	test("adds only the libraries the inherited path lacks", () => {
-		const { store, zlib, profile } = runtimeFixture();
-		expect(resolveCppRuntimeLibraryPath({ LD_LIBRARY_PATH: store, DEVBOX_PACKAGES_DIR: profile })).toBe(`${zlib}:${store}`);
-	});
-
-	test("prepends the Devbox runtime directory when the inherited path lacks it", () => {
-		const { store, zlib, profile, unrelated } = runtimeFixture();
-		expect(resolveCppRuntimeLibraryPath({ LD_LIBRARY_PATH: unrelated, DEVBOX_PACKAGES_DIR: profile }))
-			.toBe(`${store}:${zlib}:${unrelated}`);
-	});
-
-	test("points at each library's own directory, never the whole profile lib", () => {
-		const { store, zlib, profile } = runtimeFixture();
-		expect(resolveCppRuntimeLibraryPath({ DEVBOX_PACKAGES_DIR: profile })).toBe(`${store}:${zlib}`);
-	});
-});

@@ -92,7 +92,7 @@ Agent sessions use [`@earendil-works/pi-coding-agent`](https://www.npmjs.com/pac
 
 The main integration is `agent/run/session_runner.ts`. It creates sessions, selects prompts and tools, attaches telemetry before the first prompt, and handles cancellation and cleanup. `agent/pi_sdk.ts` is only a small observability experiment. The optional child-session integration is under `agent/subagents/`.
 
-When upgrading Pi, update the Devbox package, both JavaScript package versions, and the compatibility notes together. Do not assume behavior from the latest upstream branch matches the pinned runtime.
+When upgrading Pi, update both JavaScript package versions, and the compatibility notes together. Do not assume behavior from the latest upstream branch matches the pinned runtime.
 
 ## Setup
 
@@ -100,60 +100,39 @@ When upgrading Pi, update the Devbox package, both JavaScript package versions, 
 
 You need:
 
-- Bun;
-- Python 3.13;
-- [uv](https://docs.astral.sh/uv/);
-- PostgreSQL 17 if you want the live trace dashboard;
+- Linux (x86_64 or arm64) with `curl`, `git`, `zip` and `unzip`;
 - a SmartLab account for fetching tasks or submitting;
-- a SAIA/GWDG API key for agent runs.
+- a SAIA/GWDG API key for agent runs;
+- PostgreSQL 17 only if you want the live trace dashboard.
 
-Devbox is the easiest way to obtain the pinned tools, but it is optional. Any environment manager is fine if it provides the required versions and uses this repository's `.venv`, `pyproject.toml`, and `uv.lock`.
+Everything else is pinned and installed by `./dev`: [mise](https://mise.jdx.dev/)
+(checksum-verified), bun, uv, ripgrep and fd from `mise.toml`, and the
+uv-managed Python 3.13 from `.python-version`. All of it, including caches,
+lives under `.tools/` in the repository; nothing is installed into your home
+directory, shell configuration or Nix profile. Deleting `.tools/`, `.venv/` and
+`node_modules/` removes every trace. On NixOS the downloaded binaries run
+through nix-ld, which must provide libstdc++ and zlib.
 
-### Option A: Devbox
-
-Install [Devbox](https://www.jetify.com/devbox), then run:
-
-```bash
-git clone <repository-url>
-cd auto-smart-lab
-cp .env.example .env
-
-# Install JavaScript packages from bun.lock.
-devbox run -- bun install --frozen-lockfile
-
-# Create/synchronize the shared Python environment from uv.lock.
-devbox run python-setup
-```
-
-`devbox shell` is convenient for interactive work. Its startup hook checks the Python environment but does not silently change dependencies.
-
-```bash
-devbox shell
-bun test
-bun run test:py
-```
-
-### Option B: another environment manager
-
-Install Bun, Python 3.13, uv, and optionally PostgreSQL yourself. Keep the Python environment at `.venv`; pipeline code expects one shared environment rather than a second tool-specific virtualenv.
+### Install
 
 ```bash
 git clone <repository-url>
 cd auto-smart-lab
 cp .env.example .env
-bun install --frozen-lockfile
 
-uv venv --python 3.13 .venv
-export VENV_DIR="$PWD/.venv"
-export UV_PROJECT_ENVIRONMENT="$VENV_DIR"
-export UV_PYTHON_DOWNLOADS=never
-"$VENV_DIR/bin/python" -I agent/setup/python_environment.py setup
+# Install the pinned tools, create .venv from uv.lock, install bun.lock.
+./dev setup
 
-bun test
-bun run test:py
+./dev mise run test
 ```
 
-Keep those three environment variables in your shell or environment-manager configuration when running the pipeline. Do not install pipeline packages with `pip`; use `agent/setup/python_environment.py` so `pyproject.toml`, `uv.lock`, the installed environment, and the dependency audit stay in sync. See [Python environment management](agent/runtime/python/README.md).
+Run every project command through `./dev`, for example `./dev bun test` or
+`./dev bun run pipeline -- spam1`. It loads `.env`, puts `.venv/bin` on `PATH`
+and sets the project's environment variables from `mise.toml`, so no shell
+activation is needed. Do not install pipeline packages with `pip`; use
+`agent/setup/python_environment.py` so `pyproject.toml`, `uv.lock`, the installed
+environment, and the dependency audit stay in sync. See
+[Python environment management](agent/runtime/python/README.md).
 
 ### Environment variables
 
@@ -173,7 +152,7 @@ LAB_PASS='...'
 
 Quote values containing spaces or shell metacharacters. The university SSH settings in `.env.example` are only needed by workflows that use that server.
 
-Outside Devbox, load `.env` with a method appropriate to your shell or environment manager. Do not commit `.env`, cookies, traces, or credentials.
+`./dev` loads `.env` for every command. Do not commit `.env`, cookies, traces, or credentials.
 
 ### Gemini through Google Cloud
 
@@ -219,7 +198,7 @@ directly, so it does not need `GOOGLE_GENAI_USE_ENTERPRISE`.
 Keep SAIA as the default and select Gemini per run:
 
 ```bash
-bun run pipeline -- spam1 --model google-vertex/gemini-3.5-flash
+./dev bun run pipeline -- spam1 --model google-vertex/gemini-3.5-flash
 ```
 
 The bundled Pi version also includes Gemini 2.5 Flash and Pro, Gemini 3.1 Pro,
@@ -229,8 +208,8 @@ Cloud project and location.
 Check access with a dry run first, then start a model request:
 
 ```bash
-bun run pipeline -- spam1 --dry-run --model google-vertex/gemini-3.5-flash
-bun run pipeline -- spam1 --stop-after research --model google-vertex/gemini-3.5-flash
+./dev bun run pipeline -- spam1 --dry-run --model google-vertex/gemini-3.5-flash
+./dev bun run pipeline -- spam1 --stop-after research --model google-vertex/gemini-3.5-flash
 ```
 
 The dry run validates local configuration without contacting Google. An HTTP
@@ -245,28 +224,28 @@ If setting the ADC quota project fails with a missing
 Download one unit and write its task metadata under `units/`:
 
 ```bash
-bun run fetch-unit -- 01-spam
+./dev bun run fetch-unit -- 01-spam
 ```
 
 Refresh page-derived metadata without replacing matching datasets:
 
 ```bash
-bun run fetch-unit -- 01-spam --refresh-metadata
+./dev bun run fetch-unit -- 01-spam --refresh-metadata
 ```
 
 List local tasks and inspect the configured pipeline without starting an agent:
 
 ```bash
-bun run pipeline -- --list
-bun run pipeline -- spam1 --dry-run
+./dev bun run pipeline -- --list
+./dev bun run pipeline -- spam1 --dry-run
 ```
 
 A task can be selected by canonical ID or unit/task number:
 
 ```bash
-bun run pipeline -- spam1
-bun run pipeline -- unit 1 task 1
-bun run pipeline -- --unit 1 --task 1
+./dev bun run pipeline -- spam1
+./dev bun run pipeline -- unit 1 task 1
+./dev bun run pipeline -- --unit 1 --task 1
 ```
 
 ## Run the pipeline
@@ -275,23 +254,23 @@ The main command uses `agent/pipeline/executor.ts` for every registered stage. I
 
 ```bash
 # Run the configured chain, currently research followed by solve.
-bun run pipeline -- spam1
+./dev bun run pipeline -- spam1
 
 # Run and stop after research.
-bun run pipeline -- spam1 --stop-after research
+./dev bun run pipeline -- spam1 --stop-after research
 
 # Start directly at solve.
-bun run pipeline -- spam1 --stage solve
+./dev bun run pipeline -- spam1 --stage solve
 
 # Print trace events while the run executes.
-bun run pipeline -- spam1 --echo-events
+./dev bun run pipeline -- spam1 --echo-events
 ```
 
 The standalone commands below still use the same stage executor:
 
 ```bash
-bun run research -- spam1
-bun run solve-stage -- spam1 --use-existing-research --iterations 3
+./dev bun run research -- spam1
+./dev bun run solve-stage -- spam1 --use-existing-research --iterations 3
 ```
 
 Each pipeline run writes a local trace to:
@@ -319,7 +298,7 @@ The stage gets the task prompt, a compact dataset manifest, optional measured st
 Preview the startup context without calling a model:
 
 ```bash
-bun run research -- spam1 --preview-context
+./dev bun run research -- spam1 --preview-context
 ```
 
 ### Solve output
@@ -376,26 +355,9 @@ Telemetry has two parts:
 
 The dashboard reads PostgreSQL. It does not read the JSONL fallback.
 
-### Start telemetry with Devbox
+### Start telemetry
 
-In one terminal:
-
-```bash
-devbox services start postgresql
-devbox services ls
-```
-
-The project config uses PostgreSQL on `127.0.0.1:55433`, database `postgres`, and the current operating-system user. In a second terminal:
-
-```bash
-devbox run -- bun run traces
-```
-
-Open [http://localhost:3001](http://localhost:3001).
-
-### Start telemetry without Devbox
-
-Run a local PostgreSQL instance and configure these variables before starting the pipeline or dashboard:
+The toolchain does not provide PostgreSQL. Run a local PostgreSQL 17 instance; `mise.toml` already sets `AGENT_DATABASE_PORT=55433` and `PGDATABASE=postgres`. Set `PGUSER` if it differs from your user:
 
 ```bash
 export AGENT_DATABASE_PORT=55433
@@ -408,8 +370,10 @@ The current event sink connects to PostgreSQL on `127.0.0.1` with TLS disabled a
 Start the dashboard:
 
 ```bash
-bun run traces
+./dev bun run traces
 ```
+
+Open [http://localhost:3001](http://localhost:3001).
 
 ### Check that telemetry works
 
@@ -419,28 +383,28 @@ Check the dashboard API:
 curl -fsS http://127.0.0.1:3001/api/traces
 ```
 
-Check PostgreSQL directly with Devbox:
+Check PostgreSQL directly:
 
 ```bash
-devbox run -- pg_isready -h 127.0.0.1 -p 55433 -d postgres
-devbox run -- psql -X -h 127.0.0.1 -p 55433 -d postgres -Atqc \
+pg_isready -h 127.0.0.1 -p 55433 -d postgres
+psql -X -h 127.0.0.1 -p 55433 -d postgres -Atqc \
   'select count(*), min(observed_at), max(observed_at) from agent_events'
 
-devbox run -- psql -X -h 127.0.0.1 -p 55433 -d postgres -P pager=off -c \
+psql -X -h 127.0.0.1 -p 55433 -d postgres -P pager=off -c \
   'select agent_run_id, event_type, observed_at, stage from agent_events order by observed_at desc limit 20'
 ```
 
 Generate a trace by running a registered stage, then inspect its local mirror:
 
 ```bash
-bun run pipeline -- spam1 --stop-after research
+./dev bun run pipeline -- spam1 --stop-after research
 ls -lt runs/spam1/pipeline/
 tail -n 20 runs/spam1/pipeline/*.jsonl
 ```
 
 If the dashboard is empty:
 
-- confirm PostgreSQL is running with `devbox services ls`;
+- confirm PostgreSQL is running (`pg_isready -h 127.0.0.1 -p 55433`);
 - confirm the pipeline and dashboard use the same `AGENT_DATABASE_PORT`, `PGDATABASE`, and `PGUSER`;
 - query `agent_events` directly;
 - inspect the pipeline command for a degraded-trace warning;
@@ -468,7 +432,7 @@ The intended use is context partitioning. A long-lived solver remains responsibl
 Read [agent/subagents/README.md](agent/subagents/README.md) before enabling it. Run its deterministic tests with:
 
 ```bash
-bun test agent/subagents agent/prompts agent/run/session_resources.test.ts
+./dev bun test agent/subagents agent/prompts agent/run/session_resources.test.ts
 ```
 
 `agent/subagents/live_smoke.ts` makes paid model calls and is not part of the normal test suite. Its original run produced valid artifacts but exited nonzero on a flawed marker assertion. The assertion now distinguishes automatic transcript forwarding from text repeated in a bounded reply. The original failed evidence is preserved, and no corrected live rerun has occurred. See the [handover evidence](docs/HANDOVER.md#live-smoke-evidence).
@@ -476,8 +440,8 @@ bun test agent/subagents agent/prompts agent/run/session_resources.test.ts
 ## Tests
 
 ```bash
-bun test
-bun run test:py
+./dev bun test
+./dev bun run test:py
 ```
 
 The TypeScript tests cover pipeline execution, prompt loading, tracing, session resources, solve contracts, and the optional subagent module. Python tests cover solve measurements and setup utilities. CI is outside the current scope; run these checks locally.

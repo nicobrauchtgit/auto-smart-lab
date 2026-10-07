@@ -2,7 +2,6 @@ import { basename, dirname, join, resolve } from "node:path";
 import { readPythonEnvironment } from "../../run/python_environment.js";
 import { resolveLabelsFile } from "../../solve/workspace.js";
 import { runRefit, type RefitOptions } from "../../refit/service.js";
-import { resolveCppRuntimeLibraryPath } from "../../training/environment.js";
 import { PROJECT_ROOT, resolveTask } from "../resolve_task.js";
 import type { StageDefinition } from "../types.js";
 export interface RefitStageOptions { trainingRoot?: string }
@@ -11,8 +10,6 @@ export function refitInputs(taskId: string, trainingRoot?: string): RefitOptions
  const labelsPath = resolveLabelsFile(taskId, join(task.taskDir, "data"));
  const environment = readPythonEnvironment();
  const env = Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => e[1] !== undefined));
- const runtime = resolveCppRuntimeLibraryPath(env);
- if (runtime) env.LD_LIBRARY_PATH = runtime;
  return { taskId, trainingRoot, projectRoot: PROJECT_ROOT, solutionsRoot: join(PROJECT_ROOT, "solutions"), pythonExecutable: environment.executable,
   environmentFingerprint: environment.fingerprint, env, labelsPath,
   trainZip: join(task.taskDir, "data", basename(labelsPath).replace(/-train\.labels$/, "-train.zip")),

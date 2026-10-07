@@ -1,7 +1,0 @@
-{
-  "description": "System libraries that binary Python wheels load and the Nix-built interpreter cannot find on its own. Each entry names the Devbox package that provides it. The Devbox shell hook and the training environment both add these directories to LD_LIBRARY_PATH.",
-  "libraries": [
-    { "file": "libstdc++.so.6", "devboxPackage": "stdenv.cc.cc.lib" },
-    { "file": "libz.so.1", "devboxPackage": "zlib" }
-  ]
-}

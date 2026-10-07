@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Project-local toolchain. mise, the tools it pins (mise.toml), uv's Python and
+# every cache live under .tools/, so nothing is installed into the user's home,
+# shell configuration or Nix profile. Deleting .tools/, .venv/ and
+# node_modules/ removes every trace.
+#
+#   ./dev setup              install the pinned tools, Python and dependencies
+#   ./dev <command> [args]   run a command inside the toolchain, e.g.
+#                            ./dev bun test, ./dev bun run pipeline -- spam1
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TOOLS="$ROOT/.tools"
+MISE="$TOOLS/bin/mise"
+MISE_VERSION="2026.10.4"
+
+case "$(uname -s)-$(uname -m)" in
+	Linux-x86_64) MISE_ASSET="linux-x64-musl"; MISE_SHA256="46ecfd7d391a22d442a650c4a7d717b3d35a01d6c3b8f37808f71abbcaa855ab" ;;
+	Linux-aarch64 | Linux-arm64) MISE_ASSET="linux-arm64-musl"; MISE_SHA256="7f92c8a883a489b31ef09862e9e198cc1b80ab32a67efebc9ae75146b7ea0e4c" ;;
+	*) echo "[dev] Unsupported platform: $(uname -s) $(uname -m)" >&2; exit 1 ;;
+esac
+
+export MISE_DATA_DIR="$TOOLS/mise/data"
+export MISE_CACHE_DIR="$TOOLS/mise/cache"
+export MISE_STATE_DIR="$TOOLS/mise/state"
+export MISE_CONFIG_DIR="$TOOLS/mise/config"
+export MISE_TRUSTED_CONFIG_PATHS="$ROOT"
+export UV_CACHE_DIR="$TOOLS/uv/cache"
+export UV_PYTHON_INSTALL_DIR="$TOOLS/uv/python"
+export BUN_INSTALL_CACHE_DIR="$TOOLS/bun/cache"
+
+if [[ ! -x "$MISE" ]]; then
+	# Pinned release, verified against its published SHA-256 before use.
+	echo "[dev] Installing mise $MISE_VERSION into .tools/" >&2
+	mkdir -p "$TOOLS/bin"
+	download="$(mktemp "$TOOLS/bin/mise.XXXXXX")"
+	trap 'rm -f "$download"' EXIT
+	curl -fsSL -o "$download" "https://github.com/jdx/mise/releases/download/v$MISE_VERSION/mise-v$MISE_VERSION-$MISE_ASSET"
+	echo "$MISE_SHA256  $download" | sha256sum --check --status || { echo "[dev] mise checksum mismatch" >&2; exit 1; }
+	chmod +x "$download"
+	mv "$download" "$MISE"
+	trap - EXIT
+fi
+
+if [[ $# -eq 0 ]]; then
+	sed -n '7,9p' "$0" | sed 's/^# \{0,1\}//'
+	exit 1
+fi
+
+if [[ "$1" == "setup" ]]; then
+	shift
+	"$MISE" install
+	exec "$MISE" run setup "$@"
+fi
+
+exec "$MISE" exec -- "$@"

@@ -1,11 +1,5 @@
 /** Environment boundary for harness-owned training processes. */
 
-import { spawnSync } from "node:child_process";
-import { existsSync, realpathSync } from "node:fs";
-import { delimiter, dirname, isAbsolute, join } from "node:path";
-
-import nativeLibraries from "../runtime/python/native-libraries.json";
-
 const RUNTIME_KEYS = [
 	"PATH",
 	"VENV_DIR",
@@ -27,58 +21,14 @@ const RUNTIME_KEYS = [
 	"TMP",
 	"TEMP",
 	"LD_LIBRARY_PATH",
+	// nix-ld runs uv's standalone Python on NixOS; absent elsewhere.
+	"NIX_LD",
+	"NIX_LD_LIBRARY_PATH",
 ] as const;
 
 export interface TrainingEnvironmentIdentity {
 	pipelineRunId?: string;
 	stageInvocationId?: string;
-}
-
-/**
- * Locate the native libraries binary Python wheels expect on Nix hosts, listed
- * in `agent/runtime/python/native-libraries.json`, and return an
- * LD_LIBRARY_PATH that provides them. `library_path` in
- * `agent/setup/python_environment.py` does the same for the Devbox shell.
- */
-export function resolveCppRuntimeLibraryPath(
-	source: Readonly<Record<string, string | undefined>> = process.env,
-): string | undefined {
-	// An unrelated LD_LIBRARY_PATH, such as one inherited from a desktop app, is
-	// not evidence that the libraries are reachable; check for each library itself.
-	const existing = (source.LD_LIBRARY_PATH ?? "").split(delimiter).filter(Boolean);
-	const added: string[] = [];
-	for (const library of RUNTIME_LIBRARIES) {
-		if ([...added, ...existing].some((directory) => existsSync(join(directory, library)))) continue;
-		const directory = devboxLibraryDirectory(source, library)
-			?? (library === CPP_RUNTIME ? compilerRuntimeDirectory() : undefined);
-		if (directory) added.push(directory);
-	}
-	if (added.length === 0) return source.LD_LIBRARY_PATH || undefined;
-	return [...added, ...existing].join(delimiter);
-}
-
-const CPP_RUNTIME = "libstdc++.so.6";
-const RUNTIME_LIBRARIES: readonly string[] = nativeLibraries.libraries.map((library) => library.file);
-
-/**
- * The store directory of a library Devbox installs.
- * Only that directory is returned, not the whole profile `lib/`, so other Nix
- * binaries keep resolving their own libraries.
- */
-function devboxLibraryDirectory(source: Readonly<Record<string, string | undefined>>, library: string): string | undefined {
-	if (!source.DEVBOX_PACKAGES_DIR) return undefined;
-	const link = join(source.DEVBOX_PACKAGES_DIR, "lib", library);
-	return existsSync(link) ? dirname(realpathSync(link)) : undefined;
-}
-
-function compilerRuntimeDirectory(): string | undefined {
-	const result = spawnSync("g++", [`-print-file-name=${CPP_RUNTIME}`], {
-		encoding: "utf8",
-		timeout: 5_000,
-	});
-	if (result.status !== 0) return undefined;
-	const library = result.stdout.trim();
-	return isAbsolute(library) && existsSync(library) ? dirname(library) : undefined;
 }
 
 /**

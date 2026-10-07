@@ -10,7 +10,7 @@ import { createHarnessTrainingTools } from "./tools.js";
 export { ExperimentRequestError, parseExperimentRequest, validateExperimentRequest } from "./contract.js";
 export { createGitHistoryGuard, classifyCommand, gitHistoryBlock } from "./git_guard.js";
 export { ensureSolutionsRepository } from "./git.js";
-export { resolveCppRuntimeLibraryPath, sanitizeTrainingEnvironment } from "./environment.js";
+export { sanitizeTrainingEnvironment } from "./environment.js";
 export { TrainingService } from "./service.js";
 export * from "./results.js";
 export * from "./seeds.js";
