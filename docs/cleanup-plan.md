@@ -195,6 +195,23 @@ Order: the cleanup (sections 0-2) first, then this.
   outbound access to the model API, Tavily and Langfuse, ports in use, the lab's
   Python template and its torch version), then choose between everything on the
   VM or agents here with training workers on the VM over SSH.
+- [x] VM inventory (2026-10-07, read-only over SSH with the `.env` login):
+  - Debian 13 (trixie), x86_64, glibc 2.41; 10 vCPUs (AMD EPYC 7713), 23 GiB RAM,
+    no GPU; **13 GB free disk** (49 GB, 74% used); `/tmp` is a 12 GB tmpfs.
+  - No `curl` (a self-built one sits in `~/curl/bin`), but `wget`, `git`, `zip`,
+    `unzip`, `gcc`, `make`, `tmux` exist. No `sudo`, no Docker, no Nix.
+  - Outbound HTTPS works: GitHub, PyPI, npm, the SAIA API, Tavily, Langfuse.
+    The lab website needs insecure TLS there too (self-signed certificate).
+  - Ports in use: 22 (SSH), 8000 (lab service, `/api/...`), 8888 (Jupyter).
+    No clash with the project's 55433 (optional Postgres) and 3001 (dashboard).
+  - Already there: system Python 3.13.5 with `~/env` (Jupyter, numpy, scipy,
+    sklearn; the lab README suggests `pip`), bun 1.4.0 in `~/.bun`, node 22,
+    and an old clone `~/auto-smart-lab` (commit `1fd1af5`, generation 1) with
+    uncommitted work (`spam2.py`, `spam3.py`, a data exploration script).
+  - Consequences: `./dev` needs a `wget` fallback for the mise download; deploy
+    next to the old clone, not over it; watch disk space (`.tools/` is ~0.8 GB,
+    torch CPU adds ~1 GB, unit datasets several hundred MB each). Agents can run
+    on the VM (option "everything on the VM"), since the model API is reachable.
 - [ ] Safety: units 2 and 3 contain real malware. Nothing may open or execute
   samples outside analysis code, and external detection services are forbidden
   by the lab rules.
