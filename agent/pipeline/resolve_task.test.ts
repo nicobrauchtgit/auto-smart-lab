@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { resolveTask, TaskNotFoundError, type TaskRef } from "./resolve_task.js";
+import { positionalSelector, resolveTask, TaskNotFoundError, type TaskRef } from "./resolve_task.js";
 
 const tasks: TaskRef[] = [
 	{
@@ -19,6 +19,19 @@ const tasks: TaskRef[] = [
 		unitTitle: "Evasion", unitSlug: "02-evasion", unitNumber: 2, hasData: false,
 	},
 ];
+
+describe("positionalSelector", () => {
+	test("`unit 1 task 1` selects by unit and task, not as an ambiguous unit", () => {
+		expect(positionalSelector(["unit", "1", "task", "1"])).toEqual({ unit: "1", task: "1" });
+		expect(resolveTask(positionalSelector(["unit", "1", "task", "1"]), tasks).taskId).toBe("spam1");
+		expect(resolveTask(positionalSelector(["unit", "1", "task", "2"]), tasks).taskId).toBe("spam2");
+	});
+
+	test("a single word is a task ID; a malformed unit form is rejected", () => {
+		expect(resolveTask(positionalSelector(["spam2"]), tasks).taskId).toBe("spam2");
+		expect(() => positionalSelector(["unit", "1", "1"])).toThrow("unit <unit> task <task>");
+	});
+});
 
 describe("resolveTask", () => {
 	test("resolves unit and task numbers", () => {

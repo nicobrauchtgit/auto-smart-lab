@@ -7,7 +7,7 @@
  */
 
 import { runSolveStage } from "./pipeline/run_solve.js";
-import { resolveTask } from "./pipeline/resolve_task.js";
+import { positionalSelector, resolveTask } from "./pipeline/resolve_task.js";
 
 function usage(): never {
 	console.error("Usage: npm run solve-stage -- <task> [--use-existing-research] [--iterations N] [--model M] [--events]");
@@ -28,10 +28,7 @@ function value(name: string): string | undefined {
 const positional = argv.filter((entry, index) =>
 	!entry.startsWith("--") && !["--iterations", "--model"].includes(argv[index - 1]));
 
-const selector = positional[0] === "unit"
-	? { unitNumber: Number(positional[1]), taskNumber: Number(positional[3]) }
-	: { taskId: positional[0] };
-const task = resolveTask(selector);
+const task = resolveTask(positionalSelector(positional));
 
 const iterations = value("--iterations");
 const result = await runSolveStage({

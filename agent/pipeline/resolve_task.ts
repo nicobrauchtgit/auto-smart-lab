@@ -121,6 +121,13 @@ function describe(tasks: TaskRef[]): string {
 		.join("\n  ");
 }
 
+/** `unit <unit> task <task>` or a single canonical task ID, as typed on a stage CLI. */
+export function positionalSelector(positional: string[]): TaskSelector {
+	if (positional[0] !== "unit") return { taskId: positional[0] };
+	if (positional[2] !== undefined && positional[2] !== "task") throw new Error(`Expected "unit <unit> task <task>", got "${positional.join(" ")}"`);
+	return { unit: positional[1], task: positional[3] };
+}
+
 export function resolveTask(selector: TaskSelector, tasks = listTasks()): TaskRef {
 	let candidates = tasks;
 	if (selector.taskId) {

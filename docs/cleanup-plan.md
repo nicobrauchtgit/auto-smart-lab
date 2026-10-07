@@ -118,9 +118,10 @@ tools, **L** later.
   `development_selection.test.ts` (earlier-run champion handed over, not an
   unpromoted trial with an equal mean), `evidence.test.ts` (evaluate rejects a
   non-champion), `results.test.ts`.
-- [ ] **Q3 `solve-stage` selector.** `agent/solve_cli.ts:32` passes
-  `{unitNumber, taskNumber}` to `resolveTask`, which expects `{unit, task}`;
-  `unit 1 task 1` fails as ambiguous.
+- [x] **Q3 `solve-stage` selector.** Done: `agent/solve_cli.ts` passed
+  `{unitNumber, taskNumber}` to `resolveTask`, which expects `{unit, task}`, so
+  `unit 1 task 1` failed as ambiguous. It now uses `positionalSelector`
+  (`agent/pipeline/resolve_task.ts`), tested in `resolve_task.test.ts`.
 - [ ] **Q4 Missing checksum.** The `solve_entrypoint` artifact
   (`agent/pipeline/stages/solve.ts`) has no sha256, so it gets no provenance.
 - [ ] **Q5 Empty default tool list.** `EXTENSION_PATHS` in
