@@ -1,237 +1,296 @@
-# Cleanup plan and decisions
+# Cleanup plan and handover
 
-Started 2026-10-07 from a code review that read only code, not docs. This file
-records the decisions and tracks the work. Tick items off as they land.
+This is the entry point for any agent or developer picking up work on this
+repository. It records the current state, the decisions taken with the user,
+what is still open, and the prioritized work queue. Started 2026-10-07 from a
+code-only review; last updated 2026-10-07.
+
+Older documents (`HANDOVER.md`, `WIP.md` and the design notes in `docs/`)
+describe earlier generations and are historical records. When they disagree
+with this file, this file wins.
+
+## Picking this up
+
+1. **Read** this file, then `AGENTS.md` (development rules: stage contract,
+   observability, setup checks, prompt management, Python dependencies). The
+   module READMEs under `agent/` describe each module.
+2. **Set up**, on any Linux machine (x86_64/arm64) with `git`, `zip`, `unzip`
+   and `curl` or `wget`:
+
+   ```bash
+   cp .env.example .env     # then fill in the keys, see "Environment and access"
+   ./dev setup              # pinned mise, bun, uv, Python 3.13 and all dependencies
+   ./dev mise run test      # bun test + Python suites
+   ```
+
+   Run every project command through `./dev` (e.g. `./dev bun run pipeline --
+   spam1 --dry-run`). Never install tools into the user's home, shell
+   configuration or Nix profile; everything lives in `.tools/` (D12).
+3. **Expected test result:** all green on a machine where unit 1 has been
+   fetched (`./dev bun run fetch-unit -- 01-spam`). Without it, 4 TypeScript
+   tests fail with "No local task matches spam1" (work item Q7).
+4. **Work conventions:** one work item per commit, tests with every change,
+   tick the item off here in the same commit. Do not act on an open decision
+   without the user. Ask before anything outward-facing: submissions (3 attempts
+   per task, they count), pushes, writes on the SmartLab VM.
+
+## Current state (2026-10-07)
+
+- **Branch** `solve-stage-hardening`, 11 commits ahead of
+  `origin/solve-stage-hardening` (not pushed). Remote:
+  `git@github.com:nicobrauchtgit/auto-smart-lab.git`.
+- **Tests:** locally 419 TypeScript tests pass (4 skipped), all Python suites
+  pass. On the VM the same, except the 4 tests that need fetched unit data.
+- **Toolchain:** `./dev` + `mise.toml` (bun 1.3.13, uv 0.12.5, ripgrep, fd) and
+  uv-managed Python 3.13.15. Devbox is gone (D12).
+- **The live pipeline** (`agent/pipeline/registry.ts`): research -> solve ->
+  evaluate -> refit, plus a deterministic submit stage that only an explicit
+  orchestrator policy may run. Two entry points share one executor:
+  `./dev bun run pipeline` (configured chain, never submits) and
+  `./dev bun run orchestrate` (decision agent, may submit under policy).
+  Solve is harness-owned training: the agent writes `solutions/tasks/<id>.py`
+  (`build_pipeline()` returning an unfitted sklearn estimator over an
+  `id`/`text` frame) and starts trials through `experiment_*` tools; Python
+  workers own folds, seeds, fits, predictions and metrics.
+- **Biggest structural limit:** the harness assumes a zip of text files,
+  binary `0`/`1` labels and balanced accuracy everywhere. Only unit 1 fits;
+  see section "Lab tasks" and work item H1.
+- **Official lab attempts:** every task 0 of 3 used, except task 4.1 (1 of 3,
+  score 0.0, 2026-08-13). spam1 has two uncounted submissions (2026-08-18,
+  scored 0.9645, marked FAILURE).
 
 ## Decisions
 
 | # | Decision | Date |
 |---|---|---|
-| D1 | The `id` rule stays a prompt rule. The harness also gets a canary that is silent unless a pipeline actually reads the ID; only then does the agent get a message (see [Canary](#id-leakage-canary)). | 2026-10-07 |
+| D1 | The `id` rule stays a prompt rule. The harness also gets a canary that is silent unless a pipeline actually reads the ID; only then does the agent get a message (see [ID leakage canary](#id-leakage-canary)). | 2026-10-07 |
 | D2 | Keep a held-back set, size it by data size instead of a fixed 10%, and score the frozen champion on it exactly once (see [Held-back confirmation](#held-back-confirmation)). | 2026-10-07 |
 | D3 | Remove dead code from earlier generations only after the uncommitted current work is committed, so the cleanup is one separate, revertible commit. | 2026-10-07 |
 | D4 | The harness takes work off the agent by measuring and offering primitives, never by restricting what the agent may build. Restrictions are only allowed where they protect evidence integrity (who fits, which rows are held back, what counts for promotion). Anything that would lock the agent out of solving a task is a bug. | 2026-10-07 |
 | D5 | Test inputs stay easy to reach for the agent: comparing test against training data is explicitly allowed. Isolation hides labels and held-back rows, not test inputs. | 2026-10-07 |
 | D6 | Drop the hand-written Naive Bayes (`agent/smartlab/tasks/spam1.py`) with the rest of `agent/smartlab/`. | 2026-10-07 |
-| D7 | No promotion on chance: a challenger replaces the champion only when its paired lead over the champion exceeds noise (section 4b). | 2026-10-07 |
-| D8 | Drop the memory-file submission counter (`agent/run/memory_utils.ts`, the `agent/tools/memory.ts` tool and the `agent/memory/memory.json` gitignore entry) and the scaffold generator (`agent/run/scaffold.ts`). The submission ledger and the agent-written entrypoint replace them. | 2026-10-07 |
+| D7 | No promotion on chance: a challenger replaces the champion only when its paired lead over the champion exceeds noise (work item Q1). | 2026-10-07 |
+| D8 | Drop the memory-file submission counter and the scaffold generator. The submission ledger and the agent-written entrypoint replace them. | 2026-10-07 |
 | D9 | No harness data loader. The agent's code reads samples; the harness owns sample identity, folds, fits and scoring. | 2026-10-07 |
-| D10 | Keep the generic `experiment_*` tools as the escape hatch for work that fits no harness kind. | 2026-10-07 |
-| D11 | Order: cleanup (sections 0-2) first, then the modular harness (section 6). Experiments will run on the SmartLab VM. | 2026-10-07 |
+| D10 | Keep the generic `experiment_*` tools (`agent/experiments/`, `argv`-based) as the escape hatch for work that fits no harness kind. | 2026-10-07 |
+| D11 | Order: cleanup first (done), then the modular harness (H1). Experiments, and the agents, run on the SmartLab VM. | 2026-10-07 |
 | D12 | Devbox is replaced by mise because the SmartLab VM has no Nix. `./dev` keeps mise (pinned, checksum-verified), its tools, uv's managed Python and all caches under `.tools/`: nothing goes into the user's home, shell configuration or Nix profile. uv owns Python (`.python-version`, `python-preference = "only-managed"`). | 2026-10-07 |
 
-## Open decisions
+## Open decisions (ask the user)
 
-- [ ] `agent/subagents/` (~770 lines, used only by its own smoke test): wire into the orchestrator, or delete?
-- [ ] `agent/tools/{smartlab,challenge_context}.ts` pi extensions (loaded by `.pi/settings.json` for interactive `pi` and by the legacy sessions): keep or delete? (`memory.ts` is decided: drop, D8.) The `smartlab_submit` tool there uploads without the new submission accounting. `agent/tools/web_search.ts` is live (the research stage loads it by path) and stays.
-- [ ] `agent/instructions/`: no code references it any more. Delete now, or wait as AGENTS.md says?
-- [ ] Doc sprawl in `docs/` (WIP, HANDOVER, several plans) describes earlier generations. Consolidate after the code cleanup?
+- [ ] `agent/subagents/` (~770 lines, used only by its own smoke test): wire into the orchestrator, or delete? The `context.*probe*` prompts go with it.
+- [ ] `agent/tools/smartlab.ts` (an upload tool that bypasses the submission ledger) and `agent/tools/challenge_context.ts`: only loaded by `.pi/settings.json` for interactive `pi` and by the default extension list. Keep or delete? (`web_search.ts` is live and stays.)
+- [ ] `agent/instructions/`: nothing references it. Delete?
+- [ ] Older docs in `docs/` (HANDOVER, WIP, design notes) describe earlier generations. Consolidate or archive?
+- [ ] Tool sets (W1): should solve get `web_search`? Should the orchestrator get read-only knowledge search? Who gets a tool for the lab service on the VM?
+- [ ] Run the agents on the VM with a copy of `.env` there? (The VM checkout has no `.env` yet; see "Environment and access".)
+- [ ] `~/.local/bin/herdr` on the VM: origin unknown, not from this project. Keep or remove?
+- [ ] Recommended, not yet confirmed: build the canary (C1), held-back confirmation (C2) and quality signals (C3) inside the modular harness (H1) rather than before it, so they are not written twice for binary classification only.
 
-## Todo
+## Work queue
 
-### 0. Prerequisites (done 2026-10-07)
-- [x] Commit the uncommitted current work (`6496825`).
-- [x] ~~Make Python runnable inside Devbox (`21a3e8e`)~~ Superseded by D12: uv's standalone Python needs no library workaround (nix-ld on NixOS, system libraries on the VM). `stdenv.cc.cc.lib` and `zlib` in `devbox.json`, their store directories exported by the Devbox shell; `resolveCppRuntimeLibraryPath` checks that `libstdc++.so.6` and `libz.so.1` are actually reachable; the health check imports the declared compiled packages (numpy, scipy, sklearn, pandas).
-- [x] ~~Native libraries listed once in `agent/runtime/python/native-libraries.json`~~ (removed with D12; the post-install import check stays), read by the Devbox hook (`python_environment.py library-path`) and the training environment. `add`/`update` import every new or changed distribution and report a missing system library (`installed_import_failure` in `changes.jsonl`, non-zero exit, package stays installed). Background: the Devbox Python is Nix-built, so the host's nix-ld libraries do not apply to it.
-- [x] Tests green: `bun test` and all four `test:py` suites. (`test:py` chains the suites with `&&`, so the first failing suite had hidden the rest; it did not only collect `agent/solve/tests`.)
+Priorities: **Q** quick fixes in the live pipeline, **T** tooling, **H** the
+modular harness, **C** measurement features for the harness, **W** wiring and
+tools, **L** later.
 
-### 1. Remove dead code (generations 0-2) (done 2026-10-07)
-- [x] `npm run solve` and `agent/run/orchestrate.ts`, `solver_session.ts`, `eval_session.ts`, `submit_session.ts`, `scaffold.ts`, `memory_utils.ts`.
-- [x] `agent/smartlab_agent.py`, `agent/smartlab/`.
-- [x] `agent/tools/memory.ts`, its prompts in `tools.json`, its entries in `.pi/settings.json` and `EXTENSION_PATHS`, and the `.gitignore` line (D8).
-- [x] `agent/run/solve_session.ts` (+ test).
-- [x] `agent/solve/{iteration,canary,champion,corpus,entrypoint}.py`, `agent/solve/results.ts`, their tests, `iterationSeed`.
-- [x] `libs/smartlab-eval`: `metrics.py`, `results.py` (`corpus.py` kept). `threshold_sweep` is recoverable from `6496825` for item 4b.
-- [x] `agent/setup/`: `fetch_units.py`, `submit.py`, `smartlab_submit.py`, `load_challenge.py`; the `environment/` folder and its `.gitignore` lines.
-- [ ] Deferred: `agent/setup/inspect_lab_data.py` and its dependency `fetch_lab.py` stay until their service/endpoint detection moves into `fetch_unit.ts` (4b).
-- [x] Prompts: `solver.*`, `evaluation.*`, `solve.iteration`, `submission.system`.
-- [ ] Deferred: the `context.*probe*` prompts belong with the open `agent/subagents/` decision.
-- [x] Stale `devbox.json` scripts removed; `devbox run test` runs `bun test` and `bun run test:py`.
-- [x] `test:py` no longer runs the removed `agent/solve/tests`.
-- [x] READMEs updated: `agent/solve`, `agent/setup`, `agent/prompts`.
+### Q. Quick fixes (small, independent)
 
-### 2. Merge duplicates (done 2026-10-07)
-- [x] `agent/solve/convergence.py` moved into `smartlab_trial/convergence.py` (no more loading by file path); its tests are `agent/training/python/test_convergence.py`.
-- [x] ~~Remove the unused generic `experiment_*` tools~~ Keep them (D10): they are the escape hatch for work that fits no harness kind. Wiring them into the agents belongs to item 6.
-- [x] `RUN_OUTPUTS` / `archivePreviousRun` removed from `agent/solve/workspace.ts`.
-- [x] `createStratifiedFolds` moved into `agent/solve/folds.ts`; `agent/pipeline/feature_audit.ts` deleted.
-
-### 3. ID leakage canary
-- [ ] Implement as described [below](#id-leakage-canary).
-
-### 4. Held-back confirmation
-- [ ] Implement as described [below](#held-back-confirmation).
-
-### 4b. Recovered from the dead code (proposed, not yet decided)
-- [ ] **Champion promotion ignores noise.** The old loop replaced the champion only
-  when the paired bootstrap interval of the difference cleared zero. The live rule
-  in `agent/training/service.ts` (champion tagging) promotes on any
-  `meanDifference > 0`; `leadExceedsNoise` is computed in
-  `smartlab_trial/search.py` but never used. Require it (or a bootstrap interval)
-  for promotion.
-- [ ] **Two selection rules can disagree.** `developmentSelection` and
-  `collectTrainingResults` pick the highest raw CV mean; the champion tag uses the
-  paired rule. Solve can return a `training_selected_result` that is not the
-  champion, and refit then rejects it ("Chosen champion differs from
+- [ ] **Q1 Promotion follows noise (D7).** `agent/training/service.ts`, champion
+  tagging: promotes when the paired `meanDifference > 0`. Require
+  `leadExceedsNoise` (computed in `smartlab_trial/search.py` `_paired`: mean >
+  2 standard errors), or a paired bootstrap interval clearing zero. Test: a
+  challenger with a positive but noisy lead keeps the old champion and records
+  `training_champion_retained`.
+- [ ] **Q2 Two selection rules disagree.** `developmentSelection`
+  (`agent/training/development_selection.ts`) and `collectTrainingResults`
+  (`agent/training/results.ts`) pick the highest raw CV mean; the champion tag
+  uses the paired rule. Solve can hand refit a `training_selected_result` that is
+  not the champion, and refit then rejects it ("Chosen champion differs from
   controller-supplied reviewed evidence"). Make selection read the champion tag.
-- [ ] **Threshold diagnostic.** `smartlab_eval.metrics.threshold_sweep` (removed in the cleanup; recover from `6496825`) reported
-  balanced accuracy at the best threshold vs. the default. Add this to
-  `agent/evaluation/diagnostics.py` as a report-only number (it matters for
-  imbalanced tasks such as webspam, ~16% positive); the agent can then build
-  threshold tuning into its pipeline. Per D4 this is a measurement only; the
-  harness never applies a threshold itself.
-- [ ] **Local services and API endpoints.** `agent/setup/inspect_lab_data.py`
+  Test: higher-mean but not promoted trial -> solve selects the champion.
+- [ ] **Q3 `solve-stage` selector.** `agent/solve_cli.ts:32` passes
+  `{unitNumber, taskNumber}` to `resolveTask`, which expects `{unit, task}`;
+  `unit 1 task 1` fails as ambiguous.
+- [ ] **Q4 Missing checksum.** The `solve_entrypoint` artifact
+  (`agent/pipeline/stages/solve.ts`) has no sha256, so it gets no provenance.
+- [ ] **Q5 Empty default tool list.** `EXTENSION_PATHS` in
+  `agent/run/session_runner.ts` gives any session that does not override it the
+  upload, challenge and web-search tools. No live caller relies on it; make the
+  default empty. Test: a session without `extensionPaths` gets no extensions.
+- [ ] **Q6 Ledger vs. lab attempt counting.** Check that `agent/submission/`
+  counts attempts the way the lab does: FAILURE rows do not count even when they
+  show a score (spam1's two rows from 2026-08-18), SUCCESS rows do (task 4.1's
+  attempt from 2026-08-13). Add parser fixtures from those pages.
+- [ ] **Q7 Tests that need downloaded course data.** 4 TypeScript tests read
+  the real spam1 task from `units/` ("actual context pairs the test archive",
+  three "solve stage input contract" tests). Use fixtures, or skip with a clear
+  reason when `units/01-spam` is absent.
+
+### T. Tooling
+
+- [ ] **T1 Type checking and formatting.** No `tsconfig.json` exists. A strict
+  `tsc --noEmit` (with Bun types) reports real errors: `null` vs. `undefined`
+  identity IDs, possibly-undefined accesses in `training/service.ts`. Newer
+  modules (orchestrator, submission, knowledge, refit, setup) use a dense
+  1-space style with lines over 200 characters. Add a typecheck and a formatter
+  to `./dev mise run test`, then fix the errors.
+
+### H. The modular harness (next big task, D11)
+
+Lab facts are in [Lab tasks](#lab-tasks-verified-2026-10-07).
+
+- [ ] **H1 Swappable harness parts, declared per task.** No data loader (D9):
+  the harness knows which samples exist, their targets or groups if any, the
+  folds and the scoring; reading a sample (pdf, pcap, apk, png, ...) is the
+  agent's code. Each task picks from existing options, no per-task code:
+  - sample source: files in a zip, connections in a pcap, images, none;
+  - targets: binary labels, groups/families, none, agent-provided evidence labels;
+  - fold scheme: stratified, group-held-out (unit 3: test families are unseen), none;
+  - metric: BACC, BACC with missing values, adjusted Rand index, external;
+  - submission: CSV + source upload, token from the VM service.
+  Reuse the current CV, seeds, supervision and scoring and make them modular,
+  e.g. CV and scoring that also work for clustering and unsupervised detection.
+  Today's binary assumptions live in `research/startup_context.ts`
+  (`TRAINING_LABEL_FILES`, label parser), `libs/smartlab-eval` (loader, labels),
+  `smartlab_trial/metrics.py`, `search.py`, `champion.py`, the solve prompt
+  (`agent/prompts/solve/start.md`), `solve/folds.ts`, `solve/workspace.ts` and
+  `evaluation/diagnostics.py`.
+- [ ] **H2 The orchestrator chooses the task kind** and applies the matching
+  harness parts.
+- [ ] **H3 Escape hatch (D10):** expose the generic `experiment_*` tools to
+  agents for work that fits no kind; the harness still observes it.
+- [ ] **H4 PyTorch (units 5, 6).** An observed training script with a
+  `smartlab_trial.report(epoch=..., loss=..., ...)` helper writing to
+  `events.jsonl`; harness-owned seeds, checkpoints and resume; a harness-owned
+  robustness measurement (clean, FGSM, PGD accuracy) for unit 6, which requires
+  a differentiable `torch.nn.Module`. CPU only (the VM has no GPU); add the CPU
+  build of torch through the environment manager when this starts.
+- [ ] **H5 Task metadata from the lab.** `agent/setup/inspect_lab_data.py`
   detected `http://127.0.0.1:<port>` services, `/api/...` endpoints and non-zip
-  downloads (pcap, csv, json) in task pages. The TS fetcher records none of these.
-  Carry the detection into `fetch_unit.ts` / the task descriptor (item 6) before
-  deleting the script.
-- [ ] **No clashes with a task's localhost service.** At least one task needs the
-  agent to talk to a service on localhost. Ports the project already uses: Postgres
-  on 55433 (`AGENT_DATABASE_PORT`), the trace dashboard on 3001 (`npm run traces`).
-  Needed: the task descriptor records the service's host and port; preflight
-  checks the port is free or held by the expected service and fails with a clear
-  message otherwise; project ports stay configurable; a per-port run lock stops two
-  runs from starting the same service; the service runs outside the agent's and
-  training workers' process groups so harness cleanup cannot kill it. Revisit with
-  the actual task page before implementing.
-- [ ] **Default extension list.** `EXTENSION_PATHS` in `agent/run/session_runner.ts`
-  loads the submit, memory and challenge tools into any session that does not
-  override it; only legacy callers rely on that. Make the default empty when the
-  legacy sessions are removed.
-- [ ] **One-task workspace.** Reuse the idea of Gen 0's `environment/` (only the
-  current task visible) for the isolation item in section 5, but per D5 the test
-  inputs are part of the workspace from the start, not "on request". Hidden:
-  the full labels file, extracted full training files, the held-back IDs and
-  other tasks. The old loader itself is not needed.
+  downloads (pcap, csv, json) in task pages; `fetch_unit.ts` records none of
+  these. Carry the detection into the fetcher / task declaration, then delete
+  `inspect_lab_data.py` and `fetch_lab.py`.
+- [ ] **H6 The VM's lab service** (`127.0.0.1:8000` on the VM, units 5 and 6):
+  record its address in the task declaration; preflight checks it answers and
+  that nothing else holds the port; it stays outside the process groups the
+  harness kills during cleanup. The project's own ports (55433 Postgres, 3001
+  dashboard) are free on the VM.
+- [ ] **H7 Safety.** Units 2 and 3 contain real malware. Nothing may open or
+  execute samples outside analysis code; external detection services
+  (antivirus, VirusTotal, ...) mean disqualification under the lab rules, so no
+  agent tool may call them.
 
-- [ ] **Pipeline-quality signals for the solve agent.** Today a finished trial
-  reaches the agent as one `balancedAccuracy` number in the leaderboard
-  (`TrainingService.leaderboard`). Reuse measurements from the removed
-  `smartlab_eval.metrics` (recover from `6496825`) on the harness's own OOF
-  predictions and show them in the trial result and leaderboard:
-  - per-fold spread and the paired interval against the champion
-    (`paired_bootstrap`): is the lead real (shares the rule with D7);
-  - per-class recall and confusion: which class it fails on;
-  - ROC AUC / average precision: ranking quality independent of the threshold;
-  - `threshold_sweep`: balanced accuracy at the best threshold vs. the default
-    (report only, per D4);
-  - `calibration`: whether scores mean what they say;
-  - corrected vs. introduced errors against the champion (already computed in
-    `smartlab_trial/champion.py`, not shown to the agent);
-  - convergence (`reachedLimit`, already collected) and fit time.
-  Binary-only today; the modular harness (item 6) selects which apply per kind.
+### C. Measurements (specs below; recommended inside H1)
 
-### 4c. Tracing: dashboard vs. Langfuse
-- [ ] Langfuse is not wired into the pipeline yet: the only Langfuse code is a
-  connectivity smoke test in `runs/langfuse-smoke/` (untracked). Pipeline traces
-  go to Postgres (port 55433) plus local JSONL, and `agent/dashboard/` is the only
-  viewer. Build a Langfuse exporter in `agent/observability.ts` first; then delete
-  `agent/dashboard/`, `npm run traces` and the Next/React/Tailwind dependencies,
-  and decide whether Postgres is still needed.
+- [ ] **C1 ID leakage canary (D1).** Spec: [ID leakage canary](#id-leakage-canary).
+- [ ] **C2 Held-back confirmation (D2).** Spec: [Held-back confirmation](#held-back-confirmation).
+- [ ] **C3 Pipeline-quality signals for the solve agent.** Today a finished
+  trial reaches the agent as one `balancedAccuracy` in the leaderboard
+  (`TrainingService.leaderboard`). Compute on the harness's own OOF predictions
+  and show in the trial result and leaderboard: per-fold spread and the paired
+  interval against the champion; per-class recall and confusion; ROC AUC /
+  average precision; `threshold_sweep` (balanced accuracy at the best threshold
+  vs. the default, report only per D4); `calibration`; corrected vs. introduced
+  errors against the champion (already computed in `smartlab_trial/champion.py`,
+  not shown); convergence (`reachedLimit`) and fit time. The removed
+  `smartlab_eval.metrics` implementations are recoverable with
+  `git show 6496825:libs/smartlab-eval/smartlab_eval/metrics.py`.
 
-### 4d. Tool sets per agent
-Current state (built-in pi tools, custom tools, file extensions):
+### W. Wiring and tools
 
-| Agent | Built-in | Custom | Extensions |
-|---|---|---|---|
-| research | read, grep, find, ls, edit, write, bash | knowledge_search/read/capture | web_search |
-| solve | read, grep, find, ls, edit, write, bash | experiment_start/status/output/stop/resume, knowledge_* | none (+ in-process git history guard) |
-| evaluate | none | evaluation_detail/report/code, knowledge_* (only when a seed plan exists) | none |
-| orchestrator | none | pipeline_status, pipeline_wait, pipeline_finish, stage_start/status/feedback/cancel, artifact_inspect | none |
-| default (any caller that sets nothing; today only the legacy sessions) | pi defaults | none | smartlab_submit, memory_*, list/read_challenge, web_search |
+- [ ] **W1 One registry of tools per agent.** Current sets:
 
-- [ ] Decide the default: empty, with each agent declaring its tools explicitly.
-- [ ] Review per agent what it is missing (per D4). Open questions: should solve
-  get `web_search` (looking up a library or method mid-solve)? Should research or
-  solve get a tool for a task's localhost service? Should the orchestrator get
-  read-only knowledge search?
-- [ ] Keep the per-agent tool sets in one registry, so adding a tool means one
-  entry plus its prompt and its setup check.
-- [ ] The eight orchestrator tools share a single description
-  (`orchestrator.tool`); give each its own.
+  | Agent | Built-in | Custom | Extensions |
+  |---|---|---|---|
+  | research | read, grep, find, ls, edit, write, bash | knowledge_search/read/capture | web_search |
+  | solve | read, grep, find, ls, edit, write, bash | experiment_start/status/output/stop/resume, knowledge_* | none (+ in-process git history guard) |
+  | evaluate | none | evaluation_detail/report/code, knowledge_* (only with a seed plan) | none |
+  | orchestrator | none | pipeline_status, pipeline_wait, pipeline_finish, stage_start/status/feedback/cancel, artifact_inspect | none |
 
-### 4e. Verify against the online tasks (done 2026-10-07; findings in section 6)
-- [x] Read every unit's task pages and check: data formats (beyond zips of text
-  files), label/target types, metrics, test-data availability, localhost services
-  and their ports, submission formats. Feed the findings into item 6 and the
-  localhost item in 4b.
+  Adding a tool should mean one registry entry plus its prompt and setup check.
+  Open questions are listed under "Open decisions".
+- [ ] **W2 Orchestrator tool descriptions.** All eight share `orchestrator.tool`;
+  give each its own prompt.
+- [ ] **W3 Isolate the solve agent's workspace.** It runs from the project root
+  with read/bash, so it can read the full labels file, the extracted full
+  training files and `runs/<task>/solve/data/sealed_ids.txt`. Give it a
+  workspace with only the current task (D5: test inputs included; hidden: full
+  labels, extracted training files, held-back IDs, other tasks).
 
-### 5. Bugs and tooling from the review
-- [ ] `agent/solve_cli.ts:32` passes `{unitNumber, taskNumber}` to `resolveTask`, which expects `{unit, task}`; `unit 1 task 1` fails as ambiguous.
-- [ ] `solve_entrypoint` artifact (`agent/pipeline/stages/solve.ts`) has no sha256, so no provenance.
-- [ ] Add `tsconfig.json` + `tsc --noEmit` and a formatter, run from `npm test`; fix the strict-mode errors.
-- [ ] Solve agent runs from the project root with read/bash access, so it can read the full labels, extracted training files and `sealed_ids.txt`. Run it in a workspace that cannot see those.
+### L. Later
 
-### 6. Next task: a modular harness per task kind
-Order: the cleanup (sections 0-2) first, then this.
+- [ ] **L1 Langfuse before removing the dashboard.** Langfuse is not wired in;
+  the only Langfuse code is a connectivity smoke test in the untracked
+  `runs/langfuse-smoke/`. Traces go to Postgres (optional, 55433) and local
+  JSONL; `agent/dashboard/` is the only viewer. Build a Langfuse exporter in
+  `agent/observability.ts`, then delete the dashboard, `npm run traces` and the
+  Next/React/Tailwind dependencies, then decide on Postgres.
 
-- [ ] No harness data loader (D9). The harness knows which samples exist, their
-  labels or groups if any, the folds and the scoring. Reading a sample (pdf,
-  pcap, apk, png, ...) is the agent's code, the first step of its pipeline.
-- [ ] Split the harness into swappable parts and let each task declare which it
-  uses, choosing from the existing options (hot-swappable, no per-task code):
-  - sample source (files in a zip, connections in a pcap, images, none)
-  - targets (binary labels, groups/families, none, agent-provided evidence labels)
-  - fold scheme (stratified, group-held-out, none)
-  - metric (BACC, BACC with missing values, adjusted Rand index, external)
-  - submission (CSV + source upload, token from the VM service)
-  Reuse the current CV, seeds, supervision and scoring and make them modular
-  rather than rewriting them, e.g. CV and scoring that also work for clustering
-  and unsupervised detection.
-- [ ] The orchestrator chooses the task kind and applies the matching harness
-  parts.
-- [ ] Kinds known from the lab (verified on the task pages, 2026-10-07):
-  supervised file classification (units 1, 2), clustering with unseen test
-  families (unit 3), unsupervised detection (unit 4), interactive attack or
-  defence against the VM service (units 5, 6).
-- [ ] Escape hatch: the generic `experiment_*` tools (D10) run any command
-  under harness observation when nothing fits.
-- [ ] PyTorch support (units 5, 6): an observed script with a `report()` helper
-  writing to `events.jsonl`, harness-owned seeds, checkpoints and resume;
-  harness-owned robustness measurement (clean, FGSM, PGD accuracy) for unit 6.
-  Unit 6 requires a differentiable `torch.nn.Module`.
-- [ ] Runs on the SmartLab VM (the lab service is `127.0.0.1:8000` there).
-  Before designing: inventory the VM (CPU/RAM/GPU/disk, glibc and arch for `./dev`,
-  outbound access to the model API, Tavily and Langfuse, ports in use, the lab's
-  Python template and its torch version), then choose between everything on the
-  VM or agents here with training workers on the VM over SSH.
-- [x] VM inventory (2026-10-07, read-only over SSH with the `.env` login):
-  - Debian 13 (trixie), x86_64, glibc 2.41; 10 vCPUs (AMD EPYC 7713), 23 GiB RAM,
-    no GPU; **13 GB free disk** (49 GB, 74% used); `/tmp` is a 12 GB tmpfs.
-  - No `curl` (a self-built one sits in `~/curl/bin`), but `wget`, `git`, `zip`,
-    `unzip`, `gcc`, `make`, `tmux` exist. No `sudo`, no Docker, no Nix.
-  - Outbound HTTPS works: GitHub, PyPI, npm, the SAIA API, Tavily, Langfuse.
-    The lab website needs insecure TLS there too (self-signed certificate).
-  - Ports in use: 22 (SSH), 8000 (lab service, `/api/...`), 8888 (Jupyter).
-    No clash with the project's 55433 (optional Postgres) and 3001 (dashboard).
-  - Already there: system Python 3.13.5 with `~/env` (Jupyter, numpy, scipy,
-    sklearn; the lab README suggests `pip`), bun 1.4.0 in `~/.bun`, node 22,
-    and an old clone `~/auto-smart-lab` (commit `1fd1af5`, generation 1) with
-    uncommitted work (`spam2.py`, `spam3.py`, a data exploration script).
-  - Consequences: `./dev` needs a `wget` fallback for the mise download; deploy
-    next to the old clone, not over it; watch disk space (`.tools/` is ~0.8 GB,
-    torch CPU adds ~1 GB, unit datasets several hundred MB each). Agents can run
-    on the VM (option "everything on the VM"), since the model API is reachable.
-- [x] VM cleanup (2026-10-07): removed `~/.cache/pip` (4.5 GB, the lab
-  image's pip download cache; free space 13 -> 17 GB). Archived the old clone's
-  uncommitted work to `docs/archive/vm-old-clone/` (code) and the gitignored
-  `units/_vm-archive/`, `runs/vm-archive/`. Then removed the old setup: the old
-  clone, `~/.bun`, the old Node for pi, `~/.npm`, the self-built curl, `~/.pi`,
-  and `~/.bash_profile` (old PATH entries and the lab password in plain text;
-  login falls back to the lab's `.profile`). Free space now 21 GB. Kept: `~/env` (9.1 GB, lab-provided, 6 GB of it CUDA libraries the
-  VM cannot use; Jupyter runs from it), `~/.ssh`, and `~/.local/bin/herdr`
-  (origin unknown, not from this project). No GPU: the only display
-  device is QEMU's emulated VGA.
-- [ ] Official attempts (2026-10-07): every task shows 0 of 3 used except task
-  4.1 (1 of 3, score 0.0). spam1 has two uncounted submissions from 2026-08-18,
-  each scored 0.9645 but marked FAILURE. Check that the submission ledger
-  (`agent/submission/`) counts attempts the way the lab does, i.e. ignores
-  FAILURE rows even when they show a score.
-- [ ] Safety: units 2 and 3 contain real malware. Nothing may open or execute
-  samples outside analysis code, and external detection services are forbidden
-  by the lab rules.
-- [ ] Task 4.1 already has one counted attempt (score 0.0, 2026-08-13) from the
-  old pipeline; make sure the submission ledger accounts for it.
+## Environment and access
+
+- **`.env`** (gitignored, never print it): `SAIA_API_KEY` (agents),
+  `TAVILY_API_KEY` (research web search), `LAB_USER`/`LAB_PASS` (lab website),
+  `GOOGLE_CLOUD_*` (optional Vertex provider), `LANGFUSE_*`,
+  `SMARTLAB_SSH_HOST`/`USER`/`PASSWORD` (the VM). `./dev` loads it.
+- **Lab website:** `https://lab-test.smartlab.mlsec.tu-berlin.de/`, needs the
+  OpenVPN tunnel (`lab-vpn.mlsec.tu-berlin.de`) and insecure TLS (self-signed).
+  `agent/setup/lab_client.ts` handles login. Unit pages contain "Confidential
+  Unit Information" (the SSH password, activation tokens): never commit unit
+  intros or prompts (`/units/*` is gitignored for that reason).
+- **The VM** (`stud02.smartlab.mlsec.tu-berlin.de`, user `stud02`): Debian 13,
+  x86_64, glibc 2.41, 10 vCPUs, 23 GiB RAM, **no GPU** (only QEMU's emulated
+  VGA), 21 GB free disk. Has `wget`, `git`, `zip`, `unzip`, `gcc`, `tmux`; no
+  `curl`, no `sudo`, no Docker, no Nix. Outbound HTTPS to GitHub, PyPI, npm,
+  the SAIA API, Tavily and Langfuse works. Ports in use: 22, 8000 (lab
+  service), 8888 (Jupyter). The lab's own Python env `~/env` (9 GB, with
+  Jupyter) is left alone.
+- **The project on the VM:** `~/smartlab`, branch `solve-stage-hardening` at
+  `e517d34` (transferred as a git bundle; origin points to GitHub), set up with
+  `./dev setup`, tests pass except Q7. **No `.env` there yet.** Update it with
+  `git pull` after pushing, or another bundle.
+- **SSH helper (local, gitignored):** `.tools/ssh/vm` runs a command on the VM
+  using the `.env` login through `.tools/ssh/askpass`, with known hosts in
+  `.tools/ssh/known_hosts` (not `~/.ssh`): `./dev .tools/ssh/vm '<command>'`. A
+  fresh clone has to recreate both small scripts (`SSH_ASKPASS` printing
+  `$SMARTLAB_SSH_PASSWORD`, `SSH_ASKPASS_REQUIRE=force`,
+  `PreferredAuthentications=password`).
+- **Never** print `.env`, the VM's shell configuration or unit pages unmasked.
+  A previous inventory command printed the lab password from the VM's old
+  `~/.bash_profile` (since deleted); the user was advised to rotate it.
+
+## Lab tasks (verified 2026-10-07)
+
+| Unit / task | Data | Training targets | Metric | Submission |
+|---|---|---|---|---|
+| 1.1-1.3 Spam (spam1, spam2, webspam) | zip of text files | binary 0/1 (`path;label`) | BACC | `path;0/1` CSV + source archive |
+| 2.1-2.3 Malicious DOCX / PDF / RTF | zip of binary documents, real malware | binary 0/1 | BACC | same |
+| 2.4 Mixed documents (bonus) | mixed formats, detect the format | only the older training data | BACC | same |
+| 3.1-3.3 Clustering (PHP/Perl, Android APK, Windows PE) | scripts, APKs, packed executables, real malware | known families; **test families are different** | adjusted Rand index | cluster assignment + source |
+| 4.1 Network intrusion | one `pcap.gz`; rows are TCP connections `ip:port->ip:port` | **none** (attacks are in the training data) | BACC with missing values | connection;0/1 |
+| 4.2 Adversarial image detection | 2,990 PNGs; the predicted class is in the file name | **none** | BACC | `path;0/1` |
+| 5.1 Model stealing | no dataset; REST service on the VM, time-limited challenges | n/a | cross-entropy, computed by the lab | token from the service, entered on the lab website |
+| 5.2 Evasion (optional) | same service | n/a | target class reached + small perturbation | same |
+| 6.1 Adversarial robustness | FashionMNIST | image classes | computed by the lab (FGSM/PGD) | a `torch.nn.Module` posted to the service -> token |
+
+Task kinds: supervised file classification (1, 2), clustering with unseen test
+families (3), unsupervised detection (4), interactive attack or defence against
+the VM service (5, 6). The task pages mention "a python template" for the
+service in units 5 and 6; it was not found in the VM's home directory and has
+not been located yet (it likely defines the expected torch version).
+
+## Done (2026-10-07)
+
+| Commit | What |
+|---|---|
+| `6496825` | Snapshot of the previously uncommitted work (orchestrator, evaluate/refit/submit, knowledge) |
+| `21a3e8e`, `97c8252`, `a19ff94` | Compiled packages load; `add`/`update` import new and requested packages and report missing system libraries (`installed_import_failure`); the library workaround was later removed with D12 |
+| `619aed8` | Removed generations 0-2: the old orchestrate loop and its sessions, `agent/smartlab/`, the measured solve loop (`solve_session`, `iteration`, `canary`, `champion`, `results`), unused `smartlab_eval` modules, replaced setup scripts, the memory tool, old prompts. Merged duplicates: convergence into `smartlab_trial/`, stratified folds into `solve/folds.ts`, removed the old output archiving and `feature_audit.ts` |
+| `3cfca0a`, `e517d34` | Devbox replaced by `./dev` + mise (D12); `wget` fallback for the VM |
+| `5e36fe4`, `1864d3e`, `e570e16` | VM inventory and cleanup (pip cache, old clone, old tools, old `~/.bash_profile`; 13 -> 21 GB free). The old clone's uncommitted solvers are in `docs/archive/vm-old-clone/`; its unit texts (with credentials) in the gitignored `units/_vm-archive/`, its submissions and memory file in `runs/vm-archive/` |
+
+Lessons kept from the removed code: the generation-2 canary compared scores,
+not just labels (C1); `threshold_sweep`, `paired_bootstrap` and `calibration`
+are recoverable from `6496825` (C3).
 
 ---
 
@@ -246,10 +305,10 @@ canary catches the case where the agent ignores the prompt.
 after the normal validation predictions, predict again on the same fitted
 estimator with the validation frame's IDs rewritten to the neutral test form
 (`smartlab_eval.corpus.NEUTRAL_SUFFIX`) and compare. Cost: one extra `predict`
-per fold. Search folds use the same path. Compare the scores
-(`predict_proba` / `decision_function`) as well as the labels: where the text
-alone already separates the classes, a leaky pipeline can predict the same labels
-while only its scores move (lesson from the removed generation-2 canary).
+per fold. Search folds and champion reruns use the same function. Compare the
+scores (`predict_proba` / `decision_function`) as well as the labels: where the
+text alone already separates the classes, a leaky pipeline can predict the same
+labels while only its scores move.
 
 **On a match:** nothing. No event to the agent, no change to the trial.
 
@@ -338,11 +397,10 @@ Resulting held-back sets:
    stating only the development row count and class balance.
 2. **Agent session:** unchanged. The agent never sees held-back rows or scores.
 3. **Confirmation (new, harness-owned, after the agent session closes):** take
-   the selected champion (`developmentSelection`, the champion tag), check out
-   its commit, build its fixed pipeline with a harness seed, fit on all
-   development rows, predict the held-back rows. Reuse the refit worker's
-   loaders and the supervisor's process ownership, as `agent/refit/` does. The
-   ID canary runs here too.
+   the selected champion (the champion tag, see Q2), check out its commit, build
+   its fixed pipeline with a harness seed, fit on all development rows, predict
+   the held-back rows. Reuse the refit worker's loaders and the supervisor's
+   process ownership, as `agent/refit/` does. The ID canary runs here too.
 4. **Result:** `holdout-confirmation.json` next to the training root, with
    experiment ID, commit, tree, holdout sha256, metrics (`_measure`:
    balanced accuracy, per-class recall, confusion matrix), a 95% stratified

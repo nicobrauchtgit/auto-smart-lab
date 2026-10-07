@@ -1,3 +1,9 @@
+# Current state and next tasks
+
+Start with [docs/cleanup-plan.md](docs/cleanup-plan.md): it records the current
+state, the decisions taken with the user, open questions and the prioritized
+work queue. Run project commands through `./dev` (see that file).
+
 # Pipeline development
 
 When creating or changing a pipeline module, follow
