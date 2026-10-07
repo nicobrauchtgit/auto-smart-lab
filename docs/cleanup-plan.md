@@ -122,8 +122,12 @@ tools, **L** later.
   `{unitNumber, taskNumber}` to `resolveTask`, which expects `{unit, task}`, so
   `unit 1 task 1` failed as ambiguous. It now uses `positionalSelector`
   (`agent/pipeline/resolve_task.ts`), tested in `resolve_task.test.ts`.
-- [ ] **Q4 Missing checksum.** The `solve_entrypoint` artifact
-  (`agent/pipeline/stages/solve.ts`) has no sha256, so it gets no provenance.
+- [x] **Q4 Missing checksum.** Done: `entrypointArtifact`
+  (`agent/pipeline/stages/solve.ts`) gives `solve_entrypoint` a sha256 and byte
+  size, so it gets provenance. The artifact points at the live file, so it is
+  handed over only while that file matches the selected trial's commit; once
+  edited, solve's summary records `entrypoint_mismatch` instead (the champion
+  may come from an earlier run, D13). Test: `stages/solve.test.ts`.
 - [ ] **Q5 Empty default tool list.** `EXTENSION_PATHS` in
   `agent/run/session_runner.ts` gives any session that does not override it the
   upload, challenge and web-search tools. No live caller relies on it; make the

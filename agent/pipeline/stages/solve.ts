@@ -8,13 +8,38 @@
  */
 
 import { HARNESS_CONFIG } from "../../harness/config.js";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
 
 import { runHarnessSolveSession } from "../../run/harness_solve_session.js";
 import { resolveLabelsFile } from "../../solve/workspace.js";
-import { PROJECT_ROOT, resolveTask } from "../resolve_task.js";
-import type { StageDefinition } from "../types.js";
+import { resolveTask } from "../resolve_task.js";
+import type { StageArtifact, StageDefinition } from "../types.js";
+import { recordedRepository } from "../../training/development_selection.js";
+import { git } from "../../training/git.js";
+import type { TrainingTrialResult } from "../../training/results.js";
+
+/**
+ * The selected trial's entrypoint, hashed for provenance. The path is the
+ * live file, so it is handed over only while it still matches the commit the
+ * trial measured; an edited file is not the selected pipeline's code.
+ */
+export function entrypointArtifact(selected: TrainingTrialResult | undefined): StageArtifact | { mismatch: string } | undefined {
+	const module = selected?.request?.pipeline.module;
+	const repository = recordedRepository(selected);
+	const commit = (selected?.invocation?.source as { commit?: string } | undefined)?.commit;
+	if (!module || !repository || !commit) return undefined;
+	const path = join(dirname(repository), module);
+	if (!existsSync(path)) return { mismatch: `${module} no longer exists` };
+	const committed = git(repository, ["rev-parse", "--verify", "--quiet", `${commit}:${relative(repository, path)}`]);
+	const live = git(repository, ["hash-object", "--", path]);
+	if (committed.status !== 0 || live.status !== 0 || committed.stdout.trim() !== live.stdout.trim()) {
+		return { mismatch: `${module} differs from commit ${commit.slice(0, 12)}` };
+	}
+	const bytes = readFileSync(path);
+	return { kind: "solve_entrypoint", path, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") };
+}
 
 export interface SolveOptions {
 	/** Maximum harness trials the agent may start; it may stop earlier. */
@@ -123,10 +148,8 @@ export const solveStage: StageDefinition<SolveOptions> = {
 			const selected = result.collection.selected.artifacts.find(entry => entry.kind === "training_trial_result")!;
 			artifacts.push({ kind: "training_selected_result", path: selected.path, bytes: selected.bytes, sha256: selected.sha256 });
 		}
-		if (result.collection.selected?.request?.pipeline.module) {
-			const path = join(PROJECT_ROOT, result.collection.selected.request.pipeline.module);
-			if (existsSync(path)) artifacts.push({ kind: "solve_entrypoint", path });
-		}
+		const entrypoint = entrypointArtifact(result.collection.selected);
+		if (entrypoint && "kind" in entrypoint) artifacts.push(entrypoint);
 
 		return {
 			artifacts,
@@ -139,6 +162,7 @@ export const solveStage: StageDefinition<SolveOptions> = {
 				selected_experiment_id: result.collection.selected?.experimentId,
 				selected_balanced_accuracy: result.collection.selected?.result?.metrics?.balancedAccuracy,
 				session_error: result.sessionError,
+				...(entrypoint && "mismatch" in entrypoint ? { entrypoint_mismatch: entrypoint.mismatch } : {}),
 				trial_validation_errors: result.collection.errors,
 			},
 		};

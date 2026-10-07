@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 
-import { solveStage } from "./solve.js";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { entrypointArtifact, solveStage } from "./solve.js";
+import { createHash } from "node:crypto";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { temporaryProject } from "../../training/testing.js";
+import type { TrainingTrialResult } from "../../training/results.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -70,5 +73,25 @@ describe("solve stage input contract", () => {
 			taskId: "spam1",
 			upstream: [{ kind: "research_document", path: RESEARCH }],
 		})).not.toThrow();
+	});
+});
+
+describe("solve entrypoint artifact", () => {
+	test("is hashed while it matches the selected trial's commit, and withheld once edited", () => {
+		const project = temporaryProject("solve-entrypoint-");
+		const module = "solutions/tasks/fixture.py";
+		const selected = {
+			experimentId: "trial", directory: project.root, valid: true, eligible: true, errors: [], artifacts: [],
+			request: { pipeline: { module, factory: "build_pipeline" } },
+			invocation: { source: { commit: project.head, repository: project.solutionsRoot } },
+		} as unknown as TrainingTrialResult;
+		const path = join(project.root, module);
+		expect(entrypointArtifact(selected)).toEqual({
+			kind: "solve_entrypoint", path, bytes: readFileSync(path).length,
+			sha256: createHash("sha256").update(readFileSync(path)).digest("hex"),
+		});
+		writeFileSync(path, `${readFileSync(path, "utf8")}\n# edited after the trial\n`);
+		expect(entrypointArtifact(selected)).toEqual({ mismatch: `${module} differs from commit ${project.head.slice(0, 12)}` });
+		expect(entrypointArtifact(undefined)).toBeUndefined();
 	});
 });
