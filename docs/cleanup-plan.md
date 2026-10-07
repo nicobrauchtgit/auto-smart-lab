@@ -149,8 +149,8 @@ Current state (built-in pi tools, custom tools, file extensions):
 - [ ] The eight orchestrator tools share a single description
   (`orchestrator.tool`); give each its own.
 
-### 4e. Verify against the online tasks (waiting for access)
-- [ ] Read every unit's task pages and check: data formats (beyond zips of text
+### 4e. Verify against the online tasks (done 2026-10-07; findings in section 6)
+- [x] Read every unit's task pages and check: data formats (beyond zips of text
   files), label/target types, metrics, test-data availability, localhost services
   and their ports, submission formats. Feed the findings into item 6 and the
   localhost item in 4b.
