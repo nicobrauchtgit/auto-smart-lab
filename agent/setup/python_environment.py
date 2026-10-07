@@ -29,6 +29,9 @@ import tomllib
 from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parents[2]
+# Compiled packages the pipeline relies on: distribution name -> import name.
+# Only the ones pyproject.toml declares are import-checked.
+NATIVE_IMPORTS = {"numpy": "numpy", "scipy": "scipy", "scikit-learn": "sklearn", "pandas": "pandas"}
 
 
 def requirement(value):
@@ -101,6 +104,20 @@ class Environment:
                                    capture_output=True, text=True, check=True)
         return json.loads(completed.stdout)
 
+    def import_check(self):
+        """Import the compiled packages. Lock agreement says nothing about whether
+        their native libraries load, as with a missing libstdc++ on Nix hosts."""
+        declared = {normalize(re.split(r"[\[<>=!~; @]", entry)[0]) for entry in self.declared()}
+        modules = [module for name, module in NATIVE_IMPORTS.items() if name in declared]
+        if not modules:
+            return None
+        completed = subprocess.run([str(self.python), "-I", "-c", f"import {', '.join(modules)}"],
+                                   cwd=self.root, capture_output=True, text=True, check=False)
+        if completed.returncode == 0:
+            return None
+        lines = [line for line in completed.stderr.strip().splitlines() if line.strip()]
+        return lines[-1] if lines else f"import failed with exit code {completed.returncode}"
+
     def uv(self, *args, check=True):
         """Run uv against Devbox's virtualenv, never a uv-managed one."""
         executable = shutil.which("uv")
@@ -148,8 +165,13 @@ class Environment:
             "dependency_errors": "\n".join((r.stdout + r.stderr).strip()
                                              for r in (lock_check, synced) if r.returncode != 0),
         })
+        import_error = self.import_check()
+        result["imports_ok"] = import_error is None
+        if import_error:
+            result["dependency_errors"] = "\n".join(filter(None, [result["dependency_errors"],
+                f"Compiled packages do not import: {import_error}"]))
         # uv evaluates version constraints, extras, and platform markers.
-        result["healthy"] = result["lock_current"] and result["environment_matches_lock"]
+        result["healthy"] = result["lock_current"] and result["environment_matches_lock"] and result["imports_ok"]
         # Already-running sessions still consume this field. Derive it from the
         # declarations so their next inspection works without a second inventory.
         direct_names = {normalize(re.split(r"[\[<>=!~; @]", entry)[0]) for entry in declared}

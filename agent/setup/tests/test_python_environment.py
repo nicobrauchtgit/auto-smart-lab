@@ -44,6 +44,9 @@ class EnvironmentTests(unittest.TestCase):
         probe = patch.object(self.env, "live_inventory", side_effect=lambda: dict(self.live))
         self.probe = probe.start()
         self.addCleanup(probe.stop)
+        imports = patch.object(self.env, "import_check", return_value=None)
+        self.imports = imports.start()
+        self.addCleanup(imports.stop)
 
     def records(self):
         return [json.loads(line) for line in (self.env.state / "changes.jsonl").read_text().splitlines()]
@@ -125,6 +128,15 @@ class EnvironmentTests(unittest.TestCase):
                     self.assertIn("lock stale", inventory["dependency_errors"])
                 if sync_status:
                     self.assertIn("environment drift", inventory["dependency_errors"])
+
+    def test_unloadable_native_packages_make_the_environment_unhealthy(self):
+        self.imports.return_value = "ImportError: libstdc++.so.6: cannot open shared object file"
+        with patch.object(self.env, "uv", side_effect=[subprocess.CompletedProcess([], 0, "", ""),
+                                                        subprocess.CompletedProcess([], 0, "", "")]):
+            inventory = self.env.inspect()
+        self.assertFalse(inventory["healthy"])
+        self.assertFalse(inventory["imports_ok"])
+        self.assertIn("libstdc++.so.6", inventory["dependency_errors"])
 
     def test_ensure_never_repairs_a_running_environment(self):
         with patch.object(self.env, "inspect", return_value={"healthy": False, "dependency_errors": "drift"}), \

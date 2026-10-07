@@ -142,7 +142,7 @@ test("whole-chain preflight checks skill templates and store locally without pro
  })()).rejects.toThrow("knowledge-skills"); expect(started).toBe(false);
  writeFileSync(join(root, "blocked"), "file");
  await expect(new SetupSession().check(setupChecks(["knowledge"], { taskId: "fixture", prompts: loadPromptSnapshot(), knowledgeRoot: join(root, "blocked", "nested") }), new AbortController().signal, () => {})).rejects.toThrow("knowledge-store");
-});
+}, 30_000); // Three preflight sessions each import numpy and sklearn in a fresh interpreter.
 
 test("selected skill snapshots remain immutable and distinct from typed knowledge inputs", () => {
  const root = temp(); cpSync(resolve("agent/prompts"), root, { recursive: true });
