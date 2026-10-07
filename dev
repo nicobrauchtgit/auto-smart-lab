@@ -35,7 +35,15 @@ if [[ ! -x "$MISE" ]]; then
 	mkdir -p "$TOOLS/bin"
 	download="$(mktemp "$TOOLS/bin/mise.XXXXXX")"
 	trap 'rm -f "$download"' EXIT
-	curl -fsSL -o "$download" "https://github.com/jdx/mise/releases/download/v$MISE_VERSION/mise-v$MISE_VERSION-$MISE_ASSET"
+	url="https://github.com/jdx/mise/releases/download/v$MISE_VERSION/mise-v$MISE_VERSION-$MISE_ASSET"
+	# The SmartLab VM has wget but no curl.
+	if command -v curl >/dev/null; then
+		curl -fsSL -o "$download" "$url"
+	elif command -v wget >/dev/null; then
+		wget -q -O "$download" "$url"
+	else
+		echo "[dev] Need curl or wget to download mise" >&2; exit 1
+	fi
 	echo "$MISE_SHA256  $download" | sha256sum --check --status || { echo "[dev] mise checksum mismatch" >&2; exit 1; }
 	chmod +x "$download"
 	mv "$download" "$MISE"

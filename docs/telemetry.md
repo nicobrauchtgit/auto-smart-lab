@@ -9,10 +9,10 @@ See [pipeline-integration.md](pipeline-integration.md) for instrumentation requi
 Run from the repository root:
 
 ```bash
-devbox services start postgresql
-devbox services ls
-devbox run -- pg_isready -h 127.0.0.1 -p 55433 -d postgres
-devbox run -- psql -X -h 127.0.0.1 -p 55433 -d postgres -P pager=off -c \
+# The ./dev toolchain does not provide PostgreSQL; run a local PostgreSQL 17
+# on 127.0.0.1:55433 yourself (mise.toml sets AGENT_DATABASE_PORT and PGDATABASE).
+./dev pg_isready -h 127.0.0.1 -p 55433 -d postgres
+./dev psql -X -h 127.0.0.1 -p 55433 -d postgres -P pager=off -c \
   'SELECT current_database(), current_user, inet_server_addr(), inet_server_port();'
 ```
 
@@ -28,7 +28,7 @@ The sink in `agent/observability.ts` and dashboard client in `agent/dashboard/li
 | User | `PGUSER`, falling back to `USER` |
 | Dashboard port | `3001` from the `traces` script |
 
-Devbox also sets `PGPORT=55433` for PostgreSQL CLI tools. The application uses `AGENT_DATABASE_PORT`, so changing only `PGPORT` does not move it. For custom settings, substitute the same port, database, and user in every diagnostic command. Use `-U <role>` if you need to choose a role explicitly. No password is embedded in the sink URL, and the sink disables TLS. A different host or authentication setup requires changes to both clients.
+`mise.toml` also sets `PGPORT=55433` for PostgreSQL CLI tools. The application uses `AGENT_DATABASE_PORT`, so changing only `PGPORT` does not move it. For custom settings, substitute the same port, database, and user in every diagnostic command. Use `-U <role>` if you need to choose a role explicitly. No password is embedded in the sink URL, and the sink disables TLS. A different host or authentication setup requires changes to both clients.
 
 The event sink creates and migrates `agent_events` when it opens. On a fresh database the dashboard may fail until that schema exists. Starting the dashboard does not create the event table.
 
@@ -37,7 +37,7 @@ The event sink creates and migrates `agent_events` when it opens. On a fresh dat
 In a separate terminal:
 
 ```bash
-devbox run -- bun run traces
+./dev bun run traces
 ```
 
 Open [the dashboard](http://localhost:3001). Check its APIs:
@@ -63,7 +63,7 @@ SSE readiness confirms the database subscription, not the completeness of a part
 List recent pipeline identities without dumping message bodies:
 
 ```bash
-devbox run -- psql -X -h 127.0.0.1 -p 55433 -d postgres -P pager=off -c "
+./dev psql -X -h 127.0.0.1 -p 55433 -d postgres -P pager=off -c "
 SELECT pipeline_run_id, task_id, min(observed_at) AS started_at,
        max(observed_at) AS updated_at, count(*) AS events
 FROM agent_events
@@ -75,7 +75,7 @@ ORDER BY updated_at DESC LIMIT 20;"
 Inspect lifecycle events for the completed subagent smoke run:
 
 ```bash
-devbox run -- psql -X -h 127.0.0.1 -p 55433 -d postgres -P pager=off <<'SQL'
+./dev psql -X -h 127.0.0.1 -p 55433 -d postgres -P pager=off <<'SQL'
 SELECT agent_run_id, stage_invocation_id, stage, attempt, event_type, observed_at
 FROM agent_events
 WHERE pipeline_run_id = '518cc241-25af-4f71-bdc3-6338aabce978'
@@ -123,7 +123,7 @@ Do not overwrite failed summaries or edit trace rows to make a run appear succes
 To exercise the fallback without stopping the real database, use the deterministic tests:
 
 ```bash
-devbox run -- bun test agent/pipeline/executor.test.ts agent/pipeline/run_pipeline.test.ts
+./dev bun test agent/pipeline/executor.test.ts agent/pipeline/run_pipeline.test.ts
 ```
 
 These tests deliberately point at unavailable storage. Their degraded-trace warnings are expected. A pipeline `--dry-run` checks configuration and task selection but does not generate a trace.

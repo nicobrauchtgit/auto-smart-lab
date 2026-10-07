@@ -1,5 +1,11 @@
 # Developer handover
 
+> **Superseded as the entry point (2026-10-07).** Start with
+> [cleanup-plan.md](cleanup-plan.md): it records the current state, decisions
+> and next tasks. Devbox was replaced by the project-local `./dev` toolchain;
+> read `devbox run -- <cmd>` below as `./dev <cmd>`. This document remains a
+> historical record.
+
 Updated: 2026-09-10. Start here, then use [WIP.md](WIP.md) for the implementation roadmap and [telemetry.md](telemetry.md) for operational checks.
 
 > **Active training migration (2026-09-24):** the ownership statement and next

@@ -1,5 +1,11 @@
 # Work in progress and implementation roadmap
 
+> **Superseded as the entry point (2026-10-07).** Start with
+> [cleanup-plan.md](cleanup-plan.md): it records the current state, decisions
+> and next tasks. Devbox was replaced by the project-local `./dev` toolchain;
+> read `devbox run -- <cmd>` below as `./dev <cmd>`. This document remains a
+> historical record.
+
 Updated: 2026-09-09
 
 This is the implementation roadmap for the autonomous experimentation plan. Start with [HANDOVER.md](HANDOVER.md) for the development baseline and decisions; use [telemetry.md](telemetry.md) for storage, dashboard, and trace diagnostics.
