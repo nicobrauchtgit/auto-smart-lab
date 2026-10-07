@@ -335,7 +335,11 @@ class Environment:
                 if not inventory["healthy"]:
                     raise RuntimeError(f"Environment check failed: {inventory['dependency_errors']}")
                 after = self.snapshot()
-                problems = self.import_problems(changed_distributions(before, after)) if action != "setup" else {}
+                # Requested packages are checked even when unchanged: re-adding an
+                # installed but unusable package must not report success.
+                requested = {normalize(re.split(r"[\[<>=!~; @]", value)[0]) for value in packages}
+                checked = sorted(set(changed_distributions(before, after)) | requested)
+                problems = self.import_problems(checked) if action != "setup" else {}
                 if problems:
                     problem = describe_import_problems(packages, problems)
                 self.record_change(operation_id, action, packages, reason,

@@ -159,6 +159,14 @@ class EnvironmentTests(unittest.TestCase):
         self.assertEqual(end["import_problems"], self.new_imports.return_value)
         self.assertEqual(end["package_changes"], [{"name": "opencv-python", "before": None, "after": "4.11"}])
 
+    def test_re_adding_an_installed_but_unusable_package_is_still_checked(self):
+        self.new_imports.return_value = {"demo": "ImportError: libfoo.so.2: cannot open shared object file"}
+        with patch.object(self.env, "uv", return_value=subprocess.CompletedProcess([], 0, "", "")), \
+                self.assertRaisesRegex(RuntimeError, "missing system library libfoo.so.2"):
+            self.env.add(["demo>=1"], "Already installed")
+        self.new_imports.assert_called_once_with(["demo"])
+        self.assertEqual(self.records()[-1]["outcome"], "installed_import_failure")
+
     def test_a_listed_but_unreachable_library_names_its_devbox_package(self):
         message = manager.describe_import_problems(["numpy"], {
             "numpy": "ImportError: libstdc++.so.6: cannot open shared object file: No such file or directory"})
