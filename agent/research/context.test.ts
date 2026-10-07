@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { identifyResearchInputs, buildResearchContext } from "./context.js";
+import { listTasks } from "../pipeline/resolve_task.js";
 import { researchStage } from "../pipeline/stages/research.js";
 import { setupChecks } from "../pipeline/setup.js";
 import { loadPromptSnapshot } from "../prompts/loader.js";
@@ -20,11 +21,15 @@ test("missing test inputs stay unavailable rather than substituting training or 
  expect(identifyResearchInputs(files, labels).test).toBeNull();
  expect(identifyResearchInputs(files)).toEqual({ training: null, training_labels: null, test: null });
 });
-test("actual context pairs the test archive and retains the shared task/archive preflight", () => {
+const hasSpamData = listTasks().some(task => task.taskId === "spam1" && task.hasData);
+const fetchReason = "requires fetched units/01-spam: ./dev bun run fetch-unit -- 01-spam";
+test.skipIf(!hasSpamData)(`actual context pairs the test archive (${fetchReason})`, () => {
  const context = buildResearchContext('spam1').context;
  expect(context.dataset.research_inputs?.training?.path).toEndWith('spam1-train.zip');
  expect(context.dataset.research_inputs?.test?.path).toEndWith('spam1-test.zip');
  expect(context.dataset.research_inputs?.test?.sha256).toHaveLength(64);
+});
+test("research retains the shared task/archive preflight without downloaded data", () => {
  expect(researchStage.setupRequirements).toContain('task');
  expect(setupChecks(researchStage.setupRequirements!, { taskId: 'spam1', prompts: loadPromptSnapshot() }).some(c => c.id === 'task:spam1')).toBe(true);
 });

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
+import { listTasks } from "../resolve_task.js";
 import { entrypointArtifact, solveStage } from "./solve.js";
 import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -51,24 +52,27 @@ describe("solve stage options", () => {
 	});
 });
 
+const hasSpamData = listTasks().some(task => task.taskId === "spam1" && task.hasData);
+const fetchReason = "requires fetched units/01-spam: ./dev bun run fetch-unit -- 01-spam";
+
 describe("solve stage input contract", () => {
 	test("rejects a task with no local dataset", () => {
 		expect(() => solveStage.checkInput({ taskId: "does-not-exist", upstream: [] })).toThrow();
 	});
 
-	test("rejects a run with no research document upstream", () => {
+	test.skipIf(!hasSpamData)(`rejects a run with no research document upstream (${fetchReason})`, () => {
 		expect(() => solveStage.checkInput({ taskId: "spam1", upstream: [] }))
 			.toThrow(/no research document upstream/);
 	});
 
-	test("rejects an upstream research document that is not on disk", () => {
+	test.skipIf(!hasSpamData)(`rejects an upstream research document that is not on disk (${fetchReason})`, () => {
 		expect(() => solveStage.checkInput({
 			taskId: "spam1",
 			upstream: [{ kind: "research_document", path: "/nonexistent/research.md" }],
 		})).toThrow(/no research document upstream/);
 	});
 
-	test("accepts a task with data and a real research document", () => {
+	test.skipIf(!hasSpamData)(`accepts a task with data and a real research document (${fetchReason})`, () => {
 		expect(() => solveStage.checkInput({
 			taskId: "spam1",
 			upstream: [{ kind: "research_document", path: RESEARCH }],

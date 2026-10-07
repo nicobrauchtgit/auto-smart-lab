@@ -3,7 +3,7 @@
 This is the entry point for any agent or developer picking up work on this
 repository. It records the current state, the decisions taken with the user,
 what is still open, and the prioritized work queue. Started 2026-10-07 from a
-code-only review; last updated 2026-10-07.
+code-only review; last updated 2026-10-08.
 
 Older documents (`HANDOVER.md`, `WIP.md` and the design notes in `docs/`)
 describe earlier generations and are historical records. When they disagree
@@ -26,9 +26,9 @@ with this file, this file wins.
    Run every project command through `./dev` (e.g. `./dev bun run pipeline --
    spam1 --dry-run`). Never install tools into the user's home, shell
    configuration or Nix profile; everything lives in `.tools/` (D12).
-3. **Expected test result:** all green on a machine where unit 1 has been
-   fetched (`./dev bun run fetch-unit -- 01-spam`). Without it, 4 TypeScript
-   tests fail with "No local task matches spam1" (work item Q7).
+3. **Expected test result:** all green, including without downloaded unit data.
+   Four course-data integration tests skip with a fetch instruction when spam1
+   data is absent (`./dev bun run fetch-unit -- 01-spam`).
 4. **Work conventions:** one work item per commit, tests with every change,
    tick the item off here in the same commit. Do not act on an open decision
    without the user. Ask before anything outward-facing: submissions (3 attempts
@@ -39,8 +39,9 @@ with this file, this file wins.
 - **Branch** `solve-stage-hardening`, ahead of
   `origin/solve-stage-hardening` (not pushed). Remote:
   `git@github.com:nicobrauchtgit/auto-smart-lab.git`.
-- **Tests:** locally 419 TypeScript tests pass (4 skipped), all Python suites
-  pass. On the VM the same, except the 4 tests that need fetched unit data.
+- **Tests (2026-10-08):** locally 430 TypeScript tests pass (4 skipped), all
+  Python suites pass. Without downloaded spam1 data, four additional integration
+  tests skip explicitly. The VM has not received the quick-fix commits yet.
 - **Toolchain:** `./dev` + `mise.toml` (bun 1.3.13, uv 0.12.5, ripgrep, fd) and
   uv-managed Python 3.13.15. Devbox is gone (D12).
 - **The live pipeline** (`agent/pipeline/registry.ts`): research -> solve ->
@@ -148,10 +149,13 @@ tools, **L** later.
   covers both pages; `submission.test.ts` proves a scored failure resolves an
   unknown reservation without consuming a try across restarts, while external
   successes still exhaust the task-global budget. No production change needed.
-- [ ] **Q7 Tests that need downloaded course data.** 4 TypeScript tests read
-  the real spam1 task from `units/` ("actual context pairs the test archive",
-  three "solve stage input contract" tests). Use fixtures, or skip with a clear
-  reason when `units/01-spam` is absent.
+- [x] **Q7 Tests that need downloaded course data.** Done: the four real
+  spam1 integration tests in `research/context.test.ts` and
+  `pipeline/stages/solve.test.ts` skip when local spam1 data is absent, with
+  the fetch command in each test name. The shared research task/archive
+  preflight declaration is now tested separately and always runs. Verified
+  those suites both locally with data and in an isolated source copy without
+  `units/` (four explicit skips, no failures).
 
 ### T. Tooling
 
