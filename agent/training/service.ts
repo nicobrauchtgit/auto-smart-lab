@@ -32,6 +32,7 @@ import {
 	uncommittedFiles,
 	type SourceIdentity,
 } from "./git.js";
+import { pairedPromotion } from "./promotion.js";
 import { runPipelineValidation, type PipelineValidator } from "./pipeline_validation.js";
 import { collectTrainingResults } from "./results.js";
 import { createSeedPlan, deriveTrialSeed, writeSeedPlan } from "./seeds.js";
@@ -713,11 +714,10 @@ export class TrainingService {
 			const current = this.champion();
 			if (current?.experimentId === selected.experimentId) return;
 			if (current) {
-				const comparison = selected.result?.championComparison as Record<string, unknown> | undefined;
-				if (comparison?.status !== "completed" || comparison.championCommit !== current.commit
-					|| typeof comparison.meanDifference !== "number" || comparison.meanDifference <= 0) {
+				const decision = pairedPromotion(selected.result?.championComparison as Record<string, unknown> | undefined, current.commit);
+				if (!decision.promote) {
 					this.options.record?.("training_champion_retained", { experiment_id: selected.experimentId,
-						champion_experiment_id: current.experimentId, reason: "no completed paired improvement over current champion" });
+						champion_experiment_id: current.experimentId, reason: decision.reason });
 					return;
 				}
 			}

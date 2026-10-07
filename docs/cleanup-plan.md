@@ -95,12 +95,15 @@ tools, **L** later.
 
 ### Q. Quick fixes (small, independent)
 
-- [ ] **Q1 Promotion follows noise (D7).** `agent/training/service.ts`, champion
-  tagging: promotes when the paired `meanDifference > 0`. Require
-  `leadExceedsNoise` (computed in `smartlab_trial/search.py` `_paired`: mean >
-  2 standard errors), or a paired bootstrap interval clearing zero. Test: a
-  challenger with a positive but noisy lead keeps the old champion and records
-  `training_champion_retained`.
+- [x] **Q1 Promotion follows noise (D7).** Done: champion tagging in
+  `agent/training/service.ts` now goes through `pairedPromotion`
+  (`agent/training/promotion.ts`), which requires a completed paired comparison
+  against the current champion with `meanDifference > 0` and
+  `leadExceedsNoise` (mean > 2 standard errors, from `smartlab_trial/search.py`
+  `_paired`); otherwise `training_champion_retained` records the reason. The
+  training start-tool prompt states the rule. Tests:
+  `agent/training/promotion.test.ts` (rule only; no live-worker test of a noisy
+  lead, since the fixture corpus is perfectly separable).
 - [ ] **Q2 Two selection rules disagree.** `developmentSelection`
   (`agent/training/development_selection.ts`) and `collectTrainingResults`
   (`agent/training/results.ts`) pick the highest raw CV mean; the champion tag

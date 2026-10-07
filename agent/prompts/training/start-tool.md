@@ -35,6 +35,8 @@ effects, paired differences, progress, cost, caveats, and the exact confirmation
 request. A search is never promotion-eligible, including promotion scope.
 Start the report's fixed-parameter confirmation request to validate the winner
 on fresh folds. The champion is rerun from its frozen commit on those folds.
+A challenger replaces the champion only when its paired lead on those folds
+exceeds fold noise (more than 2 standard errors of the per-fold differences).
 
 A measured cost above the harness threshold stops gracefully with retained
 work. Decide whether the cost is justified and set search.acceptEstimatedSeconds
