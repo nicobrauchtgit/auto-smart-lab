@@ -212,6 +212,18 @@ Order: the cleanup (sections 0-2) first, then this.
     next to the old clone, not over it; watch disk space (`.tools/` is ~0.8 GB,
     torch CPU adds ~1 GB, unit datasets several hundred MB each). Agents can run
     on the VM (option "everything on the VM"), since the model API is reachable.
+- [x] VM cleanup (2026-10-07): removed `~/.cache/pip` (4.5 GB, the lab
+  image's pip download cache; free space 13 -> 17 GB). Archived the old clone's
+  uncommitted work to `docs/archive/vm-old-clone/` (code) and the gitignored
+  `units/_vm-archive/`, `runs/vm-archive/`. The old clone itself is still on
+  the VM (3.4 GB); `~/env` (9.1 GB, lab-provided, 6 GB of it CUDA libraries the
+  VM cannot use; Jupyter runs from it) is left alone. No GPU: the only display
+  device is QEMU's emulated VGA.
+- [ ] Official attempts (2026-10-07): every task shows 0 of 3 used except task
+  4.1 (1 of 3, score 0.0). spam1 has two uncounted submissions from 2026-08-18,
+  each scored 0.9645 but marked FAILURE. Check that the submission ledger
+  (`agent/submission/`) counts attempts the way the lab does, i.e. ignores
+  FAILURE rows even when they show a score.
 - [ ] Safety: units 2 and 3 contain real malware. Nothing may open or execute
   samples outside analysis code, and external detection services are forbidden
   by the lab rules.
