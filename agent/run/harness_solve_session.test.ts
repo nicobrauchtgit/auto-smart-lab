@@ -6,6 +6,8 @@ import { join } from "node:path";
 
 import type { StageReporter, SuppliedInput } from "../pipeline/types.js";
 import type { PythonEnvironment } from "./python_environment.js";
+import { spamConfiguration } from "../pipeline/task_configuration.testing.js";
+import type { TaskConfiguration } from "../pipeline/task_configuration.js";
 import {
 	runHarnessSolveSession,
 	type HarnessSolveDependencies,
@@ -21,17 +23,20 @@ function fixtureWorkspace() {
 	mkdirSync(join(solutionsRoot, "tasks"), { recursive: true });
 	const taskPath = join(root, "task.md");
 	const devZip = join(data, "train-dev.zip");
-	const labels = join(data, "train-dev.labels");
+	const manifest = join(data, "development-samples.json");
 	writeFileSync(taskPath, "Train a classifier scored by balanced accuracy.\n");
 	writeFileSync(devZip, "zip fixture");
-	writeFileSync(labels, "data/a.0;0\ndata/b.1;1\n");
+	writeFileSync(manifest, JSON.stringify({ schemaVersion: 1, samples: [
+		{ id: "data/a.0", input: { archive: devZip, member: "data/a.0" }, target: 0 },
+		{ id: "data/b.1", input: { archive: devZip, member: "data/b.1" }, target: 1 }] }));
 	writeFileSync(join(researchDir, "research.md"), "# Research\n");
 	return {
 		root, solutionsRoot, entrypointPath: join(solutionsRoot, "tasks", "task.py"), taskPath, researchDir,
-		devLabelsPath: labels, fullLabelsPath: labels, devZip, sealedPath: join(data, "sealed.txt"), trainZip: devZip,
-		datasetPaths: [devZip], split: { sealedIds: [], devRows: [], fraction: 0.1, seed: 13, sha256: "a".repeat(64) },
+		configuration: spamConfiguration(),
+		sampleManifestPath: manifest, measurement: { kind: "classification" as const, execution: "inductive" as const, sampleManifestPath: manifest }, devZip, sealedPath: join(data, "sealed.txt"), trainZip: devZip, testZip: join(data, "test.zip"),
+		datasetPaths: [devZip], split: { sealedIds: [], fraction: 0.1, seed: 13, sha256: "a".repeat(64), scheme: "stratified" as const },
 		recommendation: { scheme: "stratified_kfold" as const, folds: 2, repeats: 1, rationale: "fixture" },
-		rowCount: 2, classBalance: "class 0 1, class 1 1", researchState: "research available",
+		rowCount: 2, targets: manifest, targetSummary: "Class balance: class 0 1, class 1 1.", researchState: "research available",
 		researchDocumentSha256: "b".repeat(64),
 	};
 }

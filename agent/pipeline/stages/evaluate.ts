@@ -8,6 +8,7 @@ import { prepareEvidence, selectedArtifact, artifact } from "../../evaluation/ev
 import { reviewerTools, validateReview } from "../../evaluation/reviewer.js";
 import { runSession } from "../../run/session_runner.js";
 import type { StageDefinition } from "../types.js";
+import { stageConfiguration } from "../task_configuration.js";
 
 export type EvaluateOptions = Record<string, never>;
 // Dependencies are injectable for offline contract tests; production has one path.
@@ -22,7 +23,11 @@ export function createEvaluateStage(deps = { prepareEvidence, runSession }): Sta
    if (Object.keys(options).length) throw new Error("unknown evaluate options");
    return {};
   },
-  checkInput(input) { selectedArtifact(input.upstream); },
+  checkInput(input) {
+   selectedArtifact(input.upstream);
+   // Label-free evidence cannot be promoted, so only these kinds reach a reviewable champion.
+   if (stageConfiguration(input).metric === "none") throw new Error("Evaluation needs a trusted development metric; this task configuration has none");
+  },
   async run(context) {
    const evidence = await deps.prepareEvidence(context.input.upstream, context.signal, context.input.taskId);
    const directory = join(evidence.directory, "evaluation", context.report.agentIdentity(1).stageInvocationId ?? crypto.randomUUID());
@@ -45,7 +50,8 @@ export function createEvaluateStage(deps = { prepareEvidence, runSession }): Sta
     delivery: "workspace_file", status: "available", artifact: source.path, content_sha256: source.sha256 });
    const prompts = context.prompts;
    const system = prompts.render("review.system", {});
-   const guide = prompts.render("review.guide", {});
+   // The review guide matches what the harness measured for this task.
+   const guide = prompts.render(stageConfiguration(context.input).kind === "clustering" ? "review.guide-clustering" : "review.guide", {});
    const { roc, precisionRecall, ...scoreSummary } = evidence.diagnostics.curves;
    const code = codeReader(PROJECT_ROOT, directory, context.report);
    let entrypoint: unknown;
@@ -87,7 +93,8 @@ export function createEvaluateStage(deps = { prepareEvidence, runSession }): Sta
    context.report.event("artifact_validation", report.validation);
    return { artifacts: [evidenceArtifact, artifact("evaluation_report", reportPath), ...curveArtifacts, ...code.artifacts()], attempts: 1,
     validation: report.validation, summary: { experiment_id: evidence.experimentId,
-     review_status: review?.status, readiness_score: review?.readinessScore, balanced_accuracy: evidence.diagnostics.summary.balancedAccuracy, advisory_only: true } };
+     review_status: review?.status, readiness_score: review?.readinessScore, task_kind: stageConfiguration(context.input).kind,
+     development_metric: evidence.diagnostics.summary.balancedAccuracy ?? evidence.diagnostics.summary.adjustedRandIndex, advisory_only: true } };
   },
  };
 }

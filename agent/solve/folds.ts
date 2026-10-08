@@ -14,7 +14,7 @@ import { createHash } from "node:crypto";
 import type { TrainingLabelRow } from "../research/startup_context.js";
 
 export interface FoldRecommendation {
-	scheme: "stratified_kfold";
+	scheme: "stratified_kfold" | "group_kfold" | "kfold";
 	folds: number;
 	repeats: number;
 	/** Why this shape was suggested, for the prompt and the trace. */
@@ -26,14 +26,17 @@ export interface FoldRecommendation {
  * with repeats, which cost little when the data is small; large ones do not need
  * them and would pay for the extra fits.
  */
-export function recommendFolds(rows: number): FoldRecommendation {
+export function recommendFolds(rows: number, options: { scheme?: FoldRecommendation["scheme"]; groups?: number } = {}): FoldRecommendation {
 	if (!Number.isInteger(rows) || rows < 1) throw new Error("recommendFolds needs a positive integer row count");
 	const { folds, repeats } = HARNESS_CONFIG.foldRecommendations.find(row => row.belowRows === null || rows < row.belowRows)!;
-	const shape = { folds, repeats };
+	const scheme = options.scheme ?? "stratified_kfold";
+	// Whole groups are held out, so a fold needs groups, not just rows.
+	const groupFolds = scheme === "group_kfold" && options.groups !== undefined ? Math.max(2, Math.min(folds, options.groups)) : folds;
 	return {
-		scheme: "stratified_kfold",
-		...shape,
-		rationale: `${rows} training rows after sealing`,
+		scheme,
+		folds: groupFolds,
+		repeats,
+		rationale: scheme === "group_kfold" ? `${rows} training rows in ${options.groups} groups after sealing` : `${rows} training rows after sealing`,
 	};
 }
 
@@ -79,6 +82,64 @@ export function sealConfirmationSet(
 		fraction,
 		seed,
 		sha256: createHash("sha256").update(JSON.stringify({ seed, fraction, sealedIds })).digest("hex"),
+	};
+}
+
+/** A sealed split over arbitrary IDs; family tasks seal whole families. */
+export interface IdSealedSplit {
+	scheme: "group" | "none";
+	sealedIds: string[];
+	devIds: string[];
+	/** Number of whole groups sealed; zero without a holdout. */
+	sealedGroups: number;
+	fraction: number;
+	seed: number;
+	sha256: string;
+}
+
+/**
+ * Seal whole families so the confirmation rows contain only families the agent
+ * never saw, mirroring a test set of unseen families. Families are drawn in a
+ * seeded order until at least the requested fraction of rows is sealed; at
+ * least two families always stay in development.
+ */
+export function sealGroups(
+	rows: readonly { id: string; group: string }[],
+	options: { fraction?: number; seed?: number } = {},
+): IdSealedSplit {
+	const fraction = options.fraction ?? HARNESS_CONFIG.solve.sealedFraction;
+	const seed = options.seed ?? HARNESS_CONFIG.solve.seed;
+	if (!(fraction > 0 && fraction < 0.5)) throw new Error("sealed fraction must be above 0 and below 0.5");
+	const groups = [...new Set(rows.map(row => row.group))].sort();
+	if (groups.length < 3) throw new Error("Sealing whole families needs at least three families");
+	const order = groups.map((_, index) => index);
+	seededShuffle(order, seed);
+	const sizes = new Map<string, number>();
+	for (const row of rows) sizes.set(row.group, (sizes.get(row.group) ?? 0) + 1);
+	const sealed = new Set<string>();
+	let sealedRows = 0;
+	for (const index of order) {
+		if (sealedRows >= fraction * rows.length || groups.length - sealed.size <= 2) break;
+		const group = groups[index];
+		// Never let one large family push the sealed share past one half.
+		if (sealedRows + sizes.get(group)! > rows.length / 2) continue;
+		sealed.add(group);
+		sealedRows += sizes.get(group)!;
+	}
+	if (!sealed.size) throw new Error("No family is small enough to seal without taking half of the training rows");
+	const sealedIds = rows.filter(row => sealed.has(row.group)).map(row => row.id).sort();
+	const devIds = rows.filter(row => !sealed.has(row.group)).map(row => row.id).sort();
+	return {
+		scheme: "group", sealedIds, devIds, sealedGroups: sealed.size, fraction, seed,
+		sha256: createHash("sha256").update(JSON.stringify({ scheme: "group", seed, fraction, sealedIds })).digest("hex"),
+	};
+}
+
+/** No holdout: without targets there is nothing to confirm on sealed rows. */
+export function noSeal(ids: readonly string[], seed: number): IdSealedSplit {
+	return {
+		scheme: "none", sealedIds: [], devIds: [...ids].sort(), sealedGroups: 0, fraction: 0, seed,
+		sha256: createHash("sha256").update(JSON.stringify({ scheme: "none", seed, sealedIds: [] })).digest("hex"),
 	};
 }
 

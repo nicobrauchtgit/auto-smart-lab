@@ -78,8 +78,8 @@ test("completed promotions are tagged and the champion tag follows the best elig
 		expect(await until(() => training.supervisor.status(started.id).status !== "running", 60_000)).toBe(true);
 		await training.service.finalize(started.id);
 		expect(git(project.solutionsRoot, ["rev-parse", `trial/${started.id}^{commit}`]).stdout.trim()).toBe(project.head);
-		expect(git(project.solutionsRoot, ["rev-parse", "champion^{commit}"]).stdout.trim()).toBe(project.head);
-		const message = JSON.parse(git(project.solutionsRoot, ["tag", "-l", "--format=%(contents)", "champion"]).stdout);
+		expect(git(project.solutionsRoot, ["rev-parse", "champion/fixture^{commit}"]).stdout.trim()).toBe(project.head);
+		const message = JSON.parse(git(project.solutionsRoot, ["tag", "-l", "--format=%(contents)", "champion/fixture"]).stdout);
 		expect(message).toMatchObject({ experimentId: started.id, pipeline: { module: "solutions/tasks/fixture.py" } });
 		expect(recorded.some((event) => event.type === "training_champion_tagged")).toBe(true);
 		const described = training.service.describe(started.id)!;

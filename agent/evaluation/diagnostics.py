@@ -1,4 +1,9 @@
-"""Read-only classification diagnostics from harness OOF evidence; never fit code."""
+"""Read-only diagnostics from harness OOF evidence; never fit code.
+
+Binary classification recomputes class metrics and score curves. Labelled
+clustering recomputes each validation batch's adjusted Rand index; cluster IDs
+are arbitrary per batch and never pooled across folds.
+"""
 from __future__ import annotations
 
 import csv
@@ -56,19 +61,13 @@ def curves(rows, labels):
             'roc': points(fpr, tpr), 'precisionRecall': points(recall, precision)}
 
 
-def diagnose(directory: Path):
-    invocation = json.loads((directory / 'invocation.json').read_text())
-    # The invocation points to development labels, never the original/sealed labels.
-    labels_path = Path(invocation['inputs']['labelsPath'])
-    labels = load_labels(labels_path)
-    if len([line for line in labels_path.read_text().splitlines() if line.strip()]) != len(labels):
-        raise ValueError('Duplicate development label IDs')
+def _checked_oof(directory, invocation, ids):
+    """OOF rows that match the fold manifest exactly, one row per ID and repeat."""
     manifest = json.loads((directory / 'fold-manifest.json').read_text())
-    result = json.loads((directory / 'trial-result.json').read_text())
     with (directory / 'oof_predictions.csv').open(newline='') as stream:
         rows = list(csv.DictReader(stream, delimiter=';'))
-    if not labels or not rows:
-        raise ValueError('Empty development labels or OOF predictions')
+    if not ids or not rows:
+        raise ValueError('Empty development targets or OOF predictions')
     def key(r):
         return (r['id'], int(r['repeat']), int(r['fold']))
     observed = Counter(key(r) for r in rows)
@@ -80,8 +79,75 @@ def diagnose(directory: Path):
         raise ValueError('OOF repeats do not match the requested scope')
     for repeat in repeats:
         counts = Counter(r['id'] for r in rows if int(r['repeat']) == repeat)
-        if set(counts) != set(labels) or any(n != 1 for n in counts.values()):
+        if set(counts) != set(ids) or any(n != 1 for n in counts.values()):
             raise ValueError('Each repeat must cover every development ID exactly once')
+    return rows, repeats
+
+
+def diagnose_clustering(directory: Path, invocation):
+    from sklearn.metrics import adjusted_rand_score, homogeneity_completeness_v_measure
+    samples = json.loads(Path(invocation['measurement']['sampleManifestPath']).read_text())['samples']
+    if any('target' not in sample for sample in samples):
+        raise ValueError('Clustering review requires family targets for every development sample')
+    targets = {sample['id']: str(sample['target']) for sample in samples}
+    result = json.loads((directory / 'trial-result.json').read_text())
+    rows, repeats = _checked_oof(directory, invocation, targets)
+    folds = []
+    for repeat, fold in sorted(set((int(r['repeat']), int(r['fold'])) for r in rows)):
+        batch = [r for r in rows if int(r['repeat']) == repeat and int(r['fold']) == fold]
+        truth, clusters = [targets[r['id']] for r in batch], [int(r['prediction']) for r in batch]
+        homogeneity, completeness, v_measure = homogeneity_completeness_v_measure(truth, clusters)
+        sizes = sorted(Counter(clusters).values(), reverse=True)
+        folds.append({'repeat': repeat, 'fold': fold, 'rows': len(batch),
+                      'adjustedRandIndex': float(adjusted_rand_score(truth, clusters)),
+                      'homogeneity': float(homogeneity), 'completeness': float(completeness), 'vMeasure': float(v_measure),
+                      'families': len(set(truth)), 'clusters': len(sizes), 'largestClusterShare': sizes[0] / len(batch),
+                      'singletonClusters': sum(1 for size in sizes if size == 1),
+                      'noiseFraction': sum(1 for c in clusters if c == -1) / len(batch)})
+    scores = [f['adjustedRandIndex'] for f in folds]
+    mean = float(np.mean(scores))
+    if not math.isclose(mean, result['metrics']['adjustedRandIndex'], abs_tol=1e-10):
+        raise ValueError('Recomputed adjusted Rand index disagrees with the harness result')
+    family_sizes = Counter(targets.values())
+    return {'schemaVersion': 1, 'experimentId': result['experimentId'], 'measurementKind': 'clustering',
+            'summary': {'adjustedRandIndex': mean, 'rows': len(rows), 'uniqueRows': len(targets), 'repeats': len(repeats),
+                        'execution': invocation['measurement']['execution'],
+                        'families': len(family_sizes), 'largestFamily': max(family_sizes.values()),
+                        'singletonFamilies': sum(1 for size in family_sizes.values() if size == 1),
+                        'foldAdjustedRandIndex': {'min': min(scores), 'max': max(scores), 'mean': mean, 'std': float(np.std(scores))},
+                        'singleFamilyBatches': sum(1 for f in folds if f['families'] < 2)},
+            'curves': {'available': False, 'reason': 'Clustering assignments have no class scores; ROC/PR do not apply.'},
+            'folds': folds,
+            'limitations': [
+                'Development cross-validation estimates, not held-out or deployment performance.',
+                'ARI is computed per validation batch and averaged; cluster IDs are arbitrary within a batch and are never pooled.',
+                'Batches with a single family give a degenerate ARI; their count is reported.',
+                'Test families may differ from training families: only family-held-out folds approximate that shift.',
+                'Model selection on these same folds can make the selected score optimistic.',
+                'Artifact checks do not test feature leakage through IDs, paths or member names.',
+            ]}
+
+
+def diagnose(directory: Path):
+    invocation = json.loads((directory / 'invocation.json').read_text())
+    measurement = invocation.get('measurement')
+    if measurement and measurement['kind'] == 'clustering':
+        return diagnose_clustering(directory, invocation)
+    if measurement and measurement['kind'] != 'classification':
+        raise ValueError('Only labelled clustering and binary classification evidence can be reviewed')
+    # The invocation points to development targets, never the original/sealed labels.
+    if measurement:
+        samples = json.loads(Path(measurement['sampleManifestPath']).read_text())['samples']
+        labels = {sample['id']: sample['target'] for sample in samples}
+        if len(labels) != len(samples) or any(value not in (0, 1) for value in labels.values()):
+            raise ValueError('Development samples need unique IDs and 0/1 targets')
+    else:
+        labels_path = Path(invocation['inputs']['labelsPath'])
+        labels = load_labels(labels_path)
+        if len([line for line in labels_path.read_text().splitlines() if line.strip()]) != len(labels):
+            raise ValueError('Duplicate development label IDs')
+    result = json.loads((directory / 'trial-result.json').read_text())
+    rows, repeats = _checked_oof(directory, invocation, labels)
     if any(r.get('score', '') != '' and not math.isfinite(float(r['score'])) for r in rows):
         raise ValueError('Non-finite OOF scores')
     if any(int(r['prediction']) not in set(labels.values()) for r in rows):

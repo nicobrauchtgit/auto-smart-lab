@@ -68,7 +68,7 @@ test("restart reattaches quiet live worker without duplicate, preserves log curs
 
 test("dead search restart keeps completed configs, budget, manifest/seeds and restores cleaned candidate/champion worktrees", async () => {
  const project = temporaryProject("recovery-search-"); enableFitBarrier(project);
- tagCommit(project.solutionsRoot, "champion", project.head, JSON.stringify({ experimentId: "prior", pipeline: request().pipeline }));
+ tagCommit(project.solutionsRoot, "champion/fixture", project.head, JSON.stringify({ experimentId: "prior", pipeline: request().pipeline }));
  const { child, opts, started } = await startChild(project);
  let training: ReturnType<typeof createHarnessTraining> | undefined;
  try {

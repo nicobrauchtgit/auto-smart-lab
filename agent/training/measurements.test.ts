@@ -89,7 +89,7 @@ test("batch clustering without predict() produces valid ARI evidence, stability,
         expect(description.diagnostics.folds[0].diagnostics.external.contingency).toBeUndefined();
         expect(description.diagnostics.championComparison.correctedPairs).toBe(result.championComparison.correctedPairs);
         expect(training.service.leaderboard().at(-1)?.adjustedRandIndex).toBe(1);
-        expect(JSON.parse(tagMessage(project.solutionsRoot, "champion")!.message).experimentId).toBe(challenger.id);
+        expect(JSON.parse(tagMessage(project.solutionsRoot, "champion/fixture")!.message).experimentId).toBe(challenger.id);
         expect(events.some(e => e.type === "training_measurement_setup" && e.payload.ok === true)).toBe(true);
         const workerEvents = readFileSync(join(challenger.directory, "events.jsonl"), "utf8").trim().split("\n").map(line => JSON.parse(line));
         expect(workerEvents.every(e => e.pipelineRunId === "measurement-run" && e.stageInvocationId === "measurement-invocation")).toBe(true);
@@ -178,7 +178,7 @@ test("label-free geometry search has an explicit proxy objective, retained featu
         expect(result.search.selectionMean).toBeLessThanOrEqual(1);
         expect(result.diagnostics.folds[0].diagnostics.geometry.silhouette.available).toBe(true);
         expect((await collectTrainingTrial(started.directory)).valid).toBe(true);
-        expect(tagMessage(project.solutionsRoot, "champion")).toBeUndefined();
+        expect(tagMessage(project.solutionsRoot, "champion/fixture")).toBeUndefined();
         const report = JSON.parse(readFileSync(join(started.directory, "search-report.json"), "utf8"));
         const confirmed = await training.service.start(report.nextStep.confirmationRequest);
         expect((await finish(training, confirmed)).promotionEligible).toBe(false);

@@ -1,4 +1,5 @@
 import type { StageGuidance } from "../pipeline/guidance.js";
+import type { TaskConfiguration } from "../pipeline/task_configuration.js";
 import type { InvocationFeedback } from "../pipeline/feedback.js";
 import { HARNESS_CONFIG } from "../harness/config.js";
 import { createHash } from "node:crypto";
@@ -39,6 +40,8 @@ export interface ResearchResult {
 }
 
 export interface RunResearchOptions {
+ /** Declares the targets and metric the startup profile describes. */
+ taskConfiguration?: TaskConfiguration;
  guidance?: StageGuidance;
  feedback?: InvocationFeedback;
 	injectStartupContext?: boolean;
@@ -68,7 +71,7 @@ export async function runResearchSession(taskId: string, model?: string, options
 	const injectStartupContext = options.injectStartupContext ?? HARNESS_CONFIG.research.injectStartupContext;
 	const report = options.report;
 	const prompts = options.prompts ?? loadPromptSnapshot();
-	const { context, prompt } = buildResearchContext(taskId);
+	const { context, prompt } = buildResearchContext(taskId, options.taskConfiguration);
 	const workspace = join(PROJECT_ROOT, "runs", taskId, "research");
 	mkdirSync(workspace, { recursive: true });
 	mkdirSync(join(workspace, "analysis"), { recursive: true });

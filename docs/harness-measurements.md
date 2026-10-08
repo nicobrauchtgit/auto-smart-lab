@@ -6,11 +6,10 @@ completed-fold recovery. No measurement owns a separate fitting process.
 Source identity, harness seeds, persisted folds, prediction checkpoints, process
 supervision, and shared pipeline/invocation events remain authoritative.
 
-The task adapters used by the registered solve/evaluate/refit stages still
-prepare binary text corpora. H1/H2 must connect the task declaration and generic
-sample metadata to these APIs before the lab's clustering or detection tasks can
-run end to end. This packet implements the training/measurement foundation,
-not all of H1–H7. No VM deployment or official submission was performed.
+Since 2026-10-08 the registered stages build these declarations from the task
+configuration (see H1/H2 in [the cleanup plan](cleanup-plan.md)): solve writes
+the development manifest and measurement, and refit repeats the measured
+execution. No VM deployment or official submission was performed.
 
 ## Controller inputs and sample identity
 

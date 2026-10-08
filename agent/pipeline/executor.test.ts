@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { spamConfiguration } from "./task_configuration.testing.js";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -36,6 +37,7 @@ function settings(stageOptions: unknown = {}) {
 			entryStage: "research",
 			scheduling: "configured",
 			stages: { research: { enabled: true }, solve: { enabled: true, options: stageOptions } },
+			tasks: { spam1: spamConfiguration() },
 		},
 		agent: { cwd: ".", agentDir: ".pi/agent", initialPrompt: "hi" },
 		defaultModel: "saia/test-model",
@@ -92,9 +94,11 @@ describe("invokeStage", () => {
 		expect(invocation.attempts).toBe(1);
 
 		const types = events.map((event) => event.event_type);
+		// The task configuration is the first supplied input, recorded before setup.
 		expect(types).toEqual([
-			"stage_started", "setup_started", "setup_finished", "stage_input", "agent_attempt_start", "stage_summary", "stage_finished",
+			"stage_started", "stage_input", "setup_started", "setup_finished", "stage_input", "agent_attempt_start", "stage_summary", "stage_finished",
 		]);
+		expect(events[1].payload.input).toMatchObject({ kind: "task_configuration", source: "pipeline_config", task_kind: "binary_classification" });
 		// Stage events carry the shared identity and no PI session.
 		for (const event of events) {
 			expect(event.stage).toBe("solve");
@@ -103,7 +107,7 @@ describe("invokeStage", () => {
 		}
 		const finished = events.at(-1);
 		expect(finished.payload.outcome).toBe("success");
-		expect(finished.payload.supplied_inputs).toHaveLength(1);
+		expect(finished.payload.supplied_inputs).toHaveLength(2);
 	});
 
 	test("a stage whose artifact fails validation is a failed invocation", async () => {
@@ -134,9 +138,11 @@ describe("invokeStage", () => {
 
 		expect(ran).toBe(false);
 		expect(invocation.outcome).toBe("failure");
+		// A task with neither a declared nor a known configuration never reaches setup.
 		expect(events.map((event) => event.event_type)).toEqual([
-			"stage_started", "setup_started", "setup_finished", "stage_input_rejected", "stage_finished",
+			"stage_started", "stage_input_rejected", "stage_finished",
 		]);
+		expect(invocation.error).toContain("pipeline.tasks.missing");
 	});
 
 	test("a thrown stage error is recorded as a failure with its message", async () => {

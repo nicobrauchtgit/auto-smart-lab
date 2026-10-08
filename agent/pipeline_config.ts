@@ -27,6 +27,8 @@ export interface PipelineConfig {
 		entryStage?: string;
 		scheduling?: string;
 		stages?: Record<string, { enabled?: boolean; options?: unknown }>;
+		/** Task configuration per task ID. Validated by agent/pipeline/task_configuration.ts. */
+		tasks?: Record<string, unknown>;
 	};
 	agent: {
 		cwd: string;

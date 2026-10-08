@@ -22,6 +22,71 @@
         "enabled": true,
         "options": {}
       }
+    },
+    "tasks": {
+      "spam1": {
+        "schemaVersion": 1,
+        "kind": "binary_classification",
+        "samples": {
+          "source": "zip_members",
+          "train": "spam1-train.zip",
+          "test": "spam1-test.zip"
+        },
+        "targets": {
+          "kind": "binary",
+          "file": "spam1-train.labels"
+        },
+        "execution": "inductive",
+        "holdout": "stratified",
+        "metric": "balanced_accuracy",
+        "refit": "fit_training_predict_test",
+        "submission": {
+          "format": "id_semicolon_prediction",
+          "predictions": "binary"
+        }
+      },
+      "spam2": {
+        "schemaVersion": 1,
+        "kind": "binary_classification",
+        "samples": {
+          "source": "zip_members",
+          "train": "spam2-train.zip",
+          "test": "spam2-test.zip"
+        },
+        "targets": {
+          "kind": "binary",
+          "file": "spam2-train.labels"
+        },
+        "execution": "inductive",
+        "holdout": "stratified",
+        "metric": "balanced_accuracy",
+        "refit": "fit_training_predict_test",
+        "submission": {
+          "format": "id_semicolon_prediction",
+          "predictions": "binary"
+        }
+      },
+      "spam3": {
+        "schemaVersion": 1,
+        "kind": "binary_classification",
+        "samples": {
+          "source": "zip_members",
+          "train": "webspam-train.zip",
+          "test": "webspam-test.zip"
+        },
+        "targets": {
+          "kind": "binary",
+          "file": "webspam-train.labels"
+        },
+        "execution": "inductive",
+        "holdout": "stratified",
+        "metric": "balanced_accuracy",
+        "refit": "fit_training_predict_test",
+        "submission": {
+          "format": "id_semicolon_prediction",
+          "predictions": "binary"
+        }
+      }
     }
   },
   "agent": {

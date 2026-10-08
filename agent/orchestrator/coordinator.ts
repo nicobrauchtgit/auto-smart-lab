@@ -5,7 +5,9 @@ import type { StageInvocationHandle } from "../pipeline/executor.js";
 import type { StageArtifact, StageInput, StageInvocation, StageName } from "../pipeline/types.js";
 import { guidanceHash, type EvidenceReference, type StageFeedback } from "../pipeline/guidance.js";
 import { StateStore, hash, type Action, type Counter, type OfficialResult, type RunState, type Work } from "./state.js";
+import { parseTaskConfiguration, taskConfigurationHash, type TaskConfiguration } from "../pipeline/task_configuration.js";
 export interface Mutation { actionId: string; expectedRevision: number; rationale: string }
+export interface ConfigureRequest extends Mutation { configuration: unknown }
 export interface StartRequest extends Mutation { stage: StageName; objective: string; artifactIds: string[]; guidance?: string; evidenceIds?: string[] }
 export interface CoordinatorDependencies {
  start(work: Work, input: StageInput): StageInvocationHandle;
@@ -14,6 +16,10 @@ export interface CoordinatorDependencies {
  /** Only deterministic idempotent adapters may recover a physical invocation. */
  recover?(work: Work, input: StageInput): Promise<StageInvocation | undefined>;
  record?(kind: string, payload: Record<string, unknown>): void;
+ /** Check the declared files against the task data; returns bounded facts, throws on mismatch. */
+ inspectTaskData?(configuration: TaskConfiguration): unknown;
+ /** The task's pipeline.config.json entry, offered while nothing is declared; never applied implicitly. */
+ suggestedConfiguration?: TaskConfiguration;
 }
 function text(value: unknown, bytes: number): asserts value is string { if (typeof value !== "string" || !value.trim() || Buffer.byteLength(value) > bytes) throw new Error("Missing or oversized text"); }
 function terminal(w: Work) { return w.status === "terminal" || w.status === "interrupted"; }
@@ -62,6 +68,8 @@ export class Coordinator {
   const notifications = s.inbox.filter(n => n.cursor > (cursor ?? s.acknowledgedCursor)).slice(0, 4);
   const status = { runId: s.runId, logicalOwner: s.controlInvocationId, revision: s.revision, status: s.status, reason: s.reason,
    goal: s.goal, availableModules: s.config.enabledStages.filter(name => name !== "submit" || s.policy.authorized), policy: s.policy,
+   taskConfiguration: s.taskConfiguration ? { declared: true, sha256: s.taskConfiguration.sha256, configuration: s.taskConfiguration.configuration }
+    : { declared: false, required: "Declare it with task_configure before starting a stage", ...(this.deps.suggestedConfiguration ? { suggested: this.deps.suggestedConfiguration } : {}) },
    budgets: { limits: s.limits, used: s.counters, deadline: s.deadline, triesUsed: this.remoteUsed, reservedUnknown: s.reservedUnknown, effectiveTriesUsed: this.remoteUsed + s.reservedUnknown, submissionsRemaining: Math.max(0, Math.min(3, s.policy.maxSubmissions) - this.remoteUsed - s.reservedUnknown) },
    works: s.works.slice(-4).map(w => ({ id: w.id, stage: w.stage, status: w.status, objective: w.objective, summary: w.summary })),
    // Keep the newest artifact of each kind available after large training
@@ -113,10 +121,31 @@ export class Coordinator {
    if (verify && (statSync(a.path).size > 64 * 1024 * 1024 || hash(readFileSync(a.path)) !== a.sha256)) throw new Error("Upstream artifact changed since validation");
    const { id: _, snapshotPath: __, producer: ___, ...artifact } = a; return artifact; });
  }
+ /**
+  * Declare the harness parts for this task. Validated for consistency and
+  * against the task's files before it is accepted; every later stage runs
+  * under it. A re-declaration applies to new invocations only.
+  */
+ configure(request: ConfigureRequest) {
+  const prior = this.inspectMutation(request, "task_configure"); if (prior) return prior.receipt;
+  if (this.state.works.some(w => !terminal(w))) throw new Error("Settle or cancel owned work before changing the task configuration");
+  const configuration = parseTaskConfiguration(request.configuration);
+  const facts = this.deps.inspectTaskData?.(configuration);
+  const sha256 = taskConfigurationHash(configuration);
+  const replaced = this.state.taskConfiguration?.sha256;
+  const receipt = { accepted: true, sha256, data: facts ?? null,
+   ...(replaced && replaced !== sha256 ? { replaced, note: "New invocations use this configuration; champions measured under the previous one cannot be compared or refit under it" } : {}) };
+  this.commit("task_configured", { actionId: request.actionId, sha256, configuration }, s => {
+   s.actions.push(this.action(request, "task_configure", receipt));
+   s.taskConfiguration = { configuration, sha256, actionId: request.actionId, revision: s.revision + 1 };
+  });
+  return { ...receipt, revision: this.state.revision };
+ }
  start(request: StartRequest) {
   const prior = this.inspectMutation(request, "stage_start"); if (prior) return prior.receipt;
   const s = this.state; text(request.objective, 2048);
   if (!s.config.enabledStages.includes(request.stage)) throw new Error("Stage unavailable");
+  if (!s.taskConfiguration) throw new Error("Declare the task configuration with task_configure before starting a stage");
   if (s.works.some(w => !terminal(w))) throw new Error("One mutating stage/workspace at a time");
   if (s.works.some(w => w.stage === "solve" && w.status === "interrupted" && (w.summary as any)?.trainingRecoveryRequired) && request.stage !== "solve") throw new Error("Reconcile lost solver's owned training through a new solve invocation before other workspace work");
   if (s.counters.stages >= s.limits.maxStages) throw new Error("Stage budget exhausted");
@@ -148,7 +177,7 @@ export class Coordinator {
   }
   const retry = s.works.filter(w => w.stage === request.stage && w.result?.outcome !== "success").length > 0;
   if (retry && s.counters.retries >= s.limits.maxRetries) throw new Error("Retry budget exhausted");
-  const work: Work = { id, stage: request.stage, actionId: request.actionId, objective: request.objective, upstream: request.artifactIds, status: "reserved", guidance: note ? { ...note, contentSha256: guidanceHash(note) } : undefined, options };
+  const work: Work = { id, stage: request.stage, actionId: request.actionId, objective: request.objective, upstream: request.artifactIds, status: "reserved", guidance: note ? { ...note, contentSha256: guidanceHash(note) } : undefined, options, taskConfiguration: s.taskConfiguration.configuration };
   const receipt = { invocationId: id, accepted: true };
   this.commit("action_accepted", { ...request, invocationId: id }, next => {
    next.actions.push(this.action(request, "stage_start", receipt)); next.works.push(work); next.counters.stages++; next.counters.trials += trials; if (retry) next.counters.retries++;
@@ -161,7 +190,7 @@ export class Coordinator {
   // Original source/refit paths may have disappeared after the one POST; they
   // must not prevent resolving that intent or induce a fallback upload.
   const metadataOnly = reconciliation && work.stage === "submit";
-  return { taskId: s.taskId, guidance: metadataOnly ? undefined : work.guidance, upstream: this.selected(work.upstream, !metadataOnly), evidenceCatalog: metadataOnly ? [] : this.selected(work.guidance?.evidence.map(ref => ref.artifactId) ?? []), submissionPolicy: { ...s.policy, controllerInvocationId: work.stage === "submit" ? work.id : s.controlInvocationId } };
+  return { taskId: s.taskId, taskConfiguration: work.taskConfiguration ?? s.taskConfiguration?.configuration, guidance: metadataOnly ? undefined : work.guidance, upstream: this.selected(work.upstream, !metadataOnly), evidenceCatalog: metadataOnly ? [] : this.selected(work.guidance?.evidence.map(ref => ref.artifactId) ?? []), submissionPolicy: { ...s.policy, controllerInvocationId: work.stage === "submit" ? work.id : s.controlInvocationId } };
  }
  private launch(work: Work) {
   this.commit("stage_dispatched", { invocationId: work.id }, s => { s.works.find(w => w.id === work.id)!.status = "active"; });

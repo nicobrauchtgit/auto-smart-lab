@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { spamConfiguration } from "./task_configuration.testing.js";
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -28,7 +29,7 @@ function workspace(): string {
 function configFile(dir: string, stages: Record<string, { enabled: boolean }>): string {
 	const path = join(dir, "pipeline.config.json");
 	writeFileSync(path, JSON.stringify({
-		pipeline: { version: 1, entryStage: "research", scheduling: "configured", stages },
+		pipeline: { version: 1, entryStage: "research", scheduling: "configured", stages, tasks: { spam1: spamConfiguration() } },
 		agent: { cwd: ".", agentDir: ".pi/agent", initialPrompt: "hi" },
 		defaultModel: "saia/test-model",
 		providers: {},

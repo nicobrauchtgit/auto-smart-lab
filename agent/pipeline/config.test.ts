@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { resolvePipelineSettings } from "./config.js";
 import { STAGE_REGISTRY } from "./registry.js";
+import { spamConfiguration } from "./task_configuration.testing.js";
 import type { PipelineConfig } from "../pipeline_config.js";
 
 function config(pipeline: unknown): PipelineConfig {
@@ -14,6 +15,23 @@ function config(pipeline: unknown): PipelineConfig {
 }
 
 describe("resolvePipelineSettings", () => {
+	test("task configurations come from a validated, fingerprinted pipeline.tasks section", () => {
+		const block = (tasks: unknown) => ({ version: 1, entryStage: "research", stages: { research: { enabled: true } }, tasks });
+		const resolved = resolvePipelineSettings(config(block({ spam1: spamConfiguration() })));
+		expect(resolved.taskConfigurations.spam1).toEqual(spamConfiguration());
+		expect(resolved.snapshot.tasks).toEqual({ spam1: spamConfiguration() });
+		const clustering = { ...spamConfiguration(), kind: "clustering", targets: { kind: "families", file: "f.labels" }, execution: "batch",
+			holdout: "group", metric: "adjusted_rand_index", refit: "fit_predict_test_batch", submission: { format: "id_semicolon_prediction", predictions: "cluster_id" } };
+		const changed = resolvePipelineSettings(config(block({ spam1: spamConfiguration(), apk: clustering })));
+		expect(changed.fingerprint).not.toBe(resolved.fingerprint);
+		// An inconsistent entry fails the whole file before any stage can run.
+		expect(() => resolvePipelineSettings(config(block({ apk: { ...clustering, metric: "balanced_accuracy" } }))))
+			.toThrow("pipeline.tasks.apk: Inconsistent task configuration");
+		expect(() => resolvePipelineSettings(config(block({ apk: { ...clustering, samples: { source: "zip_members", train: "../x.zip", test: "t.zip" } } }))))
+			.toThrow("samples.train must be a file name");
+		expect(() => resolvePipelineSettings(config(block([])))).toThrow("keyed by task ID");
+	});
+
 	test("resolves the research-only pipeline with defaulted options", () => {
 		const resolved = resolvePipelineSettings(config({
 			version: 1,

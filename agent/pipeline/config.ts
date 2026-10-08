@@ -12,6 +12,7 @@ import { createHash } from "node:crypto";
 
 import { loadPipelineConfig, type PipelineConfig } from "../pipeline_config.js";
 import { getStage, isImplemented, KNOWN_STAGES } from "./registry.js";
+import { parseTaskConfiguration, type TaskConfiguration } from "./task_configuration.js";
 import type { StageName } from "./types.js";
 
 export interface StageSettings {
@@ -31,6 +32,8 @@ export interface ResolvedPipelineConfig {
 	/** Parsed, defaulted options per enabled and implemented stage. */
 	effectiveOptions: Partial<Record<StageName, unknown>>;
 	enabledStages: StageName[];
+	/** Validated `pipeline.tasks` entries: the harness parts of each configured task. */
+	taskConfigurations: Record<string, TaskConfiguration>;
 	snapshot: Record<string, unknown>;
 	fingerprint: string;
 	warnings: string[];
@@ -107,6 +110,15 @@ export function resolvePipelineSettings(config: PipelineConfig): ResolvedPipelin
 		throw new Error(`Entry stage "${entryStage}" is not enabled in pipeline.config.json`);
 	}
 
+	const rawTasks = (block as { tasks?: unknown }).tasks ?? {};
+	if (typeof rawTasks !== "object" || rawTasks === null || Array.isArray(rawTasks)) throw new Error("`pipeline.tasks` must be an object keyed by task ID");
+	const taskConfigurations: Record<string, TaskConfiguration> = {};
+	for (const [taskId, value] of Object.entries(rawTasks)) {
+		// Invalid entries fail the whole file at load time, before any stage runs.
+		try { taskConfigurations[taskId] = parseTaskConfiguration(value); }
+		catch (error) { throw new Error(`pipeline.tasks.${taskId}: ${error instanceof Error ? error.message : String(error)}`); }
+	}
+
 	const settings: PipelineSettings = { version: 1, entryStage, scheduling, stages };
 	// The snapshot carries settings and model identity only; no credentials.
 	const snapshot = canonical({
@@ -114,6 +126,7 @@ export function resolvePipelineSettings(config: PipelineConfig): ResolvedPipelin
 		harness: HARNESS_CONFIG,
 		harness_sha256: HARNESS_CONFIG_SHA256,
 		effectiveOptions,
+		tasks: taskConfigurations,
 		defaultModel: config.defaultModel,
 		stageVersions: Object.fromEntries(enabledStages.map((name) => [name, getStage(name).version])),
 	}) as Record<string, unknown>;
@@ -122,6 +135,7 @@ export function resolvePipelineSettings(config: PipelineConfig): ResolvedPipelin
 		settings,
 		effectiveOptions,
 		enabledStages,
+		taskConfigurations,
 		snapshot,
 		fingerprint: createHash("sha256").update(JSON.stringify(snapshot)).digest("hex"),
 		warnings,

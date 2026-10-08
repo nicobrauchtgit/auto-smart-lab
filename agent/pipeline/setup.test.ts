@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
 import { SetupSession, setupChecks, type SetupCheck } from "./setup.js";
 import { loadPromptSnapshot } from "../prompts/loader.js";
+import { spamConfiguration } from "./task_configuration.testing.js";
+import type { TaskConfiguration } from "./task_configuration.js";
 
 const signal = () => new AbortController().signal;
 test("collects all local failures, skips remote probes and never exposes exception secrets", async () => {
@@ -129,7 +131,7 @@ test("a missing optuna or git prevents the solve stage from running", async () =
  try {
   STAGE_REGISTRY.solve = { ...solveStage, checkInput() {}, async run() { ran = true; return { artifacts: [] }; } };
   const config = resolvePipelineSettings({ pipeline: { entryStage: "solve", stages: { solve: { enabled: true } } }, agent: { cwd: ".", agentDir: ".", initialPrompt: "" }, providers: {}, defaultModel: "fixture/model" } as any);
-  const invocation = await invokeStage({ stage: "solve", input: { taskId: "fixture", upstream: [] }, config, trace, setupSession: new MissingTrainingTools() });
+  const invocation = await invokeStage({ stage: "solve", input: { taskId: "fixture", taskConfiguration: spamConfiguration(), upstream: [] }, config, trace, setupSession: new MissingTrainingTools() });
   expect(invocation.outcome).toBe("failure");
   expect(invocation.error).toContain("training-optuna");
   expect(invocation.error).toContain("training-git");
@@ -177,7 +179,7 @@ test("missing shared metric prerequisites block the solve stage before execution
   STAGE_REGISTRY.solve = { ...original, checkInput() {}, async run() { ran = true; return { artifacts: [] }; } };
   const config = resolvePipelineSettings({ pipeline: { entryStage: "solve", stages: { solve: { enabled: true } } },
    agent: { cwd: ".", agentDir: ".", initialPrompt: "" }, providers: {}, defaultModel: "fixture/model" } as any);
-  const result = await invokeStage({ stage: "solve", input: { taskId: "fixture", upstream: [] }, config, trace, setupSession: new MissingMetrics() });
+  const result = await invokeStage({ stage: "solve", input: { taskId: "fixture", taskConfiguration: spamConfiguration(), upstream: [] }, config, trace, setupSession: new MissingMetrics() });
   expect(result.outcome).toBe("failure");
   expect(result.error).toContain("training-imports");
   expect(ran).toBe(false);

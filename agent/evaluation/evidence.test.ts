@@ -39,7 +39,7 @@ test("real harness trial becomes verified review evidence; changed artifacts and
   if (trained.status !== 0) throw new Error(trained.stderr);
   // Evaluation reviews only the tagged champion.
   await expect(prepareEvidence([artifact('training_selected_result', join(directory, 'trial-result.json'))], new AbortController().signal, 'fixture-task')).rejects.toThrow('not the current champion');
-  tagCommit(repository, 'champion', commit, JSON.stringify({ experimentId: 'fixture', pipeline: request.pipeline, trainingRoot: join(root, 'training') }), true);
+  tagCommit(repository, 'champion/fixture-task', commit, JSON.stringify({ experimentId: 'fixture', pipeline: request.pipeline, trainingRoot: join(root, 'training') }), true);
   const collection = await championSelection(await collectTrainingResults(join(root, 'training')), repository, 'fixture-task');
   expect(collection.selected?.experimentId).toBe('fixture');
   const upstream = [...collection.artifacts, artifact('training_selected_result', join(directory, 'trial-result.json'))];
@@ -49,7 +49,7 @@ test("real harness trial becomes verified review evidence; changed artifacts and
   expect(evidence.diagnostics.curves.rocAuc).toBe(.5);
   expect(curveSvg(evidence.diagnostics.curves)).toContain('<svg');
   expect(curveSvg({ available: false })).toBeUndefined();
-  await expect(prepareEvidence(upstream, new AbortController().signal, 'wrong-task')).rejects.toThrow('different task');
+  await expect(prepareEvidence(upstream, new AbortController().signal, 'wrong-task')).rejects.toThrow('not the current champion');
   const oof = join(directory, 'oof_predictions.csv');
   writeFileSync(oof, readFileSync(oof, 'utf8') + '\n');
   await expect(prepareEvidence(upstream, new AbortController().signal, 'fixture-task')).rejects.toThrow('changed upstream');

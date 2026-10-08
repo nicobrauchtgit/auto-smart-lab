@@ -4,15 +4,20 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHarnessTraining } from "../training/index.js";
 import { loadPromptSnapshot } from "../prompts/loader.js";
-import { commitAll, temporaryProject, PYTHON, WORKER, trainingEnvironment, until, writeCorpus } from "../training/testing.js";
+import { commitAll, temporaryProject, PYTHON, WORKER, trainingEnvironment, until, writeCorpus, writeSampleManifest } from "../training/testing.js";
 import { git, tagCommit, tagMessage } from "../training/git.js";
 import { collectTrainingResults } from "../training/results.js";
 import { assertDevelopmentCandidate } from "../training/terminal.js";
 import { prepareRefit, runRefit, hashFile, type RefitOptions } from "./service.js";
+import { spamConfiguration } from "../pipeline/task_configuration.testing.js";
+import type { TaskConfiguration } from "../pipeline/task_configuration.js";
 import type { StageReporter } from "../pipeline/types.js";
 
 async function fixture(delay = 0, search = false, barrier = false) {
- const project = temporaryProject("terminal-refit-");
+ const created = temporaryProject("terminal-refit-");
+ // Raw sample input, as production solve prepares it; refit refuses decoded-text champions.
+ const samples = writeSampleManifest(created.root, created.zipPath, created.labelsPath);
+ const project = { ...created, datasetSha256: samples.datasetSha256, measurement: samples.measurement };
  // The estimator asserts that full labels are available only after the atomic freeze.
  writeFileSync(join(project.solutionsRoot, "features.py"), readFileSync(join(project.solutionsRoot, "features.py"), "utf8").replace('if self.delay:', `if len(frame) > 120:\n            import json, pathlib\n            records = list(pathlib.Path(${JSON.stringify(join(project.solutionsRoot, ".git", "smartlab-terminal"))}).glob('*.json'))\n            assert len(records) == 1\n            frozen = json.loads(records[0].read_text())\n            assert frozen['data']['trainRows'] == len(frame)\n            assert set(frame['id']) == set(frozen['data']['trainIds'])\n            assert len(y) == len(frame)\n        if self.delay:`));
  if (barrier) {
@@ -23,14 +28,14 @@ async function fixture(delay = 0, search = false, barrier = false) {
  const root = join(project.root, "runs", "fixture", "solve", "training", "run");
  const harness = createHarnessTraining({ root, env: trainingEnvironment(), pythonExecutable: PYTHON,
   projectRoot: project.root, solutionsRoot: project.solutionsRoot, taskId: "fixture", datasetSha256: project.datasetSha256,
-  rootSeed: 13, zipPath: project.zipPath, labelsPath: project.labelsPath, prompts: loadPromptSnapshot(), workerPath: WORKER,
+  rootSeed: 13, zipPath: project.zipPath, measurement: project.measurement, prompts: loadPromptSnapshot(), workerPath: WORKER,
   environmentFingerprint: "fixture-environment", limits: { sampleIntervalMs: 25, stopGraceMs: 100 } });
  let request = { schemaVersion: 2, hypothesis: "winning fixed confirmation", pipeline: { module: "solutions/tasks/fixture.py", factory: "build_pipeline", parameters: { delay }, estimatorParams: { model__C: 0.75 } }, cv: { kind: "builtin", scheme: "stratified_kfold", folds: 2, repeats: 1 }, scope: { kind: "promotion" } };
  if (search) {
   const searched = await harness.service.start({ ...request, pipeline: { ...request.pipeline, estimatorParams: {} }, search: { space: { model__C: { type: "categorical", choices: [0.25, 0.75] } }, sampler: "grid" } });
   expect(await until(() => harness.supervisor.status(searched.id).status !== "running")).toBe(true);
   await harness.service.finalize(searched.id);
-  expect(tagMessage(project.solutionsRoot, "champion")).toBeUndefined();
+  expect(tagMessage(project.solutionsRoot, "champion/fixture")).toBeUndefined();
   request = JSON.parse(readFileSync(join(searched.directory, "search-report.json"), "utf8")).nextStep.confirmationRequest;
  }
  const started = await harness.service.start(request);
@@ -44,7 +49,7 @@ async function fixture(delay = 0, search = false, barrier = false) {
  const events: { type: string; payload: Record<string, unknown> }[] = [];
  const report: StageReporter = { event: (type, payload) => events.push({ type, payload }), agentIdentity: () => ({ pipelineRunId: "refit-run", stageInvocationId: "refit-invocation" } as any), input: input => events.push({ type: "input", payload: input }), observation: () => { throw new Error("No model session allowed"); } };
  const options: RefitOptions = { taskId: "fixture", projectRoot: project.root, solutionsRoot: project.solutionsRoot, pythonExecutable: PYTHON,
-  labelsPath: full.labelsPath, trainZip: full.zipPath, testZip, environmentFingerprint: "fixture-environment", env: trainingEnvironment(), trainingRoot: root, report };
+  taskConfiguration: spamConfiguration(), labelsPath: full.labelsPath, trainZip: full.zipPath, testZip, environmentFingerprint: "fixture-environment", env: trainingEnvironment(), trainingRoot: root, report };
  return { ...project, head, root, request, started, options, events };
 }
 
@@ -79,13 +84,13 @@ test("refit freezes exact champion with fixed confirmation params, fits all rows
 }, 90_000);
 
 test("refit rejects missing, uneligible, mismatched and drifted chosen evidence/data/dependencies before freeze", async () => {
- const f = await fixture(); const originalTag = tagMessage(f.solutionsRoot, "champion")!;
+ const f = await fixture(); const originalTag = tagMessage(f.solutionsRoot, "champion/fixture")!;
  const chosen = JSON.parse(originalTag.message);
  for (const changed of [{ ...chosen, experimentId: "missing" }, { ...chosen, pipeline: { ...chosen.pipeline, estimatorParams: { model__C: 123 } } }]) {
-  tagCommit(f.solutionsRoot, "champion", f.head, JSON.stringify(changed), true);
+  tagCommit(f.solutionsRoot, "champion/fixture", f.head, JSON.stringify(changed), true);
   await expect(prepareRefit(f.options)).rejects.toThrow();
  }
- tagCommit(f.solutionsRoot, "champion", f.head, originalTag.message, true);
+ tagCommit(f.solutionsRoot, "champion/fixture", f.head, originalTag.message, true);
  await expect(prepareRefit({ ...f.options, environmentFingerprint: "drift" })).rejects.toThrow("fingerprint drifted");
  await expect(prepareRefit({ ...f.options, trainingRoot: join(f.root, "other") })).rejects.toThrow("disagrees");
  const oofPath = join(f.started.directory, "oof_predictions.csv"); const originalOof = readFileSync(oofPath);
@@ -100,7 +105,7 @@ test("refit rejects missing, uneligible, mismatched and drifted chosen evidence/
  await expect(prepareRefit(f.options)).rejects.toThrow("eligible"); writeFileSync(resultPath, saved);
  writeFileSync(f.options.testZip, "corrupt");
  await expect(prepareRefit(f.options)).rejects.toThrow();
- expect(git(f.solutionsRoot, ["tag", "-d", "champion"]).status).toBe(0);
+ expect(git(f.solutionsRoot, ["tag", "-d", "champion/fixture"]).status).toBe(0);
  await expect(prepareRefit(f.options)).rejects.toThrow("No authoritative");
 }, 90_000);
 
@@ -117,7 +122,7 @@ test("opaque terminal fit cancellation retains freeze, retries same identity, an
  await runRefit(f.options);
  expect(JSON.parse(readFileSync(join(prepared.directory, "attempt.json"), "utf8")).attempt).toBe(2);
  const training = createHarnessTraining({ root: join(f.root, "new"), env: trainingEnvironment(), pythonExecutable: PYTHON, projectRoot: f.options.projectRoot,
-  solutionsRoot: f.solutionsRoot, taskId: "fixture", datasetSha256: f.datasetSha256, rootSeed: 13, zipPath: f.zipPath, labelsPath: f.labelsPath, prompts: loadPromptSnapshot(), workerPath: WORKER });
+  solutionsRoot: f.solutionsRoot, taskId: "fixture", datasetSha256: f.datasetSha256, rootSeed: 13, zipPath: f.zipPath, measurement: f.measurement, prompts: loadPromptSnapshot(), workerPath: WORKER });
  try { await expect(training.service.start(f.request)).rejects.toThrow("terminal"); } finally { await training.close(); }
  expect(f.events.some(e => e.type === "experiment_stop_requested")).toBe(true);
 }, 90_000);
@@ -183,7 +188,7 @@ test("authoritative chosen tag wins when a different eligible trial has a higher
  writeFileSync(join(f.solutionsRoot, "tasks", "fixture.py"), "from sklearn.dummy import DummyClassifier\ndef build_pipeline(context):\n    return DummyClassifier(strategy='most_frequent')\n");
  const chosenCommit = commitAll(f.solutionsRoot, "Explicit chosen baseline");
  const training = createHarnessTraining({ root: f.root, env: trainingEnvironment(), pythonExecutable: PYTHON, projectRoot: f.options.projectRoot,
-  solutionsRoot: f.solutionsRoot, taskId: "fixture", datasetSha256: f.datasetSha256, rootSeed: 13, zipPath: f.zipPath, labelsPath: f.labelsPath,
+  solutionsRoot: f.solutionsRoot, taskId: "fixture", datasetSha256: f.datasetSha256, rootSeed: 13, zipPath: f.zipPath, measurement: f.measurement,
   prompts: loadPromptSnapshot(), workerPath: WORKER, environmentFingerprint: f.options.environmentFingerprint, limits: { sampleIntervalMs: 25, stopGraceMs: 100 } });
  const request = { ...f.request, pipeline: { module: "solutions/tasks/fixture.py", factory: "build_pipeline", estimatorParams: { strategy: "most_frequent" } } };
  const selected = await training.service.start(request);
@@ -191,7 +196,7 @@ test("authoritative chosen tag wins when a different eligible trial has a higher
  await training.service.finalize(selected.id); await training.close();
  const trials = (await collectTrainingResults(f.root)).trials, score = (id: string) => trials.find(t => t.experimentId === id)!.result!.metrics!.balancedAccuracy;
  expect(score(f.started.id)).toBeGreaterThan(score(selected.id));
- tagCommit(f.solutionsRoot, "champion", chosenCommit, JSON.stringify({ experimentId: selected.id, pipeline: request.pipeline, trainingRoot: f.root }), true);
+ tagCommit(f.solutionsRoot, "champion/fixture", chosenCommit, JSON.stringify({ experimentId: selected.id, pipeline: request.pipeline, trainingRoot: f.root }), true);
  const frozen = await prepareRefit(f.options);
  expect(frozen.chosenExperimentId).toBe(selected.id); expect(frozen.source.commit).toBe(chosenCommit);
  await runRefit(f.options);

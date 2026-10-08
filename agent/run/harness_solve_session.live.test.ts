@@ -6,6 +6,8 @@ import { join } from "node:path";
 
 import { PROJECT_ROOT } from "../pipeline/resolve_task.js";
 import type { PythonEnvironment } from "./python_environment.js";
+import { spamConfiguration } from "../pipeline/task_configuration.testing.js";
+import { writeSampleManifest } from "../training/testing.js";
 import { runHarnessSolveSession, type HarnessSolveDependencies } from "./harness_solve_session.js";
 
 const pythonEnvironment = (): PythonEnvironment => ({
@@ -33,6 +35,8 @@ test("an agent-authored pipeline deliberately starts the harness-owned promotion
 		zipPath], { cwd: archiveRoot });
 	const labelsPath = join(root, "train.labels");
 	writeFileSync(labelsPath, `${labels.join("\n")}\n`);
+	// Raw sample input, exactly as solve prepares it.
+	const samples = writeSampleManifest(root, zipPath, labelsPath);
 	const taskPath = join(root, "task.md");
 	const researchDir = join(root, "research");
 	mkdirSync(researchDir);
@@ -47,11 +51,12 @@ test("an agent-authored pipeline deliberately starts the harness-owned promotion
 	mkdirSync(join(solutionsRoot, "tasks"), { recursive: true });
 	const workspace = {
 		root, solutionsRoot, entrypointPath: modulePath, taskPath, researchDir,
-		devLabelsPath: labelsPath, fullLabelsPath: labelsPath, devZip: zipPath,
+		configuration: spamConfiguration(), testZip: join(root, "test.zip"), targets: samples.sampleManifestPath,
+		sampleManifestPath: samples.sampleManifestPath, measurement: samples.measurement, devZip: zipPath,
 		sealedPath: join(root, "sealed.txt"), trainZip: zipPath, datasetPaths: [zipPath],
-		split: { sealedIds: [], devRows: [], fraction: 0.1, seed: 13, sha256: "d".repeat(64) },
+		split: { sealedIds: [], fraction: 0.1, seed: 13, sha256: "d".repeat(64), scheme: "stratified" as const },
 		recommendation: { scheme: "stratified_kfold" as const, folds: 2, repeats: 1, rationale: "fixture" },
-		rowCount: 40, classBalance: "class 0 20, class 1 20", researchState: "research available",
+		rowCount: 40, targetSummary: "Class balance: class 0 20, class 1 20.", researchState: "research available",
 		researchDocumentSha256: "e".repeat(64),
 	};
 
@@ -60,7 +65,7 @@ test("an agent-authored pipeline deliberately starts the harness-owned promotion
 		readPython: pythonEnvironment,
 		runAgentSession: async (options) => {
 			// This write represents the model agent authoring the implementation.
-			writeFileSync(modulePath, `from sklearn.feature_extraction.text import TfidfVectorizer\nfrom sklearn.linear_model import LogisticRegression\nfrom sklearn.pipeline import FunctionTransformer, Pipeline\n\ndef build_pipeline(context):\n    return Pipeline([("text", FunctionTransformer(lambda frame: frame["text"], validate=False)), ("tfidf", TfidfVectorizer()), ("model", LogisticRegression(max_iter=200))])\n`);
+			writeFileSync(modulePath, `from sklearn.feature_extraction.text import TfidfVectorizer\nfrom sklearn.linear_model import LogisticRegression\nfrom sklearn.pipeline import FunctionTransformer, Pipeline\nimport zipfile\n\ndef read(frame):\n    texts = []\n    for d in frame["input"]:\n        with zipfile.ZipFile(d["archive"]) as a:\n            texts.append(a.read(d["member"]).decode())\n    return texts\n\ndef build_pipeline(context):\n    return Pipeline([("text", FunctionTransformer(read, validate=False)), ("tfidf", TfidfVectorizer()), ("model", LogisticRegression(max_iter=200))])\n`);
 			// The agent commits its work: the harness rejects uncommitted code.
 			execFileSync("git", ["-C", solutionsRoot, "add", "-A"]);
 			execFileSync("git", ["-C", solutionsRoot, "commit", "--quiet", "-m", "Word tf-idf with logistic regression"]);

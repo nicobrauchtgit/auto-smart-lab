@@ -7,11 +7,16 @@ import type { ResolvedPipelineConfig } from "../pipeline/config.js";
 import type { StageArtifact, StageInvocation, StageName, StageInput } from "../pipeline/types.js";
 import type { StageGuidance } from "../pipeline/guidance.js";
 import { HARNESS_CONFIG } from "../harness/config.js";
+import { parseTaskConfiguration, taskConfigurationHash, type TaskConfiguration } from "../pipeline/task_configuration.js";
 export const hash = (value: unknown): string => createHash("sha256").update(typeof value === "string" || Buffer.isBuffer(value) ? value : JSON.stringify(value)).digest("hex");
 export type Limits = typeof HARNESS_CONFIG.orchestrator;
 export type Counter = "sessions" | "modelRequests" | "toolCalls" | "stages" | "trials" | "retries";
 export interface CatalogArtifact extends StageArtifact { id: string; snapshotPath: string; producer: string }
-export interface Work { id: string; stage: StageName; actionId: string; objective: string; upstream: string[]; status: "reserved" | "active" | "interrupted" | "uncertain" | "terminal"; guidance?: StageGuidance; options?: unknown; result?: StageInvocation; summary?: Record<string, unknown> }
+export interface Work { id: string; stage: StageName; actionId: string; objective: string; upstream: string[]; status: "reserved" | "active" | "interrupted" | "uncertain" | "terminal"; guidance?: StageGuidance; options?: unknown; result?: StageInvocation; summary?: Record<string, unknown>;
+ /** The configuration this invocation ran under; recovery reuses it even after a re-declaration. */
+ taskConfiguration?: TaskConfiguration }
+/** The controller's declared harness parts for this task. */
+export interface DeclaredConfiguration { configuration: TaskConfiguration; sha256: string; actionId: string; revision: number }
 export interface Action { id: string; requestHash: string; kind: string; revision: number; receipt: Record<string, unknown> }
 export interface Notification { cursor: number; kind: string; invocationId?: string; summary: Record<string, unknown> }
 export interface OfficialResult { attemptId: string; score?: number; candidateId?: string; artifactId?: string; status: string }
@@ -22,6 +27,7 @@ export interface RunState {
  startedAt: number; deadline: number; limits: Limits; counters: Record<Counter, number>; revision: number;
  status: "running" | "finished" | "blocked" | "cancelled"; reason?: string;
  works: Work[]; actions: Action[]; artifacts: CatalogArtifact[]; official: OfficialResult[]; bestOfficial?: OfficialResult;
+ taskConfiguration?: DeclaredConfiguration;
  remoteTriesUsed: number; reservedUnknown: number; cursor: number; acknowledgedCursor: number; inbox: Notification[]; journal: { revision: number; at: number; kind: string; payload: Record<string, unknown> }[];
 }
 function validate(s: RunState): void {
@@ -41,6 +47,10 @@ function validate(s: RunState): void {
  if (!Number.isSafeInteger(s.cursor) || s.acknowledgedCursor > s.cursor || s.acknowledgedCursor < 0 || s.inbox.some(n => n.cursor > s.cursor)) throw new Error("Invalid notification cursor");
  if (!Number.isSafeInteger(s.remoteTriesUsed) || s.remoteTriesUsed < 0) throw new Error("Invalid remote attempt accounting");
  if (!Number.isSafeInteger(s.reservedUnknown) || s.reservedUnknown < 0 || s.reservedUnknown > 3) throw new Error("Invalid unknown submission reservations");
+ for (const declared of [s.taskConfiguration, ...s.works.map(w => w.taskConfiguration && { configuration: w.taskConfiguration, sha256: taskConfigurationHash(w.taskConfiguration) })]) {
+  if (declared && taskConfigurationHash(parseTaskConfiguration(declared.configuration)) !== declared.sha256) throw new Error("Invalid persisted task configuration");
+ }
+ if (s.taskConfiguration && !s.actions.some(a => a.id === s.taskConfiguration!.actionId && a.kind === "task_configure")) throw new Error("Unowned persisted task configuration");
 }
 export class StateStore {
  readonly path: string;

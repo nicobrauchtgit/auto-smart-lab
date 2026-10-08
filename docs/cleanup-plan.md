@@ -54,11 +54,20 @@ with this file, this file wins.
   (`build_pipeline()` returning an unfitted sklearn estimator over an
   `id`/`text` frame) and starts trials through `experiment_*` tools; Python
   workers own folds, seeds, fits, predictions and metrics.
-- **Biggest structural limit:** the harness assumes a zip of text files,
-  binary `0`/`1` labels and balanced accuracy in the registered task adapters.
-  Only unit 1 fits end to end. The training API now supports opaque sample
-  manifests and clustering/anomaly measurements; H1/H2 must still connect the
-  lab task declarations, research/workspace preparation, evaluation and refit.
+- **Task configuration (H2, 2026-10-08):** every stage runs under a typed,
+  validated `TaskConfiguration` (`agent/pipeline/task_configuration.ts`): task
+  kind, sample source, targets, execution, holdout, metric, refit and submission
+  domain. The orchestrator declares it with the `task_configure` controller
+  tool (checked against the task files, stored durably); configured runs and
+  standalone stage commands read `pipeline.tasks.<task>` from the verified,
+  fingerprinted `pipeline.config.json`. There are no command-line overrides
+  (user decision). A task with neither cannot start a stage.
+- **Biggest structural limit:** stages now drive binary text classification
+  (units 1, and unit 2 as text) and labelled clustering (unit 3) end to end on
+  fixtures; no real unit 2-4 data has been run yet. Label-free kinds (clustering
+  without families, anomaly detection) run solve but cannot promote, so they stop
+  there (open decision). Pcap connections (4.1) and the VM service (5, 6) are not
+  sample sources yet.
 - **Official lab attempts:** every task 0 of 3 used, except task 4.1 (1 of 3,
   score 0.0, 2026-08-13). spam1 has two uncounted submissions (2026-08-18,
   scored 0.9645, marked FAILURE).
@@ -90,6 +99,13 @@ with this file, this file wins.
 - [ ] Tool sets (W1): should the orchestrator get read-only knowledge search? Who gets a tool for the lab service on the VM?
 - [ ] Run the agents on the VM with a copy of `.env` there? (The VM checkout has no `.env` yet; see "Environment and access".)
 - [ ] `~/.local/bin/herdr` on the VM: origin unknown, not from this project. Keep or remove?
+- [ ] Label-free tasks (unit 4, clustering without families) cannot promote, so
+  evaluate/refit/submit never run for them. Options: an advisory promotion rule
+  on a declared proxy objective, or controller-supplied trusted evidence labels.
+  Either changes D7/D13 and needs your decision.
+- [ ] Unit 2 documents are binary files, but binary classification still hands
+  pipelines decoded `text`. Add a manifest-based binary classification (raw
+  `{archive, member}` inputs) to the training worker?
 - [ ] Recommended, not yet confirmed: build the canary (C1) and held-back
   confirmation (C2) inside the modular harness (H1). The user approved the
   measurement packets; C3 and C5–C8 are implemented in the shared training path.
@@ -194,10 +210,32 @@ Lab facts are in [Lab tasks](#lab-tasks-verified-2026-10-07).
   The training/measurement foundation is now available: controller-declared
   opaque sample metadata, inductive/batch execution, K-fold/group-held-out folds,
   ARI scoring/search/champion comparison and label-free diagnostics. See
-  [the measurement packets](harness-measurements.md). This does not complete
-  task declaration, stage adapters, generic terminal refit or submission.
-- [ ] **H2 The orchestrator chooses the task kind** and applies the matching
-  harness parts.
+  [the measurement packets](harness-measurements.md).
+  Done 2026-10-08: the stage adapters. Solve prepares binary workspaces as
+  before and, for sample tasks, a development archive, an opaque
+  `{archive, member}` manifest and the training `measurement`; family tasks
+  seal whole families (`sealGroups`), label-free tasks seal nothing. Sample
+  identity comes from `agent/training/python/task_samples.py` (member lists and
+  targets only). Research profiles family counts; evaluation recomputes per-batch
+  ARI and uses `review.guide-clustering`; refit repeats the measured execution
+  (inductive fit on all training samples, or fit/predict on the test batch) and
+  refuses a champion measured under another configuration; submission checks the
+  frozen prediction domain and fails closed unless task.md documents it. Solve
+  prompts pick `solve.task-<kind>`. Tests: `refit/sample_task.test.ts` (sealed
+  families -> clustering champion -> test-batch refit), `test_task_samples.py`,
+  clustering cases in `test_diagnostics.py`, `loader.test.ts`, `config.test.ts`.
+  Still open: pcap connections and images-without-test sources, "BACC with
+  missing values", knowledge citations of sample-task trials (refused with a
+  clear message), and real unit 2-4 data.
+- [x] **H2 The orchestrator chooses the task kind** and applies the matching
+  harness parts. Done: `task_configure` validates the declaration (consistency
+  rules, then the task files) and stores it in coordinator state with its owning
+  action; `stage_start` refuses until one exists; each work records the
+  configuration it ran under, so restart recovery reuses it. Status offers the
+  task's `pipeline.config.json` entry as a suggestion only; the opening context
+  lists the task's data files. Re-declaration is allowed between stages.
+  Submission reconciliation never waits for a configuration. Tests:
+  `coordinator.test.ts`, `executor.test.ts`.
 - [ ] **H3 Escape hatch (D10):** expose the generic `experiment_*` tools to
   agents for work that fits no kind; the harness still observes it.
 - [ ] **H4 PyTorch (units 5, 6).** An observed training script with a

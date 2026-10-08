@@ -10,6 +10,7 @@ export const PROMPTS = {
  "shared.stage-feedback": { file: "shared/stage-feedback.md", variables: ["note"] },
 	"review.system": { file: "review/system.md", variables: [] },
 	"review.guide": { file: "review/guide.md", variables: [] },
+	"review.guide-clustering": { file: "review/guide-clustering.md", variables: [] },
 	"review.start": { file: "review/start.md", variables: ["taskId", "experimentId", "evidence", "code"] , optionalVariables: ["guidance"] },
 	"review.code-tool": { file: "review/code-tool.md", variables: [] },
 	"review.detail-tool": { file: "review/detail-tool.md", variables: [] },
@@ -62,7 +63,11 @@ export const PROMPTS = {
 	"research.launch": { file: "research/launch.md", variables: ["request", "taskId", "contextHash", "startupContext"] },
 	"research.initial-document": { file: "research/initial-document.md", variables: ["title", "taskId", "contextHash"] },
 	"solve.system": { file: "solve/system.md", variables: ["taskId"] },
-	"solve.start": { file: "solve/start.md", variables: ["taskId", "workspace", "datasetPaths", "labelsPath", "rowCount", "classBalance", "foldRecommendation", "researchState", "maxIterations"] , optionalVariables: ["guidance"] },
+	"solve.start": { file: "solve/start.md", variables: ["taskId", "workspace", "datasetPaths", "targets", "rowCount", "targetSummary", "foldRecommendation", "researchState", "maxIterations", "taskContract"] , optionalVariables: ["guidance"] },
+	"solve.task-binary_classification": { file: "solve/task-binary_classification.md", variables: ["taskId"] },
+	"solve.task-clustering": { file: "solve/task-clustering.md", variables: ["taskId", "execution"] },
+	"solve.task-anomaly_detection": { file: "solve/task-anomaly_detection.md", variables: ["taskId", "execution", "scoreMethod", "scoreDirection", "anomalyLabel"] },
+	"solve.label-free": { file: "solve/label-free.md", variables: [] },
 	"solve.observable-fits": { file: "solve/observable-fits.md", variables: [] },
 } as const;
 

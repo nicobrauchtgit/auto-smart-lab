@@ -9,6 +9,8 @@ import { PROMPTS, type PromptId } from "./registry.js";
 import { prepareResearchPrompts } from "./research.js";
 import { prepareSolvePrompts } from "./solve.js";
 import { summarizeTrainingLabels } from "../research/startup_context.js";
+import { spamConfiguration } from "../pipeline/task_configuration.testing.js";
+import type { TaskConfiguration } from "../pipeline/task_configuration.js";
 
 test("every registered template loads and renders with its declared inputs", () => {
 	const snapshot = loadPromptSnapshot();
@@ -84,8 +86,8 @@ test("profile injection changes rendered identity without changing the task temp
 test("the solve opening carries the fit policy as its own identified template", () => {
 	const snapshot = loadPromptSnapshot();
 	const prepared = prepareSolvePrompts(snapshot, {
-		taskId: "spam1", workspace: "/tmp/ws", datasetPaths: ["/tmp/train.zip"],
-		labelsPath: "/tmp/train.labels", rowCount: 14995, classBalance: "52/48",
+		taskId: "spam1", configuration: spamConfiguration(), workspace: "/tmp/ws", datasetPaths: ["/tmp/train.zip"],
+		targets: "/tmp/train.labels", rowCount: 14995, targetSummary: "Class balance: 52/48.",
 		foldRecommendation: "5-fold stratified, 1 repeat(s)", researchState: "none", maxIterations: 6,
 	});
 	// The policy is stable across tasks, so it stays a separate template rather
@@ -101,6 +103,31 @@ test("the solve opening carries the fit policy as its own identified template", 
 	assert.match(prepared.prompt, /The harness materializes your fold\s+design with harness-owned seeds/);
 	assert.match(prepared.prompt, /A pilot should deliberately reduce work/);
 	assert.equal(snapshot.render("solve.observable-fits", {}).reference.rendered_sha256, policy.rendered_sha256);
+});
+
+test("the solve opening selects the task contract of the configured kind", () => {
+	const snapshot = loadPromptSnapshot();
+	const base = { taskId: "apk", workspace: "/tmp/ws", datasetPaths: ["/tmp/dev.zip"], targets: "families", rowCount: 90,
+		targetSummary: "Families: 9.", foldRecommendation: "5-fold group_kfold, 1 repeat(s)", researchState: "none", maxIterations: 3 };
+	const binary = prepareSolvePrompts(snapshot, { ...base, configuration: spamConfiguration() });
+	assert.match(binary.prompt, /Scored on balanced accuracy/);
+	assert.ok(binary.promptReferences.some(reference => reference.id === "solve.task-binary_classification"));
+	const clustering: TaskConfiguration = { schemaVersion: 1, kind: "clustering", samples: { source: "zip_members", train: "a-train.zip", test: "a-test.zip" },
+		targets: { kind: "families", file: "a-train.labels" }, execution: "batch", holdout: "group", metric: "adjusted_rand_index",
+		refit: "fit_predict_test_batch", submission: { format: "id_semicolon_prediction", predictions: "cluster_id" } };
+	const clustered = prepareSolvePrompts(snapshot, { ...base, configuration: clustering });
+	assert.match(clustered.prompt, /adjusted Rand index/);
+	assert.match(clustered.prompt, /Execution for this task: `batch`/);
+	assert.doesNotMatch(clustered.prompt, /balanced accuracy|`text` columns/);
+	assert.ok(clustered.promptReferences.some(reference => reference.id === "solve.task-clustering"));
+	assert.ok(!clustered.promptReferences.some(reference => reference.id === "solve.label-free"));
+	const anomaly: TaskConfiguration = { ...clustering, kind: "anomaly_detection", targets: { kind: "none" }, execution: "inductive", holdout: "none",
+		metric: "none", refit: "fit_training_predict_test", submission: { format: "id_semicolon_prediction", predictions: "binary" },
+		anomaly: { scoreMethod: "score_samples", scoreDirection: "lower_is_anomalous", anomalyLabel: -1 } };
+	const detected = prepareSolvePrompts(snapshot, { ...base, configuration: anomaly });
+	assert.match(detected.prompt, /returning `-1` for anomalies/);
+	assert.match(detected.prompt, /lower is anomalous/);
+	assert.ok(detected.promptReferences.some(reference => reference.id === "solve.label-free"));
 });
 
 test("research always supplies the separate test-input pass and its evidence limits", () => {

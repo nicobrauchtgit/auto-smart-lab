@@ -12,12 +12,18 @@ import { startStageInvocation, type StageInvocationHandle } from "../pipeline/ex
 import { runDecisionAgent, orchestrationSessionOptions } from "./session.js";
 import type { StageInput, StageInvocation, StageName } from "../pipeline/types.js";
 import { parseOrchestrateArgs } from "../orchestrate_cli.js";
+import { spamConfiguration } from "../pipeline/task_configuration.testing.js";
+import type { TaskConfiguration } from "../pipeline/task_configuration.js";
 function fixture(authorized = true, caps: Partial<RunState["limits"]> = {}) {
  const directory = mkdtempSync(join(tmpdir(), "orchestrator-")), prompts = loadPromptSnapshot();
  const config = resolvePipelineSettings({ defaultModel: "fixture/model", providers: {}, agent: { cwd: directory, agentDir: directory, initialPrompt: "" }, pipeline: { version: 1, scheduling: "agent", entryStage: "research", stages: Object.fromEntries(["research", "solve", "evaluate", "refit", "submit"].map(name => [name, { enabled: true, options: {} }])) } } as any);
  const state = initialState({ taskId: "fixture", taskFingerprint: "a".repeat(64), config, promptTemplates: prompts.serialize(), promptFingerprint: prompts.fingerprint, authorized, limits: caps });
- const store = new StateStore(directory, state); return { directory, state, store, prompts, config };
+ const store = new StateStore(directory, state);
+ // Every scenario starts after the controller declared the task's harness parts.
+ new Coordinator(store, { start: () => { throw new Error("unused"); } }).configure({ actionId: "configure", expectedRevision: 0, rationale: "Binary text task", configuration: TASK_CONFIGURATION });
+ return { directory, state: store.state, store, prompts, config };
 }
+const TASK_CONFIGURATION = spamConfiguration();
 function fakeResult(work: Work, extra: Partial<StageInvocation> = {}): StageInvocation { return { stage: work.stage, invocationId: work.id, stageVersion: 1, options: {}, startedAt: "now", finishedAt: "now", outcome: "success", artifacts: [], validation: { valid: true, errors: [] }, attempts: 0, ...extra }; }
 function controllable(work: Work) {
  let resolve!: (v: StageInvocation) => void;
@@ -41,8 +47,37 @@ test("durable action IDs reject conflicts/stale revisions and serialize mutating
  expect(child.feedback[0]).toMatchObject({ content: "Inspect observed shift", author: { logicalSessionId: c.state.controlInvocationId } });
  const cancel = { actionId: "cancel", expectedRevision: c.state.revision, rationale: "stop wasted work", invocationId: first.invocationId as string };
  c.cancel(cancel); await c.settle(); expect(c.stageStatus(first.invocationId as string).status).toBe("terminal");
- expect(c.state.actions.length).toBe(3); c.close();
+ expect(c.state.actions.length).toBe(4); c.close();
  const reopened = new StateStore(f.directory); expect(reopened.state.counters.stages).toBe(1); expect(reopened.state.journal.length).toBe(reopened.state.revision); reopened.close();
+});
+
+test("stages wait for a declared task configuration that matches the task data", () => {
+ const directory = mkdtempSync(join(tmpdir(), "orchestrator-unconfigured-")), prompts = loadPromptSnapshot();
+ const config = resolvePipelineSettings({ defaultModel: "fixture/model", providers: {}, agent: { cwd: directory, agentDir: directory, initialPrompt: "" }, pipeline: { version: 1, scheduling: "agent", entryStage: "research", stages: { research: { enabled: true, options: {} }, solve: { enabled: true, options: {} } } } } as any);
+ const store = new StateStore(directory, initialState({ taskId: "fixture", taskFingerprint: "a".repeat(64), config, promptTemplates: prompts.serialize(), promptFingerprint: prompts.fingerprint, authorized: false }));
+ const inputs: StageInput[] = [];
+ const c = new Coordinator(store, { suggestedConfiguration: TASK_CONFIGURATION,
+  start: (work, input) => { inputs.push(input); return controllable(work).handle; },
+  inspectTaskData: configuration => { if (configuration.samples.train !== "spam1-train.zip") throw new Error("Declared task file is missing: other.zip"); return { trainRows: 10, testRows: 5 }; } });
+ const status = c.status() as any;
+ expect(status.taskConfiguration).toMatchObject({ declared: false, suggested: TASK_CONFIGURATION });
+ expect(() => c.start(request(c, "research", "too-early"))).toThrow("Declare the task configuration");
+ const mutation = (actionId: string, configuration: unknown) => ({ actionId, expectedRevision: c.state.revision, rationale: "Map the task", configuration });
+ // Inconsistent combinations and files that do not match are rejected before anything is recorded.
+ expect(() => c.configure(mutation("inconsistent", { ...TASK_CONFIGURATION, metric: "adjusted_rand_index" }))).toThrow("binary_classification is scored with balanced_accuracy");
+ expect(() => c.configure(mutation("missing-file", { ...TASK_CONFIGURATION, samples: { ...TASK_CONFIGURATION.samples, train: "other.zip" } }))).toThrow("other.zip");
+ expect(c.state.taskConfiguration).toBeUndefined();
+ const receipt = c.configure(mutation("declare", TASK_CONFIGURATION)) as any;
+ expect(receipt).toMatchObject({ accepted: true, data: { trainRows: 10, testRows: 5 } });
+ expect((c.status() as any).taskConfiguration).toMatchObject({ declared: true, sha256: receipt.sha256 });
+ c.start(request(c, "research", "research"));
+ expect(inputs[0].taskConfiguration).toEqual(TASK_CONFIGURATION);
+ expect(c.state.works[0].taskConfiguration).toEqual(TASK_CONFIGURATION);
+ // A live invocation keeps the configuration it started with.
+ expect(() => c.configure(mutation("redeclare", TASK_CONFIGURATION))).toThrow("Settle or cancel owned work");
+ c.close();
+ // The declaration survives a restart with its owning action.
+ const reopened = new StateStore(directory); expect(reopened.state.taskConfiguration?.sha256).toBe(receipt.sha256); reopened.close();
 });
 
 test("faux model chooses measured baseline then official feedback improvements through three-attempt cap", async () => {
@@ -153,7 +188,7 @@ test("physical handoff attaches current controller state and narrow allowlist wi
  const report: any = { input() {}, event() {}, observation: () => ({ identity: {}, sink: {} }) };
  const options = orchestrationSessionOptions({ coordinator: c, prompts: f.prompts, report, taskDescription: "task", signal: new AbortController().signal, attempt: 2 });
  expect(JSON.parse(options.sessionContext!()).controllerState.works[0].status).toBe("active"); expect(c.state.counters.stages).toBe(1);
- expect(options.customTools!.map(t => t.name)).toEqual(["pipeline_status", "stage_start", "stage_status", "stage_feedback", "stage_cancel", "artifact_inspect", "pipeline_wait", "pipeline_finish"]);
+ expect(options.customTools!.map(t => t.name)).toEqual(["pipeline_status", "task_configure", "stage_start", "stage_status", "stage_feedback", "stage_cancel", "artifact_inspect", "pipeline_wait", "pipeline_finish"]);
  await c.stop("test cancellation"); expect(c.state.works[0].result?.outcome).toBe("cancelled"); expect(c.state.status).toBe("cancelled"); c.close();
 });
 
@@ -204,7 +239,7 @@ test("production recovery invokes reconcile with no ledger/source and never uplo
  };
  try {
   const work: Work = { id: "reserved-submit", actionId: "upload", stage: "submit", objective: "submit", upstream: [], status: "reserved" };
-  const result = await reconcileOwnedInvocation(work, { taskId: "fixture", upstream: [], submissionPolicy: { ...f.state.policy, controllerInvocationId: work.id } }, { config: f.config, trace, prompts: f.prompts });
+  const result = await reconcileOwnedInvocation(work, { taskId: "fixture", taskConfiguration: TASK_CONFIGURATION, upstream: [], submissionPolicy: { ...f.state.policy, controllerInvocationId: work.id } }, { config: f.config, trace, prompts: f.prompts });
   expect(result?.summary).toMatchObject({ state: "unknown", newAttempt: false }); expect(reconciles).toBe(1); expect(uploads).toBe(0);
   // Removed source/candidate files are irrelevant to the registered GET-only path.
   await reconcileOwnedInvocation(work, { taskId: "fixture", upstream: [], submissionPolicy: { ...f.state.policy, controllerInvocationId: work.id } }, { config: f.config, trace, prompts: f.prompts });

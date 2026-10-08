@@ -1,4 +1,12 @@
-"""Deterministic terminal fit. No CV, selection, or sealed measurement."""
+"""Deterministic terminal fit. No CV, selection, or sealed measurement.
+
+Every task fits opaque `{archive, member}` descriptors the agent's code reads
+itself, following the measured execution: inductive tasks fit all training
+samples (binary classification with all labels, sealed rows included) and
+predict the test samples; batch tasks fit and predict the test batch. Only
+classification passes targets to fit. Freezes from the retired decoded-text
+frame (no `kind` in their inputs) remain verifiable through the legacy path.
+"""
 import argparse
 import csv
 import hashlib
@@ -7,12 +15,14 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import re
 import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'training' / 'python'))
 from smartlab_trial.agent_code import expose_project, _load_module, _factory, _call_pipeline_factory, _inject_random_states
 from smartlab_trial.artifacts import _atomic_json, EventWriter
 from smartlab_eval import load_labelled, load_corpus, load_labels
+from task_samples import archive_ids, read_targets
 
 
 def sha(path):
@@ -35,7 +45,34 @@ def ids(path, labels_path=None):
     return values
 
 
+def sample_data(inputs):
+    """Original sample identity for sample tasks; the dev manifest must be a subset with identical content."""
+    targets_path = inputs.get('targetsPath')
+    train = archive_ids(inputs['trainZip'], targets_path)
+    test = archive_ids(inputs['testZip'])
+    assert not set(train).intersection(test), 'Train/test overlap'
+    targets = read_targets(targets_path, inputs['task']['targets']) if targets_path else None
+    assert targets is None or set(targets) == set(train), 'Original archive/target coverage mismatch'
+    if 'devManifest' not in inputs:
+        return {'trainRows': len(train), 'testRows': len(test)}
+    samples = json.loads(Path(inputs['devManifest']).read_text())['samples']
+    dev = [sample['id'] for sample in samples]
+    assert dev and len(set(dev)) == len(dev) and set(dev) <= set(train), 'Development manifest is not a subset of training samples'
+    assert all(sample['input'] == {'archive': inputs['devZip'], 'member': sample['id']} for sample in samples), 'Development descriptors drifted'
+    if targets is not None:
+        assert all(str(targets[sample['id']]) == str(sample.get('target')) for sample in samples), 'Development targets drifted'
+    assert set(archive_ids(inputs['devZip'])) == set(dev), 'Development archive coverage mismatch'
+    with zipfile.ZipFile(inputs['trainZip']) as original, zipfile.ZipFile(inputs['devZip']) as measured:
+        assert all(original.read(name) == measured.read(name) for name in dev), 'Original training content differs from measured development archive'
+    keys = ['trainZip', 'testZip', 'devZip', 'devManifest', *(['targetsPath'] if targets_path else [])]
+    return {'trainIds': sorted(train), 'testIds': sorted(test), 'trainRows': len(train),
+            'developmentRows': len(dev), 'sealedRows': len(train) - len(dev), 'testRows': len(test),
+            'hashes': {key: sha(inputs[key]) for key in keys}}
+
+
 def data(inputs):
+    if inputs.get('kind') == 'samples':
+        return sample_data(inputs)
     lines = [line.strip() for line in Path(inputs['labelsPath']).read_text().splitlines() if line.strip()]
     labels = load_labels(inputs['labelsPath'])
     assert len(lines) == len(labels) and labels, 'Duplicate or empty labels'
@@ -77,8 +114,51 @@ def validate(directory, freeze):
         rows = list(reader)
     assert len(rows) == freeze['data']['testRows']
     assert sorted(row['id'] for row in rows) == freeze['data']['testIds'], 'Prediction coverage mismatch'
-    assert all(row['prediction'] in ('0', '1') for row in rows), 'Invalid prediction domain'
+    domain = freeze['inputs'].get('task', {}).get('predictions', 'binary')
+    valid = (lambda value: value in ('0', '1')) if domain == 'binary' else (lambda value: re.fullmatch(r'-?\d+', value) is not None)
+    assert all(valid(row['prediction']) for row in rows), 'Invalid prediction domain'
     return result
+
+
+def sample_frame(archive, ids):
+    import pandas as pd
+    return pd.DataFrame([{'id': row_id, 'input': {'archive': archive, 'member': row_id}} for row_id in ids])
+
+
+def fit_samples(estimator, freeze, events):
+    """Mirror the measured execution exactly; only classification fits with targets."""
+    task, inputs = freeze['inputs']['task'], freeze['inputs']
+    train = sample_frame(inputs['trainZip'], freeze['data']['trainIds'])
+    test = sample_frame(inputs['testZip'], freeze['data']['testIds'])
+    if task['kind'] == 'classification':
+        targets = read_targets(inputs['targetsPath'], 'binary')
+        with events.stage('terminal_fit', fitRows=len(train), execution='inductive'):
+            estimator.fit(train, [targets[row_id] for row_id in freeze['data']['trainIds']])
+        with events.stage('terminal_predict', testRows=len(test)):
+            predicted = [int(value) for value in estimator.predict(test)]
+        assert len(predicted) == len(test) and all(value in (0, 1) for value in predicted), 'Invalid predictions'
+        return predicted, len(train), len(test)
+    if task['execution'] == 'batch':
+        with events.stage('terminal_fit', fitRows=len(test), execution='batch'):
+            if callable(getattr(estimator, 'fit_predict', None)):
+                predicted = estimator.fit_predict(test)
+            else:
+                estimator.fit(test)
+                predicted = estimator.predict(test)
+        fit_rows = len(test)
+    else:
+        with events.stage('terminal_fit', fitRows=len(train), execution='inductive'):
+            estimator.fit(train)
+        with events.stage('terminal_predict', testRows=len(test)):
+            predicted = estimator.predict(test)
+        fit_rows = len(train)
+    values = [float(value) for value in predicted]
+    assert len(values) == len(test) and all(value == int(value) for value in values), 'Predictions must be integer labels'
+    values = [int(value) for value in values]
+    if task['kind'] == 'anomaly_detection':
+        # The submitted domain is 1 for anomalies, whatever label the pipeline uses.
+        values = [1 if value == task['anomaly']['anomalyLabel'] else 0 for value in values]
+    return values, fit_rows, len(test)
 
 
 def fit(directory, freeze):
@@ -88,19 +168,26 @@ def fit(directory, freeze):
     source = Path(freeze['sourceRoot'])
     expose_project(source)
     pipeline = freeze['pipeline']
-    estimator = _call_pipeline_factory(_factory(_load_module(source, pipeline['module']), pipeline['factory']),
-                                      {'parameters': pipeline.get('parameters'), 'seed': freeze['seed']})
+    context = {'parameters': pipeline.get('parameters'), 'seed': freeze['seed']}
+    if freeze['inputs'].get('kind') == 'samples':
+        # The factory sees the same controller measurement context as in its measured trials.
+        context['measurement'] = freeze['inputs']['task']['measurement']
+    estimator = _call_pipeline_factory(_factory(_load_module(source, pipeline['module']), pipeline['factory']), context)
     if pipeline.get('estimatorParams'):
         estimator.set_params(**pipeline['estimatorParams'])
     seeded = _inject_random_states(estimator, freeze['seed'])
-    frame, labels = load_labelled(freeze['inputs']['trainZip'], freeze['inputs']['labelsPath'], freeze['data']['trainIds'])
-    test = load_corpus(freeze['inputs']['testZip'], freeze['data']['testIds'])
     events = EventWriter(directory, freeze['identity'])
-    with events.stage('terminal_fit', trainRows=len(labels)):
-        estimator.fit(frame, labels)
-    with events.stage('terminal_predict', testRows=len(test)):
-        predicted = list(estimator.predict(test))
-    assert len(predicted) == len(test) and all(value in (0, 1) for value in predicted), 'Invalid predictions'
+    if freeze['inputs'].get('kind') == 'samples':
+        predicted, fit_rows, test_rows = fit_samples(estimator, freeze, events)
+    else:
+        frame, labels = load_labelled(freeze['inputs']['trainZip'], freeze['inputs']['labelsPath'], freeze['data']['trainIds'])
+        test = load_corpus(freeze['inputs']['testZip'], freeze['data']['testIds'])
+        with events.stage('terminal_fit', trainRows=len(labels)):
+            estimator.fit(frame, labels)
+        with events.stage('terminal_predict', testRows=len(test)):
+            predicted = list(estimator.predict(test))
+        assert len(predicted) == len(test) and all(value in (0, 1) for value in predicted), 'Invalid predictions'
+        fit_rows, test_rows = len(labels), len(test)
     # Completion is committed last. Interrupted fits never count as complete.
     with tempfile.NamedTemporaryFile(dir=directory, delete=False, mode='w', newline='') as stream:
         writer = csv.writer(stream)
@@ -127,8 +214,8 @@ def fit(directory, freeze):
         events.emit('model_serialization_unavailable', errorType=type(error).__name__)
     _atomic_json(directory / 'result.json', {
         'schemaVersion': 1, 'status': 'completed', 'identity': freeze['identity'],
-        'freezeSha256': sha(directory / 'freeze.json'), 'trainRows': len(labels), 'testRows': len(test),
-        'fitCalls': 1, 'trainIdsSha256': hashlib.sha256(json.dumps(freeze['data']['trainIds'], separators=(',', ':')).encode()).hexdigest(),
+        'freezeSha256': sha(directory / 'freeze.json'), 'trainRows': freeze['data']['trainRows'], 'testRows': test_rows,
+        'fitRows': fit_rows, 'fitCalls': 1, 'trainIdsSha256': hashlib.sha256(json.dumps(freeze['data']['trainIds'], separators=(',', ':')).encode()).hexdigest(),
         'seededParameters': seeded, 'source': freeze['source'], 'pipeline': pipeline,
         'environment': freeze['environment'], 'seed': freeze['seed'], 'seedLineage': freeze['seedLineage'],
         'evidence': freeze['evidence'], 'data': freeze['data']['hashes'],

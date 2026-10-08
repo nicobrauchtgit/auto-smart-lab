@@ -4,25 +4,29 @@ import {
 	mkdirSync,
 	readFileSync,
 	readdirSync,
-	renameSync,
 	statSync,
 	writeFileSync,
 } from "node:fs";
 import { createHash } from "node:crypto";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { LabClient } from "./lab_client.ts";
+import { dataFileName, type TaskDataFile } from "./task_data.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(HERE, "..", "..");
 const UNITS_DIR = join(PROJECT_ROOT, "units");
 const CACHE_DIR = join(HERE, "downloaded_task_page");
 
+/**
+ * Fetch a unit's metadata: intro, task prompts and each task's download links.
+ * No data is downloaded here; a run downloads its own task's files on demand
+ * (agent/setup/task_data.ts), so storage holds only the tasks actually run.
+ */
 export interface FetchUnitOptions {
 	insecure?: boolean;
 	refreshMetadata?: boolean;
-	refreshData?: boolean;
 }
 
 export interface FetchUnitResult {
@@ -43,6 +47,8 @@ interface TaskMetadata {
 	url: string;
 	task_number?: number;
 	short_id?: string;
+	/** Download links of the task's data; sizes and hashes are added when a run downloads them. */
+	data_files?: TaskDataFile[];
 }
 
 interface UnitDataHash {
@@ -250,81 +256,6 @@ async function cachedGet(client: LabClient, url: string, path: string, refresh =
 	return response.text;
 }
 
-async function extractZip(archive: string, destination: string): Promise<boolean> {
-	const listing = Bun.spawn(["unzip", "-Z1", archive], { stdout: "pipe", stderr: "pipe" });
-	const [listingText, listingError, listingExit] = await Promise.all([
-		new Response(listing.stdout).text(),
-		new Response(listing.stderr).text(),
-		listing.exited,
-	]);
-	if (listingExit !== 0) throw new Error(listingError.trim() || `unzip listing exited with ${listingExit}`);
-	const destinationRoot = resolve(destination);
-	const entries = listingText.split(/\r?\n/).filter(Boolean).map((entry) => entry.replaceAll("\\", "/"));
-	for (const entry of entries) {
-		const target = resolve(destinationRoot, entry);
-		if (target !== destinationRoot && !target.startsWith(`${destinationRoot}${sep}`)) {
-			throw new Error(`unsafe archive path: ${entry}`);
-		}
-	}
-	if (entries.length > 0 && entries.every((entry) => existsSync(resolve(destinationRoot, entry)))) {
-		return false;
-	}
-
-	const child = Bun.spawn(["unzip", "-o", "-q", archive, "-d", destination], {
-		stdout: "ignore",
-		stderr: "pipe",
-	});
-	const errorText = await new Response(child.stderr).text();
-	const exitCode = await child.exited;
-	if (exitCode !== 0) throw new Error(errorText.trim() || `unzip exited with ${exitCode}`);
-	return true;
-}
-
-async function downloadData(
-	client: LabClient,
-	urls: string[],
-	destination: string,
-	refreshData: boolean,
-): Promise<string[]> {
-	mkdirSync(destination, { recursive: true });
-	const packages: string[] = [];
-	for (const url of urls) {
-		const urlPath = new URL(url).pathname;
-		const filename = decodeURIComponent(basename(urlPath)) || "data.zip";
-		const localPath = join(destination, filename);
-		if (!existsSync(localPath) || refreshData) {
-			console.log(`    [download] ${url}`);
-			const response = await client.get(url);
-			const expectedLength = Number(response.headers["content-length"] ?? 0);
-			if (expectedLength > 0 && response.body.length !== expectedLength) {
-				throw new Error(`Incomplete download for ${url}: expected ${expectedLength} bytes, got ${response.body.length}`);
-			}
-			if (filename.toLowerCase().endsWith(".zip")) {
-				const signature = response.body.subarray(0, 4).toString("hex");
-				if (!["504b0304", "504b0506", "504b0708"].includes(signature)) {
-					throw new Error(`Downloaded response is not a ZIP archive: ${url}`);
-				}
-			}
-			const temporaryPath = `${localPath}.tmp`;
-			writeFileSync(temporaryPath, response.body);
-			renameSync(temporaryPath, localPath);
-		} else {
-			console.log(`    [skip] ${filename} (already downloaded)`);
-		}
-		packages.push(localPath);
-		if (filename.toLowerCase().endsWith(".zip")) {
-			try {
-				if (await extractZip(localPath, destination)) {
-					console.log(`    [extract] ${filename} -> ${relative(PROJECT_ROOT, destination)}/`);
-				}
-			} catch (error) {
-				console.warn(`    [warn] could not extract ${filename}: ${error instanceof Error ? error.message : String(error)}`);
-			}
-		}
-	}
-	return packages;
-}
-
 function readMetadata(path: string): TaskMetadata | undefined {
 	try {
 		return JSON.parse(readFileSync(path, "utf8")) as TaskMetadata;
@@ -403,7 +334,7 @@ function rebuildTaskIndex(): void {
 
 export async function fetchUnit(unit: string, options: FetchUnitOptions = {}): Promise<FetchUnitResult> {
 	const cached = await findCachedUnit(unit);
-	if (cached?.valid && metadataCacheValid(cached.record) && !options.refreshMetadata && !options.refreshData) {
+	if (cached?.valid && metadataCacheValid(cached.record) && !options.refreshMetadata) {
 		console.log(`[fetch_unit] ${cached.record.unitSlug} unit data hash matches; skipping fetch.`);
 		return { unitSlug: cached.record.unitSlug, taskPaths: cached.record.taskPaths };
 	}
@@ -501,6 +432,12 @@ export async function fetchUnit(unit: string, options: FetchUnitOptions = {}): P
 		console.log(`  [task] ${taskTitle || taskId} -> ${relative(PROJECT_ROOT, taskDir)}/`);
 		writeFileSync(join(taskDir, "prompt.md"),
 			`# ${taskTitle}\n\nSource: ${taskUrl}\n\n${htmlToMarkdown(extractTaskDescription(taskPage))}\n`);
+		const downloads = unique(parseLinks(taskPage)
+			.map((link) => new URL(link.href, taskUrl).toString())
+			.filter((url) => url.includes("download.smartlab") || /\.(zip|gz|csv|json)(\?|$)/i.test(url))).sort();
+		// Keep sizes/hashes of files a run already downloaded from the same link.
+		const previous = readMetadata(join(taskDir, "meta.json"))?.data_files ?? [];
+		const dataFiles: TaskDataFile[] = downloads.map((url) => previous.find((file) => file.url === url) ?? { name: dataFileName(url), url });
 		const metadata: TaskMetadata = {
 			unit: selected.title,
 			unit_slug: selected.slug,
@@ -508,21 +445,12 @@ export async function fetchUnit(unit: string, options: FetchUnitOptions = {}): P
 			task_slug: taskSlug,
 			url: taskUrl,
 			task_number: taskIndex + 1,
+			data_files: dataFiles,
 		};
 		writeFileSync(join(taskDir, "meta.json"), `${JSON.stringify(metadata, null, 2)}\n`);
-
-		const downloads = unique(parseLinks(taskPage)
-			.map((link) => new URL(link.href, taskUrl).toString())
-			.filter((url) => url.includes("download.smartlab") || /\.(zip|gz|csv|json)(\?|$)/i.test(url)));
-		if (downloads.length > 0) {
-			dataPackages.push(...await downloadData(
-				client,
-				downloads.sort(),
-				join(taskDir, "data"),
-				options.refreshData ?? false,
-			));
-		}
+		if (dataFiles.length) console.log(`    [data] ${dataFiles.length} file(s) recorded; downloaded when a run needs this task`);
 		else console.log("    [data] no download links found on task page");
+		dataPackages.push(...dataFiles.map((file) => join(taskDir, "data", file.name)).filter((path) => existsSync(path)));
 		taskPaths.push(relative(PROJECT_ROOT, taskDir));
 	}
 
@@ -531,12 +459,12 @@ export async function fetchUnit(unit: string, options: FetchUnitOptions = {}): P
 	const dataHash = await hashUnitData(unitDir, dataFiles);
 	if (!dataHash) throw new Error(`Could not hash complete unit corpus for ${selected.slug}`);
 	if (
-		cached && !options.refreshData &&
+		cached &&
 		JSON.stringify([...cached.record.dataFiles].sort()) === JSON.stringify(dataFiles) &&
 		cached.record.dataHash !== dataHash
 	) {
 		throw new Error(
-			`Unit data differs from the saved hash for ${selected.slug}; rerun with { refreshData: true } to replace existing archives`,
+			`Unit data differs from the saved hash for ${selected.slug}; remove the changed archives so the next run downloads them again`,
 		);
 	}
 	const hashRecord: UnitDataHash = {

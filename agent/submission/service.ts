@@ -65,7 +65,7 @@ function receipt(intent:Intent, ledger:Ledger,status:OfficialStatus,max:number,n
 export function buildFrozenBundle(options:SubmitRefitOptions, root:string) {
  const temporary=join(root,`.bundle-${randomUUID()}`);mkdirSync(temporary,{recursive:true});
  try {
-  const built=spawnSync(options.pythonExecutable,[join(import.meta.dir,"bundle.py")],{input:JSON.stringify({taskId:options.taskId,refitArtifact:options.refitArtifact,projectRoot:options.projectRoot,taskPromptPath:options.taskPromptPath,environmentFingerprint:options.environmentFingerprint,outputDirectory:temporary}),env:sanitizeTrainingEnvironment(options.env??process.env),encoding:"utf8",timeout:90000,maxBuffer:2*1024*1024});
+  const built=spawnSync(options.pythonExecutable,[join(import.meta.dir,"bundle.py")],{input:JSON.stringify({taskId:options.taskId,refitArtifact:options.refitArtifact,projectRoot:options.projectRoot,taskPromptPath:options.taskPromptPath,environmentFingerprint:options.environmentFingerprint,outputDirectory:temporary,...(options.predictions?{predictions:options.predictions}:{})}),env:sanitizeTrainingEnvironment(options.env??process.env),encoding:"utf8",timeout:90000,maxBuffer:2*1024*1024});
   if(built.error||built.status!==0)throw new Error("Frozen submission bundle validation failed; restore exact source, task, dependencies and refit evidence");
   const manifest=JSON.parse(built.stdout);const bundleId=digest(manifest);const directory=join(root,bundleId);
   for(const name of ["output.csv","source.zip"]) {if(hash(join(temporary,name))!==manifest.artifacts[name])throw new Error("Submission bundle checksum mismatch");const fd=openSync(join(temporary,name),"r");try{fsyncSync(fd);}finally{closeSync(fd);}}
@@ -148,7 +148,7 @@ export async function reconcileSubmission(options:import("./types.js").Reconcile
   options.report?.event("submission_reconciled",{intent_id:intent.id,state:result.state,official_score:result.officialScore,tries_used:result.triesUsed,reserved_unknown:result.reservedUnknown,new_attempt:false});return result;
  }finally{release();}
 }
-export function validateFrozenRefit(options:Pick<SubmitRefitOptions,"taskId"|"refitArtifact"|"projectRoot"|"pythonExecutable"|"taskPromptPath"|"environmentFingerprint"|"env">):void {
+export function validateFrozenRefit(options:Pick<SubmitRefitOptions,"taskId"|"refitArtifact"|"projectRoot"|"pythonExecutable"|"taskPromptPath"|"environmentFingerprint"|"env"|"predictions">):void {
  const checked=spawnSync(options.pythonExecutable,[join(import.meta.dir,"bundle.py")],{input:JSON.stringify({...options,validateOnly:true}),env:sanitizeTrainingEnvironment(options.env??process.env),encoding:"utf8",timeout:90000,maxBuffer:1024*1024});
  if(checked.error||checked.status!==0)throw new Error("Frozen submission candidate unavailable or invalid");
 }

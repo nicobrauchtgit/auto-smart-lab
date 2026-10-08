@@ -3,7 +3,14 @@ import { isRepositoryRoot, tagMessage } from "./git.js";
 import { isTerminalCandidate } from "./terminal.js";
 import { collectTrainingTrial, type TrainingCollection, type TrainingResultError, type TrainingTrialResult } from "./results.js";
 
-export const CHAMPION_TAG = "champion";
+/**
+ * The champion tag of one task. solutions/ is shared by every task, so each
+ * task keeps its own "best" (D13); one task's champion never gates another's.
+ */
+export function championTag(taskId: string): string {
+ if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(taskId)) throw new Error(`Task ID cannot name a champion tag: ${taskId}`);
+ return `champion/${taskId}`;
+}
 
 /** The solutions repository a versioned trial recorded as its source. */
 export function recordedRepository(trial: TrainingTrialResult | undefined): string | undefined {
@@ -29,7 +36,7 @@ export async function championSelection(collection: TrainingCollection, reposito
   errors: collection.errors.some(error => error.code === "no_eligible_result") ? collection.errors
    : [...collection.errors, { code: "no_eligible_result", message } as TrainingResultError] });
  if (!repository || !isRepositoryRoot(repository)) return fail("No solutions repository records a champion");
- const tag = tagMessage(repository, CHAMPION_TAG);
+ const tag = tagMessage(repository, championTag(taskId));
  if (!tag) return fail("No champion: no completed promotion has been tagged");
  let message: { experimentId?: unknown; trainingRoot?: unknown };
  try { message = JSON.parse(tag.message); } catch { return fail("Malformed champion tag"); }

@@ -10,7 +10,8 @@ import {
 } from "node:fs";
 import { dirname, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { summarizeTrainingLabels, TRAINING_LABEL_FILES, type StartupProfile } from "./startup_context.js";
+import { summarizeTrainingFamilies, summarizeTrainingLabels, type StartupProfile } from "./startup_context.js";
+import type { TaskConfiguration } from "../pipeline/task_configuration.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const PROJECT_ROOT = resolve(HERE, "..", "..");
@@ -23,15 +24,15 @@ export interface ResearchInputs {
 	test: ResearchSource | null;
 }
 
-/** Identify paired archives from the task's declared label adapter, never from arbitrary files. */
-export function identifyResearchInputs(inputs: ResearchSource[], labelsPath?: string): ResearchInputs {
+/**
+ * Identify the separately inspected populations from the task configuration's
+ * declared files, never from arbitrary files. `training_labels` is the targets
+ * file (binary labels or families); label-free tasks have none.
+ */
+export function identifyResearchInputs(inputs: ResearchSource[], declared?: { train: string; test: string; targets?: string }): ResearchInputs {
 	const source = (path?: string) => inputs.find(input => input.path === path) ?? null;
-	if (!labelsPath?.endsWith("-train.labels")) return { training: null, training_labels: null, test: null };
-	return {
-		training: source(labelsPath.replace(/-train\.labels$/, "-train.zip")),
-		training_labels: source(labelsPath),
-		test: source(labelsPath.replace(/-train\.labels$/, "-test.zip")),
-	};
+	if (!declared) return { training: null, training_labels: null, test: null };
+	return { training: source(declared.train), training_labels: source(declared.targets), test: source(declared.test) };
 }
 
 export interface ResearchContext {
@@ -114,7 +115,8 @@ function findTask(taskId: string): TaskLocation {
 	throw new Error(`No canonical task metadata found for ${taskId}; run the unit fetcher first`);
 }
 
-export function buildResearchContext(taskId: string): ResearchContextInput {
+/** Without a configuration the context lists the data but declares no targets or metric. */
+export function buildResearchContext(taskId: string, configuration?: TaskConfiguration): ResearchContextInput {
 	const generatedAt = new Date();
 	const task = findTask(taskId);
 	const workspace = join(PROJECT_ROOT, "runs", taskId, "research");
@@ -138,19 +140,24 @@ export function buildResearchContext(taskId: string): ResearchContextInput {
 	// Hash only the source archives and label/metadata files. Extracted corpora can
 	// contain tens of thousands of files and are derived from these inputs.
 	const primaryFiles = files.filter((path) => /\.(?:zip|labels|csv|json)$/i.test(path));
-	const labelFilename = TRAINING_LABEL_FILES[taskId];
-	const labelPath = labelFilename ? join(dataDir, labelFilename) : undefined;
-	// Recognize only the explicit metric wording; unfamiliar metrics remain unknown.
-	const metric = /\bbalanced\s+accuracy\b/i.test(prompt) ? "balanced_accuracy" as const : null;
+	const targets = configuration?.targets.kind === "none" ? undefined : configuration?.targets;
+	const labelPath = targets ? join(dataDir, targets.file) : undefined;
+	// The declared metric wins; otherwise recognize only explicit metric wording.
+	const metric = configuration?.metric === "adjusted_rand_index" ? "adjusted_rand_index" as const
+		: configuration?.metric === "balanced_accuracy" || (!configuration && /\bbalanced\s+accuracy\b/i.test(prompt)) ? "balanced_accuracy" as const : null;
 	let startupProfile: StartupProfile = {
 		schema_version: 1,
 		status: "unavailable",
 		metric,
-		reason: labelFilename ? `Expected training labels file ${labelFilename} is unavailable.` : "No training-label adapter for this task.",
+		reason: !configuration ? "No task configuration declares the training targets."
+			: !targets ? "The task configuration declares no training targets."
+				: `Expected training targets file ${targets.file} is unavailable.`,
 	};
 	const primaryInputs = primaryFiles.map((path) => {
 		const content = readFileSync(path);
-		if (path === labelPath) startupProfile = summarizeTrainingLabels(content, relative(workspace, path), metric);
+		if (path === labelPath) startupProfile = targets!.kind === "binary"
+			? summarizeTrainingLabels(content, relative(workspace, path), metric)
+			: summarizeTrainingFamilies(content, relative(workspace, path), metric);
 		return {
 			path: relative(workspace, path),
 			bytes: content.length,
@@ -179,7 +186,11 @@ export function buildResearchContext(taskId: string): ResearchContextInput {
 				total_bytes: totalBytes,
 				file_types: Object.fromEntries(Object.entries(fileTypes).sort(([a], [b]) => a.localeCompare(b))),
 				primary_inputs: primaryInputs,
-				research_inputs: identifyResearchInputs(primaryInputs, labelPath ? relative(workspace, labelPath) : undefined),
+				research_inputs: identifyResearchInputs(primaryInputs, configuration ? {
+					train: relative(workspace, join(dataDir, configuration.samples.train)),
+					test: relative(workspace, join(dataDir, configuration.samples.test)),
+					...(labelPath ? { targets: relative(workspace, labelPath) } : {}),
+				} : undefined),
 				snapshot_sha256: sha256(snapshot),
 			},
 			limits: {

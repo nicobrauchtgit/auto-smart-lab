@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { guidanceHash, validateGuidance, type StageGuidance, type StageFeedback } from "./guidance.js";
 import { InvocationFeedback } from "./feedback.js";
+import { spamConfiguration } from "./task_configuration.testing.js";
+import type { TaskConfiguration } from "./task_configuration.js";
 import { loadPromptSnapshot } from "../prompts/loader.js";
 import { prepareResearchPrompts } from "../prompts/research.js";
 import { prepareSolvePrompts } from "../prompts/solve.js";
@@ -54,7 +56,7 @@ test("unguided research and solve prompts remain byte-compatible; guidance is se
  const guided = prepareResearchPrompts(prompts, { taskId: "fixture", contextHash: "context", guidance: note() });
  expect(base.prompt).toBe([prompts.render("research.start", { taskId: "fixture", contextHash: "context", startupContext: "" }).text, prompts.render("research.test-distribution", {}).text].join("\n\n"));
  expect(guided.prompt).toContain("{{literal}}"); expect(guided.promptReferences.filter(p => p.id !== "shared.stage-guidance").map(p => [p.id, p.template_sha256])).toEqual(base.promptReferences.map(p => [p.id, p.template_sha256]));
- const input = { taskId: "fixture", workspace: "/tmp", datasetPaths: [], labelsPath: "/tmp/labels", rowCount: 10, classBalance: "balanced", foldRecommendation: "two", researchState: "prior", maxIterations: 1 };
+ const input = { taskId: "fixture", workspace: "/tmp", datasetPaths: [], configuration: spamConfiguration(), targets: "/tmp/labels", rowCount: 10, targetSummary: "balanced", foldRecommendation: "two", researchState: "prior", maxIterations: 1 };
  const plain = prepareSolvePrompts(prompts, input); const withNote = prepareSolvePrompts(prompts, { ...input, guidance: note("solve") });
  expect(withNote.prompt).toContain(plain.prompt.split("\n\n")[0]); expect(withNote.prompt).toContain("Base stage contracts remain authoritative");
  const retry = prepareResearchPrompts(prompts, { taskId: "fixture", contextHash: "context", guidance: note(), failedChecks: ["source missing"] });
@@ -103,14 +105,15 @@ test("executor snapshots before awaits, rejects invalid guidance before stage, h
   } };
   const config = resolvePipelineSettings({ pipeline: { entryStage: "research", stages: { research: { enabled: true } } }, agent: {}, providers: {} } as PipelineConfig);
   const trace = { pipelineRunId: "run", localPath: join(root, "trace"), stage: () => ({ ...report(inputs, events), inputs: () => inputs }) } as any;
-  const n = note(); const handle = startStageInvocation({ stage: "research", input: { taskId: "fixture", upstream: [], guidance: n }, config, trace, prompts });
+  const n = note(); const handle = startStageInvocation({ stage: "research", input: { taskId: "fixture", taskConfiguration: spamConfiguration(), upstream: [], guidance: n }, config, trace, prompts });
   n.content = "changed after start";
   while (!unblock) await new Promise(resolve => setTimeout(resolve, 1));
   handle.cancel(); unblock(); expect((await handle.result).outcome).toBe("cancelled");
   expect((await handle.feedback(feedback("cancelled"))).status).toBe("refused");
-  expect(inputs[0].content_sha256).toBe(note().contentSha256); expect(inputs[0].snapshot_sha256).not.toBe(note().contentSha256);
-  expect(readFileSync(inputs[0].artifact, "utf8")).toContain("{{literal}}");
-  const invalid = startStageInvocation({ stage: "research", input: { taskId: "fixture", upstream: [], guidance: n }, config, trace, prompts });
+  const guidanceInput = inputs.find(input => input.kind === "stage_guidance");
+  expect(guidanceInput.content_sha256).toBe(note().contentSha256); expect(guidanceInput.snapshot_sha256).not.toBe(note().contentSha256);
+  expect(readFileSync(guidanceInput.artifact, "utf8")).toContain("{{literal}}");
+  const invalid = startStageInvocation({ stage: "research", input: { taskId: "fixture", taskConfiguration: spamConfiguration(), upstream: [], guidance: n }, config, trace, prompts });
   expect((await invalid.result).outcome).toBe("failure"); expect(calls).toBe(1);
  } finally { STAGE_REGISTRY.research = original; rmSync(root, { recursive: true, force: true }); }
 });

@@ -10,11 +10,12 @@ import { hashFile } from "../refit/service.js";
 import { validateFrozenRefit } from "./service.js";
 import { readOfficialStatus } from "./transport.js";
 import { validatePolicy, type SubmissionPolicy, type TransportConfig } from "./types.js";
+import type { TaskConfiguration } from "../pipeline/task_configuration.js";
 export function submissionTransport(taskId:string):TransportConfig {
  const task=resolveTask({taskId});if(!task.url)throw new Error("Selected task has no submission URL");
  return {taskUrl:task.url,username:process.env.LAB_USER??"",password:process.env.LAB_PASS??"",loginUrl:process.env.LAB_LOGIN_URL,cookie:process.env.LAB_SESSION_COOKIE,ca:process.env.LAB_CA_BUNDLE?readFileSync(process.env.LAB_CA_BUNDLE,"utf8"):undefined};
 }
-export interface SubmissionSetupOptions { taskId:string; policy?:SubmissionPolicy; projectRoot?:string; candidateProducedUpstream?:boolean; transport?:TransportConfig }
+export interface SubmissionSetupOptions { taskId:string; taskConfiguration?:TaskConfiguration; policy?:SubmissionPolicy; projectRoot?:string; candidateProducedUpstream?:boolean; transport?:TransportConfig }
 /** Controller passes the immutable run policy; absent policy never authorizes access. */
 export function submissionSetupChecks(options:SubmissionSetupOptions):SetupCheck[] {
  if(options.policy === undefined)return [];
@@ -40,9 +41,10 @@ export function submissionSetupChecks(options:SubmissionSetupOptions):SetupCheck
  ];
  if(!options.candidateProducedUpstream)checks.splice(1,0,{id:`submission-candidate:${options.taskId}`,phase:"local",remedy:"Complete authoritative terminal refit for the selected candidate and restore its immutable source, predictions, dependencies and evidence.",async run(signal) {
   const { refitInputs }=await import("../pipeline/stages/refit.js");
-  const refit=refitInputs(options.taskId);const frozen=await prepareRefit({...refit,signal});
+  const configuration=options.taskConfiguration;if(!configuration)throw new Error("No task configuration");
+  const refit=refitInputs(options.taskId,configuration);const frozen=await prepareRefit({...refit,signal});
   const path=join(frozen.directory,"result.json");
-  validateFrozenRefit({taskId:options.taskId,refitArtifact:{kind:"terminal_refit_result",path,sha256:hashFile(path)},projectRoot:root,pythonExecutable:refit.pythonExecutable,environmentFingerprint:refit.environmentFingerprint,env:refit.env,taskPromptPath:join(resolveTask({taskId:options.taskId}).taskDir,"prompt.md")});
+  validateFrozenRefit({taskId:options.taskId,refitArtifact:{kind:"terminal_refit_result",path,sha256:hashFile(path)},projectRoot:root,pythonExecutable:refit.pythonExecutable,environmentFingerprint:refit.environmentFingerprint,env:refit.env,taskPromptPath:join(resolveTask({taskId:options.taskId}).taskDir,"prompt.md"),predictions:configuration.submission.predictions});
  }});
  return checks;
 }

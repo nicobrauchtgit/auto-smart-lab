@@ -88,7 +88,7 @@ test("suggested confirmation uses fresh folds and reruns the frozen champion on 
   expect(read(confirm.directory, "fold-manifest.json").folds).not.toEqual(read(search.directory, "fold-manifest.json").folds);
   expect(result.championComparison).toMatchObject({ status: "completed", championCommit: project.head, meanDifference: -0.5, championMean: 1 });
   expect(read(confirm.directory, "champion-rerun.json").manifestSha256).toBe(result.manifestSha256);
-  expect(git(project.solutionsRoot, ["rev-parse", "champion^{commit}"]).stdout.trim()).toBe(project.head);
+  expect(git(project.solutionsRoot, ["rev-parse", "champion/fixture^{commit}"]).stdout.trim()).toBe(project.head);
   expect(git(project.solutionsRoot, ["rev-parse", `trial/${confirm.id}^{commit}`]).stdout.trim()).toBe(challengerCommit);
  } finally { await training.close(); }
 }, 90_000);

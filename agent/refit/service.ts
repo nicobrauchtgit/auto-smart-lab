@@ -7,11 +7,13 @@ import { atomicJson, claimWorkspace, liveGroup, ownedProcessAlive } from "../exp
 import { ExperimentSupervisor } from "../experiments/supervisor.js";
 import { addWorktree, git, resolveCommit, tagMessage, uncommittedFiles } from "../training/git.js";
 import { collectTrainingResults } from "../training/results.js";
+import { championTag } from "../training/development_selection.js";
 import { deriveTrialSeed, parseSeedPlan } from "../training/seeds.js";
 import { candidateIdentity, canonical, digest, selectionClaim, terminalPath } from "../training/terminal.js";
 import { sanitizeTrainingEnvironment } from "../training/environment.js";
 import type { StageArtifact, StageReporter } from "../pipeline/types.js";
 import type { PipelineRequest } from "../training/types.js";
+import type { TaskConfiguration } from "../pipeline/task_configuration.js";
 
 const FRAMEWORK_ROOT = resolve(import.meta.dir, "..");
 const WORKER = join(import.meta.dir, "worker.py");
@@ -20,7 +22,10 @@ export const hashFile = (path: string) => createHash("sha256").update(readFileSy
 const json = (path: string) => JSON.parse(readFileSync(path, "utf8"));
 export interface RefitOptions {
  taskId: string; projectRoot: string; solutionsRoot: string; pythonExecutable: string;
- labelsPath: string; trainZip: string; testZip: string;
+ /** Selects the terminal fit and prediction domain; must agree with the measured champion. */
+ taskConfiguration: TaskConfiguration;
+ /** The original targets file (binary labels or families); absent for label-free tasks. */
+ labelsPath?: string; trainZip: string; testZip: string;
  trainingRoot?: string; environmentFingerprint: string; env: Record<string, string>;
 	/** Controller assertion binding reviewed upstream evidence to terminal selection. */
 	expectedExperimentId?: string;
@@ -31,7 +36,7 @@ export interface RefitFreeze {
  source: { commit: string; tree: string }; sourceRoot: string; pipeline: PipelineRequest;
  chosenExperimentId: string; environment: { fingerprint: string; runtimeDependencyHash: string; frameworkHash: string };
  seed: number; seedLineage: unknown; evidence: { path: string; sha256: string }[];
- inputs: Record<string, string>; data: { trainIds: string[]; testIds: string[]; trainRows: number; developmentRows: number; sealedRows: number; testRows: number; hashes: Record<string, string> };
+ inputs: Record<string, unknown>; data: { trainIds: string[]; testIds: string[]; trainRows: number; developmentRows: number; sealedRows: number; testRows: number; hashes: Record<string, string> };
  origin: { pipelineRunId?: string | null; stageInvocationId?: string | null };
 }
 export interface TerminalRefitResult {
@@ -49,7 +54,28 @@ function python(options: RefitOptions, args: string[], timeout = 30_000): string
 export function runtimeDependencyHash(options: RefitOptions): string {
  return createHash("sha256").update(python(options, ["-I", "-c", "import importlib.metadata,json,platform; print(json.dumps({'python':platform.python_version(),'packages':sorted((d.metadata['Name'],d.version) for d in importlib.metadata.distributions())},sort_keys=True))"], 5000)).digest("hex");
 }
-function frameworkHash(): string { return digest([hashFile(WORKER), hashFile(RUNNER), hashFile(join(import.meta.dir, "evidence.py"))]); }
+const TASK_SAMPLES = join(FRAMEWORK_ROOT, "training/python/task_samples.py");
+function frameworkHash(): string { return digest([hashFile(WORKER), hashFile(RUNNER), hashFile(join(import.meta.dir, "evidence.py")), hashFile(TASK_SAMPLES)]); }
+
+/** The measurement declaration a sample trial ran under, as the training service hashed it. */
+function measuredDeclaration(measurement: Record<string, unknown>): Record<string, unknown> {
+ const { sampleManifestSha256: _hash, hasTargets: _targets, evidenceManifestSha256: _evidence, ...declaration } = measurement;
+ return declaration;
+}
+
+/** The champion must have been measured under the configuration the refit now applies. */
+function assertMeasuredConfiguration(configuration: TaskConfiguration, measurement: Record<string, any> | undefined): void {
+ if (!measurement) throw new Error("Champion was measured on the retired decoded-text frame; promote a champion on raw sample input first");
+ const kind = configuration.kind === "binary_classification" ? "classification" : configuration.kind;
+ if (measurement.kind !== kind || measurement.execution !== configuration.execution) throw new Error("Champion measurement kind/execution differs from the task configuration");
+ if (configuration.kind === "anomaly_detection" && ["scoreMethod", "scoreDirection", "anomalyLabel"].some(key => measurement[key] !== (configuration.anomaly as Record<string, unknown>)[key])) throw new Error("Champion anomaly score semantics differ from the task configuration");
+}
+
+/** Worker inputs for original-data inspection, without development evidence. */
+export function originalRefitData(options: Pick<RefitOptions, "taskConfiguration" | "labelsPath" | "trainZip" | "testZip">): Record<string, unknown> {
+ return { kind: "samples", task: { kind: options.taskConfiguration.kind === "binary_classification" ? "classification" : options.taskConfiguration.kind, targets: options.taskConfiguration.targets.kind },
+  trainZip: options.trainZip, testZip: options.testZip, ...(options.labelsPath ? { targetsPath: options.labelsPath } : {}) };
+}
 function assertNoWorkers(root: string): void {
  if (!existsSync(root)) return;
  for (const entry of readdirSync(root, { withFileTypes: true })) {
@@ -66,7 +92,7 @@ function assertNoWorkers(root: string): void {
 /** Read-only candidate integrity check; never selects by score. */
 export async function prepareRefit(options: RefitOptions): Promise<RefitFreeze> {
  options.signal?.throwIfAborted();
- const tag = tagMessage(options.solutionsRoot, "champion");
+ const tag = tagMessage(options.solutionsRoot, championTag(options.taskId));
  if (!tag) throw new Error("No authoritative champion tag; complete a measured promotion first");
  const chosen = JSON.parse(tag.message);
  if (options.expectedExperimentId !== undefined && chosen.experimentId !== options.expectedExperimentId) throw new Error("Chosen champion differs from controller-supplied reviewed evidence");
@@ -85,14 +111,24 @@ export async function prepareRefit(options: RefitOptions): Promise<RefitFreeze> 
  const recovery = json(recoveryPath);
  const dependencies = runtimeDependencyHash(options);
  if (recovery.runtimeDependencyHash !== dependencies || recovery.environmentFingerprint !== options.environmentFingerprint) throw new Error("Champion dependency fingerprint drifted; restore measured environment");
- const devZip = String(trial.invocation.inputs.zipPath), devLabelsPath = String(trial.invocation.inputs.labelsPath);
- const developmentHash = createHash("sha256").update(readFileSync(devZip)).update(readFileSync(devLabelsPath)).digest("hex");
- if (recovery.dataHash !== developmentHash || recovery.datasetSha256 !== developmentHash
-  || recovery.invocationHash !== hashFile(join(trial.directory, "invocation.json"))
+ const measurement = json(join(trial.directory, "invocation.json")).measurement as Record<string, any> | undefined;
+ assertMeasuredConfiguration(options.taskConfiguration, measurement);
+ const devZip = String(trial.invocation.inputs.zipPath);
+ // Trials hash their declaration and manifest; the solve fingerprint also covers the archive bytes.
+ const manifest = String(measurement!.sampleManifestPath);
+ const dataHash = createHash("sha256").update(canonical(measuredDeclaration(measurement!))).update(readFileSync(manifest)).digest("hex");
+ const datasetHash = createHash("sha256").update(readFileSync(devZip)).update(readFileSync(manifest)).digest("hex");
+ if (recovery.dataHash !== dataHash || recovery.datasetSha256 !== datasetHash) throw new Error("Measured evidence/data identity drifted");
+ const original = originalRefitData(options) as { task: Record<string, unknown> };
+ const inputs: Record<string, unknown> = { ...original, task: { ...original.task, execution: options.taskConfiguration.execution, predictions: options.taskConfiguration.submission.predictions,
+  ...(options.taskConfiguration.anomaly ? { anomaly: options.taskConfiguration.anomaly } : {}),
+  // Exactly the controller context the factory received in its measured trials.
+  measurement: Object.fromEntries(Object.entries(measurement!).filter(([key]) => !["sampleManifestPath", "sampleManifestSha256", "evidence", "evidenceManifestSha256"].includes(key))) },
+  devZip, devManifest: manifest };
+ if (recovery.invocationHash !== hashFile(join(trial.directory, "invocation.json"))
   || recovery.seedPlanHash !== hashFile(join(trial.directory, "seed-plan.json"))) throw new Error("Measured evidence/data identity drifted");
  const plan = parseSeedPlan(readFileSync(join(trial.directory, "seed-plan.json"), "utf8"));
  if (plan.taskId !== options.taskId) throw new Error("Champion belongs to another task");
- const inputs = { labelsPath: options.labelsPath, trainZip: options.trainZip, testZip: options.testZip, devZip, devLabelsPath };
  const data = JSON.parse(python(options, [WORKER, "--inspect-json", JSON.stringify(inputs)]));
  python(options, [WORKER, "--evidence", trial.directory]);
  const identity = candidateIdentity(options.taskId, tag.commit, trial.request.pipeline);
@@ -142,11 +178,11 @@ export async function runRefit(options: RefitOptions): Promise<{ artifacts: Stag
   try {
    if (existsSync(prepared.terminalPath)) freeze = json(prepared.terminalPath);
    else {
-    const current = tagMessage(options.solutionsRoot, "champion");
+    const current = tagMessage(options.solutionsRoot, championTag(options.taskId));
     if (!current || current.commit !== prepared.source.commit || JSON.parse(current.message).experimentId !== prepared.chosenExperimentId || canonical(JSON.parse(current.message).pipeline) !== canonical(prepared.pipeline)) throw new Error("Champion changed while preparing refit; retry selection");
     for (const entry of prepared.evidence) if (hashFile(entry.path) !== entry.sha256) throw new Error("Evidence changed before freeze");
     assertNoWorkers(join(options.projectRoot, "runs", options.taskId, "solve", "training"));
-    assertNoWorkers(options.trainingRoot ?? JSON.parse(tagMessage(options.solutionsRoot, "champion")!.message).trainingRoot);
+    assertNoWorkers(options.trainingRoot ?? JSON.parse(tagMessage(options.solutionsRoot, championTag(options.taskId))!.message).trainingRoot);
     freeze = prepared;
     mkdirSync(freeze.directory, { recursive: true });
     // One atomic record is both the freeze and terminal selection boundary.

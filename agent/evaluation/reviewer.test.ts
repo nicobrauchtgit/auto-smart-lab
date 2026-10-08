@@ -7,6 +7,8 @@ import { loadPromptSnapshot } from "../prompts/loader.js";
 import { createEvaluateStage } from "../pipeline/stages/evaluate.js";
 import { validateReview, reviewerTools } from "./reviewer.js";
 import type { EvaluationEvidence } from "./evidence.js";
+import { spamConfiguration } from "../pipeline/task_configuration.testing.js";
+import type { TaskConfiguration } from "../pipeline/task_configuration.js";
 
 const review = { readinessScore: 3, readinessRationale: "Concern 1: lower class 0 recall needs investigation; current source is not bound to training.", status: "concerns", assessment: "OOF balanced accuracy is 0.75; generalization is uncertain.",
  concerns: [{ severity: "medium", finding: "Class 0 recall is lower", evidence: "Recall 0.5 vs 1.0" }],
@@ -52,7 +54,7 @@ for (const mode of ['success', 'no-report', 'session-failure', 'cancelled'] as c
     if (mode === 'success') await options.customTools![1].execute('id', review as any);
     return { output: 'Done; APPROVE' };
    } });
-   const pending = stage.run({ prompts: loadPromptSnapshot(), input: { taskId: 'fixture', upstream: [], guidance },
+   const pending = stage.run({ prompts: loadPromptSnapshot(), input: { taskId: 'fixture', taskConfiguration: spamConfiguration(), upstream: [], guidance },
     options: stage.parseOptions(undefined), signal: controller.signal,
     report: { event: type => events.push(type), input: i => inputs.push(i), agentIdentity: () => ({ stageInvocationId: 'invocation' }) as any, observation: () => observation as any } });
    if (mode === 'cancelled') { await expect(pending).rejects.toThrow(); return; }
@@ -96,7 +98,7 @@ test("evaluation prerequisites prevent execution and record failure under the in
  try {
   STAGE_REGISTRY.evaluate = { ...createEvaluateStage(), async run() { ran = true; return { artifacts: [] }; } };
   const config = resolvePipelineSettings({ pipeline: { entryStage: 'evaluate', stages: { evaluate: { enabled: true } } }, agent: { cwd: '.', agentDir: '.', initialPrompt: '' }, providers: {}, defaultModel: 'fixture/model' } as any);
-  const invocation = await invokeStage({ stage: 'evaluate', input: { taskId: 'fixture', upstream: [] }, config, trace, setupSession: new MissingPrerequisite() });
+  const invocation = await invokeStage({ stage: 'evaluate', input: { taskId: 'fixture', taskConfiguration: spamConfiguration(), upstream: [] }, config, trace, setupSession: new MissingPrerequisite() });
   expect(invocation.outcome).toBe('failure');
   expect(invocation.error).toContain('evaluation-diagnostics');
   expect(ran).toBe(false);

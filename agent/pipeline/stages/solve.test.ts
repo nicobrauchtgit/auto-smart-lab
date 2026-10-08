@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { spamConfiguration } from "../task_configuration.testing.js";
 
 import { listTasks } from "../resolve_task.js";
 import { entrypointArtifact, solveStage } from "./solve.js";
@@ -61,20 +62,20 @@ describe("solve stage input contract", () => {
 	});
 
 	test.skipIf(!hasSpamData)(`rejects a run with no research document upstream (${fetchReason})`, () => {
-		expect(() => solveStage.checkInput({ taskId: "spam1", upstream: [] }))
+		expect(() => solveStage.checkInput({ taskId: "spam1", taskConfiguration: spamConfiguration(), upstream: [] }))
 			.toThrow(/no research document upstream/);
 	});
 
 	test.skipIf(!hasSpamData)(`rejects an upstream research document that is not on disk (${fetchReason})`, () => {
 		expect(() => solveStage.checkInput({
-			taskId: "spam1",
+			taskId: "spam1", taskConfiguration: spamConfiguration(),
 			upstream: [{ kind: "research_document", path: "/nonexistent/research.md" }],
 		})).toThrow(/no research document upstream/);
 	});
 
 	test.skipIf(!hasSpamData)(`accepts a task with data and a real research document (${fetchReason})`, () => {
 		expect(() => solveStage.checkInput({
-			taskId: "spam1",
+			taskId: "spam1", taskConfiguration: spamConfiguration(),
 			upstream: [{ kind: "research_document", path: RESEARCH }],
 		})).not.toThrow();
 	});

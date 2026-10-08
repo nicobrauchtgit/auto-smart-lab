@@ -9,6 +9,8 @@ import { loadChildResources } from "../subagents/pi.js";
 import { createSubagents } from "../subagents/index.js";
 import { observeAgentSession, type EventRecord, type EventSink } from "../observability.js";
 import { loadPromptSnapshot } from "../prompts/loader.js";
+import { spamConfiguration } from "../pipeline/task_configuration.testing.js";
+import type { TaskConfiguration } from "../pipeline/task_configuration.js";
 import { SmartContextSession, CONTEXT_HANDOFF_TOKENS, omitEmptyTools } from "./session.js";
 
 const prompts = loadPromptSnapshot();
@@ -233,7 +235,7 @@ test("module guidance appears in assembled openings and every replacement while 
    const body = { id: "immutable", version: 1, stage, taskId: "fixture", content: "INVOCATION_GUIDANCE {{literal}}", evidence: [] };
    const guidance = { ...body, contentSha256: guidanceHash(body) };
    const opening = stage === "research" ? prepareResearchPrompts(prompts, { taskId: "fixture", contextHash: "context", guidance }).prompt :
-    stage === "solve" ? prepareSolvePrompts(prompts, { taskId: "fixture", workspace: "/tmp", datasetPaths: [], labelsPath: "/tmp/labels", rowCount: 10, classBalance: "balanced", foldRecommendation: "two", researchState: "prior", maxIterations: 1, guidance }).prompt :
+    stage === "solve" ? prepareSolvePrompts(prompts, { taskId: "fixture", workspace: "/tmp", datasetPaths: [], configuration: spamConfiguration(), targets: "/tmp/labels", rowCount: 10, targetSummary: "balanced", foldRecommendation: "two", researchState: "prior", maxIterations: 1, guidance }).prompt :
     [prompts.render("review.start", { taskId: "fixture", experimentId: "candidate", code: "{}", evidence: "{}" }).text, guidanceBlock(prompts, guidance)!.text].join("\n\n");
    f.provider.setResponses([
     context => { assert.match(JSON.stringify(context.messages), /INVOCATION_GUIDANCE/); f.sessions[0].getContextUsage = () => ({ tokens: 6000, contextWindow: 200000, percent: 3 }); return fauxAssistantMessage("Progress"); },

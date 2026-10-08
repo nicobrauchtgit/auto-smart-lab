@@ -22,12 +22,14 @@ import {
 import { championSelection } from "../training/development_selection.js";
 import { GIT_BLOCK_PROMPT_IDS } from "../training/git_guard.js";
 import { readPythonEnvironment, type PythonEnvironment } from "./python_environment.js";
+import type { TaskConfiguration } from "../pipeline/task_configuration.js";
 import { runSession } from "./session_runner.js";
 
 export type HarnessSolveStopReason = "agent_finished" | "agent_failed" | "cancelled" | "no_promotion";
 
 export interface HarnessSolveResult {
 	workspace: string;
+	configuration: TaskConfiguration;
 	trainingRoot: string;
 	valid: boolean;
 	errors: string[];
@@ -38,6 +40,8 @@ export interface HarnessSolveResult {
 }
 
 export interface RunHarnessSolveOptions {
+ /** Harness parts for this task, as resolved by the executor. */
+ taskConfiguration?: TaskConfiguration;
  guidance?: StageGuidance;
  feedback?: InvocationFeedback;
 	/** Advisory experiment budget shown to the agent; the agent decides when fitting is useful. */
@@ -77,11 +81,19 @@ const DEFAULT_DEPENDENCIES: HarnessSolveDependencies = {
 
 const sha256 = (content: string | Buffer) => createHash("sha256").update(content).digest("hex");
 
+/** Development sample bytes plus the manifest that identifies them and their targets. */
 function datasetFingerprint(workspace: SolveWorkspace): string {
 	return createHash("sha256")
 		.update(readFileSync(workspace.devZip))
-		.update(readFileSync(workspace.devLabelsPath))
+		.update(readFileSync(workspace.sampleManifestPath))
 		.digest("hex");
+}
+
+/** The selected trial's primary development metric, named by the task configuration. */
+export function primaryMetric(workspace: Pick<SolveWorkspace, "configuration">, metrics: Record<string, unknown> | undefined): Record<string, unknown> {
+	const name = workspace.configuration.metric === "balanced_accuracy" ? "balancedAccuracy"
+		: workspace.configuration.metric === "adjusted_rand_index" ? "adjustedRandIndex" : undefined;
+	return name ? { name: workspace.configuration.metric, value: metrics?.[name] } : { name: "none" };
 }
 
 function workerEnvironment(python: PythonEnvironment): Record<string, string> {
@@ -124,7 +136,9 @@ function reportInputs(
 	report.input({
 		kind: "training_dataset", version: 1, delivery: "tool", status: "available",
 		artifact: workspace.devZip, dataset_sha256: datasetFingerprint(workspace),
-		bytes: statSync(workspace.devZip).size, labels_artifact: workspace.devLabelsPath,
+		bytes: statSync(workspace.devZip).size,
+		sample_manifest: workspace.sampleManifestPath, measurement: workspace.measurement,
+		task_kind: workspace.configuration.kind, holdout: workspace.split.scheme,
 		rows: workspace.rowCount, sealed_rows: workspace.split.sealedIds.length,
 	});
 	report.input({
@@ -176,6 +190,7 @@ export async function runHarnessSolveSession(
 	const runId = options.runId ?? crypto.randomUUID();
 	const report = options.report;
 	const workspace = dependencies.prepareWorkspace(taskId, {
+		configuration: options.taskConfiguration,
 		sealedFraction: options.sealedFraction,
 		seed: options.seed,
 		upstream: options.upstream,
@@ -203,6 +218,8 @@ export async function runHarnessSolveSession(
 		development_rows: workspace.rowCount,
 		sealed_rows: workspace.split.sealedIds.length,
 		sealed_sha256: workspace.split.sha256,
+		holdout: workspace.split.scheme,
+		task_kind: workspace.configuration.kind,
 		fold_recommendation: shape,
 		training_root: trainingRoot,
 	});
@@ -210,12 +227,13 @@ export async function runHarnessSolveSession(
 	const opening = prepareSolvePrompts(prompts, {
  guidance: options.guidance,
 		taskId,
+		configuration: workspace.configuration,
 		workspace: workspace.root,
 		datasetPaths: workspace.datasetPaths,
-		labelsPath: workspace.devLabelsPath,
+		targets: workspace.targets,
 		rowCount: workspace.rowCount,
-		classBalance: workspace.classBalance,
-		foldRecommendation: `${shape.folds}-fold stratified, ${shape.repeats} repeat(s)`,
+		targetSummary: workspace.targetSummary,
+		foldRecommendation: `${shape.folds}-fold ${workspace.recommendation.scheme}, ${shape.repeats} repeat(s)`,
 		researchState: workspace.researchState,
 		maxIterations: options.maxTrials ?? HARNESS_CONFIG.solve.maxIterations,
 	});
@@ -245,7 +263,7 @@ export async function runHarnessSolveSession(
 		datasetSha256: fingerprint,
 		rootSeed: options.seed ?? HARNESS_CONFIG.solve.seed,
 		zipPath: workspace.devZip,
-		labelsPath: workspace.devLabelsPath,
+		measurement: workspace.measurement,
 		solutionsRoot: workspace.solutionsRoot,
 		search: HARNESS_CONFIG.search,
 		onTrialStarted: (trial) => report?.input({
@@ -321,7 +339,7 @@ export async function runHarnessSolveSession(
 		stop_reason: stopReason,
 		valid: collection.valid,
 		selected_experiment_id: collection.selected?.experimentId,
-		selected_balanced_accuracy: collection.selected?.result?.metrics?.balancedAccuracy,
+		selected_metric: primaryMetric(workspace, collection.selected?.result?.metrics as Record<string, unknown> | undefined),
 		errors,
 		trial_validation_errors: collection.errors,
 		session_error: sessionError,
@@ -329,6 +347,7 @@ export async function runHarnessSolveSession(
 
 	return {
 		workspace: workspace.root,
+		configuration: workspace.configuration,
 		trainingRoot,
 		valid: collection.valid,
 		errors,

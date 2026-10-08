@@ -43,6 +43,11 @@ export type CvRequest = BuiltinCvRequest | FactoryCvRequest;
 
 /** Controller metadata, never an agent request or a model-design constraint. */
 export type MeasurementConfig = {
+	/** Binary classification over opaque sample descriptors; targets are 0/1. */
+	kind: "classification";
+	sampleManifestPath: string;
+	execution: "inductive";
+} | {
 	kind: "clustering";
 	sampleManifestPath: string;
 	execution: "inductive" | "batch";

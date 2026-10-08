@@ -56,6 +56,21 @@ export function writeCorpus(root: string, rows = 120): { zipPath: string; labels
 	return { zipPath, labelsPath, datasetSha256 };
 }
 
+/**
+ * Raw sample input for a corpus: an `{archive, member}` manifest with 0/1
+ * targets, as solve writes it, and the matching training measurement.
+ */
+export function writeSampleManifest(root: string, zipPath: string, labelsPath: string) {
+	const samples = readFileSync(labelsPath, "utf8").trim().split("\n").map(line => {
+		const [id, label] = [line.slice(0, line.lastIndexOf(";")), line.slice(line.lastIndexOf(";") + 1)];
+		return { id, input: { archive: zipPath, member: id }, target: Number(label) };
+	});
+	const sampleManifestPath = join(root, "development-samples.json");
+	writeFileSync(sampleManifestPath, `${JSON.stringify({ schemaVersion: 1, samples })}\n`);
+	const datasetSha256 = createHash("sha256").update(readFileSync(zipPath)).update(readFileSync(sampleManifestPath)).digest("hex");
+	return { sampleManifestPath, datasetSha256, measurement: { kind: "classification" as const, execution: "inductive" as const, sampleManifestPath } };
+}
+
 /** A text pipeline whose feature helper lives in a separate module, imported as `solutions.features`. */
 export const FEATURES_MODULE = `
 import time
@@ -71,6 +86,14 @@ class TextColumn(BaseEstimator, TransformerMixin):
         return self
 
     def transform(self, frame):
+        # Raw sample input: read each member's bytes, as agent code does in production.
+        if "input" in frame:
+            import zipfile
+            texts = []
+            for descriptor in frame["input"]:
+                with zipfile.ZipFile(descriptor["archive"]) as archive:
+                    texts.append(archive.read(descriptor["member"]).decode("utf-8", "replace"))
+            return texts
         return frame["text"]
 `;
 

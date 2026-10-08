@@ -12,7 +12,9 @@ export interface StartupProfile {
 		majority_class_accuracy: number;
 		constant_prediction_balanced_accuracy: number | null;
 	};
-	metric: "balanced_accuracy" | null;
+	/** Clustering tasks: family counts from the declared targets file. */
+	training_families?: { rows: number; families: number; largest: number; smallest: number; singletons: number };
+	metric: "balanced_accuracy" | "adjusted_rand_index" | null;
 }
 
 // Explicit adapters for the fetched SmartLab tasks. Do not guess a label
@@ -94,16 +96,45 @@ export function summarizeTrainingLabels(
 	};
 }
 
+/** Family counts from an `id;family` file; strict like the binary parser. */
+export function summarizeTrainingFamilies(content: Buffer, sourcePath: string, metric: StartupProfile["metric"]): StartupProfile {
+	const source = { path: sourcePath, sha256: createHash("sha256").update(content).digest("hex") };
+	const families = new Map<string, number>();
+	const seen = new Set<string>();
+	const lines = content.toString("utf8").replace(/^\uFEFF/, "").split(/\r?\n/);
+	for (const [index, raw] of lines.entries()) {
+		const line = raw.trim();
+		if (!line) continue;
+		const separator = line.lastIndexOf(";");
+		const id = line.slice(0, separator).trim(), family = line.slice(separator + 1).trim();
+		if (separator < 1 || !id || !family || line.includes("\uFFFD") || seen.has(id)) {
+			return { schema_version: 1, status: "unavailable", source, metric, reason: `Invalid or repeated id;family record at line ${index + 1}; no partial counts reported.` };
+		}
+		seen.add(id);
+		families.set(family, (families.get(family) ?? 0) + 1);
+	}
+	if (!seen.size) return { schema_version: 1, status: "unavailable", source, metric, reason: "The training targets file has no records." };
+	const sizes = [...families.values()];
+	return { schema_version: 1, status: "available", source, metric, training_families: {
+		rows: seen.size, families: sizes.length, largest: Math.max(...sizes), smallest: Math.min(...sizes), singletons: sizes.filter(size => size === 1).length,
+	} };
+}
+
 export function renderStartupContextPrompt(profile: StartupProfile | undefined, prompts: PromptSnapshot): RenderedPrompt | undefined {
 	if (!profile) return undefined;
 	const lines: string[] = [];
 	if (profile.source) lines.push(`Source: ${profile.source.path}; sha256:${profile.source.sha256}.`);
 	if (profile.metric === "balanced_accuracy") {
 		lines.push("Task metric: balanced accuracy, as stated in task.md; each class recall has equal weight.");
+	} else if (profile.metric === "adjusted_rand_index") {
+		lines.push("Task metric: adjusted Rand index between clusters and families, as declared by the task configuration; cluster IDs are arbitrary.");
 	} else {
 		lines.push("Task metric: not identified by this profile.");
 	}
-	if (profile.status !== "available" || !profile.training_labels) {
+	if (profile.status === "available" && profile.training_families) {
+		const families = profile.training_families;
+		lines.push(`Training target records: ${families.rows} in ${families.families} families; largest ${families.largest}, smallest ${families.smallest}, ${families.singletons} singleton families.`);
+	} else if (profile.status !== "available" || !profile.training_labels) {
 		lines.push(`Class counts unavailable: ${profile.reason ?? "No supported labels source."}`);
 	} else {
 		const labels = profile.training_labels;

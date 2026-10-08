@@ -9,11 +9,14 @@ import { solveStage } from "../pipeline/stages/solve.js";
 import { STAGE_REGISTRY } from "../pipeline/registry.js";
 import { runPipeline } from "../pipeline/executor.js";
 import { runRefitStage } from "../pipeline/run_refit.js";
+import { spamConfiguration } from "../pipeline/task_configuration.testing.js";
+import type { TaskConfiguration } from "../pipeline/task_configuration.js";
 
 function configuration(root: string, chain = false) {
  const path = join(root, "pipeline.config.json");
  writeFileSync(path, JSON.stringify({ agent: { cwd: ".", agentDir: ".", initialPrompt: "" }, defaultModel: "unused/local", providers: {},
-  pipeline: { version: 1, entryStage: chain ? "solve" : "refit", stages: { solve: { enabled: chain }, refit: { enabled: true } } } }));
+  pipeline: { version: 1, entryStage: chain ? "solve" : "refit", stages: { solve: { enabled: chain }, refit: { enabled: true } },
+   tasks: { fixture: spamConfiguration(), "fixture-missing": spamConfiguration() } } }));
  return path;
 }
 test("refit preflight has no provider requirements, checks full data before upstream selection and rejects missing runtime dependencies", async () => {

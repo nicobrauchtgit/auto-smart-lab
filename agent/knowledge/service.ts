@@ -55,7 +55,11 @@ async function harnessEvidence(root: string, id: string, origin: KnowledgeOrigin
  const seed = JSON.parse(readFileSync(join(trial.directory, "seed-plan.json"), "utf8"));
  if (seed.taskId !== origin.taskId || seed.datasetSha256 !== origin.datasetSha256) throw new Error("Harness evidence task/dataset mismatch");
  const invocation = trial.invocation;
- const data = [invocation.inputs.zipPath, invocation.inputs.labelsPath];
+ // verify_evidence.py recomputes binary classification measurements only.
+ const measurement = JSON.parse(readFileSync(join(trial.directory, "invocation.json"), "utf8")).measurement as { kind?: string; sampleManifestPath?: string } | undefined;
+ if (measurement && measurement.kind !== "classification") throw new Error("Knowledge evidence citations support binary classification trials only; cite clustering and anomaly trials by experiment ID in prose");
+ // The development data the solve fingerprint covers: archive bytes plus the manifest (or legacy labels).
+ const data = [invocation.inputs.zipPath, measurement ? measurement.sampleManifestPath : invocation.inputs.labelsPath];
  if (!data.every(path => typeof path === "string" && existsSync(path))) throw new Error("Harness development data unavailable");
  if (digest(Buffer.concat(data.map(path => readFileSync(safePath(path as string))))) !== origin.datasetSha256) throw new Error("Harness development dataset changed");
  const checkpoint = join(trial.directory, trial.request.search ? "search-checkpoint.json" : "single-checkpoint.json");

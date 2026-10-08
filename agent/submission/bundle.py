@@ -48,7 +48,7 @@ def make(spec):
     dependencies = json.dumps({'python': platform.python_version(), 'packages': sorted((d.metadata['Name'], d.version) for d in importlib.metadata.distributions())}, sort_keys=True)
     assert hashlib.sha256(dependencies.encode()).hexdigest() == freeze['environment']['runtimeDependencyHash']
     project = Path(spec['projectRoot'])
-    framework_files = ['agent/refit/worker.py', 'agent/training/python/runner.py', 'agent/refit/evidence.py']
+    framework_files = ['agent/refit/worker.py', 'agent/training/python/runner.py', 'agent/refit/evidence.py', 'agent/training/python/task_samples.py']
     hashes = [sha(project / name) for name in framework_files]
     assert hashlib.sha256(json.dumps(hashes, separators=(',', ':')).encode()).hexdigest() == freeze['environment']['frameworkHash']
     assert freeze['evidence'] and freeze['chosenExperimentId']
@@ -68,14 +68,21 @@ def make(spec):
         assert reader.fieldnames == ['id', 'prediction']
         rows = list(reader)
     assert sorted(row['id'] for row in rows) == freeze['data']['testIds']
-    assert all(row['prediction'] in ('0', '1') and not row.get(None) for row in rows)
+    # The frozen refit fixes the prediction domain; the declared configuration must agree.
+    domain = freeze['inputs'].get('task', {}).get('predictions', 'binary')
+    assert spec.get('predictions', domain) == domain
+    value = r'[01]' if domain == 'binary' else r'-?\d+'
+    assert all(re.fullmatch(value, row['prediction']) and not row.get(None) for row in rows)
     # This adapter supports only tasks whose documented example establishes this format.
     prompt = Path(spec['taskPromptPath']).read_text()
-    examples = re.findall(r'^([^\s;]+\.x);[01]$', prompt, re.M)
-    assert examples and all('/' in name for name in examples)
-    expected_prefixes = {name.rsplit('/', 1)[0] for name in examples}
-    assert len(expected_prefixes) == 1
-    assert all(row['id'].rsplit('/', 1)[0] in expected_prefixes and not re.search(r'[;\r\n]', row['id']) for row in rows)
+    examples = re.findall(r'^([^\s;]+\.x);[01]$' if domain == 'binary' else r'^([^\s;]+);-?\d+$', prompt, re.M)
+    assert examples
+    if domain == 'binary' or all('/' in name for name in examples):
+        assert all('/' in name for name in examples)
+        expected_prefixes = {name.rsplit('/', 1)[0] for name in examples}
+        assert len(expected_prefixes) == 1
+        assert all(row['id'].rsplit('/', 1)[0] in expected_prefixes for row in rows)
+    assert not any(re.search(r'[;\r\n]', row['id']) for row in rows)
     source = directory / 'source' / 'solutions'
     common = Path(git(source, 'rev-parse', '--path-format=absolute', '--git-common-dir').decode().strip())
     assert Path(freeze['terminalPath']).resolve() == common / 'smartlab-terminal' / (freeze['identity'] + '.json')

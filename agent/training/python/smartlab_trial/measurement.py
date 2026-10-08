@@ -17,12 +17,14 @@ def validate_config(value: Any) -> dict[str, Any]:
     allowed = {"kind", "sampleManifestPath", "sampleManifestSha256", "hasTargets", "execution", "scoreMethod", "scoreDirection", "anomalyLabel", "evidence", "evidenceManifestSha256"}
     if set(value) - allowed:
         raise InvocationError("measurement contains unknown fields")
-    if value.get("kind") not in ("clustering", "anomaly_detection"):
-        raise InvocationError("measurement.kind must be clustering or anomaly_detection")
+    if value.get("kind") not in ("classification", "clustering", "anomaly_detection"):
+        raise InvocationError("measurement.kind must be classification, clustering or anomaly_detection")
     if not isinstance(value.get("sampleManifestPath"), str) or not value["sampleManifestPath"]:
         raise InvocationError("measurement.sampleManifestPath must name development metadata")
     if value.get("execution") not in ("inductive", "batch"):
         raise InvocationError("measurement.execution must be inductive or batch")
+    if value["kind"] == "classification" and value["execution"] != "inductive":
+        raise InvocationError("classification fits training rows and predicts validation rows (inductive)")
     if value["kind"] == "anomaly_detection":
         if value.get("scoreMethod") not in ("score_samples", "decision_function", "negative_outlier_factor_"):
             raise InvocationError("anomaly measurement requires score_samples, decision_function, or batch negative_outlier_factor_")
@@ -39,7 +41,7 @@ def validate_config(value: Any) -> dict[str, Any]:
                     or evidence["source"] not in ("trusted", "agent_provided")):
                 raise InvocationError("Evidence requires a path and explicit trusted/agent_provided source")
     elif any(key in value for key in ("scoreMethod", "scoreDirection", "anomalyLabel", "evidence", "evidenceManifestSha256")):
-        raise InvocationError("anomaly score fields do not apply to clustering")
+        raise InvocationError(f"anomaly score fields do not apply to {value['kind']}")
     return dict(value)
 
 
@@ -77,8 +79,13 @@ def load_samples(config: dict[str, Any]) -> tuple[Any, list[str] | None, str]:
         raise InvocationError("Family target identifiers must have a uniform type")
     if config["kind"] == "anomaly_detection" and any(labelled):
         raise InvocationError("Label-free anomaly metadata must omit targets; evidence-label scoring is a later adapter")
+    if config["kind"] == "classification" and (not all(labelled) or any(type(sample["target"]) is not int or sample["target"] not in (0, 1) for sample in samples)):
+        raise InvocationError("Classification metadata requires integer 0/1 targets on every development sample")
     samples = sorted(samples, key=lambda sample: sample["id"])
-    targets = [str(sample["target"]) for sample in samples] if all(labelled) else None
+    if config["kind"] == "classification":
+        targets = [sample["target"] for sample in samples]
+    else:
+        targets = [str(sample["target"]) for sample in samples] if all(labelled) else None
     frame = pd.DataFrame([{"id": sample["id"], "input": sample["input"]} for sample in samples])
     if "evidence" in config:
         frame.attrs["diagnosticEvidence"] = load_evidence(config, ids)

@@ -12,9 +12,9 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 
-import { runHarnessSolveSession } from "../../run/harness_solve_session.js";
-import { resolveLabelsFile } from "../../solve/workspace.js";
+import { primaryMetric, runHarnessSolveSession } from "../../run/harness_solve_session.js";
 import { resolveTask } from "../resolve_task.js";
+import { stageConfiguration, taskDataPaths } from "../task_configuration.js";
 import type { StageArtifact, StageDefinition } from "../types.js";
 import { recordedRepository } from "../../training/development_selection.js";
 import { git } from "../../training/git.js";
@@ -116,9 +116,12 @@ export const solveStage: StageDefinition<SolveOptions> = {
 		if (!task.hasData) {
 			throw new Error(`Task ${task.taskId} has no local dataset; run \`npm run fetch-unit -- ${task.unitSlug}\``);
 		}
-		// A labels adapter and a readable labels file are what make the sealed split
-		// and every recomputed score possible, so their absence is a contract failure.
-		resolveLabelsFile(task.taskId, join(task.taskDir, "data"));
+		// The declared archives and targets are what make the sealed split and every
+		// recomputed score possible, so their absence is a contract failure.
+		const paths = taskDataPaths(task.taskId, stageConfiguration(input));
+		for (const path of [paths.trainZip, paths.targetsPath].filter((p): p is string => !!p)) {
+			if (!existsSync(path)) throw new Error(`Task ${task.taskId} lacks the declared file ${relative(paths.dataDir, path)}`);
+		}
 		const research = input.upstream.find((entry) => entry.kind === "research_document");
 		if (!research || !existsSync(research.path)) {
 			throw new Error(`Task ${task.taskId} has no research document upstream; run the research stage first`);
@@ -127,6 +130,7 @@ export const solveStage: StageDefinition<SolveOptions> = {
 
 	async run(context) {
 		const result = await runHarnessSolveSession(context.input.taskId, context.input.model, {
+			taskConfiguration: stageConfiguration(context.input),
 			maxTrials: context.options.maxIterations,
 			sealedFraction: context.options.sealedFraction,
 			seed: context.options.seed,
@@ -160,7 +164,8 @@ export const solveStage: StageDefinition<SolveOptions> = {
 				eligible_trials: result.collection.trials.filter((trial) => trial.eligible).length,
 				stop_reason: result.stopReason,
 				selected_experiment_id: result.collection.selected?.experimentId,
-				selected_balanced_accuracy: result.collection.selected?.result?.metrics?.balancedAccuracy,
+				task_kind: result.configuration.kind,
+				selected_metric: primaryMetric(result, result.collection.selected?.result?.metrics as Record<string, unknown> | undefined),
 				session_error: result.sessionError,
 				...(entrypoint && "mismatch" in entrypoint ? { entrypoint_mismatch: entrypoint.mismatch } : {}),
 				trial_validation_errors: result.collection.errors,

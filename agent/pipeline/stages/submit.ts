@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { readPythonEnvironment } from "../../run/python_environment.js";
 import { submitRefit, reconcileSubmission, validatePolicy, submissionTransport, type SubmissionPolicy } from "../../submission/index.js";
 import { PROJECT_ROOT, resolveTask } from "../resolve_task.js";
+import { stageConfiguration } from "../task_configuration.js";
 import type { StageDefinition, StageInput, StageResult } from "../types.js";
 export interface SubmitStageOptions { timeoutMs:number; pollTimeoutMs:number; pollIntervalMs:number }
 function inputPolicy(input:StageInput):SubmissionPolicy { return validatePolicy(input.submissionPolicy); }
@@ -32,7 +33,7 @@ export const submitStage:StageDefinition<SubmitStageOptions>={
    const environment=readPythonEnvironment();const task=resolveTask({taskId:context.input.taskId});
    const result=await submitRefit({taskId:context.input.taskId,refitArtifact:context.input.upstream.find(a=>a.kind==="terminal_refit_result")!,policy,
     transport:{...submissionTransport(context.input.taskId),timeoutMs:context.options.timeoutMs},accountingRoot:join(PROJECT_ROOT,"runs/submissions"),projectRoot:PROJECT_ROOT,
-    pythonExecutable:environment.executable,environmentFingerprint:environment.fingerprint,taskPromptPath:join(task.taskDir,"prompt.md"),env,report:context.report,signal:context.signal,
+    pythonExecutable:environment.executable,environmentFingerprint:environment.fingerprint,taskPromptPath:join(task.taskDir,"prompt.md"),predictions:stageConfiguration(context.input).submission.predictions,env,report:context.report,signal:context.signal,
     pollTimeoutMs:context.options.pollTimeoutMs,pollIntervalMs:context.options.pollIntervalMs});
    return submissionStageResult(result);
   }catch {

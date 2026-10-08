@@ -409,7 +409,7 @@ async function collectTrial(directory: string, experimentId: string): Promise<Tr
 		error(errors, experimentId, "invalid_result", `trial-result.json primary metric must be between ${clustering ? -1 : 0} and 1`, "trial-result.json");
 	}
 	if (measurement && result?.status !== "failed") {
-		if (!["clustering", "anomaly_detection"].includes(measurement.kind ?? "") || typeof measurement.hasTargets !== "boolean"
+		if (!["classification", "clustering", "anomaly_detection"].includes(measurement.kind ?? "") || typeof measurement.hasTargets !== "boolean"
 			|| typeof measurement.sampleManifestSha256 !== "string" || !/^[a-f0-9]{64}$/.test(measurement.sampleManifestSha256)) {
 			error(errors, experimentId, "invalid_measurement", "Controller measurement lacks validated kind, target availability or metadata hash", "invocation.json");
 		}

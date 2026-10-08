@@ -12,6 +12,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 
 import { runResearchSession } from "../../run/research_session.js";
 import { resolveTask } from "../resolve_task.js";
+import { stageConfiguration } from "../task_configuration.js";
 import type { StageDefinition, StageArtifact } from "../types.js";
 
 export interface ResearchOptions {
@@ -61,6 +62,7 @@ export const researchStage: StageDefinition<ResearchOptions> = {
 
 	async run(context) {
 		const result = await runResearchSession(context.input.taskId, context.input.model, {
+			taskConfiguration: stageConfiguration(context.input),
 			injectStartupContext: context.options.injectStartupContext,
 			prompts: context.prompts,
  guidance: context.input.guidance, feedback: context.feedback,

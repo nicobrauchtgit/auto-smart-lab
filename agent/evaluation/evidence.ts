@@ -38,9 +38,11 @@ export async function prepareEvidence(upstream: StageArtifact[], signal: AbortSi
  const seedPlan = JSON.parse(readFileSync(join(directory, "seed-plan.json"), "utf8"));
  if (seedPlan.taskId !== taskId) throw new Error("Selected trial belongs to a different task");
  const invocationPath = join(directory, "invocation.json");
- const labelsPath = trial.invocation?.inputs.labelsPath;
- if (typeof labelsPath !== "string") throw new Error("Selected trial has no development labels");
- sources.push({ ...artifact("evaluation_development_labels", labelsPath), experimentId: trial.experimentId } as typeof sources[number]);
+ // Development targets: the labels file of binary classification, or the sample manifest of a sample task.
+ const measurement = JSON.parse(readFileSync(invocationPath, "utf8")).measurement as { kind: string; sampleManifestPath: string } | undefined;
+ const targetsPath = measurement ? measurement.sampleManifestPath : trial.invocation?.inputs.labelsPath;
+ if (typeof targetsPath !== "string") throw new Error("Selected trial has no development targets");
+ sources.push({ ...artifact(measurement ? "evaluation_development_samples" : "evaluation_development_labels", targetsPath), experimentId: trial.experimentId } as typeof sources[number]);
  sources.push({ ...artifact("evaluation_invocation", invocationPath), experimentId: trial.experimentId } as typeof sources[number]);
  const { stdout } = await promisify(execFile)(readPythonEnvironment().executable,
   [new URL("./diagnostics.py", import.meta.url).pathname, directory],
@@ -53,6 +55,7 @@ export async function prepareEvidence(upstream: StageArtifact[], signal: AbortSi
  return { directory, experimentId: trial.experimentId, sources, diagnostics,
   candidate: { request: trial.request, trialsConsidered: collection.trials.length,
    eligibleTrials: collection.trials.filter(t => t.eligible).length,
-   selectionRule: "Highest measured development balanced accuracy among eligible trials; no independent comparison is implied." } };
+   measurementKind: measurement?.kind ?? "classification",
+   selectionRule: "The authoritative champion tag: a promotion trial whose paired lead over the previous champion on the task's development metric exceeded noise; no independent comparison is implied." } };
 }
 export type EvaluationEvidence = Awaited<ReturnType<typeof prepareEvidence>>;

@@ -8,6 +8,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "training" / "python"))
 from smartlab_eval import load_labels
 from smartlab_trial.invocation import parse_invocation
+from smartlab_trial.measurement import load_samples
 from smartlab_trial.metrics import _measure
 from smartlab_trial.recovery import digest, load_checkpoint, persisted_folds, validate_single
 from smartlab_trial.folds import _pilot_indices
@@ -17,7 +18,13 @@ from smartlab_trial.seeds import _derive_seed
 def verify(directory):
     document = json.loads((directory / "invocation.json").read_text())
     invocation = parse_invocation(document)
-    labels = load_labels(invocation.labels_path)
+    if invocation.measurement:
+        # verify() recomputes binary classification measurements only.
+        assert invocation.measurement["kind"] == "classification"
+        frame, targets, _digest = load_samples(invocation.measurement)
+        labels = dict(zip(frame["id"].tolist(), targets))
+    else:
+        labels = load_labels(invocation.labels_path)
     ids = sorted(labels)
     # Pilot folds may use a deterministic subset; retain the harness's persisted cohort.
     if invocation.scope.kind == "pilot" and invocation.scope.max_rows is not None:

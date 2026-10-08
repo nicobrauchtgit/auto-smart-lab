@@ -39,8 +39,8 @@ import { createSeedPlan, deriveTrialSeed, writeSeedPlan } from "./seeds.js";
 import type { ExperimentRequest, JsonValue, MeasurementConfig, ValidationIssue } from "./types.js";
 
 const PYTHON_ROOT = join(dirname(fileURLToPath(import.meta.url)), "python");
-import { CHAMPION_TAG } from "./development_selection.js";
-export { CHAMPION_TAG };
+import { championTag } from "./development_selection.js";
+export { championTag };
 
 export interface SearchSettings {
 	confirmAboveSeconds: number;
@@ -204,6 +204,14 @@ function canonical(value: any): string {
 	if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
 	if (value && typeof value === "object") return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`;
 	return JSON.stringify(value);
+}
+
+/** What makes two trials pairwise comparable: the contract, not where the manifest lives. */
+function comparisonCohort(value: any): unknown {
+	const declaration = measurementDeclaration(value) as Record<string, unknown> | null;
+	if (!declaration) return { kind: "legacy_text_classification" };
+	const { sampleManifestPath: _path, evidence: _evidence, ...cohort } = declaration;
+	return cohort;
 }
 
 function measurementDeclaration(value: any): unknown {
@@ -576,12 +584,17 @@ export class TrainingService {
 	/** The current champion, read from its annotated tag so it survives across runs. */
 	private champion(): { experimentId: string; commit: string; pipeline: JsonValue } | undefined {
 		if (!this.options.solutionsRoot || !isRepositoryRoot(this.options.solutionsRoot)) return undefined;
-		const tag = tagMessage(this.options.solutionsRoot, CHAMPION_TAG);
+		const tag = tagMessage(this.options.solutionsRoot, championTag(this.options.taskId));
 		if (!tag) return undefined;
 		const message = JSON.parse(tag.message) as { experimentId?: unknown; pipeline?: JsonValue; measurement?: unknown };
 		if (typeof message.experimentId !== "string" || message.pipeline === undefined) throw new Error("Malformed champion tag");
-		if (canonical(measurementDeclaration(message.measurement)) !== canonical(measurementDeclaration(this.options.measurement))) {
-			throw new Error("Champion task measurement differs from this controller declaration; use a separate task comparison cohort.");
+		if (canonical(comparisonCohort(message.measurement)) !== canonical(comparisonCohort(this.options.measurement))) {
+			// A changed task contract (kind, execution, score semantics or input frame)
+			// cannot be compared pairwise. The old champion stays reachable through its
+			// trial tag; the first promotion of the new cohort takes the task's tag.
+			this.options.record?.("training_champion_cohort_changed", { experiment_id: message.experimentId, commit: tag.commit,
+				previous: comparisonCohort(message.measurement), current: comparisonCohort(this.options.measurement) });
+			return undefined;
 		}
 		if (isTerminalCandidate(this.options.solutionsRoot, this.options.taskId, tag.commit, message.pipeline as unknown as import("./types.js").PipelineRequest)) {
 			this.options.record?.("training_terminal_champion_retained_as_history", { experiment_id: message.experimentId, commit: tag.commit, comparison_available: false });
@@ -827,7 +840,7 @@ export class TrainingService {
 					return;
 				}
 			}
-			tagCommit(root, CHAMPION_TAG, selectedTrial.source.commit, JSON.stringify({
+			tagCommit(root, championTag(this.options.taskId), selectedTrial.source.commit, JSON.stringify({
 				experimentId: selected.experimentId,
 				balancedAccuracy: selected.result?.metrics?.balancedAccuracy,
 				adjustedRandIndex: selected.result?.metrics?.adjustedRandIndex,

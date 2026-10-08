@@ -24,10 +24,12 @@ writers and expire on host-process death, not inactivity. Corrupt/oversized stat
 fails closed before effects. This is cooperative local durability, not protection
 against someone who can rewrite all harness files and recompute their hashes.
 
-Only controller tools are exposed: `pipeline_status`, `stage_start`,
+Only controller tools are exposed: `pipeline_status`, `task_configure`, `stage_start`,
 `stage_status`, `stage_feedback`, `stage_cancel`, `artifact_inspect`,
 `pipeline_wait`, `pipeline_finish`. All mutations require action ID, expected
-revision and rationale. Identical action retries return their durable receipt;
+revision and rationale. `task_configure` declares the task configuration
+(harness parts, validated against the task files) before the first stage; the
+task's `pipeline.config.json` entry is shown as a suggestion only. Identical action retries return their durable receipt;
 conflicting IDs/stale revisions refuse. Accounting reservations persist in the
 journal without advancing the decision revision carried by the guarded tool call.
 Workspace/evidence/action transitions advance it. One mutating stage is active at

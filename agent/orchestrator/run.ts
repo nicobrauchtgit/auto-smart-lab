@@ -11,9 +11,11 @@ import { startStageInvocation, invokeStage, type InvokeStageOptions } from "../p
 import { loadPromptSnapshot, restorePromptSnapshot } from "../prompts/loader.js";
 import { buildResearchContext } from "../research/context.js";
 import { claimWorkspace } from "../experiments/ownership.js";
+import { ensureTaskData } from "../setup/task_data.js";
 import { TaskKnowledge } from "../knowledge/service.js";
 import { readSubmissionAccounting, submissionTransport } from "../submission/index.js";
 import { initialState, StateStore, hash, type Limits, type Work } from "./state.js";
+import { inspectTaskData, listTaskDataFiles, projectPython } from "../pipeline/task_configuration.js";
 import { Coordinator } from "./coordinator.js";
 import { runDecisionAgent } from "./session.js";
 import type { PipelineRunResult, StageInput } from "../pipeline/types.js";
@@ -47,6 +49,8 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Pip
  let stoppedBecause = "", outcome: PipelineRunResult["outcome"] = "failure";
  try {
   const { resolved: config } = await loadResolvedPipelineConfig(options.configPath);
+  // The task's own data, downloaded only if missing, before its dataset fingerprint is taken.
+  const taskData = await ensureTaskData(task.taskId, { signal: controller.signal });
   const snapshot = loadPromptSnapshot(), runId = options.resumeRunId ?? randomUUID();
   const { context } = buildResearchContext(task.taskId);
   const taskDescription = [boundedFile(join(task.taskDir, "prompt.md")), ...(existsSync(join(dirname(task.taskDir), "unit-intro.md")) ? [boundedFile(join(dirname(task.taskDir), "unit-intro.md"), 16000)] : [])].join("\n\n");
@@ -62,9 +66,13 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Pip
   const report = trace.stage("orchestrator", saved.controlInvocationId);
   const setup = new SetupSession();
   const available = saved.config.enabledStages.filter(name => name !== "submit" || saved.policy.authorized);
+  trace.event("task_data_ready", { downloaded: taskData.downloaded, present: taskData.present, legacy: taskData.legacy });
   trace.event("pipeline_run_start", { scheduling: "agent", resumed: !!options.resumeRunId, config_snapshot: saved.config.snapshot, config_fingerprint: saved.config.fingerprint, prompt_snapshot_sha256: prompts.fingerprint, policy: saved.policy, goal: saved.goal, available_modules: available });
   coordinator = new Coordinator(store, {
    record: report.event,
+   inspectTaskData: configuration => inspectTaskData(task.taskId, configuration, projectPython()),
+   // The file's entry is advice; stages run under what the agent declares.
+   suggestedConfiguration: saved.config.taskConfigurations?.[task.taskId],
    start: (work, input) => startStageInvocation({ invocationId: work.id, stage: work.stage, input: { ...input, model: options.model }, config: saved.config, configPath: options.configPath, trace: trace!, prompts, setupSession: setup, optionOverrides: work.options, reason: "orchestrator_decision", signal: controller.signal, executionGuard: coordinator!.executionGuard }),
    officialStatus: async () => { const accounting = await readSubmissionAccounting({ taskId: task.taskId, transport: submissionTransport(task.taskId), accountingRoot: join(PROJECT_ROOT, "runs/submissions"), report, signal: controller.signal }); const s = accounting.officialStatus; return { triesUsed: s.triesUsed, reservedUnknown: accounting.reservedUnknown, effectiveTriesUsed: accounting.effectiveTriesUsed, unresolved: accounting.unresolved, results: s.attempts.map(a => ({ attemptId: a.id, status: a.state, ...(a.score === null ? {} : { score: a.score }) })) }; },
    recover: async (work, input) => {
@@ -75,6 +83,8 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Pip
   });
   const allSetup = () => setup.check(setupChecks(["orchestrator", "model", "python", "task", "knowledge", ...available.flatMap(name => [...(getStage(name).setupRequirements ?? [])])], {
    taskId: task.taskId, model: options.model, configPath: options.configPath, prompts, submissionPolicy: saved.policy,
+   // The decision agent declares the configuration; its tool validates the task files then.
+   taskConfiguration: coordinator!.state.taskConfiguration?.configuration ?? saved.config.taskConfigurations?.[task.taskId], taskConfigurationDeclaredLater: true,
    candidateProducedUpstream: available.includes("solve"), refitTrainingRoot: (saved.config.effectiveOptions.refit as { trainingRoot?: string })?.trainingRoot,
   }), controller.signal, trace!.event);
   if (options.checkSetupOnly) { await allSetup(); stoppedBecause = "setup checks passed; no agents or stages executed"; outcome = "success"; return result(); }
@@ -92,7 +102,7 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Pip
    controller.signal.throwIfAborted();
    report.event("agent_attempt_start", { attempt, role: "orchestrator" });
    try {
-    await runDecisionAgent({ coordinator, prompts, report, taskDescription, knowledgeSummaries: knowledge.search(task.taskTitle.slice(0, 200), 6), model: options.model, signal: controller.signal, attempt });
+    await runDecisionAgent({ coordinator, prompts, report, taskDescription, taskFiles: listTaskDataFiles(task.taskId), knowledgeSummaries: knowledge.search(task.taskTitle.slice(0, 200), 6), model: options.model, signal: controller.signal, attempt });
     if (coordinator.state.status === "running") {
      await coordinator.stop("Decision agent ended without a controller finish; owned work was cancelled and settled");
     }

@@ -13,11 +13,13 @@ import { SetupSession, setupChecks } from "./setup.js";
  * start, effective options, supplied inputs, artifacts, validation, and outcome.
  */
 
-import { PROJECT_ROOT } from "./resolve_task.js";
+import { listTasks, PROJECT_ROOT } from "./resolve_task.js";
+import { ensureTaskData } from "../setup/task_data.js";
 import { getStage } from "./registry.js";
 import { loadResolvedPipelineConfig, type ResolvedPipelineConfig } from "./config.js";
 import { createPipelineTrace, type PipelineTrace } from "./trace.js";
 import { loadPromptSnapshot, type PromptSnapshot } from "../prompts/loader.js";
+import { resolveTaskConfiguration } from "./task_configuration.js";
 import type {
 	PipelineRunResult,
 	StageArtifact,
@@ -147,6 +149,18 @@ async function executeStage(options: InvokeStageOptions, invocationId: string,
 		// Contract failures happen before any agent session exists, and are recorded
 		// against the invocation rather than lost.
 		const prompts = options.prompts!;
+		// Every stage runs under one explicit configuration; a task without a
+		// declared or known default configuration cannot start a stage.
+		// Reconciliation only reads durable ledgers, so it never waits for one.
+		let configuration: ReturnType<typeof resolveTaskConfiguration> | undefined;
+		try { configuration = resolveTaskConfiguration(input.taskId, input.taskConfiguration, config.taskConfigurations?.[input.taskId]); }
+		catch (error) { if (options.mode !== "reconcile") throw error; }
+		input.taskConfiguration = configuration?.configuration;
+		report.input(configuration
+			? { kind: "task_configuration", version: 1, delivery: "none", status: "available",
+				content_sha256: configuration.sha256, source: configuration.source, task_kind: configuration.configuration.kind,
+				metric: configuration.configuration.metric, execution: configuration.configuration.execution, configuration: configuration.configuration }
+			: { kind: "task_configuration", version: 1, delivery: "none", status: "unavailable", reason: "reconciliation without a declared configuration" });
         if (input.guidance !== undefined) {
             input.guidance = validateGuidance(input.guidance, options.stage, input.taskId, [...input.upstream, ...(input.evidenceCatalog ?? [])]);
             const path = `${trace.localPath}.${invocationId}.guidance.json`;
@@ -158,7 +172,7 @@ async function executeStage(options: InvokeStageOptions, invocationId: string,
                 stage: input.guidance.stage, task_id: input.taskId, author: input.guidance.author, evidence: input.guidance.evidence });
         }
 		await (options.setupSession ?? new SetupSession()).check(
-			setupChecks(options.mode === "reconcile" ? stage.recoverySetupRequirements ?? [] : stage.setupRequirements ?? [], { taskId: input.taskId, model: input.model, configPath: options.configPath, prompts, submissionPolicy: input.submissionPolicy, refitTrainingRoot: options.stage === "refit" ? (effective as { trainingRoot?: string })?.trainingRoot : undefined }),
+			setupChecks(options.mode === "reconcile" ? stage.recoverySetupRequirements ?? [] : stage.setupRequirements ?? [], { taskId: input.taskId, taskConfiguration: input.taskConfiguration, model: input.model, configPath: options.configPath, prompts, submissionPolicy: input.submissionPolicy, refitTrainingRoot: options.stage === "refit" ? (effective as { trainingRoot?: string })?.trainingRoot : undefined }),
 			options.signal ?? new AbortController().signal, report.event,
 		);
 		stage.checkInput(input);
@@ -279,6 +293,11 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
 		if (!requestedGuidance || typeof requestedGuidance !== "object" || Array.isArray(requestedGuidance)) throw new Error("Guidance map must be an object");
         if (!Array.isArray(evidenceCatalog)) throw new Error("Evidence catalog must be an array");
         const prompts = loadPromptSnapshot();
+		// One configuration for the whole chain, resolved before any setup check.
+		const taskConfiguration = resolveTaskConfiguration(options.taskId, undefined, resolved.taskConfigurations[options.taskId]);
+		// Only this task's data is downloaded, and only what is missing; setup then checks it.
+		if (listTasks().some(task => task.taskId === options.taskId)) await ensureTaskData(options.taskId, { record: trace.event, signal: options.signal });
+		trace.event("pipeline_task_configuration", { source: taskConfiguration.source, sha256: taskConfiguration.sha256, configuration: taskConfiguration.configuration });
 		trace.event("pipeline_prompt_snapshot", { prompt_snapshot_sha256: prompts.fingerprint });
 		const setupSession = new SetupSession();
 		const planned: StageName[] = [];
@@ -302,7 +321,7 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
 				...(options.optionOverrides?.[name] as Record<string, unknown> ?? {}) });
 		}
 		await setupSession.check(setupChecks(planned.flatMap(name => [...(getStage(name).setupRequirements ?? [])]), {
-			taskId: options.taskId, model: options.model, configPath: options.configPath, prompts,
+			taskId: options.taskId, taskConfiguration: taskConfiguration.configuration, model: options.model, configPath: options.configPath, prompts,
             candidateProducedUpstream: planned.includes("solve"), refitTrainingRoot: (options.optionOverrides?.refit as { trainingRoot?: string })?.trainingRoot ?? (resolved.effectiveOptions.refit as { trainingRoot?: string })?.trainingRoot,
 		}), options.signal ?? new AbortController().signal, trace.event);
 		if (trace.degraded()) console.warn("[setup] Trace database unavailable; local JSONL recording remains active.");
@@ -325,7 +344,7 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
 				setupSession,
 				configPath: options.configPath,
 				prompts,
-				input: { taskId: options.taskId, upstream: [...upstream], model: options.model, guidance: requestedGuidance[current], evidenceCatalog },
+				input: { taskId: options.taskId, taskConfiguration: taskConfiguration.configuration, upstream: [...upstream], model: options.model, guidance: requestedGuidance[current], evidenceCatalog },
 				config: resolved,
 				trace,
 				optionOverrides: options.optionOverrides?.[current],

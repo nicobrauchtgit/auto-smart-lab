@@ -13,8 +13,25 @@ export function controllerTools(controller: Coordinator, prompts: PromptSnapshot
    try { signal?.throwIfAborted(); const value = await execute(args, signal); return result(value); }
    catch (error) { return result({ rejected: true, reason: error instanceof Error ? error.message : "Controller action failed", revision: controller.state.revision }); }
   } });
+ const literal = (...values: string[]) => Type.Union(values.map(value => Type.Literal(value)));
+ const file = Type.String({ minLength: 1, maxLength: 255 });
+ // The controller still validates consistency and the task files; the schema only shapes the request.
+ const configuration = Type.Object({
+  schemaVersion: Type.Literal(1),
+  kind: literal("binary_classification", "clustering", "anomaly_detection"),
+  samples: Type.Object({ source: Type.Literal("zip_members"), train: file, test: file }),
+  targets: Type.Union([Type.Object({ kind: literal("binary", "families"), file }), Type.Object({ kind: Type.Literal("none") })]),
+  execution: literal("inductive", "batch"),
+  holdout: literal("stratified", "group", "none"),
+  metric: literal("balanced_accuracy", "adjusted_rand_index", "none"),
+  anomaly: Type.Optional(Type.Object({ scoreMethod: literal("score_samples", "decision_function", "negative_outlier_factor_"),
+   scoreDirection: literal("higher_is_anomalous", "lower_is_anomalous"), anomalyLabel: Type.Integer() })),
+  refit: literal("fit_training_predict_test", "fit_predict_test_batch"),
+  submission: Type.Object({ format: Type.Literal("id_semicolon_prediction"), predictions: literal("binary", "cluster_id") }),
+ });
  return [
   tool("pipeline_status", Type.Object({ cursor: Type.Optional(Type.Integer({ minimum: 0 })) }), args => controller.status(args.cursor)),
+  tool("task_configure", Type.Object({ ...mutation, configuration }), args => controller.configure(args)),
   tool("stage_start", Type.Object({ ...mutation, stage: Type.Union(["research", "solve", "evaluate", "refit", "submit"].map(x => Type.Literal(x))), objective: Type.String({ minLength: 1, maxLength: 2048 }), artifactIds: ids, guidance: Type.Optional(Type.String({ minLength: 1, maxLength: 8192 })), evidenceIds: Type.Optional(ids) }), args => controller.start(args)),
   tool("stage_status", Type.Object({ invocationId: id }), args => controller.stageStatus(args.invocationId)),
   tool("stage_feedback", Type.Object({ ...mutation, invocationId: id, message: Type.String({ minLength: 1, maxLength: 8192 }), evidenceIds: ids }), args => controller.feedback(args)),

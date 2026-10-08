@@ -34,7 +34,7 @@ test("a terminal champion stays frozen while a changed candidate earns fresh sta
   const coordinator = new Coordinator(controllerStore, { start() { throw new Error("No model/stage dispatch in this fixture"); } });
   const pilot = await training.service.start({ ...request, hypothesis: "pilot cannot replace a terminal champion", pipeline: { ...request.pipeline, parameters: { c: 0.3 } }, scope: { kind: "pilot", maxFolds: 1 } });
   expect(await until(() => training.supervisor.status(pilot.id).status !== "running")).toBe(true); await training.service.finalize(pilot.id);
-  expect(JSON.parse(tagMessage(project.solutionsRoot, "champion")!.message).experimentId).toBe(baseline.id);
+  expect(JSON.parse(tagMessage(project.solutionsRoot, "champion/fixture")!.message).experimentId).toBe(baseline.id);
   expect((await championSelection(await collectTrainingResults(root), project.solutionsRoot, "fixture")).valid).toBe(false);
   await expect(training.service.start({ ...request, pipeline: { ...request.pipeline, parameters: { c: 0.4 } }, cv: { ...request.cv, folds: 1 } })).rejects.toThrow();
   const changed = { ...request, hypothesis: "new fixed parameters independently measured", pipeline: { ...request.pipeline, parameters: { c: 0.5 } } };
@@ -42,7 +42,7 @@ test("a terminal champion stays frozen while a changed candidate earns fresh sta
   const invocation = JSON.parse(readFileSync(join(next.directory, "invocation.json"), "utf8")); expect(invocation.champion).toBeUndefined();
   expect(await until(() => training.supervisor.status(next.id).status !== "running")).toBe(true); await training.service.finalize(next.id);
   const result = JSON.parse(readFileSync(join(next.directory, "trial-result.json"), "utf8")); expect(result.promotionEligible).toBe(true); expect(result.championComparison).toBeUndefined();
-  expect(JSON.parse(tagMessage(project.solutionsRoot, "champion")!.message).experimentId).toBe(next.id);
+  expect(JSON.parse(tagMessage(project.solutionsRoot, "champion/fixture")!.message).experimentId).toBe(next.id);
   const selected = await championSelection(await collectTrainingResults(root), project.solutionsRoot, "fixture"); expect(selected.selected?.experimentId).toBe(next.id); expect(selected.trials.length).toBe(3);
   expect(coordinator.state.bestOfficial).toMatchObject({ score: 0.91, candidateId: identity, artifactId: "prior-receipt" }); coordinator.close();
   expect(readFileSync(path, "utf8")).toBe(marker); expect(events.some(e => e.type === "training_terminal_champion_retained_as_history")).toBe(true);
@@ -64,7 +64,7 @@ test("solve hands over the tagged champion, even from an earlier run, never an u
   champion = await first.service.start(request);
   expect(await until(() => first.supervisor.status(champion.id).status !== "running")).toBe(true); await first.service.finalize(champion.id);
  } finally { await first.close(); }
- expect(JSON.parse(tagMessage(project.solutionsRoot, "champion")!.message).experimentId).toBe(champion.id);
+ expect(JSON.parse(tagMessage(project.solutionsRoot, "champion/fixture")!.message).experimentId).toBe(champion.id);
  const second = harness(join(runs, "run-2"));
  try {
   const challenger = await second.service.start({ ...request, hypothesis: "a challenger without a lead beyond noise", pipeline: { ...request.pipeline, parameters: { c: 0.5 } } });

@@ -1,20 +1,26 @@
 /**
  * Prepare the run workspace for one solve invocation.
  *
- * The agent receives the dataset zips unmodified. Only the labels file is
- * filtered: the sealed rows are absent from it, so the confirmation split cannot
- * be scored locally and the gap the stage reports stays meaningful. That is a
- * withheld measurement, not a hidden one -- the prompt says so plainly.
+ * Every task kind gets the same minimally prepared input: a development
+ * archive and a sample manifest of opaque `{archive, member}` descriptors.
+ * The harness never decodes or parses samples (D9); the agent's code reads the
+ * bytes and decides how. The task configuration selects the targets (binary
+ * labels, families or none) and the sealed split: stratified rows, whole
+ * families, or nothing when there are no targets to confirm against. Sealed
+ * rows are absent from everything the agent is pointed at, so the confirmation
+ * split cannot be scored locally.
  */
 
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { basename, join, relative } from "node:path";
 
-import { parseTrainingLabels, TRAINING_LABEL_FILES } from "../research/startup_context.js";
 import { PROJECT_ROOT, resolveTask } from "../pipeline/resolve_task.js";
+import { projectPython, resolveTaskConfiguration, TASK_SAMPLES_SCRIPT, taskDataPaths, type TaskConfiguration } from "../pipeline/task_configuration.js";
 import type { StageArtifact } from "../pipeline/types.js";
-import { recommendFolds, sealConfirmationSet, type FoldRecommendation, type SealedSplit } from "./folds.js";
+import type { MeasurementConfig } from "../training/types.js";
+import { HARNESS_CONFIG } from "../harness/config.js";
+import { noSeal, recommendFolds, sealConfirmationSet, sealGroups, type FoldRecommendation, type IdSealedSplit } from "./folds.js";
 
 export interface SolveWorkspace {
 	root: string;
@@ -23,28 +29,38 @@ export interface SolveWorkspace {
 	entrypointPath: string;
 	taskPath: string;
 	researchDir: string;
-	/** Development labels only: the sealed rows are not in this file. */
-	devLabelsPath: string;
-	/** Every training label, including the held-out rows. Harness-only. */
-	fullLabelsPath: string;
+	configuration: TaskConfiguration;
+	/** The development manifest the training harness measures: descriptors and targets, no sealed rows. */
+	sampleManifestPath: string;
+	/** Controller measurement declaration for the training harness. */
+	measurement: MeasurementConfig;
 	/** The archive the agent is given: development rows only. */
 	devZip: string;
 	sealedPath: string;
 	trainZip: string;
+	testZip: string;
 	datasetPaths: string[];
-	split: SealedSplit;
+	split: { sealedIds: string[]; fraction: number; seed: number; sha256: string; scheme: "stratified" | "group" | "none"; sealedGroups?: number };
 	recommendation: FoldRecommendation;
 	rowCount: number;
-	classBalance: string;
+	/** Where the development targets are, for the prompt. */
+	targets: string;
+	/** Class balance, family counts, or the absence of targets. */
+	targetSummary: string;
 	researchState: string;
 	researchDocumentSha256?: string;
 }
 
 export interface PrepareOptions {
+	configuration?: TaskConfiguration;
 	sealedFraction?: number;
 	seed?: number;
 	upstream?: StageArtifact[];
 	projectRoot?: string;
+	/** Reads archive member lists; defaults to the project environment. */
+	pythonExecutable?: string;
+	/** The task's directory; defaults to the fetched unit metadata. */
+	taskDir?: string;
 }
 
 /** Reserve the shared location where the agent, and only the agent, authors pipelines. */
@@ -60,77 +76,90 @@ export function prepareSolutionsWorkspace(
 	};
 }
 
-export function resolveLabelsFile(taskId: string, dataDir: string): string {
-	const name = TRAINING_LABEL_FILES[taskId];
-	if (!name) throw new Error(`No training labels adapter for task "${taskId}"; add one to TRAINING_LABEL_FILES`);
-	const path = join(dataDir, name);
-	if (!existsSync(path)) throw new Error(`Training labels file is missing: ${path}`);
-	return path;
+/** Sample IDs and targets of one archive, read without opening sample content. */
+export function archiveRows(pythonExecutable: string, zip: string, targetsPath?: string, targets: TaskConfiguration["targets"]["kind"] = "none"): { ids: string[]; targets: (string | number)[] | null } {
+	const output = execFileSync(pythonExecutable, [TASK_SAMPLES_SCRIPT, "--rows", JSON.stringify({ zip, targetsPath: targetsPath ?? null, targets })],
+		{ encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
+	return JSON.parse(output);
+}
+
+function seal(configuration: TaskConfiguration, ids: string[], targets: Map<string, string | number>, options: PrepareOptions): IdSealedSplit | ReturnType<typeof stratifiedSeal> {
+	const seed = options.seed ?? HARNESS_CONFIG.solve.seed;
+	if (configuration.holdout === "stratified") return stratifiedSeal(ids, targets, options.sealedFraction, seed);
+	if (configuration.holdout === "group") return sealGroups(ids.map(id => ({ id, group: String(targets.get(id)) })), { fraction: options.sealedFraction, seed });
+	return noSeal(ids, seed);
+}
+
+function stratifiedSeal(ids: string[], targets: Map<string, string | number>, fraction: number | undefined, seed: number) {
+	const split = sealConfirmationSet(ids.map(id => ({ id, label: targets.get(id) as 0 | 1 })), { fraction, seed });
+	return { scheme: "stratified" as const, sealedIds: split.sealedIds, devIds: split.devRows.map(row => row.id).sort(),
+		sealedGroups: undefined, fraction: split.fraction, seed: split.seed, sha256: split.sha256 };
+}
+
+function describeTargets(configuration: TaskConfiguration, devIds: string[], targets: Map<string, string | number>, manifest: string, sealedGroups?: number) {
+	if (configuration.targets.kind === "none") return { targets: "none; this task has no training targets", summary: "No targets: trials report label-free diagnostics." };
+	const counts = new Map<string, number>();
+	for (const id of devIds) counts.set(String(targets.get(id)), (counts.get(String(targets.get(id))) ?? 0) + 1);
+	if (configuration.targets.kind === "binary") {
+		const share = (label: string) => `class ${label} ${counts.get(label) ?? 0} (${(((counts.get(label) ?? 0) / devIds.length) * 100).toFixed(2)}%)`;
+		return { targets: `binary \`target\` values in ${manifest} (sealed rows absent)`, summary: `Class balance: ${share("0")}, ${share("1")}.` };
+	}
+	const sizes = [...counts.values()].sort((a, b) => b - a);
+	return { targets: `family \`target\` values in ${manifest} (the harness scores with them; they never reach fit)`,
+		summary: `Families: ${counts.size}; largest ${sizes[0]} rows, smallest ${sizes.at(-1)} rows, ${sizes.filter(size => size === 1).length} singleton families. ${sealedGroups ?? 0} further families are sealed.` };
 }
 
 export function prepareSolveWorkspace(taskId: string, options: PrepareOptions = {}): SolveWorkspace {
+	const configuration = resolveTaskConfiguration(taskId, options.configuration).configuration;
 	const projectRoot = options.projectRoot ?? PROJECT_ROOT;
-	const task = resolveTask({ taskId });
-	const dataDir = join(task.taskDir, "data");
-	const fullLabelsPath = resolveLabelsFile(taskId, dataDir);
-
-	const parsed = parseTrainingLabels(readFileSync(fullLabelsPath));
-	if (!parsed.ok) throw new Error(`Cannot read training labels: ${parsed.error}`);
-	const split = sealConfirmationSet(parsed.rows, { fraction: options.sealedFraction, seed: options.seed });
+	const taskDir = options.taskDir ?? resolveTask({ taskId }).taskDir;
+	const paths = taskDataPaths(taskId, configuration, taskDir);
+	const python = options.pythonExecutable ?? projectPython();
+	const train = archiveRows(python, paths.trainZip, paths.targetsPath, configuration.targets.kind);
+	const targets = new Map<string, string | number>(train.targets ? train.ids.map((id, index) => [id, train.targets![index]]) : []);
+	const split = seal(configuration, train.ids, targets, options);
 
 	const root = join(projectRoot, "runs", taskId, "solve");
 	const dataOut = join(root, "data");
 	const researchDir = join(root, "research");
-	mkdirSync(root, { recursive: true });
-	for (const directory of [dataOut, researchDir]) {
-		mkdirSync(directory, { recursive: true });
-	}
+	for (const directory of [root, dataOut, researchDir]) mkdirSync(directory, { recursive: true });
 	const { solutionsRoot, entrypointPath } = prepareSolutionsWorkspace(projectRoot, taskId);
-
 	const taskPath = join(root, "task.md");
-	const prompt = readFileSync(join(task.taskDir, "prompt.md"), "utf8");
+	const prompt = readFileSync(join(taskDir, "prompt.md"), "utf8");
 	writeFileSync(taskPath, prompt.endsWith("\n") ? prompt : `${prompt}\n`);
-
-	const devLabelsPath = join(dataOut, `${basename(fullLabelsPath)}`.replace(/\.labels$/, "-dev.labels"));
-	writeFileSync(devLabelsPath, `${split.devRows.map((row) => `${row.id};${row.label}`).join("\n")}\n`);
 	// Harness-only. The agent is never pointed at this and never needs it.
 	const sealedPath = join(dataOut, "sealed_ids.txt");
-	writeFileSync(sealedPath, `${split.sealedIds.join("\n")}\n`);
-
+	writeFileSync(sealedPath, split.sealedIds.length ? `${split.sealedIds.join("\n")}\n` : "");
 	const researchState = copyResearch(researchDir, taskId, options.upstream ?? [], projectRoot);
+	const devZip = writeDevelopmentZip(paths.trainZip, dataOut, split.devIds);
 
-	const zips = ["train", "test"]
-		.map((kind) => join(dataDir, `${basename(fullLabelsPath).replace(/-train\.labels$/, "")}-${kind}.zip`))
-		.filter((path) => existsSync(path));
-	const trainZip = zips.find((path) => path.endsWith("-train.zip"));
-	if (!trainZip) throw new Error(`No training zip found in ${dataDir}`);
-	const devZip = writeDevelopmentZip(trainZip, dataOut, split.devRows.map((row) => row.id));
-
-	const counts = [0, 0];
-	for (const row of split.devRows) counts[row.label]++;
-	const total = split.devRows.length;
-
+	// Opaque descriptors: the agent's code opens the archive member itself.
+	const sampleManifestPath = join(dataOut, "development-samples.json");
+	writeFileSync(sampleManifestPath, `${JSON.stringify({ schemaVersion: 1, samples: split.devIds.map(id => ({
+		id, input: { archive: devZip, member: id }, ...(targets.size ? { target: targets.get(id)! } : {}),
+	})) })}\n`);
+	const measurement: MeasurementConfig = configuration.kind === "binary_classification"
+		? { kind: "classification", execution: "inductive", sampleManifestPath }
+		: configuration.kind === "clustering"
+			? { kind: "clustering", execution: configuration.execution, sampleManifestPath }
+			: { kind: "anomaly_detection", execution: configuration.execution, sampleManifestPath, ...configuration.anomaly! };
+	const described = describeTargets(configuration, split.devIds, targets, relative(projectRoot, sampleManifestPath), split.sealedGroups);
+	const groups = configuration.targets.kind === "families" ? new Set(split.devIds.map(id => targets.get(id))).size : undefined;
 	return {
-		root,
-		solutionsRoot,
-		entrypointPath,
-		taskPath,
-		researchDir,
-		devLabelsPath,
-		fullLabelsPath,
-		sealedPath,
-		trainZip,
-		devZip,
+		root, solutionsRoot, entrypointPath, taskPath, researchDir, configuration,
+		sampleManifestPath, measurement,
+		devZip, sealedPath, trainZip: paths.trainZip, testZip: paths.testZip,
 		// What the agent is given: the development archive and the unlabelled test
 		// set. The full training archive is withheld, because the held-out rows are
-		// otherwise recoverable from it as `members - labels`, and their extensions
-		// carry the labels.
-		datasetPaths: [devZip, ...zips.filter((path) => path.endsWith("-test.zip"))]
-			.map((path) => relative(projectRoot, path)),
-		split,
-		recommendation: recommendFolds(total),
-		rowCount: total,
-		classBalance: `class 0 ${counts[0]} (${((counts[0] / total) * 100).toFixed(2)}%), class 1 ${counts[1]} (${((counts[1] / total) * 100).toFixed(2)}%)`,
+		// otherwise recoverable from it as `members - manifest`.
+		datasetPaths: [devZip, ...(existsSync(paths.testZip) ? [paths.testZip] : [])].map(path => relative(projectRoot, path)),
+		split: { sealedIds: split.sealedIds, fraction: split.fraction, seed: split.seed, sha256: split.sha256, scheme: split.scheme, ...(split.sealedGroups !== undefined ? { sealedGroups: split.sealedGroups } : {}) },
+		recommendation: configuration.holdout === "stratified" ? recommendFolds(split.devIds.length)
+			: groups ? recommendFolds(split.devIds.length, { scheme: "group_kfold", groups })
+				: recommendFolds(split.devIds.length, { scheme: "kfold" }),
+		rowCount: split.devIds.length,
+		targets: described.targets,
+		targetSummary: described.summary,
 		researchState,
 		researchDocumentSha256: options.upstream?.find((artifact) => artifact.kind === "research_document")?.sha256,
 	};

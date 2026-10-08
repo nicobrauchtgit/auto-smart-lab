@@ -1,13 +1,12 @@
 /** Fail-fast prerequisites shared by pipeline and standalone stage execution. */
-import { accessSync, constants, readFileSync, statSync } from "node:fs";
-import { join, basename, resolve } from "node:path";
+import { accessSync, constants, statSync } from "node:fs";
+import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { initializeModel } from "../model_provider.js";
 import { loadPipelineConfig } from "../pipeline_config.js";
 import { readPythonEnvironment } from "../run/python_environment.js";
 import { resolveTask, PROJECT_ROOT } from "./resolve_task.js";
-import { resolveLabelsFile } from "../solve/workspace.js";
-import { parseTrainingLabels } from "../research/startup_context.js";
+import { inspectTaskData, projectPython, type TaskConfiguration } from "./task_configuration.js";
 import { processIdentity } from "../experiments/ownership.js";
 import { HARNESS_CONFIG } from "../harness/config.js";
 import type { PromptSnapshot } from "../prompts/loader.js";
@@ -64,7 +63,12 @@ function readable(path: string): void {
 }
 
 export function setupChecks(requirements: readonly SetupRequirement[], options: {
- taskId: string; model?: string; configPath?: string; prompts: PromptSnapshot;
+ taskId: string;
+ /** The resolved harness parts: declared, or from pipeline.config.json. */
+ taskConfiguration?: TaskConfiguration;
+ /** The orchestrator declares the configuration later; its tool validates the data then. */
+ taskConfigurationDeclaredLater?: boolean;
+ model?: string; configPath?: string; prompts: PromptSnapshot;
  /** Executable overrides for regression tests; production resolves them from the environment. */
  executables?: { python?: string; git?: string };
  candidateProducedUpstream?: boolean; refitTrainingRoot?: string;
@@ -79,7 +83,7 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
   if (!processIdentity(process.pid)) throw new Error("Process identities unavailable");
   readable(join(PROJECT_ROOT, "agent/orchestrator/coordinator.ts"));
  });
- if (needs.has("submission")) checks.push(...submissionSetupChecks({ taskId: options.taskId, policy: options.submissionPolicy, candidateProducedUpstream: options.candidateProducedUpstream }));
+ if (needs.has("submission")) checks.push(...submissionSetupChecks({ taskId: options.taskId, taskConfiguration: options.taskConfiguration, policy: options.submissionPolicy, candidateProducedUpstream: options.candidateProducedUpstream }));
  if (needs.has("submission-recovery")) checks.push(...submissionRecoverySetupChecks({ taskId: options.taskId, policy: options.submissionPolicy }));
  if (needs.has("knowledge")) {
   add("knowledge-skills", "local", "Restore the registered agent/prompts/knowledge skills and tool template; runtime selection requires the validated prompt snapshot.", () => {
@@ -95,19 +99,16 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
    if (result.error || result.status !== 0) throw new Error("Knowledge evidence imports failed");
   });
  }
- if (needs.has("task")) add(`task:${options.taskId}`, "local", "Fetch the selected unit again; its metadata, prompt, labels and train/test archives must be readable and non-empty.", () => {
+ if (needs.has("task")) add(`task:${options.taskId}`, "local", "Fetch the selected unit again; its metadata and prompt must be readable. The task configuration must name readable train/test archives with unique, disjoint sample IDs and a targets file covering exactly the training samples; add it as pipeline.tasks.<task> in pipeline.config.json, or let the orchestrator declare it.", () => {
   const task = resolveTask({ taskId: options.taskId });
   readable(join(task.taskDir, "meta.json"));
   readable(join(task.taskDir, "prompt.md"));
-  const labels = resolveLabelsFile(options.taskId, join(task.taskDir, "data"));
-  readable(labels);
-  const parsed = parseTrainingLabels(readFileSync(labels));
-  if (!parsed.ok || !parsed.rows.length) throw new Error("Invalid labels");
-  const archives = ["train", "test"].map(kind => join(task.taskDir, "data", basename(labels).replace(/-train\.labels$/, `-${kind}.zip`)));
-  archives.forEach(readable);
-  const python = join(resolve(PROJECT_ROOT, process.env.VENV_DIR ?? ".venv"), "bin/python");
-  const result = spawnSync(python, ["-I", "-c", "import sys, zipfile\nfor p in sys.argv[1:]:\n with zipfile.ZipFile(p) as z:\n  assert z.namelist() and z.testzip() is None", ...archives], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });
-  if (result.error || result.status !== 0) throw new Error("Unreadable or corrupt archives");
+  const configuration = options.taskConfiguration;
+  if (!configuration) {
+   if (options.taskConfigurationDeclaredLater) return;
+   throw new Error("No task configuration");
+  }
+  inspectTaskData(options.taskId, configuration, options.executables?.python ?? projectPython());
  });
  if (needs.has("python")) add("python-environment", "local", "Run ./dev setup; declarations, lockfile and installed packages must agree.", () => { readPythonEnvironment(); });
  if (needs.has("evaluation")) {
@@ -126,7 +127,7 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
    if (result.error || result.status !== 0) throw new Error("Kernel file locking unavailable");
   });
   add("training-imports", "local", "Run ./dev setup; numpy, pandas, sklearn and scipy metric primitives must import successfully.", () => {
-   for (const name of ["check_measurement.py", ...["diagnostics", "measurement", "geometry", "extra_measurements", "anomaly_measurements", "validation_measurements", "uncertainty", "options"].map(name => `smartlab_trial/${name}.py`)]) readable(join(PROJECT_ROOT, "agent/training/python", name));
+   for (const name of ["check_measurement.py", "task_samples.py", ...["diagnostics", "measurement", "geometry", "extra_measurements", "anomaly_measurements", "validation_measurements", "uncertainty", "options"].map(name => `smartlab_trial/${name}.py`)]) readable(join(PROJECT_ROOT, "agent/training/python", name));
    const python = options.executables?.python ?? readPythonEnvironment().executable;
    const result = spawnSync(python, [join(PROJECT_ROOT, "agent/training/python/check_measurement.py"), "--check-imports"], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });
    if (result.error || result.status !== 0) throw new Error("Imports failed");
@@ -148,7 +149,7 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
  }
  if (needs.has("refit")) {
   add("refit-runtime", "local", "Restore the terminal worker and runner, git, kernel process identities and the project Python dependencies (numpy, pandas, sklearn, smartlab_eval, cloudpickle, fcntl).", () => {
-   readable(join(PROJECT_ROOT, "agent/refit/worker.py")); readable(join(PROJECT_ROOT, "agent/training/python/runner.py"));
+   readable(join(PROJECT_ROOT, "agent/refit/worker.py")); readable(join(PROJECT_ROOT, "agent/training/python/runner.py")); readable(join(PROJECT_ROOT, "agent/training/python/task_samples.py"));
    if (!processIdentity(process.pid)) throw new Error("Process identity unavailable");
    const python = options.executables?.python ?? readPythonEnvironment().executable;
    const probe = spawnSync(python, ["-c", "import numpy,pandas,sklearn,smartlab_eval,cloudpickle,fcntl"], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });
@@ -156,9 +157,13 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
    if (probe.error || probe.status !== 0 || git.error || git.status !== 0) throw new Error("Refit prerequisites unavailable");
   });
   add(`refit-data:${options.taskId}`, "local", "Restore complete original training labels/train archive and the unlabelled test archive. IDs must be unique, exact, disjoint and test IDs neutral; archives must pass CRC validation.", async () => {
-   const { refitInputs } = await import("./stages/refit.js");
-   const inputs = refitInputs(options.taskId);
-   const result = spawnSync(options.executables?.python ?? inputs.pythonExecutable, [join(PROJECT_ROOT, "agent/refit/worker.py"), "--inspect-json", JSON.stringify({ labelsPath: inputs.labelsPath, trainZip: inputs.trainZip, testZip: inputs.testZip })], { env: inputs.env, timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });
+   const { refitInputs, originalRefitData } = await import("./stages/refit.js");
+   const configuration = options.taskConfiguration;
+   // An orchestrator declares the configuration later; refit checks it again at invocation.
+   if (!configuration && options.taskConfigurationDeclaredLater) return;
+   if (!configuration) throw new Error("No task configuration");
+   const inputs = refitInputs(options.taskId, configuration);
+   const result = spawnSync(options.executables?.python ?? inputs.pythonExecutable, [join(PROJECT_ROOT, "agent/refit/worker.py"), "--inspect-json", JSON.stringify(originalRefitData(inputs))], { env: inputs.env, timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });
    if (result.error || result.status !== 0) throw new Error("Original refit data invalid");
   });
   // The chain may not have selected a candidate yet. Data/runtime prerequisites
@@ -166,7 +171,9 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
   if (!options.candidateProducedUpstream) add(`refit-candidate:${options.taskId}`, "local", "Complete a champion promotion and restore its exact measured source, data, dependencies and checksummed evidence. The chosen tag and supplied training root must agree.", async signal => {
    const { refitInputs } = await import("./stages/refit.js");
    const { prepareRefit } = await import("../refit/service.js");
-   await prepareRefit({ ...refitInputs(options.taskId, options.refitTrainingRoot), signal });
+   const configuration = options.taskConfiguration;
+   if (!configuration) throw new Error("No task configuration");
+   await prepareRefit({ ...refitInputs(options.taskId, configuration, options.refitTrainingRoot), signal });
   });
  }
  if (needs.has("web-search")) {

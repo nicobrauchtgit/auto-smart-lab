@@ -11,6 +11,7 @@ import type { SetupRequirement } from "./setup.js";
 
 import type { AgentObservation, EventIdentity } from "../observability.js";
 import type { PromptSnapshot } from "../prompts/loader.js";
+import type { TaskConfiguration } from "./task_configuration.js";
 
 export type StageName = "research" | "solve" | "evaluate" | "refit" | "submit";
 
@@ -46,6 +47,12 @@ export interface StageInput {
 	/** Immutable controller policy. Stage/model option overrides cannot grant upload permission. */
 	submissionPolicy?: { version: 1; authorized: boolean; maxSubmissions: number; pipelineRunId: string; controllerInvocationId: string };
 	taskId: string;
+	/**
+	 * The harness parts this task uses, declared by the controller. The executor
+	 * fills in the task's known default when none is declared and rejects the
+	 * invocation when there is neither.
+	 */
+	taskConfiguration?: TaskConfiguration;
 	guidance?: StageGuidance;
 	evidenceCatalog?: StageArtifact[];
 	/** Artifacts produced by earlier stages of the same pipeline run. */

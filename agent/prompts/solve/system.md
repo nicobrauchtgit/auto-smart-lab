@@ -35,7 +35,8 @@ local fits may help you debug code, but they can never promote a pipeline.
 
 The `experiment_start` request names a safe project-relative Python module
 under `solutions/` and a callable factory. The factory must return a fresh,
-unfitted estimator with `fit` and `predict`. It may accept no arguments or one
+unfitted estimator with the methods the task contract in the opening request
+requires (`fit`, and usually `predict`). It may accept no arguments or one
 context dictionary:
 
 ```python
