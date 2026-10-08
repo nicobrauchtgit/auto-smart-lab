@@ -2,7 +2,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { atomicJson, claimWorkspace, liveGroup, ownedProcessAlive } from "../experiments/ownership.js";
 import { ExperimentSupervisor } from "../experiments/supervisor.js";
 import { addWorktree, git, resolveCommit, tagMessage, uncommittedFiles } from "../training/git.js";
@@ -14,6 +14,7 @@ import { sanitizeTrainingEnvironment } from "../training/environment.js";
 import type { StageArtifact, StageReporter } from "../pipeline/types.js";
 import type { PipelineRequest } from "../training/types.js";
 import type { TaskConfiguration } from "../pipeline/task_configuration.js";
+import { confirmedCandidate } from "../confirmation/receipt.js";
 
 const FRAMEWORK_ROOT = resolve(import.meta.dir, "..");
 const WORKER = join(import.meta.dir, "worker.py");
@@ -55,8 +56,10 @@ export function runtimeDependencyHash(options: RefitOptions): string {
  return createHash("sha256").update(python(options, ["-I", "-c", "import importlib.metadata,json,platform; print(json.dumps({'python':platform.python_version(),'packages':sorted((d.metadata['Name'],d.version) for d in importlib.metadata.distributions())},sort_keys=True))"], 5000)).digest("hex");
 }
 /** Fingerprint every local executable adapter used by terminal refit/recovery. */
+export const REFIT_FRAMEWORK_FILES = ["refit/worker.py", "training/python/runner.py", "refit/evidence.py", "training/python/task_samples.py", "training/python/pcap_samples.py",
+ "training/python/confirm.py", "confirmation/receipt.ts", ...["metrics.py", "measurement.py", "id_leakage.py"].map(name => `training/python/smartlab_trial/${name}`)];
 export function frameworkHash(root = FRAMEWORK_ROOT): string {
- return digest(["refit/worker.py", "training/python/runner.py", "refit/evidence.py", "training/python/task_samples.py", "training/python/pcap_samples.py"].map(path => hashFile(join(root, path))));
+ return digest(REFIT_FRAMEWORK_FILES.map(path => hashFile(join(root, path))));
 }
 
 /** The measurement declaration a sample trial ran under, as the training service hashed it. */
@@ -79,7 +82,7 @@ export function originalRefitData(options: Pick<RefitOptions, "taskConfiguration
  return { kind: "samples", task: { kind: options.taskConfiguration.kind === "binary_classification" ? "classification" : options.taskConfiguration.kind, targets: options.taskConfiguration.targets.kind, source: options.taskConfiguration.samples.source },
   trainZip: options.trainZip, testZip: options.testZip, ...(options.labelsPath ? { targetsPath: options.labelsPath } : {}) };
 }
-function assertNoWorkers(root: string): void {
+export function assertNoWorkers(root: string): void {
  if (!existsSync(root)) return;
  for (const entry of readdirSync(root, { withFileTypes: true })) {
   if (!entry.isDirectory() || entry.name === "source" || entry.name === "champion") continue;
@@ -93,7 +96,7 @@ function assertNoWorkers(root: string): void {
  }
 }
 /** Read-only candidate integrity check; never selects by score. */
-export async function prepareRefit(options: RefitOptions): Promise<RefitFreeze> {
+export async function inspectRefitCandidate(options: RefitOptions): Promise<RefitFreeze> {
  options.signal?.throwIfAborted();
  const tag = tagMessage(options.solutionsRoot, championTag(options.taskId));
  if (!tag) throw new Error("No authoritative champion tag; complete a measured promotion first");
@@ -150,6 +153,22 @@ export async function prepareRefit(options: RefitOptions): Promise<RefitFreeze> 
   const local = join(frozen.directory, "freeze.json");
   if (existsSync(local) && hashFile(local) !== hashFile(frozen.terminalPath)) throw new Error("Local freeze differs from terminal marker");
   if (existsSync(join(frozen.directory, "result.json"))) python(options, [WORKER, "--directory", frozen.directory, "--validate"]);
+ }
+ return prepared;
+}
+export async function prepareRefit(options: RefitOptions): Promise<RefitFreeze> {
+ const prepared = await inspectRefitCandidate(options);
+ const confirmation = confirmedCandidate(options.projectRoot, options.taskId, prepared);
+ if (confirmation) {
+  prepared.evidence.push({ path: confirmation.path, sha256: confirmation.sha256 });
+  if (confirmation.record.status === "completed") {
+   const directory = dirname(confirmation.path);
+   python(options, [join(FRAMEWORK_ROOT, "training/python/confirm.py"), "--directory", directory, "--validate"]);
+   const freeze = json(join(directory, "freeze.json"));
+   for (const path of [join(directory, "freeze.json"), join(directory, "predictions.csv"), ...Object.keys(freeze.hashes)]) {
+    if (!prepared.evidence.some(entry => entry.path === path)) prepared.evidence.push({ path, sha256: hashFile(path) });
+   }
+  }
  }
  return prepared;
 }

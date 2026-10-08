@@ -198,40 +198,31 @@ Solve prescribes nothing about the model and trusts nothing it is told.
 The agent writes its own scikit-learn pipeline under `solutions/`, organised
 however it likes. `solutions/tasks/<task_id>.py` is the one convention: an
 orchestration entrypoint declaring a factory that returns an unfitted estimator
-taking a frame with `id` and `text` columns. That exists so the harness can
+taking a frame with `id` and opaque `input` descriptors. That exists so the harness can
 re-run the agent's own pipeline for the canary and the paired comparison.
 `solutions/` persists across tasks and runs, so it accumulates reusable code.
 
-The dataset zips are handed over unmodified. Only the labels file is filtered:
-a stratified `sealedFraction` of rows is absent from it, so the confirmation
-split cannot be scored locally.
+The agent receives a development archive containing only its rows, the test
+archive and a development sample manifest. Original full archives, labels and
+sealed IDs remain outside the solve filesystem boundary. Binary classification
+uses class-based holdout sizing from `harness.config.json`; the controller seed
+plan fixes the draw for a task and original dataset.
 
 ### The results contract
 
-| File | Written by | Content |
-| --- | --- | --- |
-| `metrics.json` | agent | `cv`, `entrypoint`, `mean_bacc`, `folds`, `approach`, `variants_compared`, `done` |
-| `oof_predictions.csv` | agent | `id;repeat;fold;prediction` plus optional `score` |
-| `confirmation_predictions.csv` | agent | `id;prediction` for exactly the sealed ids |
-| `notes.md` | agent | what was built, tried, and rejected |
-| `iterations.jsonl` | harness | one measured record per iteration |
-| `iterations/<n>/` | harness | snapshot of `solutions/` for a promoted champion |
+The agent supplies code and structured experiment requests. The harness writes
+trial invocations, source snapshots, seed plans, fold results, authoritative OOF
+predictions, measurements and recovery receipts. See
+[Harness-owned training](harness-owned-training.md) for the precise contract.
 
-`smartlab_eval` (`libs/smartlab-eval/`, installed into the venv) reads the corpus, writes this contract
-from accumulated fold predictions, and offers ROC, threshold, calibration, and
-paired-bootstrap diagnostics. The stage still reads the files rather than the
-library, so a differently-produced set of files grades identically -- but the
-prompt instructs the agent to use it for loading and writing, because both are
-plumbing with one correct answer and a failure mode that costs a whole session.
-Modelling stays entirely the agent's.
-
-An example's id is its full path inside the zip. The labels file, the sealed id
-list, and both prediction files all use that form, and `load_corpus` /
-`load_labelled` return it, so ids stay consistent by passing through rather than
-being reconstructed. Those loaders also open each archive exactly once:
-`zipfile.ZipFile()` reparses the whole central directory on construction, so
-opening per document turns a 0.2 s read of the corpus into roughly ten minutes
-and can consume an entire session on IO alone.
+After the agent and training workers close, the harness freezes the selected
+champion's commit and fixed parameters, fits development rows and predicts the
+sealed rows. A hashed `holdout_confirmation` artifact records class metrics,
+a 95% stratified bootstrap interval, the CV gap, precision and recorded reuse.
+Completed identities are reused; failed reads are consumed rather than silently
+retried. Evaluation remains advisory, and refit checks the confirmed identity
+before including sealed rows in terminal training. See
+[Held-back confirmation](held-back-confirmation.md).
 
 ### Compliance and diagnostics are separate
 

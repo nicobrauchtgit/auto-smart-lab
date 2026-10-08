@@ -7,7 +7,8 @@ const fields = {
 	setup: ["timeoutMs", "modelMaxTokens"],
 	session: ["timeoutMs"], context: ["handoffTokens", "maxHandoffBytes"],
 	research: ["injectStartupContext", "maxAttempts", "webSearchCalls", "webSearchResults", "maxReportBytes", "maxAnalysisArtifactBytes", "maxFeatureRecommendations"],
-	solve: ["maxIterations", "sealedFraction", "seed", "foldPolicy", "experimentUpdateIntervalSeconds"],
+	solve: ["maxIterations", "seed", "foldPolicy", "experimentUpdateIntervalSeconds"],
+	holdout: ["targetSmallestClassRows", "minSmallestClassRows", "maxFraction", "groupFraction"],
 	search: ["confirmAboveSeconds", "overrunFactor", "maxSeconds", "validationTimeoutSeconds"],
 	supervisor: ["updateIntervalMs", "linesPerUpdate", "minStallMs", "stallGapMultiple", "importPreludeMs", "idleCpuPercent", "sampleIntervalMs", "maxConcurrent", "stopGraceMs"],
 	subagents: ["turnTimeoutMs", "waitTimeoutMs", "maxWaitTimeoutMs", "limits"],
@@ -35,12 +36,13 @@ export function parseHarnessConfig(raw: unknown): HarnessConfig {
 	for (const [section, keys] of Object.entries(fields)) {
 		const block = object(value[section], keys, section);
 		for (const key of keys) {
-			if (["injectStartupContext", "sealedFraction", "seed", "foldPolicy", "limits", "overrunFactor"].includes(key)) continue;
+			if (["injectStartupContext", "maxFraction", "groupFraction", "seed", "foldPolicy", "limits", "overrunFactor"].includes(key)) continue;
 			positive(block[key], `${section}.${key}`);
 		}
 	}
 	if (typeof value.research.injectStartupContext !== "boolean") throw new Error("Invalid startup context setting");
-	if (!(typeof value.solve.sealedFraction === "number" && value.solve.sealedFraction > 0 && value.solve.sealedFraction < 0.5)) throw new Error("Invalid sealed fraction");
+	for (const key of ["maxFraction", "groupFraction"]) if (!(typeof value.holdout[key] === "number" && value.holdout[key] > 0 && value.holdout[key] < 0.5)) throw new Error(`Invalid holdout.${key}`);
+	if (value.holdout.minSmallestClassRows > value.holdout.targetSmallestClassRows) throw new Error("holdout minimum exceeds target");
 	if (!Number.isSafeInteger(value.solve.seed)) throw new Error("Invalid root seed");
 	if (!(typeof value.search.overrunFactor === "number" && value.search.overrunFactor > 1 && value.search.overrunFactor <= 10)) {
 		throw new Error("search.overrunFactor must be a number above 1 and at most 10");

@@ -34,6 +34,32 @@ function controllable(work: Work) {
 }
 function request(c: Coordinator, stage: StageName, id: string, artifactIds: string[] = []) { return { stage, actionId: id, expectedRevision: c.state.revision, rationale: "Use validated evidence to investigate the next candidate", objective: "Measured task improvement", artifactIds }; }
 
+test("confirmation remains visible to the controller but cannot enter solve inputs or feedback", async () => {
+ const f = fixture();
+ let child!: ReturnType<typeof controllable>;
+ const c = new Coordinator(f.store, { start: work => { child = controllable(work); return child.handle; } });
+ const producer = c.start(request(c, "solve", "champion"));
+ const artifacts = Array.from({ length: 20 }, (_, index) => ({ kind: `fold-${index}`, contents: {} }));
+ artifacts.push({ kind: "holdout_confirmation", contents: { readCount: 1, populationReadCount: 1 } as any });
+ const work = c.state.works.find(w => w.id === producer.invocationId)!;
+ const saved = artifacts.map((value, index) => {
+  const path = join(f.directory, `evidence-${index}.json`), bytes = JSON.stringify(value.contents); writeFileSync(path, bytes);
+  return { kind: value.kind, path, bytes: bytes.length, sha256: hash(bytes), provenance: { artifactId: `artifact-${index}`, taskId: "fixture", pipelineRunId: f.state.runId, invocationId: work.id, sha256: hash(bytes) } };
+ });
+ child.resolve(fakeResult(work, { artifacts: saved, summary: { holdout_confirmation: { readCount: 1, balancedAccuracy: .8 } } }));
+ await c.settle();
+ const id = saved.at(-1)!.provenance.artifactId;
+ expect((c.status() as any).artifacts.some((a: any) => a.id === id)).toBe(true);
+ expect(JSON.stringify(c.inspect(id))).toContain('readCount');
+ expect(() => c.start(request(c, "solve", "bad-input", [id]))).toThrow("must not enter solve");
+ expect(() => c.start({ ...request(c, "solve", "bad-guidance"), evidenceIds: [id], guidance: "Use confirmation" })).toThrow("must not enter solve");
+ const next = c.start(request(c, "solve", "next"));
+ await expect(c.feedback({ actionId: "bad-feedback", expectedRevision: c.state.revision, rationale: "holdout", invocationId: next.invocationId as string, message: "Use confirmation", evidenceIds: [id] })).rejects.toThrow("must not enter solve feedback");
+ expect(child.feedback).toHaveLength(0);
+ c.cancel({ actionId: "stop", expectedRevision: c.state.revision, rationale: "fixture finished", invocationId: next.invocationId as string });
+ await c.settle(); c.close();
+});
+
 test("durable action IDs reject conflicts/stale revisions and serialize mutating work", async () => {
  const f = fixture(); let child!: ReturnType<typeof controllable>; let launches = 0;
  const c = new Coordinator(f.store, { start: work => { launches++; child = controllable(work); return child.handle; } });

@@ -45,7 +45,7 @@ test("invalid tuning values fail before starting sessions", () => {
 		(value: any) => { value.context.handoffTokens = 0; },
 		(value: any) => { value.supervisor.sampleIntervalMs = -1; },
 		(value: any) => { value.session.timeoutMs = 3_000_000_000; },
-		(value: any) => { value.solve.sealedFraction = 0.7; },
+		(value: any) => { value.holdout.maxFraction = 0.7; },
 		(value: any) => { value.subagents.waitTimeoutMs = value.subagents.maxWaitTimeoutMs + 1; },
 		(value: any) => { value.foldRecommendations[1].belowRows = 1; },
 		(value: any) => { value.solve.typo = 30; },

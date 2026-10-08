@@ -31,8 +31,19 @@ describe("recommendFolds", () => {
 });
 
 describe("sealConfirmationSet", () => {
+	test("class counts determine target, reduced and absent precision", () => {
+		const corpus = (zero: number, one: number) => Array.from({ length: zero + one }, (_, index) => ({ id: `sample-${index}`, label: (index < zero ? 0 : 1) as 0 | 1 }));
+		expect(sealConfirmationSet(corpus(8360, 8302))).toMatchObject({ precision: "target", perClass: { "0": 201, "1": 200 }, rows: 401 });
+		expect(sealConfirmationSet(corpus(13074, 5682))).toMatchObject({ precision: "target", perClass: { "0": 460, "1": 200 }, rows: 660 });
+		expect(sealConfirmationSet(corpus(3007, 554))).toMatchObject({ precision: "reduced", fraction: .2, perClass: { "0": 601, "1": 111 }, rows: 712 });
+		expect(sealConfirmationSet(corpus(100, 20))).toMatchObject({ precision: "none", fraction: 0, sealedIds: [], rows: 0 });
+	});
+	test("rounds exact per-class counts half up", () => {
+		const split = sealConfirmationSet(rows(55), { policy: { targetSmallestClassRows: 20, minSmallestClassRows: 1, maxFraction: .25 } });
+		expect(split.perClass).toEqual({ "0": 7, "1": 7 });
+	});
 	test("draws the requested fraction, stratified", () => {
-		const split = sealConfirmationSet(rows(1_000), { fraction: 0.1, seed: 13 });
+		const split = sealConfirmationSet(rows(1_000), { policy: { targetSmallestClassRows: 50, minSmallestClassRows: 20, maxFraction: .2 }, seed: 13 });
 		expect(split.sealedIds).toHaveLength(100);
 		expect(split.devRows).toHaveLength(900);
 		const sealed = new Set(split.sealedIds);
@@ -65,8 +76,8 @@ describe("sealConfirmationSet", () => {
 	});
 
 	test("rejects a fraction that would seal too much", () => {
-		expect(() => sealConfirmationSet(rows(100), { fraction: 0 })).toThrow();
-		expect(() => sealConfirmationSet(rows(100), { fraction: 0.9 })).toThrow();
+		expect(() => sealConfirmationSet(rows(100), { policy: { targetSmallestClassRows: 200, minSmallestClassRows: 50, maxFraction: 0 } })).toThrow();
+		expect(() => sealConfirmationSet(rows(100), { policy: { targetSmallestClassRows: 20, minSmallestClassRows: 50, maxFraction: .2 } })).toThrow();
 	});
 });
 

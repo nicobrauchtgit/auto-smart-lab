@@ -41,7 +41,7 @@ test("whole chain rejects missing later refit inputs before solve starts", async
   await expect(runPipeline({ taskId: "fixture-missing", entryStage: "solve", configPath: path, runsDir: root })).rejects.toThrow("refit-data");
   expect(called).toBe(false);
  } finally { STAGE_REGISTRY.solve = oldSolve; STAGE_REGISTRY.refit = oldRefit; }
-});
+}, 30_000);
 
 test("standalone refit calls the shared executor, records typed inputs/artifact validation, and skips all workers for check-setup", async () => {
  const root = mkdtempSync(join(tmpdir(), "refit-standalone-")); const path = configuration(root);

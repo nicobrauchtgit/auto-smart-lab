@@ -302,46 +302,17 @@ Preview the startup context without calling a model:
 
 ### Solve output
 
-The solve agent owns the model implementation under `solutions/`. The harness owns measurement. It removes a sealed confirmation split from the labels available to the agent, recomputes reported scores, checks prediction coverage, runs a filename-leakage canary, and compares challengers against the current champion.
+The solve agent writes an unfitted pipeline under `solutions/`. The harness owns folds, seeds, fits, predictions, measurements and paired champion comparison. Solve gives the agent a development archive and opaque sample manifest; sealed rows and original full labels remain outside its filesystem boundary.
 
-The two-file agent contract is accompanied by predictions and notes in the run workspace:
+Training trials contain harness-written `trial-result.json`, `metrics.json`, fold measurements and `oof_predictions.csv`. After the agent closes, binary classification also returns a hashed `holdout_confirmation` artifact. The frozen champion fits on development rows and predicts sealed rows once; its receipt reports balanced accuracy, a 95% stratified bootstrap interval, the CV gap, precision and recorded reuse. Evaluation treats this as advisory evidence. Terminal refit checks the confirmed candidate before fitting all training rows.
 
-- `metrics.json` describes cross-validation and the chosen entrypoint;
-- `oof_predictions.csv` contains development predictions;
-- `confirmation_predictions.csv` contains predictions for sealed IDs;
-- `notes.md` records attempted and rejected approaches;
-- `iterations.jsonl` is written by the harness.
-
-See [Solve stage harness](agent/solve/README.md) for the exact contract and diagnostics.
+See [Held-back confirmation](docs/held-back-confirmation.md), [Solve workspace](agent/solve/README.md) and [Harness-owned training](docs/harness-owned-training.md).
 
 ### Filename-leakage canary
 
-The spam training archive contains a dangerous shortcut. Training filenames end in `.0` or `.1`, which reveals the class label, while test filenames end in `.x`. A model that uses the path or filename can score almost perfectly in local cross-validation and then fail on the real test set.
+Training member names may end in `.0` or `.1`, revealing their labels; test IDs use `.x`. After each classification validation prediction, the harness predicts again with neutral IDs and ZIP member names while preserving sample bytes. It compares both predictions and continuous scores, without another fit. A mismatch excludes the trial from promotion and gives the agent one repair message; matching outputs are silent. The same canary runs during sealed confirmation.
 
-The canary in `agent/solve/canary.py` tests the agent's own pipeline rather than scanning source code for suspicious feature names:
-
-1. It takes a class-balanced sample of at most 400 development examples.
-2. It loads the factory declared by `solutions/tasks/<task-id>.py`.
-3. It fits one fresh pipeline with the real IDs.
-4. It rewrites only those IDs to neutral `.x` forms and fits another fresh pipeline on the same text and labels.
-5. It compares `predict_proba` or `decision_function` values. It falls back to hard predictions only when the estimator exposes neither continuous output.
-6. It passes only when the outputs are equal within a tolerance of `1e-8`.
-
-Continuous scores matter here. The leaked filename may change a model's confidence without changing its final class on an easy sample. Comparing labels alone would miss that dependence.
-
-A canary failure blocks champion promotion because the measured validation score cannot be trusted until the pipeline is verified. The result identifies the actual failure class:
-
-| Result kind | Meaning |
-| --- | --- |
-| `passed` | Model output did not change when IDs were neutralized |
-| `id_dependence` | Output changed when only the ID changed, which is evidence of leakage |
-| `entrypoint_failed` | The declared model factory could not be loaded |
-| `fit_failed` | The pipeline could not fit or produce output during the check |
-| `sample_unusable` | The canary could not construct or load a valid two-class sample |
-
-Only `id_dependence` proves that the implementation reads label-bearing IDs. The other failures mean the canary could not verify the model. They still block promotion, but the solver receives different repair guidance. The canary also records the sample fit time so the harness can estimate the cost of a full cross-validation pass.
-
-The canary is separate from the sealed confirmation split. The canary tests feature independence from filenames. The sealed split measures whether repeated development decisions are drifting away from unseen labels.
+See [ID leakage canary](docs/id-leakage-canary.md) for the checked paths and limits.
 
 ## Telemetry and trace dashboard
 

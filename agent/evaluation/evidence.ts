@@ -7,6 +7,7 @@ import { collectTrainingResults, collectTrainingTrial } from "../training/result
 import { championSelection, recordedRepository } from "../training/development_selection.js";
 import { readPythonEnvironment } from "../run/python_environment.js";
 import type { StageArtifact } from "../pipeline/types.js";
+import { confirmedCandidate } from "../confirmation/receipt.js";
 
 export const digest = (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex");
 export function artifact(kind: string, path: string): StageArtifact {
@@ -53,6 +54,18 @@ export async function prepareEvidence(upstream: StageArtifact[], signal: AbortSi
   if (digest(readFileSync(source.path)) !== source.sha256) throw new Error(`Evidence changed during evaluation: ${source.kind}`);
  }
  const diagnostics = JSON.parse(stdout);
+ const source = trial.invocation?.source as { commit: string; tree: string };
+ const confirmation = confirmedCandidate(dirname(repository!), taskId, { chosenExperimentId: trial.experimentId,
+  source: { commit: source.commit, tree: source.tree }, pipeline: trial.request!.pipeline });
+ if (confirmation) {
+  const supplied = upstream.find(a => a.kind === "holdout_confirmation" && resolve(a.path) === resolve(confirmation.path) && a.sha256 === confirmation.sha256);
+  if (!supplied) throw new Error("Missing or changed upstream holdout confirmation");
+  sources.push({ ...artifact("holdout_confirmation", confirmation.path), experimentId: trial.experimentId } as typeof sources[number]);
+  if (confirmation.record.status === "completed") await promisify(execFile)(readPythonEnvironment().executable,
+   [new URL("../training/python/confirm.py", import.meta.url).pathname, "--directory", dirname(confirmation.path), "--validate"],
+   { signal, timeout: 30_000, maxBuffer: 1024 * 1024 });
+  diagnostics.holdoutConfirmation = { ...confirmation.record, populationReadCount: confirmation.populationReadCount };
+ }
  return { directory, experimentId: trial.experimentId, sources, diagnostics,
   candidate: { request: trial.request, trialsConsidered: collection.trials.length,
    eligibleTrials: collection.trials.filter(t => t.eligible).length,

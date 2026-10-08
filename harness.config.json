@@ -22,10 +22,15 @@
   },
   "solve": {
     "maxIterations": 6,
-    "sealedFraction": 0.1,
     "seed": 13,
     "foldPolicy": "auto",
     "experimentUpdateIntervalSeconds": 30
+  },
+  "holdout": {
+    "targetSmallestClassRows": 200,
+    "minSmallestClassRows": 50,
+    "maxFraction": 0.2,
+    "groupFraction": 0.1
   },
   "search": {
     "confirmAboveSeconds": 900,

@@ -150,6 +150,7 @@ export class Coordinator {
   if (s.works.some(w => w.stage === "solve" && w.status === "interrupted" && (w.summary as any)?.trainingRecoveryRequired) && request.stage !== "solve") throw new Error("Reconcile lost solver's owned training through a new solve invocation before other workspace work");
   if (s.counters.stages >= s.limits.maxStages) throw new Error("Stage budget exhausted");
   const upstream = this.selected(request.artifactIds);
+  if (request.stage === "solve" && [...upstream, ...this.selected(request.evidenceIds ?? [])].some(a => a.kind === "holdout_confirmation")) throw new Error("Held-back confirmation must not enter solve inputs or guidance");
   for (const artifact of upstream) {
    const producer = s.works.find(w => w.id === artifact.provenance?.invocationId);
    if (producer?.result?.outcome !== "success" || producer.result.validation?.valid !== true) throw new Error("Upstream artifact did not pass its producer's authoritative validation");
@@ -253,7 +254,9 @@ export class Coordinator {
   text(request.message, 8192); const work = this.state.works.find(w => w.id === request.invocationId), handle = this.handles.get(request.invocationId);
   if (!work || !handle || terminal(work)) throw new Error("Invocation has no live feedback receiver; start a new invocation");
   if (!["research", "solve", "evaluate"].includes(work.stage)) throw new Error("Feedback unsupported for deterministic stage");
-  const evidence: EvidenceReference[] = this.selected(request.evidenceIds).map(a => a.provenance!);
+  const selectedEvidence = this.selected(request.evidenceIds);
+  if (work.stage === "solve" && selectedEvidence.some(a => a.kind === "holdout_confirmation")) throw new Error("Held-back confirmation must not enter solve feedback");
+  const evidence: EvidenceReference[] = selectedEvidence.map(a => a.provenance!);
   const note = { id: request.actionId, stage: work.stage, taskId: this.state.taskId, content: request.message, evidence, author: { name: "orchestrator", logicalSessionId: this.state.controlInvocationId } };
   const receipt = { accepted: true, deliveryId: request.actionId, state: "pending" };
   this.commit("feedback_accepted", { ...request }, s => { s.actions.push(this.action(request, "stage_feedback", receipt)); });
@@ -273,7 +276,7 @@ export class Coordinator {
   if (!Number.isSafeInteger(offset) || offset < 0 || offset > (artifact.bytes ?? 0)) throw new Error("Invalid detail cursor");
   const bytes = readFileSync(artifact.snapshotPath); if (hash(bytes) !== artifact.sha256) throw new Error("Artifact snapshot corrupted");
   // Predictions, labels, models and raw dataset rows never enter controller context.
-  if (!/^(research_document|research_context|training_trial_result|training_selected_result|evaluation_report|terminal_refit_result|submission_receipt)$/.test(artifact.kind)) throw new Error("Artifact kind is not available through bounded controller detail");
+  if (!/^(research_document|research_context|training_trial_result|training_selected_result|holdout_confirmation|evaluation_report|terminal_refit_result|submission_receipt)$/.test(artifact.kind)) throw new Error("Artifact kind is not available through bounded controller detail");
   const content = bytes.toString("utf8");
   if (artifact.kind !== "research_document") {
    const parsed = JSON.parse(content);
@@ -336,7 +339,7 @@ function unresolvedSubmission(work: Work): boolean {
  const content = (work.summary?.measurements as any)?.content;
  return work.stage === "submit" && (work.status === "uncertain" || ["pending", "unknown"].includes(content?.state) || content?.reservedUnknown > 0);
 }
-function requiredArtifact(kind: string) { return ["research_document", "training_selected_result", "evaluation_report", "terminal_refit_result", "submission_receipt"].includes(kind); }
+function requiredArtifact(kind: string) { return ["research_document", "training_selected_result", "holdout_confirmation", "evaluation_report", "terminal_refit_result", "submission_receipt"].includes(kind); }
 function statExists(path: string) { try { statSync(path); return true; } catch { return false; } }
 export function boundedSummary(value: unknown, maxBytes: number): Record<string, unknown> {
  function bound(v: any, depth = 0): any { if (depth > 4) return { omitted: true }; if (typeof v === "string") return v.length > 512 ? `${v.slice(0, 512)}…` : v; if (Array.isArray(v)) return v.slice(0, 12).map(x => bound(x, depth + 1)); if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).slice(0, 24).filter(([k]) => !/prediction|label|target|row|curve|sealed.*score|model.pkl/i.test(k)).map(([k, x]) => [k, bound(x, depth + 1)])); return v; }

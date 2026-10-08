@@ -26,6 +26,7 @@ import { readPythonEnvironment, type PythonEnvironment } from "./python_environm
 import type { TaskConfiguration } from "../pipeline/task_configuration.js";
 import { prepareSolveSandbox, isolatedSolveTools, solvePythonEnvironmentTool, trainingSandboxCommand } from "./solve_sandbox.js";
 import { runSession } from "./session_runner.js";
+import { runConfirmation, type ConfirmationOutput } from "../confirmation/service.js";
 
 export type HarnessSolveStopReason = "agent_finished" | "agent_failed" | "cancelled" | "no_promotion";
 
@@ -39,6 +40,7 @@ export interface HarnessSolveResult {
 	stopReason: HarnessSolveStopReason;
 	collection: TrainingCollection;
 	sessionError?: string;
+	confirmation?: ConfirmationOutput;
 }
 
 export interface RunHarnessSolveOptions {
@@ -48,7 +50,6 @@ export interface RunHarnessSolveOptions {
  feedback?: InvocationFeedback;
 	/** Advisory experiment budget shown to the agent; the agent decides when fitting is useful. */
 	maxTrials?: number;
-	sealedFraction?: number;
 	seed?: number;
 	foldPolicy?: "auto" | { folds: number; repeats: number };
 	/** Minimum seconds between routine experiment updates. */
@@ -71,6 +72,7 @@ export interface HarnessSolveDependencies {
 	collectResults: typeof collectTrainingResults;
 	prepareRepository: typeof ensureSolutionsRepository;
 	prepareSandbox: typeof prepareSolveSandbox;
+	confirm: typeof runConfirmation;
 }
 
 const DEFAULT_DEPENDENCIES: HarnessSolveDependencies = {
@@ -81,6 +83,7 @@ const DEFAULT_DEPENDENCIES: HarnessSolveDependencies = {
 	collectResults: collectTrainingResults,
 	prepareRepository: ensureSolutionsRepository,
 	prepareSandbox: prepareSolveSandbox,
+	confirm: runConfirmation,
 };
 
 const sha256 = (content: string | Buffer) => createHash("sha256").update(content).digest("hex");
@@ -195,7 +198,6 @@ export async function runHarnessSolveSession(
 	const report = options.report;
 	const workspace = dependencies.prepareWorkspace(taskId, {
 		configuration: options.taskConfiguration,
-		sealedFraction: options.sealedFraction,
 		seed: options.seed,
 		upstream: options.upstream,
 	});
@@ -234,6 +236,8 @@ export async function runHarnessSolveSession(
 		sealed_rows: workspace.split.sealedIds.length,
 		sealed_sha256: workspace.split.sha256,
 		holdout: workspace.split.scheme,
+		holdout_metadata: workspace.split.confirmation,
+		holdout_seed_plan: workspace.holdoutSeedPlan,
 		task_kind: workspace.configuration.kind,
 		fold_recommendation: shape,
 		training_root: trainingRoot,
@@ -263,7 +267,6 @@ export async function runHarnessSolveSession(
 		version: 1, defaults: HARNESS_CONFIG,
 		solve: { ...HARNESS_CONFIG.solve, maxIterations: options.maxTrials ?? HARNESS_CONFIG.solve.maxIterations,
 			seed: options.seed ?? HARNESS_CONFIG.solve.seed,
-			sealedFraction: options.sealedFraction ?? HARNESS_CONFIG.solve.sealedFraction,
 			foldPolicy: options.foldPolicy ?? HARNESS_CONFIG.solve.foldPolicy,
 			experimentUpdateIntervalSeconds: options.experimentUpdateIntervalSeconds ?? HARNESS_CONFIG.solve.experimentUpdateIntervalSeconds },
 		foldRecommendation: shape,
@@ -349,6 +352,18 @@ export async function runHarnessSolveSession(
 
 	const collection = await championSelection(await dependencies.collectResults(trainingRoot), workspace.solutionsRoot, taskId);
 	const errors = collection.valid ? [] : collection.errors.map((error) => error.message);
+	let confirmation: ConfirmationOutput | undefined;
+	if (collection.valid && collection.selected && workspace.holdoutSeedPlan && !options.signal?.aborted) {
+		try {
+			confirmation = await dependencies.confirm({ workspace, pythonExecutable: python.executable,
+				environmentFingerprint: python.fingerprint, env: workerEnvironment(python), signal: options.signal, report,
+				sandboxCommand: (command, input) => trainingSandboxCommand(sandbox, command, input) });
+		} catch (error) {
+			options.signal?.throwIfAborted();
+			errors.push(error instanceof Error ? error.message : String(error));
+			collection.valid = false;
+		}
+	}
 	if (!collection.valid && stopReason === "agent_finished") stopReason = "no_promotion";
 	report?.event("training_results_validated", {
 		valid: collection.valid,
@@ -364,6 +379,7 @@ export async function runHarnessSolveSession(
 		selected_experiment_id: collection.selected?.experimentId,
 		selected_metric: primaryMetric(workspace, collection.selected?.result?.metrics as Record<string, unknown> | undefined),
         selected_selection: selectionSummary(collection.selected?.result),
+        holdout_confirmation: confirmation?.summary,
 		errors,
 		trial_validation_errors: collection.errors,
 		session_error: sessionError,
@@ -378,6 +394,7 @@ export async function runHarnessSolveSession(
 		attempts: 1,
 		stopReason,
 		collection,
+		...(confirmation ? { confirmation } : {}),
 		...(sessionError ? { sessionError } : {}),
 	};
 }

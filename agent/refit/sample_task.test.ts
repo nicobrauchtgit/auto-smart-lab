@@ -83,7 +83,7 @@ test.skipIf(!hasZip)("a declared clustering task runs from sealed families throu
 	zip(join(project.root, "staging-test"), join(taskDir, "data", "apk-test.zip"), test);
 	writeFileSync(join(taskDir, "data", "apk-train.labels"), `${labels.join("\n")}\n`);
 
-	const workspace = prepareSolveWorkspace("fixture", { configuration: CLUSTERING, projectRoot: project.root, taskDir, pythonExecutable: PYTHON, seed: 13, sealedFraction: 0.1 });
+	const workspace = prepareSolveWorkspace("fixture", { configuration: CLUSTERING, projectRoot: project.root, taskDir, pythonExecutable: PYTHON, seed: 13 });
 	// Whole families are sealed, so the confirmation rows hold only unseen families.
 	const manifest = JSON.parse(readFileSync(workspace.sampleManifestPath!, "utf8"));
 	const devFamilies = new Set(manifest.samples.map((sample: { target: string }) => sample.target));

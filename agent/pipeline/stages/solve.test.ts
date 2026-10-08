@@ -16,7 +16,7 @@ writeFileSync(RESEARCH, "# Research\n");
 describe("solve stage options", () => {
 	test("applies defaults", () => {
 		expect(solveStage.parseOptions(undefined)).toEqual({
-			maxIterations: 6, sealedFraction: 0.1, seed: 13, foldPolicy: "auto",
+			maxIterations: 6, seed: 13, foldPolicy: "auto",
 			experimentUpdateIntervalSeconds: 30,
 		});
 	});

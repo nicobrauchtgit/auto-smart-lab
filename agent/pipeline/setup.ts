@@ -15,7 +15,7 @@ import { KnowledgeStore } from "../knowledge/store.js";
 import { selectedKnowledge } from "../knowledge/service.js";
 import { submissionSetupChecks, submissionRecoverySetupChecks } from "../submission/setup.js";
 
-export type SetupRequirement = "model" | "python" | "task" | "training" | "evaluation" | "refit" | "web-search" | "knowledge" | "submission" | "submission-recovery" | "orchestrator" | "solve-isolation";
+export type SetupRequirement = "model" | "python" | "task" | "training" | "evaluation" | "refit" | "web-search" | "knowledge" | "submission" | "submission-recovery" | "orchestrator" | "solve-isolation" | "confirmation";
 export interface SetupCheck {
  id: string;
  phase: "local" | "remote";
@@ -137,6 +137,11 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
   readable(join(PROJECT_ROOT, "agent/training/python/pcap_samples.py"));
   const result = spawnSync(options.executables?.python ?? projectPython(), ["-c", "import dpkt"], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });
   if (result.error || result.status !== 0) throw new Error("PCAP sample dependency unavailable");
+ });
+ if (needs.has("confirmation") || ((needs.has("evaluation") || needs.has("refit")) && options.taskConfiguration?.kind === "binary_classification")) add("holdout-confirmation-runtime", "local", "Restore confirm.py, confirmation service/receipt modules and shared metric/canary helpers; run ./dev setup for numpy/pandas/sklearn. Confirmation requires git worktrees and verified process-group ownership.", () => {
+  for (const file of ["training/python/confirm.py", "training/python/runner.py", "confirmation/service.ts", "confirmation/receipt.ts", "training/python/smartlab_trial/id_leakage.py"]) readable(join(PROJECT_ROOT, "agent", file));
+  const result = spawnSync(options.executables?.python ?? projectPython(), ["-c", "import numpy,pandas,sklearn,fcntl"], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });
+  if (result.error || result.status !== 0 || !processIdentity(process.pid)) throw new Error("Confirmation runtime unavailable");
  });
  if (needs.has("python")) add("python-environment", "local", "Run ./dev setup; declarations, lockfile and installed packages must agree.", () => { readPythonEnvironment(); });
  if (needs.has("evaluation")) {

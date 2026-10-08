@@ -2,18 +2,22 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { frameworkHash } from "./service.js";
+import { frameworkHash, REFIT_FRAMEWORK_FILES } from "./service.js";
 
-test("terminal framework identity changes when imported PCAP adapter changes", () => {
+test("terminal framework identity covers PCAP and confirmation verification dependencies", () => {
  const root = mkdtempSync(join(tmpdir(), "refit-framework-"));
  try {
-  for (const path of ["refit/worker.py", "training/python/runner.py", "refit/evidence.py", "training/python/task_samples.py", "training/python/pcap_samples.py"]) {
+  for (const path of REFIT_FRAMEWORK_FILES) {
    mkdirSync(dirname(join(root, path)), { recursive: true });
    writeFileSync(join(root, path), `# immutable fixture ${path}\n`);
   }
   const frozen = frameworkHash(root);
-  writeFileSync(join(root, "training/python/pcap_samples.py"), "# changed connection identity semantics\n");
-  expect(frameworkHash(root)).not.toBe(frozen);
+  for (const path of ["training/python/pcap_samples.py", "training/python/confirm.py", "confirmation/receipt.ts", "training/python/smartlab_trial/metrics.py"]) {
+   writeFileSync(join(root, path), "# changed verification semantics\n");
+   expect(frameworkHash(root)).not.toBe(frozen);
+   writeFileSync(join(root, path), `# immutable fixture ${path}\n`);
+   expect(frameworkHash(root)).toBe(frozen);
+  }
   rmSync(join(root, "training/python/pcap_samples.py"));
   expect(() => frameworkHash(root)).toThrow();
  } finally { rmSync(root, { recursive: true, force: true }); }

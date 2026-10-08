@@ -51,38 +51,53 @@ export interface SealedSplit {
 	sha256: string;
 }
 
-/**
- * Draw a stratified confirmation set that stays identical for a task across every
- * iteration and every run at the same seed, so repeated runs are comparable and
- * the split cannot drift into data the agent has already optimised against.
- *
- * The draw reuses `createStratifiedFolds`: one fold of `round(1 / fraction)` is
- * exactly a stratified sample of that fraction, so there is no second splitter to
- * keep in step with the first.
- */
+export interface HoldoutPolicy {
+    targetSmallestClassRows: number;
+    minSmallestClassRows: number;
+    maxFraction: number;
+}
+export interface HoldoutMetadata {
+    rows: number;
+    perClass: Record<string, number>;
+    precision: "target" | "reduced" | "none";
+    reason?: string;
+}
+
+/** Exact, size-aware stratified draw; input ordering never affects membership. */
 export function sealConfirmationSet(
-	rows: readonly TrainingLabelRow[],
-	options: { fraction?: number; seed?: number } = {},
-): SealedSplit {
-	const fraction = options.fraction ?? HARNESS_CONFIG.solve.sealedFraction;
-	const seed = options.seed ?? HARNESS_CONFIG.solve.seed;
-	if (!(fraction > 0 && fraction < 1)) throw new Error("sealed fraction must be between 0 and 1");
-	const parts = Math.round(1 / fraction);
-	if (parts < 2) throw new Error("sealed fraction must leave at least half the rows for development");
-	// Ordering is fixed before the draw so the split depends on the seed and the
-	// row set, never on the order the labels file happened to arrive in.
-	const ordered = [...rows].sort((left, right) => left.id.localeCompare(right.id));
-	const folds = createStratifiedFolds(ordered.map((row) => row.label), parts, seed);
-	const sealedRows = new Set(folds[0]);
-	const sealedIds = folds[0].map((index) => ordered[index].id).sort();
-	const devRows = ordered.filter((_, index) => !sealedRows.has(index));
-	return {
-		sealedIds,
-		devRows,
-		fraction,
-		seed,
-		sha256: createHash("sha256").update(JSON.stringify({ seed, fraction, sealedIds })).digest("hex"),
-	};
+    rows: readonly TrainingLabelRow[],
+    options: { policy?: HoldoutPolicy; seed?: number } = {},
+): SealedSplit & HoldoutMetadata {
+    const policy = options.policy ?? HARNESS_CONFIG.holdout;
+    const seed = options.seed ?? HARNESS_CONFIG.solve.seed;
+    if (!Number.isSafeInteger(policy.targetSmallestClassRows) || policy.targetSmallestClassRows < 1
+        || !Number.isSafeInteger(policy.minSmallestClassRows) || policy.minSmallestClassRows < 1
+        || policy.minSmallestClassRows > policy.targetSmallestClassRows
+        || !(policy.maxFraction > 0 && policy.maxFraction < 0.5)) throw new Error("Invalid holdout policy");
+    if (!rows.length || new Set(rows.map(row => row.id)).size !== rows.length
+        || rows.some(row => row.label !== 0 && row.label !== 1)) throw new Error("Holdout needs unique binary-labelled rows");
+    const ordered = [...rows].sort((a, b) => a.id.localeCompare(b.id));
+    const classes = [ordered.filter(row => row.label === 0), ordered.filter(row => row.label === 1)];
+    const smallest = Math.min(...classes.map(values => values.length));
+    const requested = smallest ? policy.targetSmallestClassRows / smallest : Infinity;
+    let fraction = Math.min(requested, policy.maxFraction);
+    let precision: HoldoutMetadata["precision"] = requested <= policy.maxFraction ? "target" : "reduced";
+    if (Math.floor(smallest * fraction + 0.5) < policy.minSmallestClassRows) { fraction = 0; precision = "none"; }
+    const perClass: Record<string, number> = {};
+    const sealedIds: string[] = [];
+    classes.forEach((values, label) => {
+        const indices = values.map((_, index) => index);
+        seededShuffle(indices, seed + label * 9973);
+        const count = Math.floor(values.length * fraction + 0.5);
+        perClass[String(label)] = count;
+        sealedIds.push(...indices.slice(0, count).map(index => values[index].id));
+    });
+    sealedIds.sort();
+    const sealed = new Set(sealedIds);
+    return { sealedIds, devRows: ordered.filter(row => !sealed.has(row.id)), fraction, seed,
+        rows: sealedIds.length, perClass, precision,
+        ...(precision === "none" ? { reason: "Too few rows in the smallest class for an independent confirmation estimate" } : {}),
+        sha256: createHash("sha256").update(JSON.stringify({ version: 2, seed, policy, sealedIds })).digest("hex") };
 }
 
 /** A sealed split over arbitrary IDs; family tasks seal whole families. */
@@ -107,7 +122,7 @@ export function sealGroups(
 	rows: readonly { id: string; group: string }[],
 	options: { fraction?: number; seed?: number } = {},
 ): IdSealedSplit {
-	const fraction = options.fraction ?? HARNESS_CONFIG.solve.sealedFraction;
+	const fraction = options.fraction ?? HARNESS_CONFIG.holdout.groupFraction;
 	const seed = options.seed ?? HARNESS_CONFIG.solve.seed;
 	if (!(fraction > 0 && fraction < 0.5)) throw new Error("sealed fraction must be above 0 and below 0.5");
 	const groups = [...new Set(rows.map(row => row.group))].sort();

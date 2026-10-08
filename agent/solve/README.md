@@ -20,3 +20,8 @@ This directory prepares what a solve run starts from.
 - Every loader opens the zip once. `zipfile.ZipFile()` reparses the whole central
   directory per construction, so a per-document open costs minutes instead of a
   fraction of a second.
+
+Binary holdouts use class-based sizing rather than a fixed fraction. After the
+agent and training workers close, `agent/confirmation/` measures the exact frozen
+champion on sealed rows. Its immutable receipt, reuse ledger and evaluation/refit
+checks are documented in [Held-back confirmation](../../docs/held-back-confirmation.md).

@@ -45,8 +45,6 @@ export function entrypointArtifact(selected: TrainingTrialResult | undefined): S
 export interface SolveOptions {
 	/** Maximum harness trials the agent may start; it may stop earlier. */
 	maxIterations: number;
-	/** Fraction of training rows sealed out of every fold for the whole run. */
-	sealedFraction: number;
 	/** Root seed for the sealed draw and harness-owned training seed lineage. */
 	seed: number;
 	foldPolicy: "auto" | { folds: number; repeats: number };
@@ -74,7 +72,7 @@ function parseFoldPolicy(raw: unknown): SolveOptions["foldPolicy"] {
 
 export const solveStage: StageDefinition<SolveOptions> = {
 	name: "solve",
-	setupRequirements: ["knowledge", "model", "python", "task", "training", "web-search", "solve-isolation"],
+	setupRequirements: ["knowledge", "model", "python", "task", "training", "web-search", "solve-isolation", "confirmation"],
 	version: 1,
 	description: "Build and iteratively improve a model, judged on recomputed out-of-fold measurements",
 	next: "evaluate",
@@ -84,17 +82,13 @@ export const solveStage: StageDefinition<SolveOptions> = {
 			throw new Error("solve options must be an object");
 		}
 		const options = (raw ?? {}) as Record<string, unknown>;
-		const known = new Set(["maxIterations", "sealedFraction", "seed", "foldPolicy", "experimentUpdateIntervalSeconds"]);
+		const known = new Set(["maxIterations", "seed", "foldPolicy", "experimentUpdateIntervalSeconds"]);
 		const unknown = Object.keys(options).filter((key) => !known.has(key));
 		if (unknown.length > 0) throw new Error(`unknown solve options: ${unknown.join(", ")}`);
 
 		const maxIterations = options.maxIterations ?? HARNESS_CONFIG.solve.maxIterations;
 		if (!Number.isInteger(maxIterations) || (maxIterations as number) < 1) {
 			throw new Error("solve.maxIterations must be a positive integer");
-		}
-		const sealedFraction = options.sealedFraction ?? HARNESS_CONFIG.solve.sealedFraction;
-		if (typeof sealedFraction !== "number" || !(sealedFraction > 0 && sealedFraction < 0.5)) {
-			throw new Error("solve.sealedFraction must be a number above 0 and below 0.5");
 		}
 		const seed = options.seed ?? HARNESS_CONFIG.solve.seed;
 		if (!Number.isInteger(seed)) throw new Error("solve.seed must be an integer");
@@ -105,7 +99,6 @@ export const solveStage: StageDefinition<SolveOptions> = {
 
 		return {
 			maxIterations: maxIterations as number,
-			sealedFraction,
 			seed: seed as number,
 			foldPolicy: parseFoldPolicy(options.foldPolicy),
 			experimentUpdateIntervalSeconds: experimentUpdateIntervalSeconds as number,
@@ -133,7 +126,6 @@ export const solveStage: StageDefinition<SolveOptions> = {
 		const result = await runHarnessSolveSession(context.input.taskId, context.input.model, {
 			taskConfiguration: stageConfiguration(context.input),
 			maxTrials: context.options.maxIterations,
-			sealedFraction: context.options.sealedFraction,
 			seed: context.options.seed,
 			foldPolicy: context.options.foldPolicy,
 			experimentUpdateIntervalSeconds: context.options.experimentUpdateIntervalSeconds,
@@ -154,6 +146,7 @@ export const solveStage: StageDefinition<SolveOptions> = {
 			artifacts.push({ kind: "training_selected_result", path: selected.path, bytes: selected.bytes, sha256: selected.sha256 });
 		}
 		const entrypoint = entrypointArtifact(result.collection.selected);
+		if (result.confirmation) artifacts.push(result.confirmation.artifact);
 		if (entrypoint && "kind" in entrypoint) artifacts.push(entrypoint);
 
 		return {
@@ -168,6 +161,9 @@ export const solveStage: StageDefinition<SolveOptions> = {
 				task_kind: result.configuration.kind,
 				selected_metric: primaryMetric(result, result.collection.selected?.result?.metrics as Record<string, unknown> | undefined),
                 selected_selection: selectionSummary(result.collection.selected?.result),
+                holdout_confirmation: result.confirmation?.summary,
+                holdout_balanced_accuracy: result.confirmation?.summary.balancedAccuracy,
+                holdout_gap: result.confirmation?.summary.gap,
 				session_error: result.sessionError,
 				...(entrypoint && "mismatch" in entrypoint ? { entrypoint_mismatch: entrypoint.mismatch } : {}),
 				trial_validation_errors: result.collection.errors,

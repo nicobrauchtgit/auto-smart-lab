@@ -153,6 +153,20 @@ test("training recovery prerequisites are scoped and block execution when flock 
  await expect(new SetupSession().check([recovery], signal(), () => {})).rejects.toThrow("training-recovery");
 });
 
+test("confirmation prerequisites are checked before solve execution and scoped to consumers", async () => {
+ const prompts = loadPromptSnapshot();
+ const { solveStage } = await import("./stages/solve.js");
+ expect(solveStage.setupRequirements).toContain("confirmation");
+ const checks = setupChecks(solveStage.setupRequirements!, { taskId: "fixture", prompts, taskConfiguration: spamConfiguration(), executables: { python: "/missing-confirmation-python" } });
+ const confirmation = checks.find(check => check.id === "holdout-confirmation-runtime")!;
+ expect(confirmation.phase).toBe("local");
+ let ran = false;
+ await expect(new SetupSession().check([confirmation], signal(), () => {}).then(() => { ran = true; })).rejects.toThrow("holdout-confirmation-runtime");
+ expect(ran).toBe(false);
+ expect(setupChecks([], { taskId: "fixture", prompts }).some(check => check.id === confirmation.id)).toBe(false);
+ expect(setupChecks(["evaluation", "refit"], { taskId: "fixture", prompts, taskConfiguration: spamConfiguration() }).some(check => check.id === confirmation.id)).toBe(true);
+});
+
 test("missing shared metric prerequisites block the solve stage before execution", async () => {
  const { mkdtempSync, rmSync } = await import("node:fs");
  const { tmpdir } = await import("node:os");

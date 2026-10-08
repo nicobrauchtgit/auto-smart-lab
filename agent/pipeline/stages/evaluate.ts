@@ -65,7 +65,7 @@ export function createEvaluateStage(deps = { prepareEvidence, runSession }): Sta
    const guidance = guidanceBlock(prompts, context.input.guidance);
    const start = prompts.render("review.start", { taskId: context.input.taskId, experimentId: evidence.experimentId,
     guidance: guidance?.text ?? "", code: JSON.stringify(entrypoint), evidence: JSON.stringify({ summary: evidence.diagnostics.summary, scores: scoreSummary,
-     limitations: evidence.diagnostics.limitations, candidate: evidence.candidate }) });
+     limitations: evidence.diagnostics.limitations, candidate: evidence.candidate, holdoutConfirmation: evidence.diagnostics.holdoutConfirmation }) });
    const reviewer = reviewerTools(evidence, prompts, code.read, sourceAvailable);
    context.report.event("agent_attempt_start", { attempt: 1 });
    let sessionError: string | undefined;
@@ -97,7 +97,7 @@ export function createEvaluateStage(deps = { prepareEvidence, runSession }): Sta
    context.report.event("artifact_validation", report.validation);
    return { artifacts: [evidenceArtifact, artifact("evaluation_report", reportPath), ...curveArtifacts, ...code.artifacts()], attempts: 1,
     validation: report.validation, summary: { experiment_id: evidence.experimentId,
-     review_status: review?.status, readiness_score: review?.readinessScore, task_kind: stageConfiguration(context.input).kind,
+     review_status: review?.status, readiness_score: review?.readinessScore, holdout_confirmation: evidence.diagnostics.holdoutConfirmation, task_kind: stageConfiguration(context.input).kind,
      official_metric: { name: stageConfiguration(context.input).metric },
      selection_metric: selectionSummary({ metrics: { selectionScore: evidence.diagnostics.summary.selectionScore }, selection: { ...evidence.diagnostics.summary.selection,
       source: evidence.diagnostics.summary.source, evidenceSha256: evidence.diagnostics.summary.evidenceSha256, folds: evidence.diagnostics.folds.map((fold: any) => fold.selection) } }),

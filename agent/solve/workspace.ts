@@ -19,8 +19,10 @@ import { PROJECT_ROOT, resolveTask } from "../pipeline/resolve_task.js";
 import { projectPython, resolveTaskConfiguration, TASK_SAMPLES_SCRIPT, taskDataPaths, type TaskConfiguration } from "../pipeline/task_configuration.js";
 import type { StageArtifact } from "../pipeline/types.js";
 import type { MeasurementConfig } from "../training/types.js";
+import { createHash } from "node:crypto";
+import { createSeedPlan, type SeedPlan } from "../training/seeds.js";
 import { HARNESS_CONFIG } from "../harness/config.js";
-import { noSeal, recommendFolds, sealConfirmationSet, sealGroups, type FoldRecommendation, type IdSealedSplit } from "./folds.js";
+import { noSeal, recommendFolds, sealConfirmationSet, sealGroups, type FoldRecommendation, type IdSealedSplit, type HoldoutPolicy, type HoldoutMetadata } from "./folds.js";
 
 export interface SolveWorkspace {
 	root: string;
@@ -37,10 +39,12 @@ export interface SolveWorkspace {
 	/** The archive the agent is given: development rows only. */
 	devZip: string;
 	sealedPath: string;
+	originalTargetsPath?: string;
+	holdoutSeedPlan?: SeedPlan;
 	trainZip: string;
 	testZip: string;
 	datasetPaths: string[];
-	split: { sealedIds: string[]; fraction: number; seed: number; sha256: string; scheme: "stratified" | "group" | "none"; sealedGroups?: number };
+	split: { sealedIds: string[]; fraction: number; seed: number; sha256: string; scheme: "stratified" | "group" | "none"; sealedGroups?: number; confirmation?: HoldoutMetadata };
 	recommendation: FoldRecommendation;
 	rowCount: number;
 	/** Where the development targets are, for the prompt. */
@@ -53,7 +57,7 @@ export interface SolveWorkspace {
 
 export interface PrepareOptions {
 	configuration?: TaskConfiguration;
-	sealedFraction?: number;
+	holdoutPolicy?: HoldoutPolicy;
 	seed?: number;
 	upstream?: StageArtifact[];
 	projectRoot?: string;
@@ -85,15 +89,16 @@ export function archiveRows(pythonExecutable: string, zip: string, targetsPath?:
 
 function seal(configuration: TaskConfiguration, ids: string[], targets: Map<string, string | number>, options: PrepareOptions): IdSealedSplit | ReturnType<typeof stratifiedSeal> {
 	const seed = options.seed ?? HARNESS_CONFIG.solve.seed;
-	if (configuration.holdout === "stratified") return stratifiedSeal(ids, targets, options.sealedFraction, seed);
-	if (configuration.holdout === "group") return sealGroups(ids.map(id => ({ id, group: String(targets.get(id)) })), { fraction: options.sealedFraction, seed });
+	if (configuration.holdout === "stratified") return stratifiedSeal(ids, targets, options.holdoutPolicy, seed);
+	if (configuration.holdout === "group") return sealGroups(ids.map(id => ({ id, group: String(targets.get(id)) })), { seed });
 	return noSeal(ids, seed);
 }
 
-function stratifiedSeal(ids: string[], targets: Map<string, string | number>, fraction: number | undefined, seed: number) {
-	const split = sealConfirmationSet(ids.map(id => ({ id, label: targets.get(id) as 0 | 1 })), { fraction, seed });
+function stratifiedSeal(ids: string[], targets: Map<string, string | number>, policy: HoldoutPolicy | undefined, seed: number) {
+	const split = sealConfirmationSet(ids.map(id => ({ id, label: targets.get(id) as 0 | 1 })), { policy, seed });
 	return { scheme: "stratified" as const, sealedIds: split.sealedIds, devIds: split.devRows.map(row => row.id).sort(),
-		sealedGroups: undefined, fraction: split.fraction, seed: split.seed, sha256: split.sha256 };
+		sealedGroups: undefined, fraction: split.fraction, seed: split.seed, sha256: split.sha256,
+        confirmation: { rows: split.rows, perClass: split.perClass, precision: split.precision, ...(split.reason ? { reason: split.reason } : {}) } };
 }
 
 function describeTargets(configuration: TaskConfiguration, devIds: string[], targets: Map<string, string | number>, manifest: string, sealedGroups?: number) {
@@ -117,7 +122,11 @@ export function prepareSolveWorkspace(taskId: string, options: PrepareOptions = 
 	const python = options.pythonExecutable ?? projectPython();
 	const train = archiveRows(python, paths.trainZip, paths.targetsPath, configuration.targets.kind, configuration.samples.source);
 	const targets = new Map<string, string | number>(train.targets ? train.ids.map((id, index) => [id, train.targets![index]]) : []);
-	const split = seal(configuration, train.ids, targets, options);
+	const originalDatasetHash = createHash("sha256").update(readFileSync(paths.trainZip))
+        .update(JSON.stringify([...targets.entries()].sort(([a], [b]) => a.localeCompare(b)))).digest("hex");
+    const holdoutSeedPlan = createSeedPlan({ rootSeed: options.seed ?? HARNESS_CONFIG.solve.seed,
+        taskId, datasetSha256: originalDatasetHash, experimentId: "holdout-split" });
+    const split = seal(configuration, train.ids, targets, { ...options, seed: holdoutSeedPlan.sealedSeed });
 
 	const root = join(projectRoot, "runs", taskId, "solve");
 	const dataOut = join(root, "data");
@@ -130,6 +139,7 @@ export function prepareSolveWorkspace(taskId: string, options: PrepareOptions = 
 	// Harness-only. The agent is never pointed at this and never needs it.
 	const sealedPath = join(dataOut, "sealed_ids.txt");
 	writeFileSync(sealedPath, split.sealedIds.length ? `${split.sealedIds.join("\n")}\n` : "");
+    writeFileSync(join(dataOut, "holdout.json"), JSON.stringify({ ...split, devIds: undefined, holdoutSeedPlan }) + "\n");
 	const researchState = copyResearch(researchDir, taskId, options.upstream ?? [], projectRoot);
 	const devZip = configuration.samples.source === "zip_members"
         ? writeDevelopmentZip(paths.trainZip, dataOut, split.devIds)
@@ -151,13 +161,14 @@ export function prepareSolveWorkspace(taskId: string, options: PrepareOptions = 
 	const groups = configuration.targets.kind === "families" ? new Set(split.devIds.map(id => targets.get(id))).size : undefined;
 	return {
 		root, solutionsRoot, entrypointPath, taskPath, researchDir, configuration,
+        originalTargetsPath: paths.targetsPath, holdoutSeedPlan,
 		sampleManifestPath, measurement,
 		devZip, sealedPath, trainZip: paths.trainZip, testZip: paths.testZip,
 		// What the agent is given: the development archive and the unlabelled test
 		// set. The full training archive is withheld, because the held-out rows are
 		// otherwise recoverable from it as `members - manifest`.
 		datasetPaths: [devZip, ...(existsSync(paths.testZip) ? [paths.testZip] : [])].map(path => relative(projectRoot, path)),
-		split: { sealedIds: split.sealedIds, fraction: split.fraction, seed: split.seed, sha256: split.sha256, scheme: split.scheme, ...(split.sealedGroups !== undefined ? { sealedGroups: split.sealedGroups } : {}) },
+		split: { sealedIds: split.sealedIds, fraction: split.fraction, seed: split.seed, sha256: split.sha256, scheme: split.scheme, ...("confirmation" in split ? { confirmation: split.confirmation } : {}), ...(split.sealedGroups !== undefined ? { sealedGroups: split.sealedGroups } : {}) },
 		recommendation: configuration.holdout === "stratified" ? recommendFolds(split.devIds.length)
 			: groups ? recommendFolds(split.devIds.length, { scheme: "group_kfold", groups })
 				: recommendFolds(split.devIds.length, { scheme: "kfold" }),
