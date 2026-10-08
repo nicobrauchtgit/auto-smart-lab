@@ -235,9 +235,23 @@ test("anomaly evidence, volume, model hooks and contamination fits retain proven
         const events = readFileSync(join(started.directory, "events.jsonl"), "utf8").trim().split("\n").map(line => JSON.parse(line));
         expect(events.filter(event => event.type === "diagnostic_fit_started")).toHaveLength(12);
         expect(events.every(event => event.pipelineRunId === "anomaly-packet" && event.stageInvocationId === "anomaly-diagnostics")).toBe(true);
+        const firstSnapshot = readFileSync(join(started.directory, "evidence.json"), "utf8");
+        const firstInvocation = JSON.parse(readFileSync(join(started.directory, "invocation.json"), "utf8"));
         const changed = JSON.parse(readFileSync(evidencePath, "utf8")); changed.labels[0].target = 1;
         writeFileSync(evidencePath, JSON.stringify(changed));
-        await expect(measured.service.start(request(6, "kfold"))).rejects.toThrow("changed after setup");
+        const later = await measured.service.start(request(6, "kfold"));
+        const laterResult = await finish(measured, later);
+        const laterInvocation = JSON.parse(readFileSync(join(later.directory, "invocation.json"), "utf8"));
+        expect(laterResult.status).toBe("completed");
+        // Diagnostic evidence alone still cannot authorize promotion.
+        expect(laterResult.promotionEligible).toBe(false);
+        expect(laterInvocation.measurement.evidence.path).toBe(join(later.directory, "evidence.json"));
+        expect(laterInvocation.measurement.evidenceManifestSha256).not.toBe(firstInvocation.measurement.evidenceManifestSha256);
+        expect(JSON.parse(readFileSync(join(later.directory, "evidence.json"), "utf8"))).toEqual(changed);
+        expect(readFileSync(join(started.directory, "evidence.json"), "utf8")).toBe(firstSnapshot);
+        expect(result.diagnostics.folds[0].diagnostics.evidence.manifestSha256).toBe(firstInvocation.measurement.evidenceManifestSha256);
+        expect((await collectTrainingTrial(started.directory)).valid).toBe(true);
+        expect((await collectTrainingTrial(later.directory)).valid).toBe(true);
     } finally { await measured.close(); }
 }, 45000);
 
