@@ -34,7 +34,7 @@ export interface TaskConfiguration {
 	schemaVersion: 1;
 	kind: TaskKind;
 	/** Sample identity. Reading sample content stays the agent's code (D9). */
-	samples: { source: "zip_members"; train: string; test: string };
+	samples: { source: "zip_members" | "pcap_tcp_connections"; train: string; test: string };
 	/** Training targets, from a `id;target` file in the task's data directory. */
 	targets: { kind: "binary" | "families"; file: string } | { kind: "none" };
 	/** Whether the harness fits on training rows (inductive) or on the scored batch itself. */
@@ -86,7 +86,7 @@ export function parseTaskConfiguration(raw: unknown): TaskConfiguration {
 	if (value.schemaVersion !== 1) throw new Error("taskConfiguration.schemaVersion must be 1");
 	const kind = oneOf(value.kind, "kind", KINDS);
 	const samples = object(value.samples, "samples", ["source", "train", "test"]);
-	oneOf(samples.source, "samples.source", ["zip_members"] as const);
+	const source = oneOf(samples.source, "samples.source", ["zip_members", "pcap_tcp_connections"] as const);
 	const targetsRaw = value.targets as Record<string, unknown> | undefined;
 	const targetKind = oneOf(targetsRaw?.kind, "targets.kind", ["binary", "families", "none"] as const);
 	const targets: TaskConfiguration["targets"] = targetKind === "none"
@@ -96,7 +96,7 @@ export function parseTaskConfiguration(raw: unknown): TaskConfiguration {
 	const configuration: TaskConfiguration = {
 		schemaVersion: 1,
 		kind,
-		samples: { source: "zip_members", train: fileName(samples.train, "samples.train"), test: fileName(samples.test, "samples.test") },
+		samples: { source, train: fileName(samples.train, "samples.train"), test: fileName(samples.test, "samples.test") },
 		targets,
 		execution: oneOf(value.execution, "execution", ["inductive", "batch"] as const),
 		holdout: oneOf(value.holdout, "holdout", ["stratified", "group", "none"] as const),
@@ -127,6 +127,7 @@ function consistencyErrors(c: TaskConfiguration): string[] {
 	const expect = (condition: boolean, message: string) => { if (!condition) errors.push(message); };
 	const refit = c.execution === "batch" ? "fit_predict_test_batch" : "fit_training_predict_test";
 	expect(c.refit === refit, `refit must be ${refit} for ${c.execution} execution, so the terminal fit matches what was measured`);
+	if (c.samples.source === "pcap_tcp_connections" && c.kind !== "anomaly_detection") errors.push("pcap_tcp_connections currently requires anomaly_detection");
 	if (c.samples.train === c.samples.test) errors.push("samples.train and samples.test must be different archives");
 	if (c.kind === "binary_classification") {
 		expect(c.targets.kind === "binary", "binary_classification requires binary targets");
@@ -231,7 +232,7 @@ export function inspectTaskData(taskId: string, configuration: TaskConfiguration
 	}
 	const result = spawnSync(pythonExecutable, [TASK_SAMPLES_SCRIPT, "--inspect", JSON.stringify({
 		trainZip: paths.trainZip, testZip: paths.testZip, targetsPath: paths.targetsPath ?? null,
-		targets: configuration.targets.kind, neutralTestIds: configuration.kind === "binary_classification",
+		source: configuration.samples.source, targets: configuration.targets.kind, neutralTestIds: configuration.kind === "binary_classification",
 	})], { encoding: "utf8", timeout: HARNESS_CONFIG.setup.timeoutMs * 4, maxBuffer: 4 * 1024 * 1024 });
 	if (result.error) throw new Error("Task data inspection could not run");
 	const output = JSON.parse(result.stdout.trim().split("\n").at(-1) || "{}");

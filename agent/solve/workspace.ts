@@ -2,9 +2,9 @@
  * Prepare the run workspace for one solve invocation.
  *
  * Every task kind gets the same minimally prepared input: a development
- * archive and a sample manifest of opaque `{archive, member}` descriptors.
- * The harness never decodes or parses samples (D9); the agent's code reads the
- * bytes and decides how. The task configuration selects the targets (binary
+ * archive/capture and a sample manifest of opaque descriptors.
+ * ZIP members stay unread; PCAP headers supply only TCP connection identity and
+ * packet pointers. The agent reads the bytes and chooses parsing/features (D9). The task configuration selects the targets (binary
  * labels, families or none) and the sealed split: stratified rows, whole
  * families, or nothing when there are no targets to confirm against. Sealed
  * rows are absent from everything the agent is pointed at, so the confirmation
@@ -77,9 +77,9 @@ export function prepareSolutionsWorkspace(
 }
 
 /** Sample IDs and targets of one archive, read without opening sample content. */
-export function archiveRows(pythonExecutable: string, zip: string, targetsPath?: string, targets: TaskConfiguration["targets"]["kind"] = "none"): { ids: string[]; targets: (string | number)[] | null } {
-	const output = execFileSync(pythonExecutable, [TASK_SAMPLES_SCRIPT, "--rows", JSON.stringify({ zip, targetsPath: targetsPath ?? null, targets })],
-		{ encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
+export function archiveRows(pythonExecutable: string, zip: string, targetsPath?: string, targets: TaskConfiguration["targets"]["kind"] = "none", source: TaskConfiguration["samples"]["source"] = "zip_members"): { ids: string[]; targets: (string | number)[] | null; samples: { id: string; input: Record<string, unknown> }[] } {
+	const output = execFileSync(pythonExecutable, [TASK_SAMPLES_SCRIPT, "--rows", JSON.stringify({ zip, targetsPath: targetsPath ?? null, targets, source, includeSamples: true })],
+		{ encoding: "utf8", timeout: HARNESS_CONFIG.setup.timeoutMs * 4, maxBuffer: 256 * 1024 * 1024 });
 	return JSON.parse(output);
 }
 
@@ -115,7 +115,7 @@ export function prepareSolveWorkspace(taskId: string, options: PrepareOptions = 
 	const taskDir = options.taskDir ?? resolveTask({ taskId }).taskDir;
 	const paths = taskDataPaths(taskId, configuration, taskDir);
 	const python = options.pythonExecutable ?? projectPython();
-	const train = archiveRows(python, paths.trainZip, paths.targetsPath, configuration.targets.kind);
+	const train = archiveRows(python, paths.trainZip, paths.targetsPath, configuration.targets.kind, configuration.samples.source);
 	const targets = new Map<string, string | number>(train.targets ? train.ids.map((id, index) => [id, train.targets![index]]) : []);
 	const split = seal(configuration, train.ids, targets, options);
 
@@ -131,12 +131,16 @@ export function prepareSolveWorkspace(taskId: string, options: PrepareOptions = 
 	const sealedPath = join(dataOut, "sealed_ids.txt");
 	writeFileSync(sealedPath, split.sealedIds.length ? `${split.sealedIds.join("\n")}\n` : "");
 	const researchState = copyResearch(researchDir, taskId, options.upstream ?? [], projectRoot);
-	const devZip = writeDevelopmentZip(paths.trainZip, dataOut, split.devIds);
+	const devZip = configuration.samples.source === "zip_members"
+        ? writeDevelopmentZip(paths.trainZip, dataOut, split.devIds)
+        : join(dataOut, `development-${basename(paths.trainZip)}`);
+    if (configuration.samples.source === "pcap_tcp_connections") copyFileSync(paths.trainZip, devZip);
+    const descriptors = new Map(train.samples.map(sample => [sample.id, sample.input]));
 
 	// Opaque descriptors: the agent's code opens the archive member itself.
 	const sampleManifestPath = join(dataOut, "development-samples.json");
 	writeFileSync(sampleManifestPath, `${JSON.stringify({ schemaVersion: 1, samples: split.devIds.map(id => ({
-		id, input: { archive: devZip, member: id }, ...(targets.size ? { target: targets.get(id)! } : {}),
+		id, input: configuration.samples.source === "zip_members" ? { archive: devZip, member: id } : { ...descriptors.get(id), pcap: devZip }, ...(targets.size ? { target: targets.get(id)! } : {}),
 	})) })}\n`);
 	const measurement: MeasurementConfig = configuration.kind === "binary_classification"
 		? { kind: "classification", execution: "inductive", sampleManifestPath }

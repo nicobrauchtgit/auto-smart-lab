@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'training' / 'pytho
 from smartlab_trial.agent_code import expose_project, _load_module, _factory, _call_pipeline_factory, _inject_random_states
 from smartlab_trial.artifacts import _atomic_json, EventWriter
 from smartlab_eval import load_labelled, load_corpus, load_labels
-from task_samples import archive_ids, read_targets
+from task_samples import archive_ids, read_targets, sample_descriptors
 
 
 def sha(path):
@@ -48,8 +48,9 @@ def ids(path, labels_path=None):
 def sample_data(inputs):
     """Original sample identity for sample tasks; the dev manifest must be a subset with identical content."""
     targets_path = inputs.get('targetsPath')
-    train = archive_ids(inputs['trainZip'], targets_path)
-    test = archive_ids(inputs['testZip'])
+    source = inputs['task'].get('source', 'zip_members')
+    train = [sample['id'] for sample in sample_descriptors(inputs['trainZip'], source, targets_path)]
+    test = [sample['id'] for sample in sample_descriptors(inputs['testZip'], source)]
     assert not set(train).intersection(test), 'Train/test overlap'
     targets = read_targets(targets_path, inputs['task']['targets']) if targets_path else None
     assert targets is None or set(targets) == set(train), 'Original archive/target coverage mismatch'
@@ -58,12 +59,16 @@ def sample_data(inputs):
     samples = json.loads(Path(inputs['devManifest']).read_text())['samples']
     dev = [sample['id'] for sample in samples]
     assert dev and len(set(dev)) == len(dev) and set(dev) <= set(train), 'Development manifest is not a subset of training samples'
-    assert all(sample['input'] == {'archive': inputs['devZip'], 'member': sample['id']} for sample in samples), 'Development descriptors drifted'
+    expected = {sample['id']: sample['input'] for sample in sample_descriptors(inputs['devZip'], source)}
+    assert all(sample['input'] == expected.get(sample['id']) for sample in samples), 'Development descriptors drifted'
     if targets is not None:
         assert all(str(targets[sample['id']]) == str(sample.get('target')) for sample in samples), 'Development targets drifted'
-    assert set(archive_ids(inputs['devZip'])) == set(dev), 'Development archive coverage mismatch'
-    with zipfile.ZipFile(inputs['trainZip']) as original, zipfile.ZipFile(inputs['devZip']) as measured:
-        assert all(original.read(name) == measured.read(name) for name in dev), 'Original training content differs from measured development archive'
+    assert set(expected) == set(dev), 'Development sample coverage mismatch'
+    if source == 'pcap_tcp_connections':
+        assert sha(inputs['trainZip']) == sha(inputs['devZip']), 'Original capture differs from measured development capture'
+    else:
+        with zipfile.ZipFile(inputs['trainZip']) as original, zipfile.ZipFile(inputs['devZip']) as measured:
+            assert all(original.read(name) == measured.read(name) for name in dev), 'Original training content differs from measured development archive'
     keys = ['trainZip', 'testZip', 'devZip', 'devManifest', *(['targetsPath'] if targets_path else [])]
     return {'trainIds': sorted(train), 'testIds': sorted(test), 'trainRows': len(train),
             'developmentRows': len(dev), 'sealedRows': len(train) - len(dev), 'testRows': len(test),
@@ -120,16 +125,19 @@ def validate(directory, freeze):
     return result
 
 
-def sample_frame(archive, ids):
+def sample_frame(archive, ids, source='zip_members', sidecar=None):
     import pandas as pd
-    return pd.DataFrame([{'id': row_id, 'input': {'archive': archive, 'member': row_id}} for row_id in ids])
+    descriptors = {sample['id']: sample['input'] for sample in sample_descriptors(archive, source, sidecar)}
+    assert set(ids) == set(descriptors), 'Sample frame coverage mismatch'
+    return pd.DataFrame([{'id': row_id, 'input': descriptors[row_id]} for row_id in ids])
 
 
 def fit_samples(estimator, freeze, events):
     """Mirror the measured execution exactly; only classification fits with targets."""
     task, inputs = freeze['inputs']['task'], freeze['inputs']
-    train = sample_frame(inputs['trainZip'], freeze['data']['trainIds'])
-    test = sample_frame(inputs['testZip'], freeze['data']['testIds'])
+    source = task.get('source', 'zip_members')
+    train = sample_frame(inputs['trainZip'], freeze['data']['trainIds'], source, inputs.get('targetsPath'))
+    test = sample_frame(inputs['testZip'], freeze['data']['testIds'], source)
     if task['kind'] == 'classification':
         targets = read_targets(inputs['targetsPath'], 'binary')
         with events.stage('terminal_fit', fitRows=len(train), execution='inductive'):

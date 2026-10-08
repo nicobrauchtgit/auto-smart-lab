@@ -110,6 +110,11 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
   }
   inspectTaskData(options.taskId, configuration, options.executables?.python ?? projectPython());
  });
+ if (needs.has("task") && options.taskConfiguration?.samples.source === "pcap_tcp_connections") add("pcap-sample-runtime", "local", "Run ./dev setup to install dpkt; restore pcap_samples.py. Captures must contain non-fragmented TCP over Ethernet, raw IP or Linux cooked capture, with complete packet headers.", () => {
+  readable(join(PROJECT_ROOT, "agent/training/python/pcap_samples.py"));
+  const result = spawnSync(options.executables?.python ?? projectPython(), ["-c", "import dpkt"], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });
+  if (result.error || result.status !== 0) throw new Error("PCAP sample dependency unavailable");
+ });
  if (needs.has("python")) add("python-environment", "local", "Run ./dev setup; declarations, lockfile and installed packages must agree.", () => { readPythonEnvironment(); });
  if (needs.has("evaluation")) {
   add("evaluation-diagnostics", "local", "Restore agent/evaluation/diagnostics.py and run ./dev setup; sklearn and smartlab_eval must import successfully.", () => {
@@ -142,7 +147,7 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
    // `git worktree -h` exits 129 after printing usage; a missing binary is a spawn error.
    if (result.error || (result.status !== 0 && result.status !== 129)) throw new Error("git unavailable");
   });
-  add("training-zip-command", "local", "Install the zip command (a system package); solve uses zip --copy to prepare development data.", () => {
+  if (options.taskConfiguration?.samples.source !== "pcap_tcp_connections") add("training-zip-command", "local", "Install the zip command (a system package); solve uses zip --copy to prepare development data.", () => {
    const result = spawnSync("zip", ["-v"], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });
    if (result.error || result.status !== 0) throw new Error("zip unavailable");
   });

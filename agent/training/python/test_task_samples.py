@@ -140,6 +140,12 @@ class SampleRefitTest(SampleFixture):
         with self.assertRaisesRegex(AssertionError, 'content differs'):
             worker.data(self.inputs)
 
+    def test_terminal_frame_excludes_identical_embedded_targets_sidecar(self):
+        with zipfile.ZipFile(self.root / 'train.zip', 'a') as archive:
+            archive.writestr(self.targets.name, self.targets.read_bytes())
+        frame = worker.sample_frame(str(self.root / 'train.zip'), sorted(self.train), sidecar=str(self.targets))
+        self.assertEqual(list(frame['id']), sorted(self.train))
+
     def test_batch_clustering_fits_the_test_batch_only(self):
         freeze = {'inputs': self.inputs, 'data': worker.data(self.inputs)}
         events = Events()

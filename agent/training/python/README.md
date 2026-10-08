@@ -84,3 +84,27 @@ original concrete fold manifest. Single folds checkpoint their authoritative
 predictions atomically; search recovery retains completed configurations and
 consumes interrupted configurations as failed slots. See
 `docs/training-search-and-versioning.md` for the service lifecycle policy.
+
+### PCAP TCP samples
+
+`TaskConfiguration.samples.source = "pcap_tcp_connections"` enumerates classic
+PCAP or `.pcap.gz` captures. The harness parses only network/transport headers to
+identify bidirectional connections; agent code parses packets and derives all
+features. Sample IDs use the first observed direction (`ip:port->ip:port`),
+with IPv6 addresses in brackets. Reverse packets share a sample, and repeated
+endpoint tuples remain one sample across the capture. These semantics need
+confirmation against the lab's actual 4.1 submission IDs when it is reachable.
+
+Descriptors contain `pcap`, zero-based `packetIndices` across all capture
+records, and directional `source`/`destination` endpoint objects. Label-free
+captures have no sealed rows: solve copies the entire training capture into its
+development input. Refit verifies that capture's hash, every pointer/ID, and
+exact test prediction coverage. No payload is extracted or interpreted by the
+adapter. ZIP member descriptors and binary/classification behavior are retained.
+
+Preflight checks `dpkt` only for this source and validates both declared
+captures before agents start. Supported links are Ethernet, raw IP and Linux
+cooked capture (v1). Invalid records, malformed IP/TCP headers, fragmented TCP,
+unsupported links, and captures without TCP fail closed. Inspection is capped
+at 2 GiB decompressed and 2,000,000 records, with bounded controller subprocess
+timeouts. PCAPNG and fragment reassembly are not implemented.

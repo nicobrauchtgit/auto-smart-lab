@@ -73,7 +73,7 @@ function assertMeasuredConfiguration(configuration: TaskConfiguration, measureme
 
 /** Worker inputs for original-data inspection, without development evidence. */
 export function originalRefitData(options: Pick<RefitOptions, "taskConfiguration" | "labelsPath" | "trainZip" | "testZip">): Record<string, unknown> {
- return { kind: "samples", task: { kind: options.taskConfiguration.kind === "binary_classification" ? "classification" : options.taskConfiguration.kind, targets: options.taskConfiguration.targets.kind },
+ return { kind: "samples", task: { kind: options.taskConfiguration.kind === "binary_classification" ? "classification" : options.taskConfiguration.kind, targets: options.taskConfiguration.targets.kind, source: options.taskConfiguration.samples.source },
   trainZip: options.trainZip, testZip: options.testZip, ...(options.labelsPath ? { targetsPath: options.labelsPath } : {}) };
 }
 function assertNoWorkers(root: string): void {

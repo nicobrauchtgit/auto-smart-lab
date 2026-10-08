@@ -1,6 +1,6 @@
-"""Sample identity for declared task data: archive member IDs and targets.
+"""Sample identity for declared task data: archive members or TCP connections.
 
-Reads archive directories and the targets file only, never sample content.
+ZIP inputs use directories/targets only; PCAP inputs parse connection headers.
 Agent code interprets sample inputs (D9); this script only establishes which
 samples exist and which targets the controller may use.
 """
@@ -59,20 +59,31 @@ def read_targets(path: str, kind: str) -> dict[str, int | str]:
     return targets
 
 
+def sample_descriptors(path: str, source: str = "zip_members", sidecar: str | None = None) -> list[dict]:
+    if source == "pcap_tcp_connections":
+        from pcap_samples import connection_samples
+        return connection_samples(path)
+    if source != "zip_members":
+        raise TaskDataError("Unsupported sample source")
+    return [{"id": row_id, "input": {"archive": path, "member": row_id}}
+            for row_id in archive_ids(path, sidecar)]
+
+
 def rows(spec: dict) -> dict:
-    ids = archive_ids(spec["zip"], spec.get("targetsPath"))
+    samples = sample_descriptors(spec["zip"], spec.get("source", "zip_members"), spec.get("targetsPath"))
+    ids = [sample["id"] for sample in samples]
     if spec.get("targets", "none") == "none" or not spec.get("targetsPath"):
-        return {"ids": ids, "targets": None}
+        return {"ids": ids, "targets": None, **({"samples": samples} if spec.get("includeSamples") else {})}
     targets = read_targets(spec["targetsPath"], spec["targets"])
     if set(targets) != set(ids):
         missing, extra = len(set(ids) - set(targets)), len(set(targets) - set(ids))
         raise TaskDataError(f"Targets must cover exactly the training samples ({missing} without target, {extra} unknown)")
-    return {"ids": ids, "targets": [targets[row_id] for row_id in ids]}
+    return {"ids": ids, "targets": [targets[row_id] for row_id in ids], **({"samples": samples} if spec.get("includeSamples") else {})}
 
 
 def inspect(spec: dict) -> dict:
-    train = rows({"zip": spec["trainZip"], "targetsPath": spec.get("targetsPath"), "targets": spec["targets"]})
-    test = archive_ids(spec["testZip"])
+    train = rows({"zip": spec["trainZip"], "targetsPath": spec.get("targetsPath"), "targets": spec["targets"], "source": spec.get("source", "zip_members")})
+    test = [sample["id"] for sample in sample_descriptors(spec["testZip"], spec.get("source", "zip_members"))]
     if set(train["ids"]) & set(test):
         raise TaskDataError("Training and test archives share sample IDs")
     if spec.get("neutralTestIds") and not all(name.endswith(".x") for name in test):
@@ -93,6 +104,7 @@ def inspect(spec: dict) -> dict:
 
 
 if __name__ == "__main__":
+    sys.modules["task_samples"] = sys.modules[__name__]
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--inspect")
