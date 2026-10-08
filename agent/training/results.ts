@@ -456,6 +456,10 @@ async function collectTrial(directory: string, experimentId: string): Promise<Tr
 		error(errors, experimentId, "invalid_promotion_eligibility", "promotionEligible is true without a completed promotion and all requested folds", "trial-result.json");
 	}
 
+	if (result?.promotionEligible === true && (result.idLeakage || foldRows?.some(fold => fold.idLeakage))) {
+		error(errors, experimentId, "invalid_promotion_eligibility", "ID leakage evidence cannot be promotion-eligible", "trial-result.json");
+	}
+
 	const valid = errors.length === 0;
 	return {
 		experimentId,

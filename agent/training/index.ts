@@ -65,6 +65,7 @@ export function createHarnessTraining(options: HarnessTrainingOptions) {
 		env,
 		validatePipeline: options.validatePipeline,
 		search: options.search,
+		idLeakageGuidance: options.prompts.render("training.id-leakage", {}).text,
 		runtimeGuidance: options.prompts.render("training.runtime-guard", {}).text,
 		caveats: options.prompts.render("training.search-caveats", {}).text
 			.split("\n").map((line) => line.replace(/^-\s*/, "").trim()).filter(Boolean),
@@ -74,7 +75,7 @@ export function createHarnessTraining(options: HarnessTrainingOptions) {
 	});
 	const tools = createHarnessTrainingTools(service, processScope.supervisor, options.prompts);
 	const toolPrompts = (["training.start-tool", "training.status-tool", "training.output-tool", "training.stop-tool",
-		"training.search-caveats", "training.runtime-guard", "training.resume-tool"] as const)
+		"training.search-caveats", "training.runtime-guard", "training.resume-tool", "training.id-leakage"] as const)
 		.map((id) => options.prompts.render(id, {}).reference);
 	const trainingService = service;
 	return {

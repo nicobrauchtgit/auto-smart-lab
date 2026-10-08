@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -261,4 +261,24 @@ describe("collectTrainingResults", () => {
 			artifacts: [],
 		});
 	});
+});
+
+
+test("eligible claims are rejected when either summary or fold records ID leakage", async () => {
+ for (const location of ["summary", "fold"]) {
+  const root = await mkdtemp(join(tmpdir(), "leakage-result-"));
+  const directory = await writeTrial(root, "leaky");
+  if (location === "summary") {
+   for (const name of ["trial-result.json", "metrics.json"]) {
+    const path = join(directory, name), document = JSON.parse(await readFile(path, "utf8"));
+    document.idLeakage = { rows: 2, mismatches: 1 }; await writeFile(path, JSON.stringify(document));
+   }
+  } else {
+   const path = join(directory, "fold-results.jsonl"), rows = (await readFile(path, "utf8")).trim().split("\n").map(JSON.parse);
+   rows[0].idLeakage = { rows: 1, mismatches: 1 }; await writeFile(path, rows.map(row => JSON.stringify(row)).join("\n") + "\n");
+  }
+  const collection = await collectTrainingResults(root);
+  expect(collection.trials[0].eligible).toBe(false);
+  expect(collection.errors.some(error => error.message.includes("ID leakage"))).toBe(true);
+ }
 });

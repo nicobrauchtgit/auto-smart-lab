@@ -84,6 +84,7 @@ export interface TrainingServiceOptions {
 	caveats?: readonly string[];
 	/** Prose explaining how to reduce a stopped search's cost, from the prompt registry. */
 	runtimeGuidance?: string;
+	idLeakageGuidance?: string;
 	/** Called once the source of a started trial is fixed; recorded as a supplied input. */
 	onTrialStarted?: (trial: StartedTrialRecord) => void;
 	/** Harness decisions mirrored under the shared pipeline identity. */
@@ -811,6 +812,11 @@ export class TrainingService {
             if (!root) return;
 			this.cleanupWorktrees(trial);
 			const result = readJson(join(trial.directory, "trial-result.json"));
+			if (result?.idLeakage && !existsSync(join(trial.directory, "id-leakage-notified.json"))) {
+                atomicJson(join(trial.directory, "id-leakage-notified.json"), { experimentId: id });
+                this.options.record?.("training_id_leakage", { experiment_id: id, ...result.idLeakage });
+                if (this.options.idLeakageGuidance) this.options.supervisor.notify?.(id, this.options.idLeakageGuidance);
+            }
 			if (!trial.source || result?.status !== "completed" || result.promotionEligible !== true || trial.request.search) return;
 			const collection = await collectTrainingResults(this.options.trainingRoot);
 			const own = collection.trials.find((entry) => entry.experimentId === id);

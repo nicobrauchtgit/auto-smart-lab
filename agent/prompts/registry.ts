@@ -45,6 +45,7 @@ export const PROMPTS = {
 	"training.stop-tool": { file: "training/stop-tool.md", variables: [] },
 	"training.request-rejected": { file: "training/request-rejected.md", variables: ["count", "errors"] },
 	"training.search-caveats": { file: "training/search-caveats.md", variables: [] },
+	"training.id-leakage": { file: "training/id-leakage.md", variables: [] },
 	"training.runtime-guard": { file: "training/runtime-guard.md", variables: [] },
 	"git.block-reset": { file: "git/block-reset.md", variables: [] },
 	"git.block-amend": { file: "git/block-amend.md", variables: [] },

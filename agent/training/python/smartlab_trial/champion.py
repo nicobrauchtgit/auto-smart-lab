@@ -123,6 +123,11 @@ def pair_changes(truth: Sequence[Any], old: Sequence[int], new: Sequence[int]) -
 def compare(challenger_folds: Sequence[dict[str, Any]], challenger_oof: Sequence[dict[str, Any]], champion: dict[str, Any],
             labels_by_id: dict[str, Any], output_dir: Path, task_kind: str = "classification") -> dict[str, Any]:
     """Paired differences: challenger minus champion on identical folds and rows."""
+    leaking = [fold["idLeakage"] for fold in champion.get("folds", []) if fold.get("idLeakage")]
+    if leaking:
+        return {"status": "failed", "championExperimentId": champion.get("experimentId"),
+                "championCommit": champion.get("commit"), "reason": "id_leakage",
+                "idLeakage": {"rows": sum(row["rows"] for row in leaking), "mismatches": sum(row["mismatches"] for row in leaking)}}
     if not champion.get("folds"):
         return {"status": "failed", "championExperimentId": champion.get("experimentId"),
                 "championCommit": champion.get("commit"), "reason": champion.get("reason")}
