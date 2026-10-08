@@ -39,6 +39,8 @@ export const SEARCH_LIMITS = Object.freeze({
 const SAMPLERS: readonly SearchSampler[] = ["tpe", "random", "grid"];
 const PARAMETER_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const FACTORY_PREFIX = "factory.";
+const diagnosticMethod = (value: unknown) => typeof value === "string" && /^[A-Za-z][A-Za-z0-9_]*$/.test(value)
+	&& !["fit", "fit_predict", "fit_transform", "partial_fit", "set_params"].includes(value);
 
 export class ExperimentRequestError extends Error {
 	constructor(readonly issues: ValidationIssue[]) {
@@ -455,7 +457,7 @@ function parseSearch(raw: unknown, pipeline: PipelineRequest | undefined, issues
 		if (raw) {
 			rejectUnknown(raw, ["kind", "metric", "direction"], "search.objective", issues);
 			if (raw.kind !== "proxy") issues.add("search.objective.kind", "unsupported objective", raw.kind, "proxy", "Trusted primary scoring is supplied by the controller; omit objective to use it.");
-			if (!["silhouette", "calinskiHarabasz", "daviesBouldin", "dbcv", "estimator_score"].includes(String(raw.metric)))
+			if (!["silhouette", "calinskiHarabasz", "daviesBouldin", "dbcv", "estimator_score", "evidence_roc_auc", "evidence_average_precision"].includes(String(raw.metric)))
 				issues.add("search.objective.metric", "unsupported metric", raw.metric, "a supported proxy metric", "Choose geometry or the estimator's explicit score().");
 			if (!["maximize", "minimize"].includes(String(raw.direction))) issues.add("search.objective.direction", "missing or invalid direction", raw.direction, "maximize or minimize", "Declare which direction is preferable.");
 			objective = raw as unknown as ProxyObjective;
@@ -562,7 +564,7 @@ const V1_KEYS = ["schemaVersion", "hypothesis", "pipeline", "cv", "scope"] as co
 function parseDiagnostics(raw: unknown, issues: Issues): DiagnosticRequest | undefined {
 	const value = objectAt(raw, "diagnostics", issues, "Declare only the extra measurements you need.");
 	if (!value) return undefined;
-	rejectUnknown(value, ["representation", "predictionStrength"], "diagnostics", issues);
+	rejectUnknown(value, ["representation", "predictionStrength", "modelSignals", "challenge", "volume", "contamination"], "diagnostics", issues);
 	if (value.predictionStrength !== undefined && typeof value.predictionStrength !== "boolean")
 		issues.add("diagnostics.predictionStrength", "not a boolean", value.predictionStrength, "true or false", "This requests one additional harness-owned fit per fold.");
 	if (value.representation !== undefined) {
@@ -570,13 +572,45 @@ function parseDiagnostics(raw: unknown, issues: Issues): DiagnosticRequest | und
 		if (spec) {
 			rejectUnknown(spec, ["source", "method", "metric", "maxRows", "dbcv"], "diagnostics.representation", issues);
 			if (!["pipeline_features", "method"].includes(String(spec.source))) issues.add("diagnostics.representation.source", "unsupported source", spec.source, "pipeline_features or method", "Use the already fitted feature prefix or a custom measurement method.");
-			if (spec.source === "method" && (typeof spec.method !== "string" || !PARAMETER_NAME.test(spec.method) || spec.method.startsWith("_")))
+			if (spec.source === "method" && !diagnosticMethod(spec.method))
 				issues.add("diagnostics.representation.method", "missing or invalid method", spec.method, "a public Python method name", "The method returns features for the supplied frame without fitting.");
 			if (spec.source === "pipeline_features" && spec.method !== undefined) issues.add("diagnostics.representation.method", "does not apply", spec.method, "no method for pipeline_features", "Remove method.");
 			if (spec.metric !== undefined && !["euclidean", "cosine"].includes(String(spec.metric))) issues.add("diagnostics.representation.metric", "unsupported distance", spec.metric, "euclidean or cosine", "Match the representation's geometry.");
 			if (spec.maxRows !== undefined && (!Number.isInteger(spec.maxRows) || (spec.maxRows as number) < 3 || (spec.maxRows as number) > 2048))
 				issues.add("diagnostics.representation.maxRows", "outside diagnostic bounds", spec.maxRows, "integer from 3 to 2048", "This bounds pairwise diagnostic cost, without limiting model inputs.");
 			if (spec.dbcv !== undefined && typeof spec.dbcv !== "boolean") issues.add("diagnostics.representation.dbcv", "not a boolean", spec.dbcv, "true or false", "Enable density validation explicitly.");
+		}
+	}
+	for (const key of ["modelSignals", "challenge"] as const) {
+		if (value[key] === undefined) continue;
+		const path = `diagnostics.${key}`;
+		const spec = objectAt(value[key], path, issues, "Name a public method on the fitted estimator.");
+		if (!spec) continue;
+		rejectUnknown(spec, key === "modelSignals" ? ["method", "maxRows", "compareTrain", "units"] : ["method", "maxRows"], path, issues);
+		if (!diagnosticMethod(spec.method)) issues.add(`${path}.method`, "invalid method", spec.method, "a public read-only Python method", "The method must not fit models.");
+		if (spec.maxRows !== undefined && (!Number.isInteger(spec.maxRows) || (spec.maxRows as number) < 2 || (spec.maxRows as number) > 2048)) issues.add(`${path}.maxRows`, "outside diagnostic bounds", spec.maxRows, "integer from 2 to 2048", "Bound diagnostic cost independently of fitting.");
+		if (spec.compareTrain !== undefined && typeof spec.compareTrain !== "boolean") issues.add(`${path}.compareTrain`, "not a boolean", spec.compareTrain, "true or false", "Train-row measurements are advisory resubstitution evidence.");
+		if (spec.units !== undefined && (typeof spec.units !== "string" || !spec.units.length || spec.units.length > 200)) issues.add(`${path}.units`, "invalid units", spec.units, "nonempty string up to 200 characters", "Declare the output scale.");
+	}
+	if (value.volume !== undefined) {
+		const spec = objectAt(value.volume, "diagnostics.volume", issues, "Declare bounded support in the fitted feature space.");
+		if (spec) {
+			rejectUnknown(spec, ["bounds", "scoreSource", "scoreMethod", "uniformSamples"], "diagnostics.volume", issues);
+			if (!["pipeline_model", "method"].includes(String(spec.scoreSource))) issues.add("diagnostics.volume.scoreSource", "unsupported source", spec.scoreSource, "pipeline_model or method", "Score uniform reference points with the fitted model.");
+			if (!diagnosticMethod(spec.scoreMethod)) issues.add("diagnostics.volume.scoreMethod", "invalid method", spec.scoreMethod, "a public read-only Python method", "The method accepts a feature matrix and returns row-aligned scores.");
+			if (!Array.isArray(spec.bounds) || spec.bounds.length < 1 || spec.bounds.length > 6 || spec.bounds.some(pair => !Array.isArray(pair) || pair.length !== 2 || !pair.every(x => typeof x === "number" && Number.isFinite(x)) || pair[0] >= pair[1]))
+				issues.add("diagnostics.volume.bounds", "invalid support", spec.bounds, "one to six finite increasing bound pairs", "Volume diagnostics are scoped to this declared low-dimensional box.");
+			if (spec.uniformSamples !== undefined && (!Number.isInteger(spec.uniformSamples) || (spec.uniformSamples as number) < 32 || (spec.uniformSamples as number) > 8192)) issues.add("diagnostics.volume.uniformSamples", "outside diagnostic bounds", spec.uniformSamples, "integer from 32 to 8192", "Use bounded Monte Carlo sampling.");
+			if (value.representation === undefined) issues.add("diagnostics.volume", "missing representation", spec, "diagnostics.representation", "Declare the feature space used for volume.");
+		}
+	}
+	if (value.contamination !== undefined) {
+		const spec = objectAt(value.contamination, "diagnostics.contamination", issues, "Declare the estimator parameter and nearby contamination fractions.");
+		if (spec) {
+			rejectUnknown(spec, ["parameter", "values"], "diagnostics.contamination", issues);
+			if (typeof spec.parameter !== "string" || !parameterName(spec.parameter) || isSeedParameter(spec.parameter)) issues.add("diagnostics.contamination.parameter", "invalid or seed parameter", spec.parameter, "a non-seed set_params name", "The harness retains control of randomness.");
+			if (!Array.isArray(spec.values) || spec.values.length < 1 || spec.values.length > 5 || spec.values.some(x => typeof x !== "number" || !Number.isFinite(x) || x <= 0 || x >= 1) || new Set(spec.values).size !== spec.values.length)
+				issues.add("diagnostics.contamination.values", "invalid fractions", spec.values, "one to five unique fractions in (0,1)", "Each value may request an additional harness-owned fit.");
 		}
 	}
 	return value as DiagnosticRequest;

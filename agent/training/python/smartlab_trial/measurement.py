@@ -14,7 +14,7 @@ from .invocation import InvocationError
 def validate_config(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise InvocationError("measurement must be a controller-supplied object")
-    allowed = {"kind", "sampleManifestPath", "sampleManifestSha256", "hasTargets", "execution", "scoreMethod", "scoreDirection", "anomalyLabel"}
+    allowed = {"kind", "sampleManifestPath", "sampleManifestSha256", "hasTargets", "execution", "scoreMethod", "scoreDirection", "anomalyLabel", "evidence", "evidenceManifestSha256"}
     if set(value) - allowed:
         raise InvocationError("measurement contains unknown fields")
     if value.get("kind") not in ("clustering", "anomaly_detection"):
@@ -32,7 +32,13 @@ def validate_config(value: Any) -> dict[str, Any]:
             raise InvocationError("anomaly measurement requires an explicit scoreDirection")
         if type(value.get("anomalyLabel")) is not int:
             raise InvocationError("anomaly measurement requires an integer anomalyLabel")
-    elif any(key in value for key in ("scoreMethod", "scoreDirection", "anomalyLabel")):
+        if "evidence" in value:
+            evidence = value["evidence"]
+            if (not isinstance(evidence, dict) or set(evidence) != {"path", "source"}
+                    or not isinstance(evidence["path"], str) or not evidence["path"]
+                    or evidence["source"] not in ("trusted", "agent_provided")):
+                raise InvocationError("Evidence requires a path and explicit trusted/agent_provided source")
+    elif any(key in value for key in ("scoreMethod", "scoreDirection", "anomalyLabel", "evidence", "evidenceManifestSha256")):
         raise InvocationError("anomaly score fields do not apply to clustering")
     return dict(value)
 
@@ -74,7 +80,33 @@ def load_samples(config: dict[str, Any]) -> tuple[Any, list[str] | None, str]:
     samples = sorted(samples, key=lambda sample: sample["id"])
     targets = [str(sample["target"]) for sample in samples] if all(labelled) else None
     frame = pd.DataFrame([{"id": sample["id"], "input": sample["input"]} for sample in samples])
+    if "evidence" in config:
+        frame.attrs["diagnosticEvidence"] = load_evidence(config, ids)
     return frame, targets, digest
+
+
+def load_evidence(config: dict[str, Any], ids: set[str]) -> dict[str, Any]:
+    with Path(config["evidence"]["path"]).open("rb") as stream:
+        content = stream.read(8 * 1024 * 1024 + 1)
+    if len(content) > 8 * 1024 * 1024:
+        raise InvocationError("Evidence metadata exceeds 8 MiB")
+    digest = hashlib.sha256(content).hexdigest()
+    if config.get("evidenceManifestSha256") not in (None, digest):
+        raise InvocationError("Evidence manifest changed since preflight")
+    document = json.loads(content)
+    if not isinstance(document, dict) or set(document) != {"schemaVersion", "labels"} or document["schemaVersion"] != 1:
+        raise InvocationError("Evidence metadata requires schemaVersion=1 and labels")
+    rows = document["labels"]
+    if not isinstance(rows, list) or not rows:
+        raise InvocationError("Evidence labels must be a nonempty list")
+    labels = {}
+    for row in rows:
+        if (not isinstance(row, dict) or set(row) != {"id", "target"} or not isinstance(row["id"], str)
+                or row["id"] not in ids or row["id"] in labels or type(row["target"]) is not int
+                or row["target"] not in (0, 1)):
+            raise InvocationError("Evidence requires unique known development IDs and binary integer targets (1 is anomalous)")
+        labels[row["id"]] = row["target"]
+    return {"labels": labels, "source": config["evidence"]["source"], "sha256": digest}
 
 
 def kind(invocation: Any) -> str:

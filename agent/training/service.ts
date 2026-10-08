@@ -108,7 +108,7 @@ export interface StartedTrialRecord {
 	worktrees: string[];
 	startedAt: number;
 	champion?: { experimentId: string; commit: string };
-	measurement?: MeasurementConfig & { sampleManifestSha256: string; hasTargets: boolean };
+	measurement?: MeasurementConfig & { sampleManifestSha256: string; hasTargets: boolean; evidenceManifestSha256?: string };
 }
 
 const DEFAULT_SEARCH: SearchSettings = {
@@ -197,7 +197,7 @@ function canonical(value: any): string {
 
 function measurementDeclaration(value: any): unknown {
 	if (!value) return null;
-	const { sampleManifestSha256: _hash, hasTargets: _targets, ...declaration } = value;
+	const { sampleManifestSha256: _hash, hasTargets: _targets, evidenceManifestSha256: _evidenceHash, ...declaration } = value;
 	return declaration;
 }
 
@@ -218,6 +218,8 @@ export class TrainingService {
 		this.options = { ...options, ...(options.measurement ? { measurement: structuredClone(options.measurement) } : {}) };
 		if (this.options.measurement && typeof this.options.measurement.sampleManifestPath === "string") {
 			this.options.measurement.sampleManifestPath = resolve(options.projectRoot, this.options.measurement.sampleManifestPath);
+			if (this.options.measurement.kind === "anomaly_detection" && typeof this.options.measurement.evidence?.path === "string")
+				this.options.measurement.evidence.path = resolve(options.projectRoot, this.options.measurement.evidence.path);
 		}
 		this.settings = { ...DEFAULT_SEARCH, ...options.search };
 	}
@@ -227,7 +229,12 @@ export class TrainingService {
         if (this.options.measurement) {
             const path = this.options.measurement.sampleManifestPath;
             if (!existsSync(path)) return "unavailable";
-            return createHash("sha256").update(canonical(this.options.measurement)).update(readFileSync(path)).digest("hex");
+            const hash = createHash("sha256").update(canonical(this.options.measurement)).update(readFileSync(path));
+            if (this.options.measurement.kind === "anomaly_detection" && this.options.measurement.evidence) {
+                if (!existsSync(this.options.measurement.evidence.path)) return "unavailable";
+                hash.update(readFileSync(this.options.measurement.evidence.path));
+            }
+            return hash.digest("hex");
         }
         if (!this.options.zipPath || !this.options.labelsPath || !existsSync(this.options.zipPath) || !existsSync(this.options.labelsPath)) return "unavailable";
         return createHash("sha256").update(readFileSync(this.options.zipPath)).update(readFileSync(this.options.labelsPath)).digest("hex");
@@ -285,22 +292,25 @@ export class TrainingService {
     }
 
     /** Same no-fit metadata/import check before readiness and every trial launch. */
-    private checkMeasurement(): (MeasurementConfig & { sampleManifestSha256: string; hasTargets: boolean }) | undefined {
+    private checkMeasurement(): (MeasurementConfig & { sampleManifestSha256: string; hasTargets: boolean; evidenceManifestSha256?: string }) | undefined {
         if (!this.options.measurement) return undefined;
         const probe = spawnSync(this.options.pythonExecutable, [join(PYTHON_ROOT, "check_measurement.py"),
             "--config", JSON.stringify(this.options.measurement)],
             { env: this.options.env, encoding: "utf8", timeout: 10_000, maxBuffer: 64 * 1024 });
-        let metadata: { sha256?: string; hasTargets?: boolean; error?: { message?: string } } = {};
+        let metadata: { sha256?: string; hasTargets?: boolean; evidenceManifestSha256?: string | null; error?: { message?: string } } = {};
         try { metadata = JSON.parse(probe.stdout ?? "{}"); } catch { /* Report bounded setup instructions below. */ }
         const valid = !probe.error && probe.status === 0 && typeof metadata.sha256 === "string" && typeof metadata.hasTargets === "boolean";
         this.options.record?.("training_measurement_setup", { ok: valid, kind: this.options.measurement.kind,
-            sampleManifestPath: this.options.measurement.sampleManifestPath, sampleManifestSha256: metadata.sha256 });
+            sampleManifestPath: this.options.measurement.sampleManifestPath, sampleManifestSha256: metadata.sha256,
+            evidenceManifestSha256: metadata.evidenceManifestSha256 });
         if (!valid) throw new Error(`Measurement setup failed: ${metadata.error?.message ?? "metadata or metric dependencies unavailable"}. Run ./dev setup and repair the development sample manifest before starting an agent.`);
-        if (this.measurementHash && this.measurementHash !== metadata.sha256) {
-            throw new Error("Development sample metadata changed after setup; create a new controller invocation with the new dataset identity.");
+        const identity = `${metadata.sha256}:${metadata.evidenceManifestSha256 ?? ""}`;
+        if (this.measurementHash && this.measurementHash !== identity) {
+            throw new Error("Development sample or evidence metadata changed after setup; create a new controller invocation with the new dataset identity.");
         }
-        this.measurementHash = metadata.sha256;
-        return { ...this.options.measurement, sampleManifestSha256: metadata.sha256!, hasTargets: metadata.hasTargets! };
+        this.measurementHash = identity;
+        return { ...this.options.measurement, sampleManifestSha256: metadata.sha256!, hasTargets: metadata.hasTargets!,
+            ...(metadata.evidenceManifestSha256 ? { evidenceManifestSha256: metadata.evidenceManifestSha256 } : {}) };
     }
 
     private launchArguments(directory: string, worker: string, invocationPath: string): string[] {

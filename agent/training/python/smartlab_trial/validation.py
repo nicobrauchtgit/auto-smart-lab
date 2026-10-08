@@ -112,6 +112,9 @@ def validate_request(source_root: Path, request: dict[str, Any], measurement: di
         validate_options(request)
     except ValueError as error:
         return [_issue("diagnostics", "invalid measurement options", request.get("diagnostics"), "valid opt-in diagnostic options", str(error))]
+    objective = (request.get("search") or {}).get("objective")
+    if objective and objective["metric"].startswith("evidence_") and not (measurement or {}).get("evidence"):
+        return [_issue("search.objective", "evidence unavailable", objective, "controller-supplied evidence metadata", "Declare diagnostic evidence before selecting on its ranking metrics.")]
     issues: list[dict[str, Any]] = []
     expose_project(source_root)
     pipeline = request.get("pipeline", {})
@@ -152,7 +155,7 @@ def validate_request(source_root: Path, request: dict[str, Any], measurement: di
         context = {"parameters": parameters, "seed": 0}
         if measurement:
             context["measurement"] = {key: value for key, value in measurement.items()
-                                      if key not in ("sampleManifestPath", "sampleManifestSha256")}
+                                      if key not in ("sampleManifestPath", "sampleManifestSha256", "evidence", "evidenceManifestSha256")}
         return _call_pipeline_factory(factory, context)
 
     try:
@@ -177,6 +180,13 @@ def validate_request(source_root: Path, request: dict[str, Any], measurement: di
     objective = (request.get("search") or {}).get("objective")
     if objective and objective["metric"] == "estimator_score" and not callable(getattr(base, "score", None)):
         issues.append(_issue("search.objective", "score() unavailable", objective, "a model exposing score()", "Choose a supported geometry metric or expose an advisory score method."))
+    for key in ("modelSignals", "challenge"):
+        option = request.get("diagnostics", {}).get(key)
+        if option and not callable(getattr(base, option["method"], None)):
+            issues.append(_issue(f"diagnostics.{key}.method", "method unavailable", option["method"], "a callable on the constructed estimator", "Expose the declared read-only diagnostic method."))
+    contamination = request.get("diagnostics", {}).get("contamination")
+    if contamination and callable(getattr(base, "get_params", None)) and contamination["parameter"] not in base.get_params(deep=True):
+        issues.append(_issue("diagnostics.contamination.parameter", "parameter unavailable", contamination["parameter"], "an estimator get_params() name", "Choose an exposed non-seed sensitivity parameter."))
     variants = [base]
     for key, spec in factory_space.items():
         for suffix, value in _candidates(spec):

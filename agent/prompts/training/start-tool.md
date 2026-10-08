@@ -25,6 +25,28 @@ controller primary metric and cannot promote label-free candidates. Fixed
 follow-up requests preserve diagnostics; inspect their evidence before choosing
 the next experiment.
 
+Further optional diagnostics:
+- modelSignals:{method:"diagnostic_signals",compareTrain:true,units:"nats"}
+  calls a read-only fitted method returning reconstructionError and/or
+  logLikelihood vectors. Train comparisons are resubstitution evidence.
+- challenge:{method:"diagnostic_challenge",maxRows:512} calls
+  method(validation_frame,{seed,maxRows}) returning {frame,labels}, with matching
+  input columns and binary anomaly labels. Synthetic quality is advisory.
+- contamination:{parameter:"model__contamination",values:[0.01,0.05,0.1]}
+  requests observed target-free refits with primary randomness held constant;
+  measured cost includes them and the primary model stays unchanged.
+- volume:{bounds:[[-5,5],[-5,5]],scoreSource:"pipeline_model",
+  scoreMethod:"score_samples",uniformSamples:2048} requires a representation.
+  Declared bounds cover one to six feature dimensions. Custom estimators can
+  use scoreSource:"method" with a feature-matrix scoring method. Feature scores
+  must reproduce validation scores. MV/EM are conditional proxies tied to the
+  declared space/support, not proof of detection accuracy.
+Controller-supplied anomaly evidence distinguishes trusted from agent-provided
+labels and reports partial coverage. Missing labels are not normal by default.
+evidence_roc_auc/evidence_average_precision are available explicit search
+objectives; labelled evidence and synthetic results do not automatically change
+the task's promotion policy. Diagnostic hooks must not fit or mutate models.
+
 Start a new idea with `scope.kind: "pilot"` and deliberately reduced work, such
 as `maxRows` or `maxFolds`. A pilot validates assumptions and estimates cost but
 cannot promote a model. Use `scope.kind: "promotion"` only when the preceding

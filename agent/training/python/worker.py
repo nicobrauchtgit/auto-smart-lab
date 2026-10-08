@@ -82,7 +82,7 @@ def _run_fold(invocation: Invocation, pipeline_factory: Any, fold: ConcreteFold,
     context = {"parameters": parameters, "seed": estimator_seed}
     if invocation.measurement:
         context["measurement"] = {key: value for key, value in invocation.measurement.items()
-                                  if key not in ("sampleManifestPath", "sampleManifestSha256")}
+                                  if key not in ("sampleManifestPath", "sampleManifestSha256", "evidence", "evidenceManifestSha256")}
     estimator = _call_pipeline_factory(pipeline_factory, context)
     applied = {**invocation.pipeline.estimator_params, **(estimator_params or {})}
     if applied:
@@ -91,6 +91,10 @@ def _run_fold(invocation: Invocation, pipeline_factory: Any, fold: ConcreteFold,
     seeded_parameters = _inject_random_states(estimator, estimator_seed)
     train_frame = frame.iloc[list(fold.train)].reset_index(drop=True)
     validation_frame = frame.iloc[list(fold.validation)].reset_index(drop=True)
+    evidence_metadata = frame.attrs.get("diagnosticEvidence")
+    # Pandas propagates attrs through slicing; evidence must never enter fit or feature hooks.
+    train_frame.attrs.clear()
+    validation_frame.attrs.clear()
     train_y = [y[index] for index in fold.train] if y is not None else None
     validation_y = [y[index] for index in fold.validation] if y is not None else None
     task_kind = measurement_kind(invocation)
@@ -138,7 +142,7 @@ def _run_fold(invocation: Invocation, pipeline_factory: Any, fold: ConcreteFold,
         signals["scoreProvenance"] = {"kind": "anomaly", "method": spec["scoreMethod"], "direction": spec["scoreDirection"]}
         measurement = {}
     extra, diagnostic_fit_seconds = extra_measurements(invocation, estimator, fold, train_frame, validation_frame,
-                                                       predictions, validation_y)
+                                                       predictions, validation_y, scores, evidence_metadata, estimator_seed)
     signals.update(extra)
     objective = proxy_score(invocation, estimator, validation_frame, validation_y, signals)
     result = {

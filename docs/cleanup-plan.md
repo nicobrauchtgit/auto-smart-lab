@@ -253,6 +253,15 @@ Lab facts are in [Lab tasks](#lab-tasks-verified-2026-10-07).
   Measurement options survive fixed follow-up requests and fold checkpoints.
   Tests: `python/test_geometry.py` and the live measurement integration suite.
 
+- [x] **C7 Anomaly evidence and model diagnostics packet.** Added bounded,
+  hashed diagnostic evidence with explicit trusted/agent provenance and partial
+  coverage; reconstruction/likelihood hooks and train-validation gaps; synthetic
+  challenge sets; seeded feature-space MV/EM curves; and contamination sensitivity
+  through observed target-free fits. Evidence metadata never enters fit frames
+  or feature hooks. All outputs retain scope and provenance; the controller's
+  primary metric and promotion policy remain authoritative. Tests:
+  `python/test_anomaly_diagnostics.py` and the live measurement integration suite.
+
 - [ ] **C4 Champion vs. unpromoted pipelines, across runs.** The goal is
   knowing what works pipeline-wise: the best pipeline (the champion) plus the
   delta of every other pipeline against it. Each promotion trial already stores

@@ -17,6 +17,10 @@ test.each([
     { representation: { source: "method", method: "features", maxRows: 100000 } },
     { representation: { source: "pipeline_features", seed: 123 } },
     { predictionStrength: "true" },
+    { modelSignals: { method: "fit", maxRows: 10000 } },
+    { modelSignals: { method: "fit", maxRows: 10 } },
+    { volume: { bounds: [[1, 0]], scoreSource: "method", scoreMethod: "scores" } },
+    { contamination: { parameter: "model__random_state", values: [.1] } },
 ])("invalid diagnostics fail structurally without a request: %j", diagnostics => {
     const result = validateExperimentRequest({ ...base, diagnostics });
     expect(result.request).toBeUndefined();

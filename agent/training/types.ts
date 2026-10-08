@@ -53,6 +53,7 @@ export type MeasurementConfig = {
 	scoreMethod: "score_samples" | "decision_function" | "negative_outlier_factor_";
 	scoreDirection: "higher_is_anomalous" | "lower_is_anomalous";
 	anomalyLabel: number;
+	evidence?: { path: string; source: "trusted" | "agent_provided" };
 };
 
 export interface PilotScope {
@@ -95,11 +96,16 @@ export interface DiagnosticRequest {
 	representation?: { source: "pipeline_features" | "method"; method?: string;
 		metric?: "euclidean" | "cosine"; maxRows?: number; dbcv?: boolean };
 	predictionStrength?: boolean;
+	modelSignals?: { method: string; maxRows?: number; compareTrain?: boolean; units?: string };
+	challenge?: { method: string; maxRows?: number };
+	volume?: { bounds: [number, number][]; scoreSource: "pipeline_model" | "method"; scoreMethod: string; uniformSamples?: number };
+	contamination?: { parameter: string; values: number[] };
 }
 
 export interface ProxyObjective {
 	kind: "proxy";
-	metric: "silhouette" | "calinskiHarabasz" | "daviesBouldin" | "dbcv" | "estimator_score";
+	metric: "silhouette" | "calinskiHarabasz" | "daviesBouldin" | "dbcv" | "estimator_score"
+		| "evidence_roc_auc" | "evidence_average_precision";
 	direction: "maximize" | "minimize";
 }
 

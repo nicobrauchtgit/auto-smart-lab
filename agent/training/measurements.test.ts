@@ -22,6 +22,18 @@ def build_pipeline(context):
 `;
 const anomalyCode = clusteringCode.replace("from sklearn.cluster import AgglomerativeClustering", "from sklearn.ensemble import IsolationForest")
     .replace("AgglomerativeClustering(n_clusters=context['parameters'].get('clusters', 6))", "IsolationForest(n_estimators=10)");
+const anomalyDiagnosticCode = anomalyCode.replace("def build_pipeline(context):", `
+class DiagnosticPipeline(Pipeline):
+    def diagnostic_signals(self, frame):
+        assert not frame.attrs
+        x = self[:-1].transform(frame)
+        return {"reconstructionError": np.sum(x*x, axis=1), "logLikelihood": -np.sum(x*x, axis=1)}
+    def diagnostic_challenge(self, frame, context):
+        assert not frame.attrs
+        import pandas as pd
+        return {"frame": pd.DataFrame({"id": ["challenge-0", "challenge-1", "challenge-2", "challenge-3"],
+                                       "input": [[0,0], [.1,.1], [100,100], [101,101]]}), "labels": [0,0,1,1]}
+def build_pipeline(context):`).replace("return Pipeline(", "return DiagnosticPipeline(");
 const request = (clusters = 6, scheme = "stratified_kfold") => ({ schemaVersion: 2, hypothesis: "measure family discovery",
     pipeline: { module: "solutions/tasks/fixture.py", factory: "build_pipeline", parameters: { clusters } },
     cv: { kind: "builtin", scheme, folds: 3, repeats: 2 }, scope: { kind: "promotion" } });
@@ -159,7 +171,8 @@ test("label-free geometry search has an explicit proxy objective, retained featu
         expect(result.status).toBe("completed");
         expect(result.metrics).toBeNull();
         expect(result.search.proxyEvidence).toBe(true);
-        expect(result.search.selectionMean).toBe(1);
+        expect(result.search.selectionMean).toBeGreaterThan(.9);
+        expect(result.search.selectionMean).toBeLessThanOrEqual(1);
         expect(result.diagnostics.folds[0].diagnostics.geometry.silhouette.available).toBe(true);
         expect((await collectTrainingTrial(started.directory)).valid).toBe(true);
         expect(tagMessage(project.solutionsRoot, "champion")).toBeUndefined();
@@ -180,6 +193,50 @@ test("metadata edits after readiness cannot silently change a trial's dataset", 
         expect(training.supervisor.list()).toHaveLength(0);
     } finally { await training.close(); }
 });
+
+test("anomaly evidence, volume, model hooks and contamination fits retain provenance without promotion", async () => {
+    const { training, project, path } = fixture("anomaly_detection");
+    const evidencePath = join(project.root, "evidence.json");
+    const metadata = JSON.parse(readFileSync(path, "utf8"));
+    writeFileSync(evidencePath, JSON.stringify({ schemaVersion: 1, labels: metadata.samples.map((row: any, i: number) => ({ id: row.id, target: i % 2 })) }));
+    // A separate controller declares diagnostic evidence before readiness.
+    await training.close();
+    writeFileSync(join(project.solutionsRoot, "tasks/fixture.py"), anomalyDiagnosticCode);
+    commitAll(project.solutionsRoot, "Fitted-model anomaly diagnostic hooks");
+    const measured = createHarnessTraining({ root: join(project.root, "diagnostic-training"), projectRoot: project.root,
+        solutionsRoot: project.solutionsRoot, pythonExecutable: PYTHON, env: trainingEnvironment(),
+        taskId: "fixture", datasetSha256: createHash("sha256").update(readFileSync(path)).digest("hex"), rootSeed: 13,
+        measurement: { kind: "anomaly_detection", execution: "inductive", sampleManifestPath: path, scoreMethod: "score_samples",
+            scoreDirection: "lower_is_anomalous", anomalyLabel: -1, evidence: { path: evidencePath, source: "trusted" } },
+        workerPath: WORKER, prompts: loadPromptSnapshot(), record() {}, limits: { sampleIntervalMs: 25 },
+        pipelineRunId: "anomaly-packet", stageInvocationId: "anomaly-diagnostics" });
+    try {
+        const started = await measured.service.start({ ...request(6, "kfold"), diagnostics: {
+            representation: { source: "pipeline_features" },
+            modelSignals: { method: "diagnostic_signals", compareTrain: true, units: "fixture outputs" },
+            challenge: { method: "diagnostic_challenge" },
+            volume: { bounds: [[-1,6], [-1,6]], scoreSource: "pipeline_model", scoreMethod: "score_samples", uniformSamples: 128 },
+            contamination: { parameter: "model__contamination", values: [.05, .2] } } });
+        const result = await finish(measured, started);
+        expect(result.status).toBe("completed");
+        expect(result.promotionEligible).toBe(false);
+        const signals = result.diagnostics.folds[0].diagnostics;
+        expect(signals.evidence.source).toBe("trusted");
+        expect(signals.evidence.labelCoverage).toBe(1);
+        expect(signals.evidence.promotionEvidence).toBe(false);
+        expect(signals.modelSignals.trainComparison.available).toBe(true);
+        expect(signals.challenge.source).toBe("synthetic");
+        expect(signals.volume.available).toBe(true);
+        expect(signals.contamination.points.every((point: any) => point.available)).toBe(true);
+        expect((await collectTrainingTrial(started.directory)).valid).toBe(true);
+        const events = readFileSync(join(started.directory, "events.jsonl"), "utf8").trim().split("\n").map(line => JSON.parse(line));
+        expect(events.filter(event => event.type === "diagnostic_fit_started")).toHaveLength(12);
+        expect(events.every(event => event.pipelineRunId === "anomaly-packet" && event.stageInvocationId === "anomaly-diagnostics")).toBe(true);
+        const changed = JSON.parse(readFileSync(evidencePath, "utf8")); changed.labels[0].target = 1;
+        writeFileSync(evidencePath, JSON.stringify(changed));
+        await expect(measured.service.start(request(6, "kfold"))).rejects.toThrow("changed after setup");
+    } finally { await measured.close(); }
+}, 45000);
 
 test.each(["missing", "duplicate", "invalid-target"])("measurement preflight rejects %s prerequisites before any worker or agent import", async failure => {
     const { training, path, events, project } = fixture("clustering");

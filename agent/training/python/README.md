@@ -15,6 +15,7 @@ package:
 | `diagnostics.py` | Per-batch classification/clustering/anomaly signals and common-ID repeat stability; no fitting. |
 | `measurement.py` | Controller measurement declaration, opaque sample metadata, identity/target checks and primary metric selection. |
 | `geometry.py` | Bounded fitted-feature geometry, density validity and prediction-strength pair counts. |
+| `anomaly_measurements.py` | Evidence provenance/coverage, model-output distributions, synthetic challenges and bounded feature-space volume curves. |
 | `extra_measurements.py` | Opt-in diagnostics and explicitly observed additional fits. |
 | `options.py` | Worker-boundary validation of requested diagnostics and proxy objectives. |
 | `validation.py` | Bounded no-fit construction and parameter constraint validation. |

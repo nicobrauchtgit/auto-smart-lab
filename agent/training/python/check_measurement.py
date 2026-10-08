@@ -5,7 +5,7 @@ import json
 from smartlab_trial import diagnostics
 from smartlab_trial.measurement import load_samples, validate_config
 from smartlab_trial.folds import _materialize_folds
-from smartlab_trial import geometry, extra_measurements
+from smartlab_trial import geometry, extra_measurements, anomaly_measurements
 
 
 if __name__ == "__main__":
@@ -20,7 +20,10 @@ if __name__ == "__main__":
             raise SystemExit(0)
         config = validate_config(json.loads(args.config))
         frame, targets, digest = load_samples(config)
-        print(json.dumps({"rows": len(frame), "hasTargets": targets is not None, "sha256": digest}))
+        evidence = frame.attrs.get("diagnosticEvidence")
+        print(json.dumps({"rows": len(frame), "hasTargets": targets is not None, "sha256": digest,
+                          "evidenceManifestSha256": evidence["sha256"] if evidence else None,
+                          "evidenceRows": len(evidence["labels"]) if evidence else 0}))
     except Exception as error:
         print(json.dumps({"error": {"type": type(error).__name__, "message": str(error)}}))
         raise SystemExit(1)

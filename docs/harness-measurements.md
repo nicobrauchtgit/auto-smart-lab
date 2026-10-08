@@ -218,6 +218,86 @@ Unavailable objectives fail that search configuration. Label-free results never
 receive fabricated ARI/BACC or champion tags. Follow-up fixed requests retain
 the diagnostics; their controller evidence rules determine eligibility.
 
+## Packet 3: anomaly evidence, model signals and challenges
+
+The controller may add diagnostic evidence to `anomaly_detection`:
+
+```ts
+evidence: {path: "/absolute/path/evidence.json", source: "trusted"}
+// Alternatively source: "agent_provided".
+```
+
+The file is bounded to 8 MiB and has `schemaVersion:1, labels:[{id,target}]`,
+where targets are integer 0/1 with 1 anomalous. It may cover a subset of the
+development IDs; duplicates, unknown IDs, invalid labels and hash drift fail
+preflight before agent-code imports. Source and SHA-256 join setup events,
+the invocation, result and recovery data identity. A metadata edit requires a
+new controller invocation. This does not authorize supplying sealed labels.
+
+Per-batch evidence records labelled coverage, observed prevalence, ROC AUC/AP,
+prediction BACC/class metrics when predictions exist, and an advisory best
+threshold. Only supplied labels are scored; missing labels are never normal by
+default. Single-class evidence explicitly lacks ranking/BACC. Evidence stays
+outside fit inputs and feature hooks, including propagated pandas attributes.
+This is an invocation contract, not filesystem isolation. Trusted evidence is
+identified as such; agent-provided labels are proxies. Neither changes the
+controller's label-free promotion policy. An explicit search objective may use
+`evidence_roc_auc` or `evidence_average_precision`, requiring both classes in each
+measured batch; its selection remains advisory.
+
+Additional schema version 2 diagnostics are opt-in:
+
+```json
+{
+  "modelSignals": {"method": "diagnostic_signals", "compareTrain": true, "units": "nats"},
+  "challenge": {"method": "diagnostic_challenge", "maxRows": 512},
+  "contamination": {"parameter": "model__contamination", "values": [0.01, 0.05, 0.1]},
+  "representation": {"source": "pipeline_features"},
+  "volume": {
+    "bounds": [[-5, 5], [-5, 5]], "scoreSource": "pipeline_model",
+    "scoreMethod": "score_samples", "uniformSamples": 2048
+  }
+}
+```
+
+`diagnostic_signals(frame)` returns row-aligned `reconstructionError` (nonnegative)
+and/or `logLikelihood` vectors. The harness samples rows and computes distributions
+in the declared units. Optional train comparison reports resubstitution means
+and validation-minus-training gaps; batch execution lacks an independently
+fitted train population. These are model-specific outputs, not universally
+comparable losses or direct evidence of anomaly accuracy. No extra fit is used.
+
+`diagnostic_challenge(frame, {seed,maxRows})` returns `{frame,labels}` with the same
+input columns, unique IDs, bounded rows, and binary anomaly labels. It receives
+validation inputs only, never training or evidence labels. The fitted model
+scores those agent-designed synthetic examples; the result records generator
+method, harness seed, content hash, source `synthetic`, and ranking/prediction
+metrics. Simple artificial anomalies can be easy and unrepresentative; these
+challenge scores cannot promote. Fitted-row-only attributes cannot score a new
+challenge population. Diagnostic hooks must be read-only; known fitting/mutation
+methods cannot be selected as hooks. Arbitrary Python purity is not sandboxed.
+
+Contamination sensitivity clones the candidate for each declared value, retains
+its primary estimator seed, and fits under the shared harness lifecycle. A value
+matching the primary parameter reuses that fit. Each point reports score-rank
+agreement, decision changes, anomaly fraction, score health and convergence.
+Extra fits omit targets and add to measured cost; they never alter the primary
+model or automatically change its contamination setting. Up to five values are
+allowed for this optional measurement.
+
+Mass–Volume and Excess–Mass use harness-seeded uniform reference samples in a
+declared feature-space box with one to six dimensions. The fitted final pipeline
+model scores those features, or a declared custom feature-scoring method does.
+Feature-space scores must reproduce the authoritative validation scores; bounds
+must cover observed diagnostic features. The implementation estimates level-set
+volume, reports tied-mass overshoot and Monte Carlo standard error, and returns
+EM curves/area over the explicit `[0,1/supportVolume]` range. Defaults use 2048
+reference points, bounded to 8192. No fit is used. Comparisons require the same
+feature units, support, sampling scheme and scoring semantics. Curves are
+conditional proxies, not estimates of real-world detection accuracy. Definitions
+follow [Goix's evaluation study](https://arxiv.org/abs/1607.01152) and
+[the Excess–Mass paper](https://arxiv.org/abs/1502.01684).
+
 ## Stability
 
 Different repeats supply harness-seeded fits and resampled validation batches.
@@ -267,7 +347,5 @@ and [probability calibration definitions](https://scikit-learn.org/stable/module
 The [outlier model-selection study](https://arxiv.org/abs/2104.01422) supports
 keeping label-free proxies distinct from demonstrated detection accuracy.
 
-Remaining options from the research: contamination sensitivity, evidence labels and synthetic
-anomaly challenge sets, Mass–Volume/Excess–Mass curves, reconstruction/likelihood
-and embedding diagnostics, learning curves, low-FPR operating points, robustness
+Remaining options from the research: learning curves, low-FPR operating points, robustness
 slices, and corrected CV uncertainty. These are not prerequisites for this packet.
