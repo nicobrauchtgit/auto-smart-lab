@@ -58,8 +58,11 @@ export class LabClient {
 	readonly loginUrl: string;
 	private readonly cookies = new Map<string, StoredCookie>();
 	private readonly httpsAgent?: HttpsAgent;
+	private readonly timeoutMs: number;
 
-	constructor(options: { insecure?: boolean; baseUrl?: string; loginUrl?: string } = {}) {
+	constructor(options: { insecure?: boolean; baseUrl?: string; loginUrl?: string; timeoutMs?: number } = {}) {
+		this.timeoutMs = options.timeoutMs ?? 120_000;
+		if (!Number.isFinite(this.timeoutMs) || this.timeoutMs <= 0) throw new Error("Lab request timeout must be positive");
 		this.baseUrl = options.baseUrl ?? process.env.LAB_BASE_URL ??
 			"https://lab-test.smartlab.mlsec.tu-berlin.de/";
 		this.loginUrl = options.loginUrl ?? process.env.LAB_LOGIN_URL ??
@@ -158,6 +161,7 @@ export class LabClient {
 				const chunks: Buffer[] = [];
 				response.on("data", (chunk) => chunks.push(chunk as Buffer));
 				response.on("end", () => {
+					clearTimeout(deadline);
 					const body = Buffer.concat(chunks);
 					const contentType = String(response.headers["content-type"] ?? "").toLowerCase();
 					const textual = /text|html|json|xml|javascript|x-www-form-urlencoded/.test(contentType);
@@ -170,8 +174,17 @@ export class LabClient {
 					});
 				});
 			});
-			request.on("error", rejectPromise);
-			request.setTimeout(120_000, () => request.destroy(new Error("request timed out")));
+			// Socket inactivity timeouts do not bound DNS lookup or a slow stream.
+			const deadline = setTimeout(() => {
+				const error = new Error("request timed out");
+				rejectPromise(error);
+				request.destroy(error);
+			}, this.timeoutMs);
+			request.on("error", (error) => {
+				clearTimeout(deadline);
+				rejectPromise(error);
+			});
+			request.setTimeout(this.timeoutMs, () => request.destroy(new Error("request timed out")));
 			if (options.body) request.write(options.body);
 			request.end();
 		});

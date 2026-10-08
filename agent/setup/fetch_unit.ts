@@ -16,7 +16,6 @@ import { dataFileName, type TaskDataFile } from "./task_data.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(HERE, "..", "..");
-const UNITS_DIR = join(PROJECT_ROOT, "units");
 const CACHE_DIR = join(HERE, "downloaded_task_page");
 
 /**
@@ -26,7 +25,15 @@ const CACHE_DIR = join(HERE, "downloaded_task_page");
  */
 export interface FetchUnitOptions {
 	insecure?: boolean;
+	/** Retained for callers; explicit fetches always refresh live metadata. */
 	refreshMetadata?: boolean;
+}
+
+/** Injectable storage/transport for offline regression fixtures. */
+export interface FetchUnitDependencies {
+	projectRoot?: string;
+	cacheDir?: string;
+	client?: Pick<LabClient, "baseUrl" | "get">;
 }
 
 export interface FetchUnitResult {
@@ -81,15 +88,14 @@ async function hashUnitData(unitDir: string, dataFiles: string[]): Promise<strin
 	return hash.digest("hex");
 }
 
-async function findCachedUnit(unit: string): Promise<{
+async function findCachedUnit(unit: string, unitsDir: string): Promise<{
 	record: UnitDataHash;
 	unitDir: string;
-	valid: boolean;
 } | undefined> {
-	if (!existsSync(UNITS_DIR)) return undefined;
+	if (!existsSync(unitsDir)) return undefined;
 	const query = unit.toLowerCase().replace(/\/$/, "");
-	for (const unitName of readdirSync(UNITS_DIR)) {
-		const unitDir = join(UNITS_DIR, unitName);
+	for (const unitName of readdirSync(unitsDir)) {
+		const unitDir = join(unitsDir, unitName);
 		const hashPath = join(unitDir, ".data-hash.json");
 		if (!existsSync(hashPath)) continue;
 		let record: UnitDataHash;
@@ -101,8 +107,7 @@ async function findCachedUnit(unit: string): Promise<{
 		const identifiers = [record.unitId, record.unitSlug, record.unitTitle, record.unitUrl]
 			.map((value) => value.toLowerCase().replace(/\/$/, ""));
 		if (!identifiers.includes(query) && !record.unitId.toLowerCase().startsWith(query)) continue;
-		const currentHash = await hashUnitData(unitDir, record.dataFiles);
-		return { record, unitDir, valid: currentHash === record.dataHash };
+		return { record, unitDir };
 	}
 	return undefined;
 }
@@ -248,14 +253,6 @@ function unique(values: string[]): string[] {
 	return [...new Set(values)];
 }
 
-async function cachedGet(client: LabClient, url: string, path: string, refresh = false): Promise<string> {
-	mkdirSync(dirname(path), { recursive: true });
-	if (!refresh && existsSync(path) && statSync(path).size > 0) return readFileSync(path, "utf8");
-	const response = await client.get(url);
-	writeFileSync(path, response.body);
-	return response.text;
-}
-
 function readMetadata(path: string): TaskMetadata | undefined {
 	try {
 		return JSON.parse(readFileSync(path, "utf8")) as TaskMetadata;
@@ -270,41 +267,11 @@ function unitKeyword(unitName: string): string {
 	return parts.at(-1) ?? unitName;
 }
 
-function metadataCacheValid(record: UnitDataHash): boolean {
-	const introPath = join(PROJECT_ROOT, record.unitSlug.startsWith("units/") ? record.unitSlug : `units/${record.unitSlug}`, "unit-intro.md");
-	if (!existsSync(introPath)) return false;
-	const intro = readFileSync(introPath, "utf8");
-	if (/Confidential Unit Information|Please login with[\s\S]{0,300}password/i.test(intro)) return false;
-	const indexPath = join(UNITS_DIR, "index.json");
-	if (!existsSync(indexPath)) return false;
-	let index: Record<string, string>;
-	try {
-		index = JSON.parse(readFileSync(indexPath, "utf8")) as Record<string, string>;
-	} catch {
-		return false;
-	}
-	const keyword = unitKeyword(record.unitSlug);
-	for (const [position, taskPath] of record.taskPaths.entries()) {
-		const taskDir = resolve(PROJECT_ROOT, taskPath);
-		const promptPath = join(taskDir, "prompt.md");
-		const metadataPath = join(taskDir, "meta.json");
-		if (!existsSync(promptPath) || !existsSync(metadataPath)) return false;
-		const prompt = readFileSync(promptPath, "utf8");
-		if (prompt.length < 300 || /Submit New Attempt/i.test(prompt)) return false;
-		const metadata = readMetadata(metadataPath);
-		const taskNumber = position + 1;
-		const shortId = `${keyword}${taskNumber}`;
-		if (!metadata || metadata.task_number !== taskNumber || metadata.short_id !== shortId) return false;
-		if (index[shortId] !== metadata.url) return false;
-	}
-	return true;
-}
-
-function rebuildTaskIndex(): void {
-	mkdirSync(UNITS_DIR, { recursive: true });
+function rebuildTaskIndex(unitsDir: string): void {
+	mkdirSync(unitsDir, { recursive: true });
 	const index: Record<string, string> = {};
-	for (const unitName of readdirSync(UNITS_DIR).sort()) {
-		const unitDir = join(UNITS_DIR, unitName);
+	for (const unitName of readdirSync(unitsDir).sort()) {
+		const unitDir = join(unitsDir, unitName);
 		if (!statSync(unitDir).isDirectory()) continue;
 		const keyword = unitKeyword(unitName);
 		const tasks = readdirSync(unitDir)
@@ -328,20 +295,31 @@ function rebuildTaskIndex(): void {
 			writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
 		});
 	}
-	writeFileSync(join(UNITS_DIR, "index.json"), `${JSON.stringify(index, null, 2)}\n`);
+	writeFileSync(join(unitsDir, "index.json"), `${JSON.stringify(index, null, 2)}\n`);
 	console.log(`[fetch_unit] Index contains: ${Object.keys(index).join(", ")}`);
 }
 
-export async function fetchUnit(unit: string, options: FetchUnitOptions = {}): Promise<FetchUnitResult> {
-	const cached = await findCachedUnit(unit);
-	if (cached?.valid && metadataCacheValid(cached.record) && !options.refreshMetadata) {
-		console.log(`[fetch_unit] ${cached.record.unitSlug} unit data hash matches; skipping fetch.`);
-		return { unitSlug: cached.record.unitSlug, taskPaths: cached.record.taskPaths };
-	}
+export async function fetchUnit(unit: string, options: FetchUnitOptions = {}, dependencies: FetchUnitDependencies = {}): Promise<FetchUnitResult> {
+	const projectRoot = dependencies.projectRoot ?? PROJECT_ROOT;
+	const unitsDir = join(projectRoot, "units");
+	const cacheDir = dependencies.cacheDir ?? CACHE_DIR;
+	const cached = await findCachedUnit(unit, unitsDir);
 	// SmartLab uses a permanently self-signed certificate on its lab/download hosts.
-	const client = new LabClient({ insecure: options.insecure ?? true });
+	const client = dependencies.client ?? new LabClient({ insecure: options.insecure ?? true, timeoutMs: 10_000 });
+	// Fetch every page live. Local data hashes cannot establish freshness of
+	// week-two links. Stage writes until every required page has been validated.
+	const writes = new Map<string, Buffer | string>();
+	const liveGet = async (url: string, path: string): Promise<string> => {
+		try {
+			const response = await client.get(url);
+			writes.set(path, response.body);
+			return response.text;
+		} catch {
+			throw new Error("SmartLab metadata is unavailable; check lab service, VPN and LAB_USER/LAB_PASS. No local files were changed.");
+		}
+	};
 	const unitsUrl = new URL("/units/", client.baseUrl).toString();
-	const unitsPage = await cachedGet(client, unitsUrl, join(CACHE_DIR, "units.html"), options.refreshMetadata);
+	const unitsPage = await liveGet(unitsUrl, join(cacheDir, "units.html"));
 	const discovered = new Map<string, string>();
 	for (const link of parseLinks(unitsPage)) {
 		if (!/\/units\/[0-9a-f-]+\/tasks\/?$/i.test(link.href)) continue;
@@ -368,7 +346,7 @@ export async function fetchUnit(unit: string, options: FetchUnitOptions = {}): P
 		const { url, listingTitle } = candidate;
 		const segments = new URL(url).pathname.split("/").filter(Boolean);
 		const id = segments.at(-1) === "tasks" ? segments.at(-2) ?? "unit" : segments.at(-1) ?? "unit";
-		const page = await cachedGet(client, url, join(CACHE_DIR, "units", `${id}.html`), options.refreshMetadata);
+		const page = await liveGet(url, join(cacheDir, "units", `${id}.html`));
 		const crumbs = breadcrumb(page);
 		const title = crumbs[1] || listingTitle;
 		const slug = (title ? slugify(title) : "") || id;
@@ -403,16 +381,15 @@ export async function fetchUnit(unit: string, options: FetchUnitOptions = {}): P
 	const numberedAlias = numberedQuery?.[2]
 		? `${String(Number(numberedQuery[1])).padStart(2, "0")}-${numberedQuery[2]}`
 		: undefined;
-	const localNames = existsSync(UNITS_DIR) ? readdirSync(UNITS_DIR) : [];
+	const localNames = existsSync(unitsDir) ? readdirSync(unitsDir) : [];
 	const existingName = localNames.find((name) =>
 		[name.toLowerCase(), slugify(name)].includes(querySlug) || name.toLowerCase() === numberedAlias);
 	const selected = { ...matched, slug: existingName ?? numberedAlias ?? matched.slug };
 
-	const unitDir = join(UNITS_DIR, selected.slug);
-	mkdirSync(unitDir, { recursive: true });
-	console.log(`[unit] ${selected.title || selected.id} -> ${relative(PROJECT_ROOT, unitDir)}/`);
+	const unitDir = join(unitsDir, selected.slug);
+	console.log(`[unit] ${selected.title || selected.id} -> ${relative(projectRoot, unitDir)}/`);
 	const intro = htmlToMarkdown(extractUnitDescription(selected.page));
-	if (intro) writeFileSync(join(unitDir, "unit-intro.md"), `# ${selected.title}\n\n${intro}\n`);
+	if (intro) writes.set(join(unitDir, "unit-intro.md"), `# ${selected.title}\n\n${intro}\n`);
 
 	const taskUrls = unique(parseLinks(selected.page)
 		.filter((link) => /\/units\/[0-9a-f-]+\/tasks\/[0-9a-f-]+\/?$/i.test(link.href))
@@ -422,15 +399,13 @@ export async function fetchUnit(unit: string, options: FetchUnitOptions = {}): P
 	const dataPackages: string[] = [];
 	for (const [taskIndex, taskUrl] of taskUrls.entries()) {
 		const taskId = new URL(taskUrl).pathname.split("/").filter(Boolean).at(-1) ?? "task";
-		const taskPage = await cachedGet(client, taskUrl,
-			join(CACHE_DIR, "tasks", `${selected.id}__${taskId}.html`), options.refreshMetadata);
+		const taskPage = await liveGet(taskUrl, join(cacheDir, "tasks", `${selected.id}__${taskId}.html`));
 		const crumbs = breadcrumb(taskPage);
 		const taskTitle = crumbs[2] ?? "";
 		const taskSlug = (taskTitle ? slugify(taskTitle) : "") || taskId;
 		const taskDir = join(unitDir, taskSlug);
-		mkdirSync(taskDir, { recursive: true });
-		console.log(`  [task] ${taskTitle || taskId} -> ${relative(PROJECT_ROOT, taskDir)}/`);
-		writeFileSync(join(taskDir, "prompt.md"),
+		console.log(`  [task] ${taskTitle || taskId} -> ${relative(projectRoot, taskDir)}/`);
+		writes.set(join(taskDir, "prompt.md"),
 			`# ${taskTitle}\n\nSource: ${taskUrl}\n\n${htmlToMarkdown(extractTaskDescription(taskPage))}\n`);
 		const downloads = unique(parseLinks(taskPage)
 			.map((link) => new URL(link.href, taskUrl).toString())
@@ -447,14 +422,13 @@ export async function fetchUnit(unit: string, options: FetchUnitOptions = {}): P
 			task_number: taskIndex + 1,
 			data_files: dataFiles,
 		};
-		writeFileSync(join(taskDir, "meta.json"), `${JSON.stringify(metadata, null, 2)}\n`);
+		writes.set(join(taskDir, "meta.json"), `${JSON.stringify(metadata, null, 2)}\n`);
 		if (dataFiles.length) console.log(`    [data] ${dataFiles.length} file(s) recorded; downloaded when a run needs this task`);
 		else console.log("    [data] no download links found on task page");
 		dataPackages.push(...dataFiles.map((file) => join(taskDir, "data", file.name)).filter((path) => existsSync(path)));
-		taskPaths.push(relative(PROJECT_ROOT, taskDir));
+		taskPaths.push(relative(projectRoot, taskDir));
 	}
 
-	rebuildTaskIndex();
 	const dataFiles = dataPackages.map((packagePath) => relative(unitDir, packagePath)).sort();
 	const dataHash = await hashUnitData(unitDir, dataFiles);
 	if (!dataHash) throw new Error(`Could not hash complete unit corpus for ${selected.slug}`);
@@ -476,7 +450,12 @@ export async function fetchUnit(unit: string, options: FetchUnitOptions = {}): P
 		dataFiles,
 		dataHash,
 	};
-	writeFileSync(join(unitDir, ".data-hash.json"), `${JSON.stringify(hashRecord, null, 2)}\n`);
+	writes.set(join(unitDir, ".data-hash.json"), `${JSON.stringify(hashRecord, null, 2)}\n`);
+	for (const [path, content] of writes) {
+		mkdirSync(dirname(path), { recursive: true });
+		writeFileSync(path, content);
+	}
+	rebuildTaskIndex(unitsDir);
 	console.log(`[fetch_unit] Done. ${taskPaths.length} task(s) written for ${selected.slug}.`);
 	return { unitSlug: selected.slug, taskPaths };
 }

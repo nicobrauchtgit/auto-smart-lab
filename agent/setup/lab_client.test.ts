@@ -7,7 +7,10 @@ import { LabClient } from "./lab_client.ts";
 const servers: Server[] = [];
 
 afterEach(async () => {
-	await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve) => server.close(() => resolve()))));
+	await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve) => {
+		server.closeAllConnections();
+		server.close(() => resolve());
+	})));
 });
 
 async function listen(server: Server): Promise<number> {
@@ -19,6 +22,25 @@ async function listen(server: Server): Promise<number> {
 }
 
 describe("LabClient", () => {
+	test("bounds a stalled response by the configured request deadline", async () => {
+		const server = createServer((_request, _response) => {});
+		const port = await listen(server);
+		const client = new LabClient({ baseUrl: `http://127.0.0.1:${port}/`, timeoutMs: 40 });
+		await expect(client.get("stalled")).rejects.toThrow("request timed out");
+	});
+
+	test("a slow stream cannot keep extending the request deadline", async () => {
+		const server = createServer((_request, response) => {
+			response.setHeader("Content-Type", "text/plain");
+			response.write("start");
+			const interval = setInterval(() => response.write("."), 5);
+			response.on("close", () => clearInterval(interval));
+		});
+		const port = await listen(server);
+		const client = new LabClient({ baseUrl: `http://127.0.0.1:${port}/`, timeoutMs: 60 });
+		await expect(client.get("streaming")).rejects.toThrow("request timed out");
+	});
+
 	test("does not send host-only cookies to a different hostname", async () => {
 		let receivedCookie = "";
 		const server = createServer((request, response) => {
