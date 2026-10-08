@@ -167,7 +167,7 @@ def validate_request(source_root: Path, request: dict[str, Any], measurement: di
                                 "Fix the factory or its parameters; it must build without fitting or loading data.",
                                 _last_line(error))]
 
-    if (measurement or {}).get("selection") and not callable(getattr(base, "predict", None)):
+    if (measurement or {}).get("selection") and request.get("scope", {}).get("kind") == "promotion" and not request.get("search") and not callable(getattr(base, "predict", None)):
         issues.append(_issue("pipeline.factory", "predictions unavailable", None, "an estimator exposing predict()", "Evidence promotion also requires fixed binary operating decisions for refit and submission."))
     # Factory values can change the pipeline's structure, so a plain name is
     # valid if any variant exposes it.

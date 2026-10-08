@@ -452,9 +452,12 @@ async function collectTrial(directory: string, experimentId: string): Promise<Tr
                     const observedKeys = observations.map(key);
                     const expectedKeys = expected.map(row => JSON.stringify([row.id, row.repeat, row.fold]));
                     if (observedKeys.length !== expectedKeys.length || new Set(observedKeys).size !== observedKeys.length || !sameJson([...observedKeys].sort(), [...expectedKeys].sort())) throw new Error("OOF evidence rows do not match completed manifest folds");
-                    if (observations.some(row => row[3] === "" || !Number.isInteger(Number(row[3])))) throw new Error("Selection requires integer predictions");
+                    const requiresPredictions = scope === "promotion" && request?.search === undefined;
+                    if (observations.some(row => row[3] === "" ? requiresPredictions : !Number.isInteger(Number(row[3])))) throw new Error("Fixed selection promotion requires integer predictions");
 					for (const fold of foldRows) {
-						const rows = observations.filter(row => Number(row[1]) === fold.repeat && Number(row[2]) === fold.fold && labels.has(row[0]));
+						const batch = observations.filter(row => Number(row[1]) === fold.repeat && Number(row[2]) === fold.fold);
+                        if (fold.validationRows !== batch.length) throw new Error("Fold validation row count differs from authoritative observations");
+                        const rows = batch.filter(row => labels.has(row[0]));
 						const scores = rows.map(row => ({ truth: labels.get(row[0])!, score: Number(row[4]) * ((measurement as any).scoreDirection === "lower_is_anomalous" ? -1 : 1) }));
 						if (rows.some(row => !row[4] || !Number.isFinite(Number(row[4])))) throw new Error("Non-finite or missing evidence scores");
 						const classes = new Set(scores.map(row => row.truth));
@@ -463,7 +466,7 @@ async function collectTrial(directory: string, experimentId: string): Promise<Tr
                             || receipt?.basis !== selection.basis || receipt?.direction !== selection.direction || receipt?.population !== selection.population
                             || receipt?.labelledRows !== rows.length || receipt?.positiveRows !== scores.filter(row => row.truth === 1).length
                             || receipt?.negativeRows !== scores.filter(row => row.truth === 0).length
-                            || receipt?.validationRows !== fold.validationRows || receipt?.labelCoverage !== rows.length / Number(fold.validationRows)) throw new Error("Fold selection identity mismatch");
+                            || receipt?.validationRows !== batch.length || receipt?.labelCoverage !== rows.length / batch.length) throw new Error("Fold selection identity mismatch");
 						if (classes.size !== 2) {
 							if (receipt.available === true || (fold.metrics as any)?.selectionScore !== undefined || result?.promotionEligible) throw new Error("One-class evidence fold cannot select or promote");
 							continue;

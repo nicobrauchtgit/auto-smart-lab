@@ -115,7 +115,8 @@ def _run_fold(invocation: Invocation, pipeline_factory: Any, fold: ConcreteFold,
         if np.any(values != np.floor(values)):
             raise InvocationError("Predictions must be integer labels")
         predictions = values.astype(int).tolist()
-    if (task_kind != "anomaly_detection" or (invocation.measurement or {}).get("selection")) and predictions is None:
+    fixed_selection_promotion = ((invocation.measurement or {}).get("selection") and invocation.scope.kind == "promotion" and invocation.search is None)
+    if (task_kind != "anomaly_detection" or fixed_selection_promotion) and predictions is None:
         raise InvocationError("Pipeline must supply predictions for this measurement kind")
     scores = None
     if task_kind == "classification":

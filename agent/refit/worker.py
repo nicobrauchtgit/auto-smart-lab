@@ -176,7 +176,7 @@ def fit(directory, freeze):
     source = Path(freeze['sourceRoot'])
     expose_project(source)
     pipeline = freeze['pipeline']
-    context = {'parameters': pipeline.get('parameters'), 'seed': freeze['seed']}
+    context = {'parameters': pipeline.get('parameters', {}), 'seed': freeze['seed']}
     if freeze['inputs'].get('kind') == 'samples':
         # The factory sees the same controller measurement context as in its measured trials.
         context['measurement'] = freeze['inputs']['task']['measurement']

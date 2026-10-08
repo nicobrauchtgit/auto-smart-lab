@@ -17,7 +17,8 @@ records that copy's hash and source. Mutable live evidence is excluded from
 base data identity, recovery and terminal freezing.
 
 Evidence labels never enter estimator fit frames, factory inputs or CV inputs.
-Every scored fold needs both classes and integer predictions. Worker scores,
+Every scored fold needs both classes. Fixed promotion also requires integer
+predictions; score-only pilots and searches remain advisory. Worker scores,
 search selection, fixed confirmation, result integrity checks, evaluation and
 refit use the same explicit selection score. Search itself cannot promote.
 The champion reruns on the challenger's exact evidence snapshot and folds;

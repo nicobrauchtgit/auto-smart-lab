@@ -35,7 +35,10 @@ class Detector(BaseEstimator):
         return np.where(self.score_samples(frame) > 0, -1, 1)
 def build_pipeline(context):
     assert 'evidence' not in context.get('measurement', {})
-    return Detector()
+    detector = Detector()
+    if context.get('parameters', {}).get('scoreOnly'):
+        detector.predict = None
+    return detector
 `;
 
 const CONFIG = parseTaskConfiguration({ schemaVersion: 1, kind: "anomaly_detection", samples: { source: "zip_members", train: "train.zip", test: "test.zip" },
@@ -73,6 +76,11 @@ test("growing evidence is snapshotted; search, paired champion, recovery, valida
   await training.service.finalize(first.id);
   const firstBytes = readFileSync(join(first.directory, "evidence.json"), "utf8");
   expect(JSON.parse(tagMessage(project.solutionsRoot, "champion/fixture")!.message).experimentId).toBe(first.id);
+  const scoreOnly = await training.service.start({ ...request, pipeline: { ...request.pipeline, parameters: { scoreOnly: true } }, scope: { kind: "pilot", maxFolds: 1 } });
+  expect(await until(() => training.supervisor.status(scoreOnly.id).status !== "running")).toBe(true);
+  const advisory = await collectTrainingTrial(scoreOnly.directory);
+  expect(advisory.valid).toBe(true);
+  expect(advisory.result).toMatchObject({ status: "completed", promotionEligible: false });
   // New evidence changes neither old measurements nor their durable base identity.
   writeFileSync(liveEvidence, JSON.stringify({ schemaVersion: 1, labels }));
   const search = await training.service.start({ ...request, pipeline: { module: request.pipeline.module, factory: request.pipeline.factory }, search: { space: { quality: { type: "categorical", choices: [0, 1] } }, sampler: "grid" } });
@@ -99,6 +107,28 @@ test("growing evidence is snapshotted; search, paired champion, recovery, valida
    expect((await collectTrainingTrial(challenger.directory)).valid).toBe(false);
   }
   writeFileSync(foldsPath, original);
+  // Both summary copies may agree while carrying corrupted provenance;
+  // they still must match the invocation and authoritative fold receipts.
+  const resultPath = join(challenger.directory, "trial-result.json");
+  const metricsPath = join(challenger.directory, "metrics.json");
+  const resultBytes = readFileSync(resultPath, "utf8");
+  const metricsBytes = readFileSync(metricsPath, "utf8");
+  for (const mutate of [(selection: any) => selection.basis = "proxy", (selection: any) => selection.source = "trusted", (selection: any) => selection.evidenceSha256 = "0".repeat(64), (selection: any) => selection.folds = []]) {
+   const changed = JSON.parse(resultBytes); mutate(changed.selection);
+   writeFileSync(resultPath, JSON.stringify(changed)); writeFileSync(metricsPath, JSON.stringify(changed));
+   expect((await collectTrainingTrial(challenger.directory)).valid).toBe(false);
+  }
+  writeFileSync(resultPath, resultBytes); writeFileSync(metricsPath, metricsBytes);
+  const falseCoverageFolds = structuredClone(folds);
+  falseCoverageFolds[0].validationRows *= 2;
+  falseCoverageFolds[0].selection.validationRows *= 2;
+  falseCoverageFolds[0].selection.labelCoverage /= 2;
+  const falseCoverageResult = JSON.parse(resultBytes);
+  falseCoverageResult.selection.folds = falseCoverageFolds.map((fold: any) => fold.selection);
+  writeFileSync(foldsPath, falseCoverageFolds.map(fold => JSON.stringify(fold)).join("\n") + "\n");
+  writeFileSync(resultPath, JSON.stringify(falseCoverageResult)); writeFileSync(metricsPath, JSON.stringify(falseCoverageResult));
+  expect((await collectTrainingTrial(challenger.directory)).valid).toBe(false);
+  writeFileSync(foldsPath, original); writeFileSync(resultPath, resultBytes); writeFileSync(metricsPath, metricsBytes);
   const snapshotPath = join(challenger.directory, "evidence.json");
   const originalEvidence = readFileSync(snapshotPath, "utf8");
   writeFileSync(snapshotPath, "{}");

@@ -708,6 +708,6 @@ def write_search_outputs(invocation: Invocation, output_dir: Path, outcome: dict
         aggregate = _measure([labels_by_id[row["id"]] for row in best.oof], [int(row["prediction"]) for row in best.oof])
     elif best is not None and measurement_kind(invocation) == "clustering" and "adjustedRandIndex" in best.folds[0]["metrics"]:
         aggregate = {"adjustedRandIndex": statistics.fmean(primary_score(fold["metrics"]) for fold in best.folds)}
-    elif best is not None and measurement_kind(invocation) == "anomaly_detection" and (invocation.measurement or {}).get("selection"):
+    elif best is not None and measurement_kind(invocation) == "anomaly_detection" and (invocation.measurement or {}).get("selection") and all("selectionScore" in fold["metrics"] for fold in best.folds):
         aggregate = {"selectionScore": statistics.fmean(primary_score(fold["metrics"]) for fold in best.folds)}
     return {"report": report, "metrics": aggregate}

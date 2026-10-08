@@ -95,6 +95,47 @@ class EvidenceSelection(unittest.TestCase):
         self.assertFalse(result['promotionEligible'])
         self.assertEqual(result['search']['selectionMean'], 1)
 
+    def test_explicit_proxy_search_with_one_class_evidence_stays_advisory(self):
+        doc = self.document()
+        path = Path(doc['measurement']['evidence']['path'])
+        path.write_text(json.dumps({'schemaVersion': 1, 'labels': [{'id': 'sample-000', 'target': 1}]}))
+        doc['measurement']['evidenceManifestSha256'] = hashlib.sha256(path.read_bytes()).hexdigest()
+        module = self.fixture.root / 'solutions/generic.py'
+        module.write_text(module.read_text().replace('    def predict(self, frame):', '    def predict(self, frame):').replace('    def score_samples(self, frame):', '    def score(self, frame):\n        return 0.5\n    def score_samples(self, frame):'))
+        doc['schemaVersion'] = doc['request']['schemaVersion'] = 2
+        doc['request']['search'] = {'space': {'mode': {'type': 'categorical', 'choices': ['anomaly']}}, 'sampler': 'grid',
+                                    'objective': {'kind': 'proxy', 'metric': 'estimator_score', 'direction': 'maximize'}}
+        result = self.execute(doc)
+        self.assertEqual(result['status'], 'completed')
+        self.assertFalse(result['promotionEligible'])
+        self.assertIsNone(result['metrics'])
+        self.assertEqual(result['search']['selectionMean'], .5)
+
+    def test_score_only_pilot_and_search_can_complete_but_fixed_promotion_requires_predictions(self):
+        doc = self.document()
+        module = self.fixture.root / 'solutions/generic.py'
+        module.write_text(module.read_text().replace('    def predict(self, frame):', '    def hidden_predict(self, frame):').replace('    def fit_predict(self, frame):', '    def hidden_fit_predict(self, frame):'))
+        doc['request']['scope'] = {'kind': 'pilot'}
+        result = self.execute(doc)
+        self.assertEqual(result['status'], 'completed')
+        self.assertEqual(result['metrics']['selectionScore'], 1)
+        self.assertFalse(result['promotionEligible'])
+        # A new directory prevents completed pilot checkpoints being reused.
+        doc['experimentId'] = 'score-only-search'
+        doc['inputs']['outputDir'] = str(self.fixture.root / 'score-only-search')
+        doc['schemaVersion'] = doc['request']['schemaVersion'] = 2
+        doc['request']['search'] = {'space': {'mode': {'type': 'categorical', 'choices': ['anomaly']}}, 'sampler': 'grid'}
+        result = self.execute(doc)
+        self.assertEqual(result['status'], 'completed')
+        self.assertEqual(result['metrics']['selectionScore'], 1)
+        self.assertFalse(result['promotionEligible'])
+        del doc['request']['search']
+        doc['request']['scope'] = {'kind': 'promotion'}
+        doc['experimentId'] = 'score-only-promotion'
+        doc['inputs']['outputDir'] = str(self.fixture.root / 'score-only-promotion')
+        with self.assertRaisesRegex(InvocationError, 'supply predictions'):
+            self.execute(doc)
+
     def test_refit_and_evaluation_recompute_frozen_evidence_and_detect_corrupt_scores(self):
         doc = self.document()
         # Terminal evidence validators require a source identity, but never import it.
