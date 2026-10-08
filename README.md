@@ -221,17 +221,16 @@ If setting the ADC quota project fails with a missing
 
 ## Fetch and inspect tasks
 
-Download one unit and write its task metadata under `units/`:
+Refresh one unit's task metadata and download links under `units/`:
 
 ```bash
 ./dev bun run fetch-unit -- 01-spam
 ```
 
-Refresh page-derived metadata without replacing matching datasets:
-
-```bash
-./dev bun run fetch-unit -- 01-spam --refresh-metadata
-```
+Every explicit fetch reads current lab pages; `--refresh-metadata` remains
+accepted for compatibility. Matching local datasets are retained, and missing
+task data is downloaded on demand when a run needs it. If required pages are
+unavailable or invalid, the fetch leaves local files unchanged.
 
 List local tasks and inspect the configured pipeline without starting an agent:
 
