@@ -1,8 +1,8 @@
 """TCP identity only: no packet features, labels, or attack interpretation.
 
 One sample is a bidirectional endpoint tuple across the capture. Direction is
-that of the first observed packet, as in connection IDs supplied by the lab;
-reverse packets share its ID. Reused tuples are intentionally one sample.
+that of the first observed packet; reverse packets share its ID. The lab's
+submission direction convention still needs verification against real data. Reused tuples are intentionally one sample.
 Packet indices are zero-based across all capture records, including non-TCP.
 IPv6 endpoints use brackets to keep the port boundary unambiguous.
 """
