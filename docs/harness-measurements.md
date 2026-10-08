@@ -427,5 +427,10 @@ and [probability calibration definitions](https://scikit-learn.org/stable/module
 The [outlier model-selection study](https://arxiv.org/abs/2104.01422) supports
 keeping label-free proxies distinct from demonstrated detection accuracy.
 
-Remaining options from the research: learning curves, low-FPR operating points, robustness
-slices, and corrected CV uncertainty. These are not prerequisites for this packet.
+The researched measurement packets are implemented, including learning curves,
+low-FPR operating points, robustness/slices and corrected CV uncertainty.
+Remaining documented work is integration and additional validation safeguards:
+H1/H2 task declarations and stage adapters, C1's ID leakage canary, C2's
+independent held-back confirmation, and C4's cross-run comparison history.
+H4's observed PyTorch training and gradient-based robustness are separate work;
+the generic perturbation hooks do not implement FGSM/PGD evaluation.

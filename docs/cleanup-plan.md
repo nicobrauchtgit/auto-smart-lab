@@ -91,8 +91,8 @@ with this file, this file wins.
 - [ ] Run the agents on the VM with a copy of `.env` there? (The VM checkout has no `.env` yet; see "Environment and access".)
 - [ ] `~/.local/bin/herdr` on the VM: origin unknown, not from this project. Keep or remove?
 - [ ] Recommended, not yet confirmed: build the canary (C1) and held-back
-  confirmation (C2) inside the modular harness (H1). The user approved the first
-  measurement packet; C3/C5 are implemented in the shared training path.
+  confirmation (C2) inside the modular harness (H1). The user approved the
+  measurement packets; C3 and C5–C8 are implemented in the shared training path.
 
 ## Work queue
 
@@ -194,7 +194,7 @@ Lab facts are in [Lab tasks](#lab-tasks-verified-2026-10-07).
   The training/measurement foundation is now available: controller-declared
   opaque sample metadata, inductive/batch execution, K-fold/group-held-out folds,
   ARI scoring/search/champion comparison and label-free diagnostics. See
-  [the first measurement packet](harness-measurements.md). This does not complete
+  [the measurement packets](harness-measurements.md). This does not complete
   task declaration, stage adapters, generic terminal refit or submission.
 - [ ] **H2 The orchestrator chooses the task kind** and applies the matching
   harness parts.
