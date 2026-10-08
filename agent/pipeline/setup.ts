@@ -134,6 +134,9 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
  });
  if (needs.has("python")) add("python-environment", "local", "Run ./dev setup; declarations, lockfile and installed packages must agree.", () => { readPythonEnvironment(); });
  if (needs.has("evaluation")) {
+  if (options.taskConfiguration?.kind === "anomaly_detection" && options.taskConfiguration.selection) add("evaluation-anomaly-prompt", "local", "Restore the registered agent/prompts/review/guide-anomaly.md template before starting the requested stage chain.", () => {
+   options.prompts.render("review.guide-anomaly", {});
+  });
   add("evaluation-diagnostics", "local", "Restore agent/evaluation/diagnostics.py and run ./dev setup; sklearn and smartlab_eval must import successfully.", () => {
    readable(join(PROJECT_ROOT, "agent/evaluation/diagnostics.py"));
    const result = spawnSync(readPythonEnvironment().executable, ["-c", "from sklearn.metrics import roc_curve, precision_recall_curve, precision_recall_fscore_support; from smartlab_eval import load_labels"], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });

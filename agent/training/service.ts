@@ -9,6 +9,7 @@
  * change what a running or finished trial measured.
  */
 
+import { selectionSummary } from "./selection_summary.js";
 import { assertDevelopmentCandidate, isTerminalCandidate, selectionClaimAsync } from "./terminal.js";
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
@@ -964,6 +965,7 @@ export class TrainingService {
 			completedFolds: result.completedFolds, requestedFolds: result.requestedFolds,
 			balancedAccuracy: result.metrics?.balancedAccuracy,
 			adjustedRandIndex: result.metrics?.adjustedRandIndex,
+            selection: selectionSummary(result),
 			diagnostics: compactDiagnostics(result),
 			promotionIneligibleReason: result.promotionIneligibleReason,
 			...(result.error ? { error: result.error } : {}),
@@ -1000,6 +1002,7 @@ export class TrainingService {
 				status: result?.status ?? "running",
 				balancedAccuracy: result?.metrics?.balancedAccuracy,
 				adjustedRandIndex: result?.metrics?.adjustedRandIndex,
+                selection: selectionSummary(result),
 				diagnostics: compactDiagnostics(result),
 				promotionEligible: result?.promotionEligible ?? false,
 				...(trial.source ? {

@@ -19,6 +19,7 @@ import {
 	ensureSolutionsRepository,
 	type TrainingCollection,
 } from "../training/index.js";
+import { selectionSummary } from "../training/selection_summary.js";
 import { championSelection } from "../training/development_selection.js";
 import { GIT_BLOCK_PROMPT_IDS } from "../training/git_guard.js";
 import { readPythonEnvironment, type PythonEnvironment } from "./python_environment.js";
@@ -341,6 +342,7 @@ export async function runHarnessSolveSession(
 		valid: collection.valid,
 		selected_experiment_id: collection.selected?.experimentId,
 		selected_metric: primaryMetric(workspace, collection.selected?.result?.metrics as Record<string, unknown> | undefined),
+        selected_selection: selectionSummary(collection.selected?.result),
 		errors,
 		trial_validation_errors: collection.errors,
 		session_error: sessionError,

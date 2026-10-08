@@ -161,6 +161,7 @@ def diagnose_anomaly(directory: Path, invocation):
                         'evidenceSha256': metadata['sha256'], 'uniqueRows': len(frame), 'labelledRows': len(metadata['labels']),
                         'positiveRows': sum(metadata['labels'].values()), 'negativeRows': len(metadata['labels']) - sum(metadata['labels'].values()),
                         'labelCoverage': len(metadata['labels']) / len(frame), 'repeats': len(repeats)},
+            'curves': {'available': False, 'reason': 'Anomaly ranking is measured per validation fold on partial labels; inspect fold evidence rather than pooling score scales.'},
             'folds': folds, 'limitations': ['Selection uses agent-provided evidence; labels are not verified by the harness.',
                 'Partial coverage does not establish official accuracy or generalization to unfamiliar attacks.',
                 'Evidence labels never enter estimator fitting; ranking AP does not choose the binary operating point.',

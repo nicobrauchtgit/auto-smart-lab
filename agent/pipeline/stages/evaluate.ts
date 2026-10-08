@@ -1,3 +1,4 @@
+import { selectionSummary } from "../../training/selection_summary.js";
 import { guidanceBlock } from "../guidance.js";
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -25,11 +26,13 @@ export function createEvaluateStage(deps = { prepareEvidence, runSession }): Sta
   },
   checkInput(input) {
    selectedArtifact(input.upstream);
-   // Label-free evidence cannot be promoted, so only these kinds reach a reviewable champion.
-   if (stageConfiguration(input).metric === "none") throw new Error("Evaluation needs a trusted development metric; this task configuration has none");
+   const configuration = stageConfiguration(input);
+   if (configuration.metric === "none" && !configuration.selection) throw new Error("Evaluation needs a development metric or explicit selection evidence; this task configuration has neither");
   },
   async run(context) {
-   const evidence = await deps.prepareEvidence(context.input.upstream, context.signal, context.input.taskId);
+   const prepared = await deps.prepareEvidence(context.input.upstream, context.signal, context.input.taskId);
+   const evidence = { ...prepared, diagnostics: { ...prepared.diagnostics, curves: prepared.diagnostics.curves ?? {
+    available: false, reason: "No pooled score curves supplied; inspect per-fold evidence" } } };
    const directory = join(evidence.directory, "evaluation", context.report.agentIdentity(1).stageInvocationId ?? crypto.randomUUID());
    mkdirSync(directory, { recursive: true });
    const evidencePath = join(directory, "evidence.json");
@@ -51,7 +54,8 @@ export function createEvaluateStage(deps = { prepareEvidence, runSession }): Sta
    const prompts = context.prompts;
    const system = prompts.render("review.system", {});
    // The review guide matches what the harness measured for this task.
-   const guide = prompts.render(stageConfiguration(context.input).kind === "clustering" ? "review.guide-clustering" : "review.guide", {});
+   const kind = stageConfiguration(context.input).kind;
+   const guide = prompts.render(kind === "clustering" ? "review.guide-clustering" : kind === "anomaly_detection" ? "review.guide-anomaly" : "review.guide", {});
    const { roc, precisionRecall, ...scoreSummary } = evidence.diagnostics.curves;
    const code = codeReader(PROJECT_ROOT, directory, context.report);
    let entrypoint: unknown;
@@ -94,6 +98,9 @@ export function createEvaluateStage(deps = { prepareEvidence, runSession }): Sta
    return { artifacts: [evidenceArtifact, artifact("evaluation_report", reportPath), ...curveArtifacts, ...code.artifacts()], attempts: 1,
     validation: report.validation, summary: { experiment_id: evidence.experimentId,
      review_status: review?.status, readiness_score: review?.readinessScore, task_kind: stageConfiguration(context.input).kind,
+     official_metric: { name: stageConfiguration(context.input).metric },
+     selection_metric: selectionSummary({ metrics: { selectionScore: evidence.diagnostics.summary.selectionScore }, selection: { ...evidence.diagnostics.summary.selection,
+      source: evidence.diagnostics.summary.source, evidenceSha256: evidence.diagnostics.summary.evidenceSha256, folds: evidence.diagnostics.folds.map((fold: any) => fold.selection) } }),
      development_metric: evidence.diagnostics.summary.selectionScore ?? evidence.diagnostics.summary.balancedAccuracy ?? evidence.diagnostics.summary.adjustedRandIndex, advisory_only: true } };
   },
  };

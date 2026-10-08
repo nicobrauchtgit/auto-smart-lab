@@ -10,6 +10,7 @@ export const PROMPTS = {
  "shared.stage-feedback": { file: "shared/stage-feedback.md", variables: ["note"] },
 	"review.system": { file: "review/system.md", variables: [] },
 	"review.guide": { file: "review/guide.md", variables: [] },
+	"review.guide-anomaly": { file: "review/guide-anomaly.md", variables: [] },
 	"review.guide-clustering": { file: "review/guide-clustering.md", variables: [] },
 	"review.start": { file: "review/start.md", variables: ["taskId", "experimentId", "evidence", "code"] , optionalVariables: ["guidance"] },
 	"review.code-tool": { file: "review/code-tool.md", variables: [] },

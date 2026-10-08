@@ -12,6 +12,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 
+import { selectionSummary } from "../../training/selection_summary.js";
 import { primaryMetric, runHarnessSolveSession } from "../../run/harness_solve_session.js";
 import { resolveTask } from "../resolve_task.js";
 import { stageConfiguration, taskDataPaths } from "../task_configuration.js";
@@ -166,6 +167,7 @@ export const solveStage: StageDefinition<SolveOptions> = {
 				selected_experiment_id: result.collection.selected?.experimentId,
 				task_kind: result.configuration.kind,
 				selected_metric: primaryMetric(result, result.collection.selected?.result?.metrics as Record<string, unknown> | undefined),
+                selected_selection: selectionSummary(result.collection.selected?.result),
 				session_error: result.sessionError,
 				...(entrypoint && "mismatch" in entrypoint ? { entrypoint_mismatch: entrypoint.mismatch } : {}),
 				trial_validation_errors: result.collection.errors,

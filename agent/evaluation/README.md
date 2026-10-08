@@ -61,3 +61,11 @@ Code review can flag leakage and inappropriate splits but does not execute a
 leakage canary. Source is captured at review time: the current training artifacts
 do not prove the reviewed bytes are exactly those fitted. This limitation is
 explicit in the source tool and must be disclosed in the review.
+
+
+Anomaly champions with explicit evidence selection use `review.guide-anomaly`.
+Evaluation recomputes per-fold evidence ranking and fixed-decision diagnostics,
+reports provenance, positive/negative counts and partial coverage, and keeps the
+official metric separate from the selection objective. It does not pool anomaly
+scores across fits into a misleading ROC/PR curve. Readiness remains advisory;
+unverified agent labels cannot establish official accuracy or submission authority.

@@ -1,3 +1,5 @@
+import { createEvaluateStage } from "../pipeline/stages/evaluate.js";
+import { primaryMetric } from "../run/harness_solve_session.js";
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -97,6 +99,10 @@ test("growing evidence is snapshotted; search, paired champion, recovery, valida
   expect(readFileSync(join(first.directory, "evidence.json"), "utf8")).toBe(firstBytes);
   expect(JSON.parse(tagMessage(project.solutionsRoot, "champion/fixture")!.message).selection.evidenceSha256).toBe((trial.invocation!.measurement as any).evidenceManifestSha256);
   championDirectory = challenger.directory;
+  expect(training.service.describe(challenger.id)?.selection).toMatchObject({ basis: "evidence", metric: "evidence_average_precision", value: 1, source: "agent_provided",
+   coverage: { unit: "validation_observations", validationRows: 120, labelledRows: 120, positiveRows: 60, negativeRows: 60, labelCoverage: 1 } });
+  expect(training.service.leaderboard().find(row => row.experimentId === challenger.id)?.selection).toMatchObject({ metric: "evidence_average_precision", value: 1, evidenceSha256: (trial.invocation!.measurement as any).evidenceManifestSha256 });
+  expect(primaryMetric({ configuration: CONFIG }, { selectionScore: 1 })).toEqual({ name: "none" });
   // Validation must reject missing/NaN values, false coverage and snapshot changes.
   const foldsPath = join(challenger.directory, "fold-results.jsonl");
   const original = readFileSync(foldsPath, "utf8");
@@ -152,7 +158,39 @@ test("growing evidence is snapshotted; search, paired champion, recovery, valida
  // Recovery must use trial snapshots even after the mutable file disappears.
  const resumed = createHarnessTraining(options);
  try { await resumed.service.ready(); } finally { await resumed.close(); }
- expect((await collectTrainingTrial(championDirectory)).eligible).toBe(true);
+ const champion = await collectTrainingTrial(championDirectory);
+ expect(champion.eligible).toBe(true);
+ const selected = champion.artifacts.find(artifact => artifact.kind === "training_trial_result")!;
+ const upstream = [{ ...selected, kind: "training_selected_result" }];
+ const diagnostics = JSON.parse(execFileSync(PYTHON, [new URL("../evaluation/diagnostics.py", import.meta.url).pathname, championDirectory], { encoding: "utf8" }));
+ expect(diagnostics.curves.available).toBe(false);
+ // Old diagnostic artifacts may omit curves; the registered stage handles them too.
+ delete diagnostics.curves;
+ const beforeReview = tagMessage(project.solutionsRoot, "champion/fixture")!.message;
+ const inputs: any[] = [];
+ const stage = createEvaluateStage({ prepareEvidence: async () => ({ directory: championDirectory, experimentId: champion.experimentId, sources: champion.artifacts,
+  diagnostics, candidate: { request: champion.request, trialsConsidered: 1, eligibleTrials: 1, measurementKind: "anomaly_detection", selectionRule: "authoritative champion" } }),
+  runSession: async options => {
+   expect(options.promptReferences.map(reference => reference.id)).toContain("review.guide-anomaly");
+   expect(options.promptReferences.map(reference => reference.id)).not.toContain("review.guide");
+   expect(options.prompt).toContain("agent-provided labels into verified truth");
+   expect(options.prompt).toContain("evidence_average_precision");
+   const curves = await options.customTools![0].execute("detail", { section: "curves" });
+   expect(JSON.parse((curves.content[0] as any).text).available).toBe(false);
+   await options.customTools![1].execute("report", { readinessScore: 3, readinessRationale: "Evidence labels are agent-provided and source inspection is incomplete", status: "concerns",
+    assessment: "AP is 1 on the supplied evidence, without verified official accuracy", concerns: [{ severity: "medium", finding: "Unverified labels", evidence: "source=agent_provided" }],
+    limitations: ["Evidence coverage does not establish transfer to unfamiliar attacks"], recommendations: ["Verify representative labels"] });
+   return { output: "Recorded advisory review" };
+  } });
+ stage.checkInput({ taskId: "fixture", taskConfiguration: CONFIG, upstream });
+ expect(() => stage.checkInput({ taskId: "fixture", taskConfiguration: { ...CONFIG, selection: undefined }, upstream })).toThrow("explicit selection evidence");
+ const evaluated = await stage.run({ input: { taskId: "fixture", taskConfiguration: CONFIG, upstream }, prompts: loadPromptSnapshot(), options: {}, signal: new AbortController().signal,
+  report: { input: (input: any) => inputs.push(input), event() {}, agentIdentity: () => ({ stageInvocationId: "fixture-evaluation" }), observation: () => ({}) } as any });
+ expect(evaluated.validation?.valid).toBe(true);
+ expect(evaluated.summary).toMatchObject({ readiness_score: 3, advisory_only: true, official_metric: { name: "none" }, selection_metric: { metric: "evidence_average_precision", value: 1, source: "agent_provided", coverage: { labelledRows: 120 } } });
+ expect(inputs.some(input => input.kind === "training_selection_evidence")).toBe(true);
+ expect(JSON.parse(readFileSync(evaluated.artifacts.find(artifact => artifact.kind === "evaluation_report")!.path, "utf8")).advisoryOnly).toBe(true);
+ expect(tagMessage(project.solutionsRoot, "champion/fixture")!.message).toBe(beforeReview);
  const testZip = join(project.root, "test.zip");
  execFileSync(PYTHON, ["-c", "import zipfile,sys; a=zipfile.ZipFile(sys.argv[1],'w'); a.writestr('test/a.x','limited prize'); a.writestr('test/b.x','meeting agenda'); a.close()", testZip]);
  const terminal = await runRefit({ taskId: "fixture", projectRoot: project.root, solutionsRoot: project.solutionsRoot, pythonExecutable: PYTHON,
