@@ -36,10 +36,13 @@ def connection_samples(path: str) -> list[dict]:
                 if link == dpkt.pcap.DLT_EN10MB:
                     frame = dpkt.ethernet.Ethernet(content)
                     network = frame.data
-                    if frame.type in (dpkt.ethernet.ETH_TYPE_IP, dpkt.ethernet.ETH_TYPE_IP6) and not isinstance(network, (dpkt.ip.IP, dpkt.ip6.IP6)):
+                    if getattr(frame, '_next_type', frame.type) in (dpkt.ethernet.ETH_TYPE_IP, dpkt.ethernet.ETH_TYPE_IP6) and not isinstance(network, (dpkt.ip.IP, dpkt.ip6.IP6)):
                         raise TaskDataError(f"Malformed or truncated IP header at record {index}")
                 elif link == dpkt.pcap.DLT_LINUX_SLL:
-                    network = dpkt.sll.SLL(content).data
+                    frame = dpkt.sll.SLL(content)
+                    network = frame.data
+                    if frame.ethtype in (dpkt.ethernet.ETH_TYPE_IP, dpkt.ethernet.ETH_TYPE_IP6) and not isinstance(network, (dpkt.ip.IP, dpkt.ip6.IP6)):
+                        raise TaskDataError(f"Malformed or truncated IP header at record {index}")
                 else:
                     if not content:
                         raise TaskDataError(f"Empty raw IP packet at record {index}")
@@ -81,10 +84,10 @@ def connection_samples(path: str) -> list[dict]:
     return sorted(samples.values(), key=lambda sample: sample['id'])
 
 
-def packet_records(stream, endian):
+def packet_records(stream, endian, max_records=2_000_000):
     """Validate record boundaries; dpkt's reader accepts short packet bodies."""
     total = 24
-    for index in range(2_000_000):
+    for index in range(max_records):
         header = stream.read(16)
         if not header:
             return
@@ -100,4 +103,5 @@ def packet_records(stream, endian):
         if len(content) != captured:
             raise TaskDataError("Truncated PCAP packet body")
         yield content
-    raise TaskDataError("PCAP exceeds 2,000,000 packet inspection limit")
+    if stream.read(1):
+        raise TaskDataError(f"PCAP exceeds {max_records:,} packet inspection limit")

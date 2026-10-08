@@ -11,7 +11,7 @@ import tempfile
 import unittest
 
 import dpkt
-from pcap_samples import connection_samples
+from pcap_samples import connection_samples, packet_records
 from task_samples import TaskDataError, inspect, rows
 from test_task_samples import worker, Events
 
@@ -84,6 +84,29 @@ class PcapSamplesTest(unittest.TestCase):
             connection_samples(capture(self.root / 'fragment.pcap', [bytes(ethernet)]))
         with self.assertRaisesRegex(TaskDataError, 'truncated IP'):
             connection_samples(capture(self.root / 'short.pcap', [packet()[:20]]))
+
+    def test_malformed_cooked_and_vlan_ip_fail_closed(self):
+        good = bytes(dpkt.sll.SLL(ethtype=dpkt.ethernet.ETH_TYPE_IP, data=packet()[14:]))
+        for kind, malformed, link in [
+            ('cooked', bytes(dpkt.sll.SLL(ethtype=dpkt.ethernet.ETH_TYPE_IP, data=b'\x45')), dpkt.pcap.DLT_LINUX_SLL),
+            ('vlan', packet()[:12] + b'\x81\x00\x00\x01\x08\x00\x45', dpkt.pcap.DLT_EN10MB),
+        ]:
+            valid = good if kind == 'cooked' else packet()
+            with self.assertRaisesRegex(TaskDataError, 'truncated IP'):
+                connection_samples(capture(self.root / f'{kind}.pcap', [valid, malformed], link))
+        self.assertEqual(len(connection_samples(capture(self.root / 'good-sll.pcap', [good], dpkt.pcap.DLT_LINUX_SLL))), 1)
+        vlan = packet()[:12] + b'\x81\x00\x00\x01\x08\x00' + packet()[14:]
+        self.assertEqual(len(connection_samples(capture(self.root / 'good-vlan.pcap', [vlan]))), 1)
+
+    def test_packet_count_limit_accepts_exact_eof_and_rejects_another_record(self):
+        import struct
+        record = struct.pack('<IIII', 0, 0, 1, 1) + b'x'
+        # Use the same production boundary logic with a tiny configured cap.
+        self.assertEqual(list(packet_records(io.BytesIO(record * 2), '<', max_records=2)), [b'x', b'x'])
+        with self.assertRaisesRegex(TaskDataError, 'exceeds 2 packet'):
+            list(packet_records(io.BytesIO(record * 3), '<', max_records=2))
+        with self.assertRaisesRegex(TaskDataError, 'exceeds 2 packet'):
+            list(packet_records(io.BytesIO(record * 2 + b'x'), '<', max_records=2))
 
     def test_refit_descriptor_integrity_and_exact_frame_coverage(self):
         dev = str(self.root / 'development.pcap.gz')

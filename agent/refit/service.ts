@@ -54,8 +54,10 @@ function python(options: RefitOptions, args: string[], timeout = 30_000): string
 export function runtimeDependencyHash(options: RefitOptions): string {
  return createHash("sha256").update(python(options, ["-I", "-c", "import importlib.metadata,json,platform; print(json.dumps({'python':platform.python_version(),'packages':sorted((d.metadata['Name'],d.version) for d in importlib.metadata.distributions())},sort_keys=True))"], 5000)).digest("hex");
 }
-const TASK_SAMPLES = join(FRAMEWORK_ROOT, "training/python/task_samples.py");
-function frameworkHash(): string { return digest([hashFile(WORKER), hashFile(RUNNER), hashFile(join(import.meta.dir, "evidence.py")), hashFile(TASK_SAMPLES)]); }
+/** Fingerprint every local executable adapter used by terminal refit/recovery. */
+export function frameworkHash(root = FRAMEWORK_ROOT): string {
+ return digest(["refit/worker.py", "training/python/runner.py", "refit/evidence.py", "training/python/task_samples.py", "training/python/pcap_samples.py"].map(path => hashFile(join(root, path))));
+}
 
 /** The measurement declaration a sample trial ran under, as the training service hashed it. */
 function measuredDeclaration(measurement: Record<string, unknown>): Record<string, unknown> {
