@@ -37,15 +37,16 @@ def finite_vector(values: Any, rows: int, name: str) -> np.ndarray:
 
 def classification(truth: Sequence[int], predicted: Sequence[int], scores: Any,
                    provenance: dict[str, Any]) -> dict[str, Any]:
+    from .uncertainty import operating_points
     if scores is None:
         return {"scoreProvenance": provenance, "ranking": unavailable("Continuous scores unavailable."),
                 "thresholdSweep": unavailable("Continuous scores unavailable."),
-                "calibration": unavailable("Probabilities unavailable.")}
+                "calibration": unavailable("Probabilities unavailable."), "lowFpr": operating_points(truth, scores)}
     values = finite_vector(scores, len(truth), "Classification scores")
     if len(set(truth)) < 2:
         return {"scoreProvenance": provenance, "ranking": unavailable("Only one observed class."),
                 "thresholdSweep": unavailable("Only one observed class."),
-                "calibration": unavailable("Only one observed class.")}
+                "calibration": unavailable("Only one observed class."), "lowFpr": operating_points(truth, scores)}
     fpr, tpr, thresholds = roc_curve(truth, values, drop_intermediate=False)
     bacc = (tpr + 1 - fpr) / 2
     best = int(np.argmax(bacc))
@@ -53,6 +54,7 @@ def classification(truth: Sequence[int], predicted: Sequence[int], scores: Any,
     default = 0.5 if provenance["kind"] == "probability" else 0.0
     result = {
         "scoreProvenance": provenance,
+        "lowFpr": operating_points(truth, values, predicted),
         "ranking": {"available": True, "rocAuc": float(roc_auc_score(truth, values)),
                     "averagePrecision": float(average_precision_score(truth, values)),
                     "positivePrevalence": float(np.mean(truth))},
@@ -77,6 +79,8 @@ def classification(truth: Sequence[int], predicted: Sequence[int], scores: Any,
                          "observedPositiveFraction": float(np.mean(np.asarray(truth)[mask])) if np.any(mask) else None})
         result["calibration"] = {"available": True, "brierScore": float(brier_score_loss(truth, values)),
                                  "logLoss": float(log_loss(truth, values, labels=[0, 1])), "bins": bins,
+                                 "binaryPositiveProbabilityEce": float(sum(bin["rows"] / len(truth) * abs(bin["meanProbability"] - bin["observedPositiveFraction"]) for bin in bins if bin["rows"])),
+                                 "eceDependsOnBinning": True,
                                  "lossesMeasureCalibrationAndDiscrimination": True}
     return result
 

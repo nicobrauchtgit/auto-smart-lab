@@ -5,7 +5,7 @@ import json
 from smartlab_trial import diagnostics
 from smartlab_trial.measurement import load_samples, validate_config
 from smartlab_trial.folds import _materialize_folds
-from smartlab_trial import geometry, extra_measurements, anomaly_measurements
+from smartlab_trial import geometry, extra_measurements, anomaly_measurements, validation_measurements, uncertainty
 
 
 if __name__ == "__main__":

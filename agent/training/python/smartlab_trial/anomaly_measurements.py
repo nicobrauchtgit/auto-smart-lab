@@ -36,6 +36,9 @@ def labelled(truth: list[int], raw_scores: Any, predictions: list[int] | None,
               "ranking": unavailable("Both evidence classes are required"),
               "predictionMetrics": unavailable("Predictions unavailable" if predictions is None else "Both evidence classes are required")}
     if len(set(truth)) == 2:
+        from .uncertainty import operating_points
+        result["lowFpr"] = operating_points(truth, oriented,
+                                            [int(label == anomaly_label) for label in predictions] if predictions is not None else None)
         result["ranking"] = {"available": True, "rocAuc": float(roc_auc_score(truth, oriented)),
                              "averagePrecision": float(average_precision_score(truth, oriented))}
         fpr, tpr, thresholds = roc_curve(truth, oriented, drop_intermediate=False)

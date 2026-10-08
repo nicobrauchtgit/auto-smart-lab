@@ -142,7 +142,8 @@ def _run_fold(invocation: Invocation, pipeline_factory: Any, fold: ConcreteFold,
         signals["scoreProvenance"] = {"kind": "anomaly", "method": spec["scoreMethod"], "direction": spec["scoreDirection"]}
         measurement = {}
     extra, diagnostic_fit_seconds = extra_measurements(invocation, estimator, fold, train_frame, validation_frame,
-                                                       predictions, validation_y, scores, evidence_metadata, estimator_seed)
+                                                       predictions, validation_y, scores, evidence_metadata, estimator_seed,
+                                                       train_y, signals.get("scoreProvenance"))
     signals.update(extra)
     objective = proxy_score(invocation, estimator, validation_frame, validation_y, signals)
     result = {

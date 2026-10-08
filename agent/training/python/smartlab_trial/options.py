@@ -14,7 +14,7 @@ def public_method(value: Any) -> bool:
 
 def validate_options(request: dict[str, Any]) -> None:
     spec = request.get("diagnostics", {})
-    if not isinstance(spec, dict) or set(spec) - {"representation", "predictionStrength", "modelSignals", "challenge", "volume", "contamination"}:
+    if not isinstance(spec, dict) or set(spec) - {"representation", "predictionStrength", "modelSignals", "challenge", "volume", "contamination", "slices", "robustness", "learningCurve"}:
         raise InvocationError("Invalid diagnostics options")
     if "predictionStrength" in spec and type(spec["predictionStrength"]) is not bool:
         raise InvocationError("diagnostics.predictionStrength must be boolean")
@@ -72,6 +72,25 @@ def validate_options(request: dict[str, Any]) -> None:
         values = option["values"]
         if not isinstance(values, list) or not 1 <= len(values) <= 5 or any(type(x) not in (int, float) or not 0 < x < 1 for x in values) or len(set(values)) != len(values):
             raise InvocationError("Contamination values must be one to five unique fractions in (0,1)")
+    for key, allowed, bounds in (("slices", {"method", "maxGroups"}, {"maxGroups": (1, 32, 16)}),
+                                 ("robustness", {"method", "maxRows", "maxVariants"}, {"maxRows": (2, 2048, 512), "maxVariants": (1, 8, 4)})):
+        if key not in spec:
+            continue
+        option = spec[key]
+        if not isinstance(option, dict) or set(option) - allowed or not public_method(option.get("method")):
+            raise InvocationError(f"{key} requires a public read-only method and valid options")
+        for name, (low, high, default) in bounds.items():
+            value = option.get(name, default)
+            if type(value) is not int or not low <= value <= high:
+                raise InvocationError(f"{key}.{name} must be from {low} to {high}")
+    if "learningCurve" in spec:
+        option = spec["learningCurve"]
+        if not isinstance(option, dict) or set(option) != {"fractions"}:
+            raise InvocationError("learningCurve requires fractions")
+        values = option["fractions"]
+        if (not isinstance(values, list) or not 1 <= len(values) <= 6
+                or any(type(x) not in (int, float) or not 0 < x <= 1 for x in values) or len(set(values)) != len(values)):
+            raise InvocationError("Learning curves need one to six unique fractions in (0,1]")
     objective = (request.get("search") or {}).get("objective")
     if objective is not None:
         if (not isinstance(objective, dict) or set(objective) != {"kind", "metric", "direction"}

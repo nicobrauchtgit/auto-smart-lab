@@ -17,6 +17,8 @@ package:
 | `geometry.py` | Bounded fitted-feature geometry, density validity and prediction-strength pair counts. |
 | `anomaly_measurements.py` | Evidence provenance/coverage, model-output distributions, synthetic challenges and bounded feature-space volume curves. |
 | `extra_measurements.py` | Opt-in diagnostics and explicitly observed additional fits. |
+| `validation_measurements.py` | Input-defined slices, train-only learning subsets and controlled perturbations with observed auxiliary fits. |
+| `uncertainty.py` | Attainable low-FPR operating points, fixed-decision binomial intervals and advisory corrected CV uncertainty. |
 | `options.py` | Worker-boundary validation of requested diagnostics and proxy objectives. |
 | `validation.py` | Bounded no-fit construction and parameter constraint validation. |
 | `search.py` | Optuna ask/tell, pruning, journal/checkpoint continuation, runtime guard and report. |

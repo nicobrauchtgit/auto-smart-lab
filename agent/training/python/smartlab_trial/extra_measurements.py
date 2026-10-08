@@ -16,11 +16,13 @@ from .seeds import _derive_seed
 from . import anomaly_measurements
 from .diagnostics import anomaly
 from scipy.stats import spearmanr
+from . import validation_measurements
 
 
 def run(invocation: Any, estimator: Any, fold: Any, train: Any, validation: Any,
         predictions: list[int] | None, validation_y: Any, raw_scores: Any = None,
-        evidence: dict[str, Any] | None = None, estimator_seed: int | None = None) -> tuple[dict[str, Any], float]:
+        evidence: dict[str, Any] | None = None, estimator_seed: int | None = None,
+        train_y: Any = None, provenance: Any = None) -> tuple[dict[str, Any], float]:
     options = invocation.request.get("diagnostics", {})
     signals, fit_seconds = {}, 0.0
     if "representation" in options:
@@ -63,7 +65,11 @@ def run(invocation: Any, estimator: Any, fold: Any, train: Any, validation: Any,
                                                 predictions, raw_scores, options["contamination"], estimator_seed)
         signals["contamination"] = measured
         fit_seconds += extra_seconds
-    return signals, fit_seconds
+    validation_signals, extra_seconds = validation_measurements.run(invocation, estimator, fold, train, train_y,
+                                                                   validation, validation_y, predictions, raw_scores,
+                                                                   evidence, estimator_seed, provenance)
+    signals.update(validation_signals)
+    return signals, fit_seconds + extra_seconds
 
 
 def contamination(invocation: Any, estimator: Any, fold: Any, train: Any, validation: Any,

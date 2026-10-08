@@ -171,6 +171,7 @@ def compare(challenger_folds: Sequence[dict[str, Any]], challenger_oof: Sequence
         "standardError": paired.get("standardError"),
         "approximateInterval95": paired.get("approximateInterval95"),
         "intervalAssumesIndependentFoldDifferences": True,
+        "correctedCvUncertainty": paired.get("correctedCvUncertainty"),
         "noiseRule": paired.get("noiseRule"),
         "leadExceedsNoise": paired.get("leadExceedsNoise"),
         "perFold": paired.get("perFold"),

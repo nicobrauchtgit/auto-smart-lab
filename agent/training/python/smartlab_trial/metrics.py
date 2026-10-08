@@ -39,7 +39,7 @@ def score_observation(estimator: Any, validation: Any) -> tuple[list[float] | No
 
 
 def _measure(truth: Sequence[int], predicted: Sequence[int]) -> dict[str, Any]:
-    labels = sorted(set(int(value) for value in truth))
+    labels = sorted({int(value) for value in truth} | {int(value) for value in predicted})
     precision, recalls, f1, support = precision_recall_fscore_support(truth, predicted, labels=labels, average=None, zero_division=0)
     return {
         "balancedAccuracy": float(balanced_accuracy_score(truth, predicted)),

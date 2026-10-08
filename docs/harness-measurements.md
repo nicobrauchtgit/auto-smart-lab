@@ -298,6 +298,84 @@ conditional proxies, not estimates of real-world detection accuracy. Definitions
 follow [Goix's evaluation study](https://arxiv.org/abs/1607.01152) and
 [the Excess–Mass paper](https://arxiv.org/abs/1502.01684).
 
+## Packet 4: operating points, slices, learning and robustness
+
+Binary supervised trials, labelled anomaly evidence and synthetic challenges
+report attainable recall/precision at FPR caps of 0.1%, 1% and 5%, plus
+standardized partial ROC AUC. Recall uses observed thresholds without
+interpolation; tied scores stay together. Negative-row counts and `fprResolution`
+identify caps below one observable false positive. Partial AUC uses
+[scikit-learn's standardized definition](https://scikit-learn.org/stable/modules/generated/sklearn.metrics.roc_auc_score.html),
+whose chance value is 0.5. Diagnostic thresholds are selected on evaluation
+labels and remain advisory. The pipeline's existing decisions also report
+conditional binomial intervals for FPR and recall, assuming independent rows
+and a fixed decision rule; these intervals do not apply to the selected
+diagnostic thresholds. Zero observed false positives does not give a zero upper
+bound. Missing scores or either class make operating points unavailable.
+
+Probability calibration includes `binaryPositiveProbabilityEce`, a weighted
+absolute gap between mean positive probability and observed positive frequency
+in ten fixed bins. It depends on binning and sample size, alongside the existing
+Brier/log loss and reliability bins. This is a binary probability summary;
+[calibration research](https://proceedings.mlr.press/v70/guo17a.html) motivates
+reading such estimates alongside reliability diagrams.
+
+Schema version 2 accepts these optional diagnostics across task kinds:
+
+```json
+{
+  "diagnostics": {
+    "slices": {"method": "diagnostic_slices", "maxGroups": 16},
+    "learningCurve": {"fractions": [0.25, 0.5, 1]},
+    "robustness": {"method": "diagnostic_changes", "maxRows": 512, "maxVariants": 4}
+  }
+}
+```
+
+`diagnostic_slices(validation_frame)` returns a dictionary of named Boolean
+masks with one entry per validation row. Groups may overlap; empty groups are
+unavailable. Defaults allow 16 groups, bounded to 32. The harness reuses its
+predictions and measurements to score each group, with row counts, coverage,
+task metrics and capability reasons. A single-class supervised slice lacks
+BACC/ranking while retaining class counts and errors. Anomaly slices score only
+the evidence actually supplied for those IDs. No fit is added. Slice definitions
+are agent-designed exploratory evidence, not independent confirmation.
+
+Learning curves use one to six unique fractions of each existing training
+fold. Harness-seeded, nested uniform subsets share the estimator seed; every
+point measures the same full held-out validation rows. The full-size fit and
+duplicate rounded subset sizes are reused. Additional fits record lifecycle,
+scope, seed, input ID hashes, convergence and cost; failed small subsets produce
+unavailable points. Supervised fits receive only their own subset targets;
+unsupervised fits receive none. Batch discovery reports this train-only curve
+unavailable because its fit population is different. This follows the usual
+[learning-curve validation design](https://scikit-learn.org/stable/modules/learning_curve.html)
+without prescribing model choices or accessing sealed confirmation rows.
+
+`diagnostic_changes(validation_frame, {seed,maxRows,maxVariants})` returns a
+list of `{name,frame,labelPreserving}` records. Each frame must preserve the
+sampled row IDs, order and input columns; names are unique. Defaults sample 512
+rows and allow four variants, bounded to 2048 rows/eight variants. Inductive
+models reuse their fitted primary model. Batch models refit a baseline and each
+variant on the same sampled population with the same estimator seed, avoiding
+confounding from a changed batch size. These fits are observed and charged.
+Clustering agreement uses label-invariant ARI; prediction changes and score-rank
+agreement are available for other tasks. Quality metrics use original labels
+only when `labelPreserving:true`; otherwise quality is unavailable. The
+label-preservation assumption is explicitly agent-declared. Content hashes,
+sampling scope and capability failures accompany all variants. Hooks receive
+input frames without evidence attributes and must not fit or mutate models.
+
+Paired champion and search comparisons now include advisory
+`correctedCvUncertainty` using the
+[Nadeau–Bengio corrected resampled t approximation](https://proceedings.neurips.cc/paper_files/paper/1999/file/7d12b66d3df6af8d429c1a357d8b9e1a-Paper.pdf):
+sample variance is multiplied by `1/n + mean(validationRows/trainRows)`, with
+Student-t critical values. It requires at least two paired inductive folds and
+recorded scope; batch fits lack this train-overlap interpretation. It is
+approximate, assumes independent original examples and does not correct search
+selection bias. Zero empirical variance is flagged. The existing promotion
+rule remains unchanged.
+
 ## Stability
 
 Different repeats supply harness-seeded fits and resampled validation batches.
@@ -328,7 +406,9 @@ alone. Missing capabilities have explicit unavailable reasons.
 
 `experiment_status` trial details and leaderboard rows expose compact diagnostics,
 including champion corrected/introduced errors. At most eight batch details are
-shown; full diagnostics stay in hashed `trial-result.json`/`metrics.json` and
+shown, with at most eight slice groups per fold. Nested contingency tables,
+per-cluster details, reliability bins and EM grid points are omitted from status;
+full diagnostics stay in hashed `trial-result.json`/`metrics.json` and
 `fold-results.jsonl`. Checkpointed folds retain their measured diagnostics on
 resume. Existing legacy results remain readable without invented measurements.
 

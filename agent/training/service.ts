@@ -162,6 +162,22 @@ const mean = (values: number[]) => values.reduce((sum, value) => sum + value, 0)
 const primaryScore = (result: Record<string, any> | undefined) => result?.metrics?.adjustedRandIndex ?? result?.metrics?.balancedAccuracy ?? -Infinity;
 
 /** Compact status view; detailed batch diagnostics remain in hashed trial artifacts. */
+function compactDetail(value: any): any {
+	if (Array.isArray(value)) return value.map(compactDetail);
+	if (!value || typeof value !== "object") return value;
+	const omitted = new Set(["contingency", "contingencySparse", "families", "clusters", "clusterSizes", "perCluster", "excessMass", "bins"]);
+	const result: Record<string, unknown> = {};
+	for (const [key, item] of Object.entries(value)) {
+		if (omitted.has(key)) continue;
+		if (key === "groups" && Array.isArray(item)) {
+			result.groups = item.slice(0, 8).map(compactDetail);
+			result.totalGroups = item.length;
+			result.shownGroups = Math.min(item.length, 8);
+		} else result[key] = compactDetail(item);
+	}
+	return result;
+}
+
 export function compactDiagnostics(result: Record<string, any> | undefined): Record<string, unknown> | undefined {
 	const signals = result?.diagnostics;
 	if (!signals) return undefined;
@@ -176,13 +192,8 @@ export function compactDiagnostics(result: Record<string, any> | undefined): Rec
 			eligibleComparisons: signals.stability.eligibleComparisons } : undefined,
 		metrics: result?.metrics,
 		folds: Array.isArray(signals.folds) ? signals.folds.slice(0, 8).map((fold: any) => {
-			const detail = fold.diagnostics ?? {};
-			const external = detail.external;
-			const structure = detail.structure;
 			return { repeat: fold.repeat, fold: fold.fold, metrics: fold.metrics, searchObjective: fold.searchObjective,
-				diagnostics: { ...detail,
-					...(external ? { external: { ...external, contingency: undefined, contingencySparse: undefined, families: undefined, clusters: undefined } } : {}),
-					...(structure ? { structure: { ...structure, clusterSizes: undefined } } : {}) } };
+				diagnostics: compactDetail(fold.diagnostics ?? {}) };
 		}) : undefined,
 		completedDiagnosticFolds: signals.folds?.length,
 		shownDiagnosticFolds: Math.min(signals.folds?.length ?? 0, 8),

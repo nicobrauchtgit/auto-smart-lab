@@ -564,7 +564,7 @@ const V1_KEYS = ["schemaVersion", "hypothesis", "pipeline", "cv", "scope"] as co
 function parseDiagnostics(raw: unknown, issues: Issues): DiagnosticRequest | undefined {
 	const value = objectAt(raw, "diagnostics", issues, "Declare only the extra measurements you need.");
 	if (!value) return undefined;
-	rejectUnknown(value, ["representation", "predictionStrength", "modelSignals", "challenge", "volume", "contamination"], "diagnostics", issues);
+	rejectUnknown(value, ["representation", "predictionStrength", "modelSignals", "challenge", "volume", "contamination", "slices", "robustness", "learningCurve"], "diagnostics", issues);
 	if (value.predictionStrength !== undefined && typeof value.predictionStrength !== "boolean")
 		issues.add("diagnostics.predictionStrength", "not a boolean", value.predictionStrength, "true or false", "This requests one additional harness-owned fit per fold.");
 	if (value.representation !== undefined) {
@@ -611,6 +611,27 @@ function parseDiagnostics(raw: unknown, issues: Issues): DiagnosticRequest | und
 			if (typeof spec.parameter !== "string" || !parameterName(spec.parameter) || isSeedParameter(spec.parameter)) issues.add("diagnostics.contamination.parameter", "invalid or seed parameter", spec.parameter, "a non-seed set_params name", "The harness retains control of randomness.");
 			if (!Array.isArray(spec.values) || spec.values.length < 1 || spec.values.length > 5 || spec.values.some(x => typeof x !== "number" || !Number.isFinite(x) || x <= 0 || x >= 1) || new Set(spec.values).size !== spec.values.length)
 				issues.add("diagnostics.contamination.values", "invalid fractions", spec.values, "one to five unique fractions in (0,1)", "Each value may request an additional harness-owned fit.");
+		}
+	}
+	for (const key of ["slices", "robustness"] as const) {
+		if (value[key] === undefined) continue;
+		const path = `diagnostics.${key}`;
+		const spec = objectAt(value[key], path, issues, "Name a read-only fitted-estimator method.");
+		if (!spec) continue;
+		rejectUnknown(spec, key === "slices" ? ["method", "maxGroups"] : ["method", "maxRows", "maxVariants"], path, issues);
+		if (!diagnosticMethod(spec.method)) issues.add(`${path}.method`, "invalid method", spec.method, "a public read-only Python method", "The method declares slices or perturbations; the harness measures them.");
+		const bounds = key === "slices" ? { maxGroups: [1, 32] } : { maxRows: [2, 2048], maxVariants: [1, 8] };
+		for (const [name, [low, high]] of Object.entries(bounds)) {
+			if (spec[name] !== undefined && (!Number.isInteger(spec[name]) || (spec[name] as number) < low || (spec[name] as number) > high))
+				issues.add(`${path}.${name}`, "outside diagnostic bounds", spec[name], `integer from ${low} to ${high}`, "Bound measurement cost independently of model design.");
+		}
+	}
+	if (value.learningCurve !== undefined) {
+		const spec = objectAt(value.learningCurve, "diagnostics.learningCurve", issues, "Declare fractions of the existing training folds.");
+		if (spec) {
+			rejectUnknown(spec, ["fractions"], "diagnostics.learningCurve", issues);
+			if (!Array.isArray(spec.fractions) || spec.fractions.length < 1 || spec.fractions.length > 6 || spec.fractions.some(x => typeof x !== "number" || !Number.isFinite(x) || x <= 0 || x > 1) || new Set(spec.fractions).size !== spec.fractions.length)
+				issues.add("diagnostics.learningCurve.fractions", "invalid fractions", spec.fractions, "one to six unique fractions in (0,1]", "Every point uses the same held-out validation rows; full-size fit is reused.");
 		}
 	}
 	return value as DiagnosticRequest;

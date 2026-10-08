@@ -39,9 +39,10 @@ with this file, this file wins.
 - **Branch** `solve-stage-hardening`, ahead of
   `origin/solve-stage-hardening` (not pushed). Remote:
   `git@github.com:nicobrauchtgit/auto-smart-lab.git`.
-- **Tests (2026-10-08):** locally 439 TypeScript tests pass (4 skipped), all
-  Python suites pass. Without downloaded spam1 data, four additional integration
-  tests skip explicitly. The VM has not received the quick-fix commits yet.
+- **Tests (2026-10-08):** locally 460 TypeScript tests pass (4 skipped), all
+  Python suites pass (18 setup, 88 training, 6 evaluation). Without downloaded
+  spam1 data, four additional integration tests skip explicitly. The VM has not
+  received the quick-fix commits yet.
 - **Toolchain:** `./dev` + `mise.toml` (bun 1.3.13, uv 0.12.5, ripgrep, fd) and
   uv-managed Python 3.13.15. Devbox is gone (D12).
 - **The live pipeline** (`agent/pipeline/registry.ts`): research -> solve ->
@@ -261,6 +262,16 @@ Lab facts are in [Lab tasks](#lab-tasks-verified-2026-10-07).
   or feature hooks. All outputs retain scope and provenance; the controller's
   primary metric and promotion policy remain authoritative. Tests:
   `python/test_anomaly_diagnostics.py` and the live measurement integration suite.
+
+- [x] **C8 Operating points and validation diagnostics packet.** Added attainable
+  low-FPR recall/precision and partial AUC with sample resolution; fixed-decision
+  conditional binomial intervals; binary probability ECE; agent-defined slices;
+  controlled perturbations and train-only learning curves; and advisory corrected
+  CV uncertainty. Extra fits share observed lifecycle, seeds and cost accounting.
+  Single-class/unsupported cases stay explicit; the primary metric and promotion
+  rule remain unchanged. Status recursively summarizes detailed diagnostics;
+  full artifacts and checkpoints retain them. Tests:
+  `python/test_validation_diagnostics.py`, `validation_measurements.test.ts`.
 
 - [ ] **C4 Champion vs. unpromoted pipelines, across runs.** The goal is
   knowing what works pipeline-wise: the best pipeline (the champion) plus the

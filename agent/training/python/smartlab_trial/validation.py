@@ -180,7 +180,7 @@ def validate_request(source_root: Path, request: dict[str, Any], measurement: di
     objective = (request.get("search") or {}).get("objective")
     if objective and objective["metric"] == "estimator_score" and not callable(getattr(base, "score", None)):
         issues.append(_issue("search.objective", "score() unavailable", objective, "a model exposing score()", "Choose a supported geometry metric or expose an advisory score method."))
-    for key in ("modelSignals", "challenge"):
+    for key in ("modelSignals", "challenge", "slices", "robustness"):
         option = request.get("diagnostics", {}).get(key)
         if option and not callable(getattr(base, option["method"], None)):
             issues.append(_issue(f"diagnostics.{key}.method", "method unavailable", option["method"], "a callable on the constructed estimator", "Expose the declared read-only diagnostic method."))

@@ -126,7 +126,7 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
    if (result.error || result.status !== 0) throw new Error("Kernel file locking unavailable");
   });
   add("training-imports", "local", "Run ./dev setup; numpy, pandas, sklearn and scipy metric primitives must import successfully.", () => {
-   for (const name of ["check_measurement.py", "smartlab_trial/diagnostics.py", "smartlab_trial/measurement.py"]) readable(join(PROJECT_ROOT, "agent/training/python", name));
+   for (const name of ["check_measurement.py", ...["diagnostics", "measurement", "geometry", "extra_measurements", "anomaly_measurements", "validation_measurements", "uncertainty", "options"].map(name => `smartlab_trial/${name}.py`)]) readable(join(PROJECT_ROOT, "agent/training/python", name));
    const python = options.executables?.python ?? readPythonEnvironment().executable;
    const result = spawnSync(python, [join(PROJECT_ROOT, "agent/training/python/check_measurement.py"), "--check-imports"], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });
    if (result.error || result.status !== 0) throw new Error("Imports failed");

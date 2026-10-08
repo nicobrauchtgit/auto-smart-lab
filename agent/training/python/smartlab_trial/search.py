@@ -282,6 +282,9 @@ def _paired(left: ConfigResult | dict[str, Any], right_scores: dict[tuple[int, i
     mean = statistics.fmean(differences)
     spread = statistics.stdev(differences) if len(differences) > 1 else 0.0
     error = spread / math.sqrt(len(differences)) if len(differences) > 1 else None
+    from .uncertainty import corrected_cv
+    left_folds = left.folds if isinstance(left, ConfigResult) else left.get("folds", [])
+    indexed = {(fold["repeat"], fold["fold"]): fold for fold in left_folds}
     return {
         "folds": len(differences),
         "perFold": [{"repeat": key[0], "fold": key[1], "difference": difference} for key, difference in zip(keys, differences)],
@@ -292,6 +295,7 @@ def _paired(left: ConfigResult | dict[str, Any], right_scores: dict[tuple[int, i
         "standardError": error,
         "approximateInterval95": [mean - 1.96 * error, mean + 1.96 * error] if error is not None else None,
         "intervalAssumesIndependentFoldDifferences": True,
+        "correctedCvUncertainty": corrected_cv(differences, [indexed[key] for key in keys if key in indexed]),
         "leadExceedsNoise": bool(error is not None and abs(mean) > 2 * error and mean != 0),
         "noiseRule": "|mean difference| > 2 x standard error of the per-fold differences (folds share training rows, so this is approximate)",
     }

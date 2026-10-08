@@ -21,6 +21,12 @@ test.each([
     { modelSignals: { method: "fit", maxRows: 10 } },
     { volume: { bounds: [[1, 0]], scoreSource: "method", scoreMethod: "scores" } },
     { contamination: { parameter: "model__random_state", values: [.1] } },
+    { slices: { method: "fit" } },
+    { slices: { method: "groups", maxGroups: 33 } },
+    { robustness: { method: "changes", maxVariants: 9 } },
+    { robustness: { method: "changes", seed: 1 } },
+    { learningCurve: { fractions: [0, 1] } },
+    { learningCurve: { fractions: [.5, .5] } },
 ])("invalid diagnostics fail structurally without a request: %j", diagnostics => {
     const result = validateExperimentRequest({ ...base, diagnostics });
     expect(result.request).toBeUndefined();

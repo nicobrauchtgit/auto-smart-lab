@@ -41,6 +41,19 @@ Further optional diagnostics:
   use scoreSource:"method" with a feature-matrix scoring method. Feature scores
   must reproduce validation scores. MV/EM are conditional proxies tied to the
   declared space/support, not proof of detection accuracy.
+- slices:{method:"diagnostic_slices",maxGroups:16} calls method(validation_frame)
+  returning named row-aligned Boolean masks. Groups may overlap. Single-class
+  slices lack BACC/ranking; counts/errors remain available. No extra fit.
+- learningCurve:{fractions:[0.25,0.5,1]} uses nested harness-seeded training
+  subsets and the same validation rows. Extra fits share the primary estimator
+  seed and add to measured cost. Full-size fits are reused. Batch execution
+  reports this train-only measurement unavailable.
+- robustness:{method:"diagnostic_changes",maxRows:512,maxVariants:4} calls
+  method(validation_frame,{seed,maxRows,maxVariants}) returning a list of
+  {name,frame,labelPreserving}. Preserve row IDs/order/columns. Inductive models
+  reuse the primary fit; batch models refit matched diagnostic populations with
+  the same seed. Quality uses original labels only when labelPreserving:true,
+  an explicitly agent-declared assumption; other variants report agreement.
 Controller-supplied anomaly evidence distinguishes trusted from agent-provided
 labels and reports partial coverage. Missing labels are not normal by default.
 evidence_roc_auc/evidence_average_precision are available explicit search
@@ -85,7 +98,12 @@ Read experiment_status after fixed trials to inspect the recorded quality
 diagnostics before designing the next experiment. Per-fold spread is not a
 confidence interval. The paired interval uses the existing approximate fold
 noise rule, whose independence assumption is imperfect because training rows
-overlap. Advisory threshold optima were selected on validation rows and do not
+overlap. correctedCvUncertainty adds an advisory train-overlap approximation
+for inductive paired folds, without correcting search selection or changing
+promotion. Low-FPR points report attainable recall and sample resolution;
+diagnostic thresholds are selected on evaluation rows. Fixed-decision binomial
+intervals assume independent examples. Binary probability ECE depends on
+binning. Advisory threshold optima were selected on validation rows and do not
 change the pipeline's threshold automatically.
 
 A measured cost above the harness threshold stops gracefully with retained

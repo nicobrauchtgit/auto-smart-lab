@@ -100,6 +100,9 @@ export interface DiagnosticRequest {
 	challenge?: { method: string; maxRows?: number };
 	volume?: { bounds: [number, number][]; scoreSource: "pipeline_model" | "method"; scoreMethod: string; uniformSamples?: number };
 	contamination?: { parameter: string; values: number[] };
+	slices?: { method: string; maxGroups?: number };
+	robustness?: { method: string; maxRows?: number; maxVariants?: number };
+	learningCurve?: { fractions: number[] };
 }
 
 export interface ProxyObjective {
