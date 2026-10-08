@@ -17,6 +17,7 @@ description = "Local ML environment for the SmartLab pipeline agents"
 requires-python = "==3.13.*"
 dependencies = [
     "cloudpickle>=3.1.2",
+    "dpkt>=1.9.8",
     "joblib>=1.6.0",
     "matplotlib>=3.11.1",
     "numpy>=2.5.3",
