@@ -64,6 +64,8 @@ export const PROMPTS = {
 	"research.startup-context": { file: "research/startup-context.md", variables: ["facts"] },
 	"research.launch": { file: "research/launch.md", variables: ["request", "taskId", "contextHash", "startupContext"] },
 	"research.initial-document": { file: "research/initial-document.md", variables: ["title", "taskId", "contextHash"] },
+	"solve.isolation": { file: "solve/isolation.md", variables: ["workspace"] },
+	"solve.python-environment-tool": { file: "solve/python-environment-tool.md", variables: [] },
 	"solve.system": { file: "solve/system.md", variables: ["taskId"] },
 	"solve.start": { file: "solve/start.md", variables: ["taskId", "workspace", "datasetPaths", "targets", "rowCount", "targetSummary", "foldRecommendation", "researchState", "maxIterations", "taskContract"] , optionalVariables: ["guidance"] },
 	"solve.task-binary_classification": { file: "solve/task-binary_classification.md", variables: ["taskId"] },

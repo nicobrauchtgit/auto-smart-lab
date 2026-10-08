@@ -1,4 +1,5 @@
 /** Fail-fast prerequisites shared by pipeline and standalone stage execution. */
+import { checkSolveSandbox } from "../run/solve_sandbox.js";
 import { accessSync, constants, statSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -14,7 +15,7 @@ import { KnowledgeStore } from "../knowledge/store.js";
 import { selectedKnowledge } from "../knowledge/service.js";
 import { submissionSetupChecks, submissionRecoverySetupChecks } from "../submission/setup.js";
 
-export type SetupRequirement = "model" | "python" | "task" | "training" | "evaluation" | "refit" | "web-search" | "knowledge" | "submission" | "submission-recovery" | "orchestrator";
+export type SetupRequirement = "model" | "python" | "task" | "training" | "evaluation" | "refit" | "web-search" | "knowledge" | "submission" | "submission-recovery" | "orchestrator" | "solve-isolation";
 export interface SetupCheck {
  id: string;
  phase: "local" | "remote";
@@ -87,7 +88,7 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
  taskConfigurationDeclaredLater?: boolean;
  model?: string; configPath?: string; prompts: PromptSnapshot;
  /** Executable overrides for regression tests; production resolves them from the environment. */
- executables?: { python?: string; git?: string };
+ executables?: { python?: string; git?: string; bwrap?: string };
  candidateProducedUpstream?: boolean; refitTrainingRoot?: string;
  knowledgeRoot?: string;
  submissionPolicy?: import("./types.js").StageInput["submissionPolicy"];
@@ -95,6 +96,11 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
  const checks: SetupCheck[] = [];
  const add = (id: string, phase: SetupCheck["phase"], remedy: string, run: SetupCheck["run"]) => checks.push({ id, phase, remedy, run });
  const needs = new Set(requirements);
+ if (needs.has("solve-isolation")) add("solve-filesystem-isolation", "local", "Solve requires Linux bubblewrap with working user, mount and PID namespaces, plus bash/git/rg/fd/uv. Install bubblewrap through the host administrator or set SOLVE_BWRAP to an existing executable; no agent starts without this boundary.", () => {
+  checkSolveSandbox(options.executables?.bwrap);
+  options.prompts.render("solve.isolation", { workspace: "preflight" });
+  options.prompts.render("solve.python-environment-tool", {});
+ });
  if (needs.has("orchestrator")) add("orchestrator-prompts", "local", "Restore the registered orchestrator system, opening and control-tool templates, and use the project Bun runtime with kernel file locking.", () => {
   options.prompts.render("orchestrator.system", {}); options.prompts.render("orchestrator.start", { task: options.taskId, context: "{}" }); options.prompts.render("orchestrator.tool", {});
   if (!processIdentity(process.pid)) throw new Error("Process identities unavailable");

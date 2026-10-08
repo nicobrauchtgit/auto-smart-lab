@@ -7,6 +7,8 @@ import type { ExperimentRequest, MeasurementConfig, ValidationIssue } from "./ty
 
 export interface PipelineValidationInput {
 	pythonExecutable: string;
+	/** Fully formed controller sandbox command, when supplied. */
+	command?: readonly string[];
 	scriptPath: string;
 	/** Root whose `solutions/` directory is the requested commit's worktree. */
 	sourceRoot: string;
@@ -27,7 +29,8 @@ function isIssue(value: unknown): value is ValidationIssue {
 
 /** A crash or timeout is a rejection with its reason, never a silent pass. */
 export const runPipelineValidation: PipelineValidator = (input) => new Promise((settle) => {
-	const child = spawn(input.pythonExecutable, [input.scriptPath], {
+	const command = input.command ?? [input.pythonExecutable, input.scriptPath];
+	const child = spawn(command[0]!, command.slice(1), {
 		cwd: input.cwd,
 		env: { ...(input.env ?? process.env), PYTHONUNBUFFERED: "1", PYTHONDONTWRITEBYTECODE: "1" },
 		stdio: ["pipe", "pipe", "pipe"],

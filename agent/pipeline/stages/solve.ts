@@ -74,7 +74,7 @@ function parseFoldPolicy(raw: unknown): SolveOptions["foldPolicy"] {
 
 export const solveStage: StageDefinition<SolveOptions> = {
 	name: "solve",
-	setupRequirements: ["knowledge", "model", "python", "task", "training", "web-search"],
+	setupRequirements: ["knowledge", "model", "python", "task", "training", "web-search", "solve-isolation"],
 	version: 1,
 	description: "Build and iteratively improve a model, judged on recomputed out-of-fold measurements",
 	next: "evaluate",

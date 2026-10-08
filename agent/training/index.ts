@@ -72,6 +72,8 @@ export function createHarnessTraining(options: HarnessTrainingOptions) {
 		onTrialStarted: options.onTrialStarted,
 		record: options.record,
 		workerPath: options.workerPath,
+		sandboxCommand: options.sandboxCommand,
+		executionBoundaryFingerprint: options.executionBoundaryFingerprint,
 	});
 	const tools = createHarnessTrainingTools(service, processScope.supervisor, options.prompts);
 	const toolPrompts = (["training.start-tool", "training.status-tool", "training.output-tool", "training.stop-tool",

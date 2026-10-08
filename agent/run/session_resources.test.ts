@@ -117,3 +117,10 @@ test("pipeline extensions exclude project/global settings and load only explicit
   rmSync(root, { recursive: true, force: true });
  }
 });
+
+
+test("isolated solve instructions remain explicit and exclude ambient AGENTS markers", async () => {
+ const prompts = loadPromptSnapshot();
+ await assertGuidanceExcluded([prompts.render("solve.system", { taskId: "fixture" }).text,
+  prompts.render("solve.isolation", { workspace: "/safe/task/agent" }).text].join("\n\n"));
+});

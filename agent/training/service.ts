@@ -92,6 +92,9 @@ export interface TrainingServiceOptions {
 	record?: (eventType: string, payload: Record<string, unknown>) => void;
 	/** Defaults to the harness's own worker; tests may run a temporary project. */
 	workerPath?: string;
+	/** Controller-owned filesystem boundary for every process loading agent code. */
+	sandboxCommand?: (command: string[], input: { directory: string; sourceRoots: readonly string[] }) => string[];
+	executionBoundaryFingerprint?: string;
 }
 
 export interface StartedTrainingExperiment {
@@ -268,6 +271,7 @@ export class TrainingService {
         const hash = createHash("sha256");
         for (const path of [join(PYTHON_ROOT, "worker.py"), join(PYTHON_ROOT, "runner.py"),
             ...readdirSync(join(PYTHON_ROOT, "smartlab_trial")).filter(n => n.endsWith(".py")).sort().map(n => join(PYTHON_ROOT, "smartlab_trial", n))]) hash.update(readFileSync(path));
+        hash.update(this.options.executionBoundaryFingerprint ?? "unisolated");
         const lock = join(this.options.projectRoot, "uv.lock");
         if (existsSync(lock)) hash.update(readFileSync(lock));
         return hash.digest("hex");
@@ -335,8 +339,12 @@ export class TrainingService {
         const meta = readJson(path)!;
         const token = randomUUID();
         atomicJson(path, { ...meta, token, lifecycle: "active" });
+        const invocation = readJson(invocationPath)!;
+        const command = [this.options.pythonExecutable, worker, "--invocation", invocationPath];
+        const workerCommand = this.options.sandboxCommand?.(command, { directory,
+            sourceRoots: [invocation.inputs?.sourceRoot, invocation.champion?.sourceRoot].filter((path): path is string => typeof path === "string") }) ?? command;
         return [this.options.pythonExecutable, join(PYTHON_ROOT, "runner.py"), "--directory", directory,
-            "--token", token, "--", this.options.pythonExecutable, worker, "--invocation", invocationPath];
+            "--token", token, "--", ...workerCommand];
     }
 
     resume(id: string, acceptEstimatedSeconds?: number): Promise<unknown> {
@@ -675,6 +683,7 @@ export class TrainingService {
 			}
 			const layer2 = await (this.options.validatePipeline ?? runPipelineValidation)({
 				pythonExecutable: this.options.pythonExecutable,
+                command: this.options.sandboxCommand?.([this.options.pythonExecutable, join(PYTHON_ROOT, "validate.py")], { directory, sourceRoots: [sourceRoot ?? this.options.projectRoot] }),
 				scriptPath: join(PYTHON_ROOT, "validate.py"),
 				sourceRoot: sourceRoot ?? this.options.projectRoot,
 				request,

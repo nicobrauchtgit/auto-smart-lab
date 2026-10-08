@@ -24,6 +24,7 @@ import { championSelection } from "../training/development_selection.js";
 import { GIT_BLOCK_PROMPT_IDS } from "../training/git_guard.js";
 import { readPythonEnvironment, type PythonEnvironment } from "./python_environment.js";
 import type { TaskConfiguration } from "../pipeline/task_configuration.js";
+import { prepareSolveSandbox, isolatedSolveTools, solvePythonEnvironmentTool, trainingSandboxCommand } from "./solve_sandbox.js";
 import { runSession } from "./session_runner.js";
 
 export type HarnessSolveStopReason = "agent_finished" | "agent_failed" | "cancelled" | "no_promotion";
@@ -69,6 +70,7 @@ export interface HarnessSolveDependencies {
 	runAgentSession: typeof runSession;
 	collectResults: typeof collectTrainingResults;
 	prepareRepository: typeof ensureSolutionsRepository;
+	prepareSandbox: typeof prepareSolveSandbox;
 }
 
 const DEFAULT_DEPENDENCIES: HarnessSolveDependencies = {
@@ -78,6 +80,7 @@ const DEFAULT_DEPENDENCIES: HarnessSolveDependencies = {
 	runAgentSession: runSession,
 	collectResults: collectTrainingResults,
 	prepareRepository: ensureSolutionsRepository,
+	prepareSandbox: prepareSolveSandbox,
 };
 
 const sha256 = (content: string | Buffer) => createHash("sha256").update(content).digest("hex");
@@ -201,6 +204,17 @@ export async function runHarnessSolveSession(
 		? foldPolicy
 		: { folds: workspace.recommendation.folds, repeats: workspace.recommendation.repeats };
 	const python = dependencies.readPython();
+	const identity = report?.agentIdentity(1);
+	const sandbox = dependencies.prepareSandbox(workspace, python);
+	const boundaryFingerprint = sha256(JSON.stringify({ version: 1, mechanism: "bubblewrap_mount_pid_user_namespaces",
+        executable: sandbox.executable, cwd: sandbox.cwd, mounts: sandbox.mounts, environment: sandbox.env,
+        sandbox_script_sha256: sha256(readFileSync(join(PROJECT_ROOT, "agent/run/solve_sandbox.ts"))),
+        tool_worker_sha256: sha256(readFileSync(join(PROJECT_ROOT, "agent/run/solve_tool_worker.ts"))) }));
+	const isolatedTools = isolatedSolveTools(sandbox);
+	const environmentToolPrompt = prompts.render("solve.python-environment-tool", {});
+	const environmentTool = solvePythonEnvironmentTool(python, environmentToolPrompt.text, PROJECT_ROOT, {
+        pipelineRunId: identity?.pipelineRunId ?? runId, stageInvocationId: identity?.stageInvocationId ?? runId, attempt: 1 });
+	const isolationPrompt = prompts.render("solve.isolation", { workspace: sandbox.agentRoot });
 	const trainingRoot = recoveryTrainingRoot(join(workspace.root, "training"), runId);
 	const fingerprint = datasetFingerprint(workspace);
 
@@ -230,7 +244,7 @@ export async function runHarnessSolveSession(
  guidance: options.guidance,
 		taskId,
 		configuration: workspace.configuration,
-		workspace: workspace.root,
+		workspace: sandbox.agentRoot,
 		datasetPaths: workspace.datasetPaths,
 		targets: workspace.targets,
 		rowCount: workspace.rowCount,
@@ -239,6 +253,12 @@ export async function runHarnessSolveSession(
 		researchState: workspace.researchState,
 		maxIterations: options.maxTrials ?? HARNESS_CONFIG.solve.maxIterations,
 	});
+	opening.prompt += `\n\n${isolationPrompt.text}`;
+	opening.promptReferences.push(isolationPrompt.reference, environmentToolPrompt.reference);
+	report?.input({ kind: "solve_filesystem_boundary", version: 1, delivery: "tool", status: "available",
+		artifact: sandbox.agentRoot, content_sha256: boundaryFingerprint, mechanism: "bubblewrap_mount_pid_user_namespaces",
+		read_only: sandbox.mounts.filter(mount => !mount.writable).map(mount => mount.source),
+		writable: sandbox.mounts.filter(mount => mount.writable).map(mount => mount.source) });
 	report?.event("harness_configuration", {
 		version: 1, defaults: HARNESS_CONFIG,
 		solve: { ...HARNESS_CONFIG.solve, maxIterations: options.maxTrials ?? HARNESS_CONFIG.solve.maxIterations,
@@ -248,7 +268,6 @@ export async function runHarnessSolveSession(
 			experimentUpdateIntervalSeconds: options.experimentUpdateIntervalSeconds ?? HARNESS_CONFIG.solve.experimentUpdateIntervalSeconds },
 		foldRecommendation: shape,
 	});
-	const identity = report?.agentIdentity(1);
 	const training = dependencies.createTraining({
 		root: trainingRoot,
 		env: workerEnvironment(python),
@@ -261,6 +280,8 @@ export async function runHarnessSolveSession(
 		// the project root in production and a temporary project in tests.
 		projectRoot: dirname(workspace.solutionsRoot),
 		workerPath: join(PROJECT_ROOT, "agent", "training", "python", "worker.py"),
+        sandboxCommand: (command, input) => trainingSandboxCommand(sandbox, command, input),
+        executionBoundaryFingerprint: boundaryFingerprint,
 		taskId,
 		datasetSha256: fingerprint,
 		rootSeed: options.seed ?? HARNESS_CONFIG.solve.seed,
@@ -306,9 +327,9 @@ export async function runHarnessSolveSession(
 				reportInput: report ? (input) => report.input(input) : undefined,
 			model,
 			cwd: PROJECT_ROOT,
-			env: { SOLVE_WORKSPACE: workspace.root },
-			tools: ["read", "grep", "find", "ls", "edit", "write", "bash"],
-			customTools: training.tools,
+			env: { SOLVE_WORKSPACE: sandbox.agentRoot },
+			tools: [],
+			customTools: [...training.tools, ...isolatedTools, environmentTool],
 			onSessionReady: training.bindSession,
 			extensionPaths: [join(PROJECT_ROOT, "agent", "tools", "web_search.ts")],
 			extensionFactories: [createGitHistoryGuard(prompts, (eventType, payload) => report?.event(eventType, payload))],

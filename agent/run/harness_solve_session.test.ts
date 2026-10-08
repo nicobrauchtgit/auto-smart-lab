@@ -41,6 +41,10 @@ function fixtureWorkspace() {
 	};
 }
 
+function sandbox(workspace: ReturnType<typeof fixtureWorkspace>) {
+ return { agentRoot: join(workspace.root, "agent"), executable: "/test/bwrap", cwd: workspace.root, mounts: [], env: {}, args: (command: string[]) => command };
+}
+
 function python(): PythonEnvironment {
 	return {
 		schema_version: 1, python_version: "3.13", executable: "/venv/bin/python", prefix: "/venv",
@@ -72,9 +76,12 @@ describe("agent-driven harness solve session", () => {
 		const toolNames = ["experiment_start", "experiment_status", "experiment_output", "experiment_stop"];
 		const dependencies: Partial<HarnessSolveDependencies> = {
 			prepareWorkspace: () => workspace,
+			prepareSandbox: () => sandbox(workspace),
 			readPython: python,
 			createTraining: (options) => {
 				updateIntervalMs = options.limits?.updateIntervalMs;
+				expect(typeof options.sandboxCommand).toBe("function");
+				expect(options.executionBoundaryFingerprint).toMatch(/^[a-f0-9]{64}$/);
 				return {
 					tools: toolNames.map((name) => ({ name })), toolPrompts: [], supervisor: {}, service: {},
 					bindSession: () => { bound = true; }, close: async () => { closed = true; },
@@ -84,7 +91,10 @@ describe("agent-driven harness solve session", () => {
 				expect(options.prompt).toContain("SOLVE_GUIDANCE");
                 expect(options.promptReferences.map(p => p.id)).toContain("shared.stage-guidance");
                 expect(options.extensionPaths).toEqual([join(import.meta.dir, "..", "tools", "web_search.ts")]);
-				expect(options.customTools?.map((tool) => tool.name)).toEqual(toolNames);
+				expect(options.tools).toEqual([]);
+				expect(options.customTools?.map((tool) => tool.name)).toEqual([...toolNames, "read", "write", "edit", "bash", "grep", "find", "ls", "python_environment"]);
+				expect(options.prompt).toContain("mount and PID namespace");
+				expect(options.env?.SOLVE_WORKSPACE).toBe(join(workspace.root, "agent"));
 				expect(options.customTools?.some((tool) => tool.name === "experiments_start")).toBe(false);
 				await options.onSessionReady?.({} as never, { agentRunId: "agent-test", piSessionId: "session-test" });
 				return { output: "done", agentRunId: "agent-1" };
@@ -116,6 +126,7 @@ describe("agent-driven harness solve session", () => {
 		let closed = false;
 		const dependencies: Partial<HarnessSolveDependencies> = {
 			prepareWorkspace: () => workspace,
+			prepareSandbox: () => sandbox(workspace),
 			readPython: python,
 			createTraining: () => ({
 				tools: [], toolPrompts: [], supervisor: {}, service: {}, bindSession() {},
