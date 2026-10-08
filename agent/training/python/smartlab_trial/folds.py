@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 import numpy as np
-from sklearn.model_selection import StratifiedKFold, train_test_split
+from sklearn.model_selection import GroupKFold, KFold, StratifiedKFold, train_test_split
 
 from .agent_code import _factory, _load_module
 from .invocation import SCHEMA_VERSION, InvocationError, CvSpec, Scope
@@ -24,7 +24,7 @@ class ConcreteFold:
     seed: int
 
 
-def _pilot_indices(y: Sequence[int], maximum: int, seed: int) -> list[int]:
+def _pilot_indices(y: Sequence[Any], maximum: int, seed: int) -> list[int]:
     if maximum >= len(y):
         return list(range(len(y)))
     if maximum < 2:
@@ -56,7 +56,7 @@ def _as_indices(values: Iterable[Any], name: str, row_count: int) -> tuple[int, 
     return indices
 
 
-def _normalise_splits(raw: Any, frame: Any, y: Sequence[int]) -> list[tuple[Iterable[Any], Iterable[Any]]]:
+def _normalise_splits(raw: Any, frame: Any, y: Sequence[Any] | None) -> list[tuple[Iterable[Any], Iterable[Any]]]:
     if callable(getattr(raw, "split", None)):
         raw = raw.split(frame, y)
     try:
@@ -66,7 +66,7 @@ def _normalise_splits(raw: Any, frame: Any, y: Sequence[int]) -> list[tuple[Iter
 
 
 def _materialize_folds(
-    cv: CvSpec, scope: Scope, frame: Any, y: Sequence[int], project_root: Path, base_seed: int
+    cv: CvSpec, scope: Scope, frame: Any, y: Sequence[Any] | None, project_root: Path, base_seed: int
 ) -> list[ConcreteFold]:
     repeats = cv.repeats
     materialized: list[ConcreteFold] = []
@@ -76,12 +76,20 @@ def _materialize_folds(
     for repeat in range(repeats):
         repeat_seed = _derive_seed("repeat", [base_seed, repeat])
         if cv.kind == "builtin":
-            splitter = StratifiedKFold(n_splits=cv.folds, shuffle=True, random_state=repeat_seed)
-            pairs = list(splitter.split(frame, y))
+            if cv.scheme == "group_kfold":
+                if y is None:
+                    raise InvocationError("group_kfold requires family/group metadata")
+                splitter = GroupKFold(n_splits=cv.folds, shuffle=True, random_state=repeat_seed)
+                pairs = list(splitter.split(frame, groups=y))
+            else:
+                if cv.scheme == "stratified_kfold" and y is None:
+                    raise InvocationError("stratified_kfold requires targets; choose kfold or a custom factory")
+                splitter = (KFold if cv.scheme == "kfold" else StratifiedKFold)(n_splits=cv.folds, shuffle=True, random_state=repeat_seed)
+                pairs = list(splitter.split(frame, y))
         else:
             raw = custom_factory({
                 "frame": frame.copy(),
-                "y": list(y),
+                "y": list(y) if y is not None else None,
                 "seed": repeat_seed,
                 "repeat": repeat,
                 "options": cv.options,

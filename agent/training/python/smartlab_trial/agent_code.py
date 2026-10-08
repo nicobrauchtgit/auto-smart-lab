@@ -55,8 +55,17 @@ def _call_pipeline_factory(factory: Any, context: dict[str, Any]) -> Any:
         estimator = factory()
     else:
         estimator = factory(context)
-    if not callable(getattr(estimator, "fit", None)) or not callable(getattr(estimator, "predict", None)):
-        raise InvocationError("pipeline factory must return an estimator with fit() and predict()")
+    measurement = context.get("measurement")
+    if measurement and measurement["execution"] == "batch" and measurement["kind"] == "clustering":
+        required = ("fit_predict",)
+    elif measurement and measurement["kind"] == "anomaly_detection":
+        required = ("fit",) if not callable(getattr(estimator, "fit_predict", None)) else ()
+        if measurement["execution"] == "inductive":
+            required = ("fit", measurement["scoreMethod"])
+    else:
+        required = ("fit", "predict")
+    if any(not callable(getattr(estimator, method, None)) for method in required):
+        raise InvocationError(f"pipeline factory must return an estimator with {', '.join(method + '()' for method in required)}")
     return estimator
 
 

@@ -41,7 +41,8 @@ export interface TrainingInvocation {
 }
 
 export interface TrialMetrics {
-	balancedAccuracy: number;
+	balancedAccuracy?: number;
+	adjustedRandIndex?: number;
 	[key: string]: unknown;
 }
 
@@ -399,10 +400,25 @@ async function collectTrial(directory: string, experimentId: string): Promise<Tr
 		}
 	}
 
-	const balancedAccuracy = result?.metrics?.balancedAccuracy;
+	const measurement = invocation?.measurement as { kind?: string; hasTargets?: boolean; sampleManifestSha256?: string } | undefined;
+	const clustering = measurement?.kind === "clustering";
+	const unlabelled = measurement?.kind === "anomaly_detection" || (clustering && measurement.hasTargets !== true);
+	const balancedAccuracy = clustering ? result?.metrics?.adjustedRandIndex : result?.metrics?.balancedAccuracy;
 	if (result?.metrics !== null && result?.metrics !== undefined
-		&& (!finiteNumber(balancedAccuracy) || balancedAccuracy < 0 || balancedAccuracy > 1)) {
-		error(errors, experimentId, "invalid_result", "trial-result.json metrics.balancedAccuracy must be between 0 and 1", "trial-result.json");
+		&& (!finiteNumber(balancedAccuracy) || balancedAccuracy < (clustering ? -1 : 0) || balancedAccuracy > 1)) {
+		error(errors, experimentId, "invalid_result", `trial-result.json primary metric must be between ${clustering ? -1 : 0} and 1`, "trial-result.json");
+	}
+	if (measurement && result?.status !== "failed") {
+		if (!["clustering", "anomaly_detection"].includes(measurement.kind ?? "") || typeof measurement.hasTargets !== "boolean"
+			|| typeof measurement.sampleManifestSha256 !== "string" || !/^[a-f0-9]{64}$/.test(measurement.sampleManifestSha256)) {
+			error(errors, experimentId, "invalid_measurement", "Controller measurement lacks validated kind, target availability or metadata hash", "invocation.json");
+		}
+		if (result?.measurementKind !== measurement.kind || !sameJson(result?.measurement, invocation?.measurement)) {
+			error(errors, experimentId, "measurement_mismatch", "Trial measurement differs from the controller invocation", "trial-result.json");
+		}
+		if (!isObject(result?.diagnostics) || result.diagnostics.kind !== measurement.kind) {
+			error(errors, experimentId, "invalid_diagnostics", "Task diagnostics are missing or have the wrong measurement kind", "trial-result.json");
+		}
 	}
 
 	// A search winner was selected on the folds that scored it; only a
@@ -427,7 +443,7 @@ async function collectTrial(directory: string, experimentId: string): Promise<Tr
 	if (isSearch && result?.promotionEligible === true) {
 		error(errors, experimentId, "invalid_promotion_eligibility", "a search trial is never promotion-eligible", "trial-result.json");
 	}
-	const completePromotion = !isSearch && scope === "promotion"
+	const completePromotion = !unlabelled && !isSearch && scope === "promotion"
 		&& result?.scope === "promotion"
 		&& result.status === "completed"
 		&& nonNegativeInteger(requestedFolds)

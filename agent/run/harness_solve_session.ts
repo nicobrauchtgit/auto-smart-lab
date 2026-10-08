@@ -254,6 +254,7 @@ export async function runHarnessSolveSession(
 			commit: trial.source?.commit, tree: trial.source?.tree, branch: trial.source?.branch,
 			subject: trial.source?.subject, requested_revision: trial.source?.requested,
 			search: trial.request.search !== undefined, scope: trial.request.scope.kind,
+			measurement: trial.measurement ?? { kind: "classification" },
 			champion_experiment_id: trial.champion?.experimentId, champion_commit: trial.champion?.commit,
 		}),
 		maxExperiments: options.maxTrials ?? HARNESS_CONFIG.solve.maxIterations,

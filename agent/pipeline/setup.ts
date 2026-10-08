@@ -125,9 +125,10 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
    const result = spawnSync(python, ["-c", "import fcntl, tempfile; f = tempfile.TemporaryFile(); fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)"], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });
    if (result.error || result.status !== 0) throw new Error("Kernel file locking unavailable");
   });
-  add("training-imports", "local", "Run ./dev setup, and install any missing system library the import error names: numpy, pandas and sklearn must import successfully.", () => {
-   const python = readPythonEnvironment().executable;
-   const result = spawnSync(python, ["-c", "import numpy, pandas, sklearn"], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });
+  add("training-imports", "local", "Run ./dev setup; numpy, pandas, sklearn and scipy metric primitives must import successfully.", () => {
+   for (const name of ["check_measurement.py", "smartlab_trial/diagnostics.py", "smartlab_trial/measurement.py"]) readable(join(PROJECT_ROOT, "agent/training/python", name));
+   const python = options.executables?.python ?? readPythonEnvironment().executable;
+   const result = spawnSync(python, [join(PROJECT_ROOT, "agent/training/python/check_measurement.py"), "--check-imports"], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });
    if (result.error || result.status !== 0) throw new Error("Imports failed");
   });
   add("training-optuna", "local", "Run ./dev setup; optuna is a declared dependency used for harness-owned hyperparameter search.", () => {

@@ -106,7 +106,7 @@ def _check_value(estimator: Any, name: str, value: Any, path: str) -> dict[str, 
     return None
 
 
-def validate_request(source_root: Path, request: dict[str, Any]) -> list[dict[str, Any]]:
+def validate_request(source_root: Path, request: dict[str, Any], measurement: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     issues: list[dict[str, Any]] = []
     expose_project(source_root)
     pipeline = request.get("pipeline", {})
@@ -144,7 +144,11 @@ def validate_request(source_root: Path, request: dict[str, Any]) -> list[dict[st
 
     def build(overrides: dict[str, Any]) -> Any:
         parameters = {**fixed, **overrides} if isinstance(fixed, dict) else fixed
-        return _call_pipeline_factory(factory, {"parameters": parameters, "seed": 0})
+        context = {"parameters": parameters, "seed": 0}
+        if measurement:
+            context["measurement"] = {key: value for key, value in measurement.items()
+                                      if key not in ("sampleManifestPath", "sampleManifestSha256")}
+        return _call_pipeline_factory(factory, context)
 
     try:
         base = build(base_overrides)

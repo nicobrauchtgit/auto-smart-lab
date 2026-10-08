@@ -58,6 +58,7 @@ export function createHarnessTraining(options: HarnessTrainingOptions) {
 		rootSeed: options.rootSeed,
 		zipPath: options.zipPath,
 		labelsPath: options.labelsPath,
+		measurement: options.measurement,
 		allowedModuleRoots: options.allowedModuleRoots,
 		maxExperiments: options.maxExperiments,
 		solutionsRoot: options.solutionsRoot,

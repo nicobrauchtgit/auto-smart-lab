@@ -54,6 +54,13 @@ warnings, configured versus completed estimator work, resource use, elapsed and
 projected cost, leakage checks, artifact hashes, and the evidence still missing
 for promotion.
 
+The [first measurement packet](harness-measurements.md) now runs in the shared
+worker and appears in solve's status tools: supervised quality diagnostics,
+clustering split/merge and coverage measurements, repeated-partition stability,
+and label-free anomaly ranking/threshold diagnostics. Controller-declared opaque
+sample metadata and batch/inductive execution are available in the training API;
+the registered task-preparation/refit adapters still need H1 integration.
+
 ## Trial lifecycle
 
 An agent submits a typed request naming its pipeline factory, parameters, CV

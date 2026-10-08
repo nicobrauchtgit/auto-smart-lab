@@ -3,7 +3,7 @@
 import { spawn } from "node:child_process";
 
 import { preview } from "./contract.js";
-import type { ExperimentRequest, ValidationIssue } from "./types.js";
+import type { ExperimentRequest, MeasurementConfig, ValidationIssue } from "./types.js";
 
 export interface PipelineValidationInput {
 	pythonExecutable: string;
@@ -11,6 +11,7 @@ export interface PipelineValidationInput {
 	/** Root whose `solutions/` directory is the requested commit's worktree. */
 	sourceRoot: string;
 	request: ExperimentRequest;
+	measurement?: MeasurementConfig;
 	env?: Record<string, string>;
 	cwd: string;
 	timeoutMs: number;
@@ -70,5 +71,5 @@ export const runPipelineValidation: PipelineValidator = (input) => new Promise((
 		settle(failure("validation crashed while loading the pipeline",
 			"Run the module locally to reproduce; the last lines of its error output are included.", tail || `exit code ${code}`));
 	});
-	child.stdin.end(JSON.stringify({ sourceRoot: input.sourceRoot, request: input.request }));
+	child.stdin.end(JSON.stringify({ sourceRoot: input.sourceRoot, request: input.request, measurement: input.measurement }));
 });

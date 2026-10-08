@@ -25,7 +25,7 @@ export interface PipelineRequest {
 
 export interface BuiltinCvRequest {
 	kind: "builtin";
-	scheme: "stratified_kfold";
+	scheme: "stratified_kfold" | "kfold" | "group_kfold";
 	folds: number;
 	repeats: number;
 }
@@ -40,6 +40,20 @@ export interface FactoryCvRequest {
 }
 
 export type CvRequest = BuiltinCvRequest | FactoryCvRequest;
+
+/** Controller metadata, never an agent request or a model-design constraint. */
+export type MeasurementConfig = {
+	kind: "clustering";
+	sampleManifestPath: string;
+	execution: "inductive" | "batch";
+} | {
+	kind: "anomaly_detection";
+	sampleManifestPath: string;
+	execution: "inductive" | "batch";
+	scoreMethod: "score_samples" | "decision_function" | "negative_outlier_factor_";
+	scoreDirection: "higher_is_anomalous" | "lower_is_anomalous";
+	anomalyLabel: number;
+};
 
 export interface PilotScope {
 	kind: "pilot";

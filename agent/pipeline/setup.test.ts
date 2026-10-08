@@ -150,3 +150,40 @@ test("training recovery prerequisites are scoped and block execution when flock 
  expect(setupChecks([], { taskId: "fixture", prompts: loadPromptSnapshot() }).some(check => check.id === "training-recovery")).toBe(false);
  await expect(new SetupSession().check([recovery], signal(), () => {})).rejects.toThrow("training-recovery");
 });
+
+test("missing shared metric prerequisites block the solve stage before execution", async () => {
+ const { mkdtempSync, rmSync } = await import("node:fs");
+ const { tmpdir } = await import("node:os");
+ const { join } = await import("node:path");
+ const { invokeStage } = await import("./executor.js");
+ const { createPipelineTrace } = await import("./trace.js");
+ const { resolvePipelineSettings } = await import("./config.js");
+ const { STAGE_REGISTRY } = await import("./registry.js");
+ const prompts = loadPromptSnapshot();
+ const missing = setupChecks(["training"], { taskId: "fixture", prompts, executables: { python: "/missing-metric-python" } })
+  .find(check => check.id === "training-imports")!;
+ expect(setupChecks([], { taskId: "fixture", prompts }).some(check => check.id === missing.id)).toBe(false);
+ class MissingMetrics extends SetupSession {
+  async check(checks: SetupCheck[], abort: AbortSignal, record: (event: string, payload: Record<string, unknown>) => void) {
+   expect(checks.some(check => check.id === missing.id)).toBe(true);
+   return super.check([missing], abort, record);
+  }
+ }
+ const original = STAGE_REGISTRY.solve;
+ const directory = mkdtempSync(join(tmpdir(), "metric-preflight-"));
+ const trace = await createPipelineTrace({ taskId: "fixture", pipelineRunId: crypto.randomUUID(), runsDir: directory });
+ let ran = false;
+ try {
+  STAGE_REGISTRY.solve = { ...original, checkInput() {}, async run() { ran = true; return { artifacts: [] }; } };
+  const config = resolvePipelineSettings({ pipeline: { entryStage: "solve", stages: { solve: { enabled: true } } },
+   agent: { cwd: ".", agentDir: ".", initialPrompt: "" }, providers: {}, defaultModel: "fixture/model" } as any);
+  const result = await invokeStage({ stage: "solve", input: { taskId: "fixture", upstream: [] }, config, trace, setupSession: new MissingMetrics() });
+  expect(result.outcome).toBe("failure");
+  expect(result.error).toContain("training-imports");
+  expect(ran).toBe(false);
+ } finally {
+  STAGE_REGISTRY.solve = original;
+  await trace.close();
+  rmSync(directory, { recursive: true, force: true });
+ }
+});

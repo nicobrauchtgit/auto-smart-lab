@@ -36,7 +36,7 @@ import { pairedPromotion } from "./promotion.js";
 import { runPipelineValidation, type PipelineValidator } from "./pipeline_validation.js";
 import { collectTrainingResults } from "./results.js";
 import { createSeedPlan, deriveTrialSeed, writeSeedPlan } from "./seeds.js";
-import type { ExperimentRequest, JsonValue, ValidationIssue } from "./types.js";
+import type { ExperimentRequest, JsonValue, MeasurementConfig, ValidationIssue } from "./types.js";
 
 const PYTHON_ROOT = join(dirname(fileURLToPath(import.meta.url)), "python");
 import { CHAMPION_TAG } from "./development_selection.js";
@@ -61,8 +61,10 @@ export interface TrainingServiceOptions {
 	taskId: string;
 	datasetSha256: string;
 	rootSeed: number;
-	zipPath: string;
-	labelsPath: string;
+	zipPath?: string;
+	labelsPath?: string;
+	/** Opaque development sample metadata and task scoring, supplied by the controller. */
+	measurement?: MeasurementConfig;
 	/** Project-relative roots from which agent-authored Python may be loaded. */
 	allowedModuleRoots?: readonly string[];
 	/** Maximum trials this session may start; the agent may always stop earlier. */
@@ -106,6 +108,7 @@ export interface StartedTrialRecord {
 	worktrees: string[];
 	startedAt: number;
 	champion?: { experimentId: string; commit: string };
+	measurement?: MeasurementConfig & { sampleManifestSha256: string; hasTargets: boolean };
 }
 
 const DEFAULT_SEARCH: SearchSettings = {
@@ -156,11 +159,46 @@ function readJsonLines(path: string): Record<string, any>[] {
 }
 
 const mean = (values: number[]) => values.reduce((sum, value) => sum + value, 0) / values.length;
+const primaryScore = (result: Record<string, any> | undefined) => result?.metrics?.adjustedRandIndex ?? result?.metrics?.balancedAccuracy ?? -Infinity;
+
+/** Compact status view; detailed batch diagnostics remain in hashed trial artifacts. */
+export function compactDiagnostics(result: Record<string, any> | undefined): Record<string, unknown> | undefined {
+	const signals = result?.diagnostics;
+	if (!signals) return undefined;
+	return { kind: signals.kind, primaryMetric: signals.primaryMetric, proxyEvidence: signals.proxyEvidence,
+		uniqueRows: signals.uniqueRows, observations: signals.observations,
+		foldSpread: signals.foldSpread, ranking: signals.ranking,
+		foldSpreadIsConfidenceInterval: signals.foldSpreadIsConfidenceInterval,
+		rankingAggregation: signals.rankingAggregation,
+		fitSeconds: signals.fitSeconds, reachedLimit: signals.reachedLimit,
+		stability: signals.stability ? { available: signals.stability.available, reason: signals.stability.reason,
+			summary: signals.stability.summary, measuredComparisons: signals.stability.measuredComparisons,
+			eligibleComparisons: signals.stability.eligibleComparisons } : undefined,
+		metrics: result?.metrics,
+		folds: Array.isArray(signals.folds) ? signals.folds.slice(0, 8).map((fold: any) => {
+			const detail = fold.diagnostics ?? {};
+			const external = detail.external;
+			const structure = detail.structure;
+			return { repeat: fold.repeat, fold: fold.fold, metrics: fold.metrics,
+				diagnostics: { ...detail,
+					...(external ? { external: { ...external, contingency: undefined, contingencySparse: undefined, families: undefined, clusters: undefined } } : {}),
+					...(structure ? { structure: { ...structure, clusterSizes: undefined } } : {}) } };
+		}) : undefined,
+		completedDiagnosticFolds: signals.folds?.length,
+		shownDiagnosticFolds: Math.min(signals.folds?.length ?? 0, 8),
+		championComparison: result?.championComparison };
+}
 
 function canonical(value: any): string {
 	if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
 	if (value && typeof value === "object") return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`;
 	return JSON.stringify(value);
+}
+
+function measurementDeclaration(value: any): unknown {
+	if (!value) return null;
+	const { sampleManifestSha256: _hash, hasTargets: _targets, ...declaration } = value;
+	return declaration;
 }
 
 export class TrainingService {
@@ -174,14 +212,24 @@ export class TrainingService {
     private closed = false;
     private durableBudgetLimit?: number;
     private recovering = new Map<string, Promise<unknown>>();
+    private measurementHash?: string;
 
 	constructor(private readonly options: TrainingServiceOptions) {
+		this.options = { ...options, ...(options.measurement ? { measurement: structuredClone(options.measurement) } : {}) };
+		if (this.options.measurement && typeof this.options.measurement.sampleManifestPath === "string") {
+			this.options.measurement.sampleManifestPath = resolve(options.projectRoot, this.options.measurement.sampleManifestPath);
+		}
 		this.settings = { ...DEFAULT_SEARCH, ...options.search };
 	}
 
     private hashFile(path: string): string { return createHash("sha256").update(readFileSync(path)).digest("hex"); }
     private dataHash(): string {
-        if (!existsSync(this.options.zipPath) || !existsSync(this.options.labelsPath)) return "unavailable";
+        if (this.options.measurement) {
+            const path = this.options.measurement.sampleManifestPath;
+            if (!existsSync(path)) return "unavailable";
+            return createHash("sha256").update(canonical(this.options.measurement)).update(readFileSync(path)).digest("hex");
+        }
+        if (!this.options.zipPath || !this.options.labelsPath || !existsSync(this.options.zipPath) || !existsSync(this.options.labelsPath)) return "unavailable";
         return createHash("sha256").update(readFileSync(this.options.zipPath)).update(readFileSync(this.options.labelsPath)).digest("hex");
     }
     private runtimeDependencyHash(): string {
@@ -206,6 +254,7 @@ export class TrainingService {
         return this.initialization ??= this.discover();
     }
     private async discover(): Promise<void> {
+        this.checkMeasurement();
         this.releases.push(claimWorkspace(this.options.trainingRoot));
         const roots = [this.options.trainingRoot, ...(this.options.recoveryRoots ?? [])];
         for (const root of [...new Set(roots)]) {
@@ -233,6 +282,25 @@ export class TrainingService {
                 if (state?.status !== "running") await this.finalize(name);
             }
         }
+    }
+
+    /** Same no-fit metadata/import check before readiness and every trial launch. */
+    private checkMeasurement(): (MeasurementConfig & { sampleManifestSha256: string; hasTargets: boolean }) | undefined {
+        if (!this.options.measurement) return undefined;
+        const probe = spawnSync(this.options.pythonExecutable, [join(PYTHON_ROOT, "check_measurement.py"),
+            "--config", JSON.stringify(this.options.measurement)],
+            { env: this.options.env, encoding: "utf8", timeout: 10_000, maxBuffer: 64 * 1024 });
+        let metadata: { sha256?: string; hasTargets?: boolean; error?: { message?: string } } = {};
+        try { metadata = JSON.parse(probe.stdout ?? "{}"); } catch { /* Report bounded setup instructions below. */ }
+        const valid = !probe.error && probe.status === 0 && typeof metadata.sha256 === "string" && typeof metadata.hasTargets === "boolean";
+        this.options.record?.("training_measurement_setup", { ok: valid, kind: this.options.measurement.kind,
+            sampleManifestPath: this.options.measurement.sampleManifestPath, sampleManifestSha256: metadata.sha256 });
+        if (!valid) throw new Error(`Measurement setup failed: ${metadata.error?.message ?? "metadata or metric dependencies unavailable"}. Run ./dev setup and repair the development sample manifest before starting an agent.`);
+        if (this.measurementHash && this.measurementHash !== metadata.sha256) {
+            throw new Error("Development sample metadata changed after setup; create a new controller invocation with the new dataset identity.");
+        }
+        this.measurementHash = metadata.sha256;
+        return { ...this.options.measurement, sampleManifestSha256: metadata.sha256!, hasTargets: metadata.hasTargets! };
     }
 
     private launchArguments(directory: string, worker: string, invocationPath: string): string[] {
@@ -325,7 +393,8 @@ export class TrainingService {
                 || meta.datasetSha256 !== this.options.datasetSha256 || meta.dataHash !== this.dataHash()
                 || meta.environmentFingerprint !== (this.options.environmentFingerprint ?? null)
                 || meta.runtimeDependencyHash === "unverified" || meta.runtimeDependencyHash !== this.runtimeDependencyHash()
-                || meta.frameworkHash !== this.frameworkHash() || canonical(meta.settings) !== canonical(this.settings)) {
+                || meta.frameworkHash !== this.frameworkHash() || canonical(meta.settings) !== canonical(this.settings)
+                || canonical(measurementDeclaration(meta.trial.measurement)) !== canonical(measurementDeclaration(this.options.measurement))) {
                 throw new Error("Recovery inputs are incompatible: restore the original dataset, dependencies, worker code, root seed and runtime settings.");
             }
             const invocationPath = join(trial.directory, "invocation.json");
@@ -476,7 +545,7 @@ export class TrainingService {
 			if (measured.length === 0) continue;
 			return {
 				priorFitSeconds: Math.max(1e-3, mean(measured.map((row) => row.fitSeconds ?? row.durationSeconds))),
-				priorTrainRows: Math.max(1, Math.round(mean(measured.map((row) => row.trainRows)))),
+				priorTrainRows: Math.max(1, Math.round(mean(measured.map((row) => row.fitRows ?? row.trainRows)))),
 				priorSource: trial.id,
 			};
 		}
@@ -488,8 +557,11 @@ export class TrainingService {
 		if (!this.options.solutionsRoot || !isRepositoryRoot(this.options.solutionsRoot)) return undefined;
 		const tag = tagMessage(this.options.solutionsRoot, CHAMPION_TAG);
 		if (!tag) return undefined;
-		const message = JSON.parse(tag.message) as { experimentId?: unknown; pipeline?: JsonValue };
+		const message = JSON.parse(tag.message) as { experimentId?: unknown; pipeline?: JsonValue; measurement?: unknown };
 		if (typeof message.experimentId !== "string" || message.pipeline === undefined) throw new Error("Malformed champion tag");
+		if (canonical(measurementDeclaration(message.measurement)) !== canonical(measurementDeclaration(this.options.measurement))) {
+			throw new Error("Champion task measurement differs from this controller declaration; use a separate task comparison cohort.");
+		}
 		if (isTerminalCandidate(this.options.solutionsRoot, this.options.taskId, tag.commit, message.pipeline as unknown as import("./types.js").PipelineRequest)) {
 			this.options.record?.("training_terminal_champion_retained_as_history", { experiment_id: message.experimentId, commit: tag.commit, comparison_available: false });
 			return undefined;
@@ -511,6 +583,11 @@ export class TrainingService {
 			throw new ExperimentRequestError(structural.issues);
 		}
 		const request = structural.request;
+		const measurement = this.checkMeasurement();
+		if (measurement && !measurement.hasTargets && request.search) {
+			throw new ExperimentRequestError([{ path: "search", problem: "no trusted primary metric for label-free search",
+				received: "search", expected: "fixed candidate trials", hint: "Compare the advisory ranking and threshold diagnostics in fixed trials; label-free proxies cannot authorize promotion." }]);
+		}
 		const budgetLimit = Math.min(this.options.maxExperiments ?? Infinity, this.durableBudgetLimit ?? Infinity);
         if (this.started >= budgetLimit) {
             throw new Error(`training experiment budget exhausted (${budgetLimit})`);
@@ -548,6 +625,7 @@ export class TrainingService {
 				scriptPath: join(PYTHON_ROOT, "validate.py"),
 				sourceRoot: sourceRoot ?? this.options.projectRoot,
 				request,
+				measurement,
 				env: this.options.env,
 				cwd: this.options.projectRoot,
 				timeoutMs: this.settings.validationTimeoutSeconds * 1_000,
@@ -597,6 +675,7 @@ export class TrainingService {
 			schemaVersion: versioned || request.schemaVersion === 2 ? 2 : 1,
 			experimentId: id,
 			request,
+			...(measurement ? { measurement } : {}),
 			...(searchCoordinate ? { searchCoordinate } : {}),
 			inputs: {
 				projectRoot: this.options.projectRoot,
@@ -633,8 +712,9 @@ export class TrainingService {
 		});
 
 		const worker = this.options.workerPath ?? join(this.options.projectRoot, "agent", "training", "python", "worker.py");
-		const record: StartedTrialRecord = {
+        const record: StartedTrialRecord = {
             id, directory, request, worktrees, startedAt: Date.now(),
+            ...(measurement ? { measurement } : {}),
             ...(source ? { source } : {}),
             ...(champion ? { champion: { experimentId: champion.experimentId, commit: champion.commit } } : {}),
         };
@@ -702,7 +782,7 @@ export class TrainingService {
 			const own = collection.trials.find((entry) => entry.experimentId === id);
 			if (!own?.eligible) return;
 			if (!tagMessage(root, `trial/${id}`)) tagCommit(root, `trial/${id}`, trial.source.commit,
-				JSON.stringify({ experimentId: id, balancedAccuracy: own.result?.metrics?.balancedAccuracy, subject: trial.source.subject }));
+				JSON.stringify({ experimentId: id, metrics: own.result?.metrics, balancedAccuracy: own.result?.metrics?.balancedAccuracy, subject: trial.source.subject }));
 			this.options.record?.("training_trial_tagged", { experiment_id: id, tag: `trial/${id}`, commit: trial.source.commit });
 			// With a champion in place, only the finishing trial is a challenger:
 			// its paired comparison ran against that champion, and a higher raw
@@ -713,7 +793,7 @@ export class TrainingService {
 			const current = this.champion();
 			const selected = current ? own : collection.trials.filter(entry => entry.eligible && entry.invocation?.source?.commit
 				&& entry.request && !isTerminalCandidate(root, this.options.taskId, entry.invocation.source.commit as string, entry.request.pipeline))
-				.sort((a, b) => (b.result?.metrics?.balancedAccuracy ?? -Infinity) - (a.result?.metrics?.balancedAccuracy ?? -Infinity))[0];
+				.sort((a, b) => primaryScore(b.result) - primaryScore(a.result))[0];
 			const selectedTrial = selected ? this.trials.get(selected.experimentId) : undefined;
 			if (!selected || !selectedTrial?.source) return;
             assertDevelopmentCandidate(root, this.options.taskId, selectedTrial.source.commit, selectedTrial.request.pipeline);
@@ -729,6 +809,8 @@ export class TrainingService {
 			tagCommit(root, CHAMPION_TAG, selectedTrial.source.commit, JSON.stringify({
 				experimentId: selected.experimentId,
 				balancedAccuracy: selected.result?.metrics?.balancedAccuracy,
+				adjustedRandIndex: selected.result?.metrics?.adjustedRandIndex,
+				measurement: selectedTrial.measurement ?? null,
 				pipeline: selectedTrial.request.pipeline,
 				cv: selectedTrial.request.cv,
 				subject: selectedTrial.source.subject,
@@ -821,6 +903,9 @@ export class TrainingService {
 			status: result.status, scope: result.scope, promotionEligible: result.promotionEligible,
 			completedFolds: result.completedFolds, requestedFolds: result.requestedFolds,
 			balancedAccuracy: result.metrics?.balancedAccuracy,
+			adjustedRandIndex: result.metrics?.adjustedRandIndex,
+			diagnostics: compactDiagnostics(result),
+			promotionIneligibleReason: result.promotionIneligibleReason,
 			...(result.error ? { error: result.error } : {}),
 			...(result.search ? { search: result.search } : {}),
 			...(result.runtimeGuard ? { runtimeGuard: result.runtimeGuard } : {}),
@@ -854,6 +939,8 @@ export class TrainingService {
 				scope: trial.request.scope.kind,
 				status: result?.status ?? "running",
 				balancedAccuracy: result?.metrics?.balancedAccuracy,
+				adjustedRandIndex: result?.metrics?.adjustedRandIndex,
+				diagnostics: compactDiagnostics(result),
 				promotionEligible: result?.promotionEligible ?? false,
 				...(trial.source ? {
 					commit: trial.source.commit.slice(0, 12), subject: trial.source.subject,

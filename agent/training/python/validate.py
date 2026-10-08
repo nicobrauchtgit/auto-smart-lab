@@ -18,7 +18,7 @@ def main() -> int:
     document = json.loads(sys.stdin.read())
     # Agent code may print while importing; only the report belongs on stdout.
     with contextlib.redirect_stdout(sys.stderr):
-        issues = validate_request(Path(document["sourceRoot"]).resolve(), document["request"])
+        issues = validate_request(Path(document["sourceRoot"]).resolve(), document["request"], document.get("measurement"))
     sys.stdout.write(json.dumps({"issues": issues}, allow_nan=False, default=repr))
     sys.stdout.flush()
     return 0

@@ -12,6 +12,8 @@ package:
 | `folds.py` | Pilot selection, concrete split materialization, coverage validation, and manifest hashing. |
 | `artifacts.py` | Events, durable fold results, atomic JSON/OOF writes, and summary artifacts. |
 | `metrics.py` | Prediction scores and authoritative measurements. |
+| `diagnostics.py` | Per-batch classification/clustering/anomaly signals and common-ID repeat stability; no fitting. |
+| `measurement.py` | Controller measurement declaration, opaque sample metadata, identity/target checks and primary metric selection. |
 | `validation.py` | Bounded no-fit construction and parameter constraint validation. |
 | `search.py` | Optuna ask/tell, pruning, journal/checkpoint continuation, runtime guard and report. |
 | `champion.py` | Frozen champion rerun in a separate interpreter on the challenger manifest. |
@@ -44,6 +46,13 @@ Both `metrics.json` and `trial-result.json` remain required summary artifacts an
 contain identical bytes. Version 1 manifest hashes, seed derivation and prediction formats are retained.
 Search trials are always ineligible; fixed-parameter confirmation can provide
 promotion evidence. Versioned trials also retain source identity.
+
+See [the first measurement packet](../../../docs/harness-measurements.md) for
+generic sample manifests, inductive/batch execution, score provenance, bounded
+stability comparisons, and advisory versus promotion evidence. `check_measurement.py`
+is the shared no-fit import/metadata preflight; `ready()` runs it before agent
+pipeline imports. Label-free trials cannot promote. Existing stage task adapters
+remain binary text adapters until H1/H2 connect generic controller declarations.
 
 ## Verification
 

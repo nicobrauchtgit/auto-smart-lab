@@ -25,7 +25,9 @@ from smartlab_trial.agent_code import (
 from smartlab_trial.artifacts import EventWriter, _atomic_json, _write_oof, append_fold_result, write_summary
 from smartlab_trial.folds import ConcreteFold, _manifest, _materialize_folds, _pilot_indices
 from smartlab_trial.invocation import SCHEMA_VERSION, InvocationError, Invocation, parse_invocation
-from smartlab_trial.metrics import _measure, _scores
+from smartlab_trial.metrics import _measure, _scores, score_observation
+from smartlab_trial import diagnostics
+from smartlab_trial.measurement import kind as measurement_kind, load_samples
 from smartlab_trial.seeds import _derive_seed
 from smartlab_trial.recovery import persisted_folds, save_checkpoint, load_checkpoint, validate_single
 from smartlab_trial.convergence import capture_convergence_warnings, summarise_convergence
@@ -38,7 +40,18 @@ def _handle_stop(_signum: int, _frame: Any) -> None:
     _stop_requested = True
 
 
-def _prepare_data(invocation: Invocation) -> tuple[Any, list[int], list[str]]:
+def _prepare_data(invocation: Invocation) -> tuple[Any, list[Any] | None, list[str]]:
+    if invocation.measurement:
+        frame, y, _digest = load_samples(invocation.measurement)
+        if invocation.search and y is None:
+            raise InvocationError("Search selection requires a trusted primary metric; label-free trials report proxies only")
+        if invocation.scope.kind == "pilot" and invocation.scope.max_rows is not None:
+            maximum = min(invocation.scope.max_rows, len(frame))
+            selected = _pilot_indices(y if y is not None else [0] * len(frame), maximum,
+                                      _derive_seed("pilot", [invocation.trial_seed]))
+            frame = frame.iloc[selected].reset_index(drop=True)
+            y = [y[index] for index in selected] if y is not None else None
+        return frame, y, frame["id"].tolist()
     frame, y = load_labelled(invocation.zip_path, invocation.labels_path)
     # Stable input order makes folds independent of labels-file ordering.
     order = np.argsort(frame["id"].astype(str).to_numpy(), kind="stable")
@@ -53,7 +66,7 @@ def _prepare_data(invocation: Invocation) -> tuple[Any, list[int], list[str]]:
 
 
 def _run_fold(invocation: Invocation, pipeline_factory: Any, fold: ConcreteFold,
-              frame: Any, y: Sequence[int], ids: Sequence[str], *,
+              frame: Any, y: Sequence[Any] | None, ids: Sequence[str], *,
               factory_parameters: Any = None, estimator_params: dict[str, Any] | None = None,
               estimator_index: int = 0, config_id: str | None = None,
               convergence: bool = False) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -66,6 +79,9 @@ def _run_fold(invocation: Invocation, pipeline_factory: Any, fold: ConcreteFold,
     estimator_seed = _derive_seed("estimator", [fold.seed, estimator_index])
     parameters = invocation.pipeline.parameters if factory_parameters is None else factory_parameters
     context = {"parameters": parameters, "seed": estimator_seed}
+    if invocation.measurement:
+        context["measurement"] = {key: value for key, value in invocation.measurement.items()
+                                  if key not in ("sampleManifestPath", "sampleManifestSha256")}
     estimator = _call_pipeline_factory(pipeline_factory, context)
     applied = {**invocation.pipeline.estimator_params, **(estimator_params or {})}
     if applied:
@@ -74,20 +90,52 @@ def _run_fold(invocation: Invocation, pipeline_factory: Any, fold: ConcreteFold,
     seeded_parameters = _inject_random_states(estimator, estimator_seed)
     train_frame = frame.iloc[list(fold.train)].reset_index(drop=True)
     validation_frame = frame.iloc[list(fold.validation)].reset_index(drop=True)
-    train_y = [y[index] for index in fold.train]
-    validation_y = [y[index] for index in fold.validation]
+    train_y = [y[index] for index in fold.train] if y is not None else None
+    validation_y = [y[index] for index in fold.validation] if y is not None else None
+    task_kind = measurement_kind(invocation)
+    batch = invocation.measurement is not None and invocation.measurement["execution"] == "batch"
     fit_started = time.monotonic()
-    if convergence:
-        with capture_convergence_warnings() as raised:
+    with capture_convergence_warnings() as raised:
+        if task_kind == "classification":
             estimator.fit(train_frame, train_y)
-    else:
-        estimator.fit(train_frame, train_y)
+        elif batch and callable(getattr(estimator, "fit_predict", None)):
+            predictions = estimator.fit_predict(validation_frame)
+        else:
+            estimator.fit(validation_frame if batch else train_frame)
     fit_seconds = time.monotonic() - fit_started
-    predictions = [int(value) for value in estimator.predict(validation_frame)]
-    if len(predictions) != len(validation_y):
-        raise InvocationError("pipeline predict() returned the wrong number of rows")
-    scores = _scores(estimator, validation_frame)
-    measurement = _measure(validation_y, predictions)
+    if not (batch and callable(getattr(estimator, "fit_predict", None))):
+        predictions = estimator.predict(validation_frame) if callable(getattr(estimator, "predict", None)) else None
+    if predictions is not None:
+        values = diagnostics.finite_vector(predictions, len(validation_frame), "Predictions")
+        if np.any(values != np.floor(values)):
+            raise InvocationError("Predictions must be integer labels")
+        predictions = values.astype(int).tolist()
+    if task_kind != "anomaly_detection" and predictions is None:
+        raise InvocationError("Pipeline must supply predictions for this measurement kind")
+    scores = None
+    if task_kind == "classification":
+        if any(value not in (0, 1) for value in predictions):
+            raise InvocationError("Classification predictions must be 0 or 1")
+        scores, provenance = score_observation(estimator, validation_frame)
+        measurement = _measure(validation_y, predictions)
+        signals = diagnostics.classification(validation_y, predictions, scores, provenance)
+    elif task_kind == "clustering":
+        signals = diagnostics.clustering(validation_y, predictions)
+        measurement = ({"adjustedRandIndex": signals["external"]["adjustedRandIndex"]}
+                       if signals["external"]["available"] else {})
+    else:
+        spec = invocation.measurement
+        score_fn = getattr(estimator, spec["scoreMethod"], None)
+        if spec["scoreMethod"] == "negative_outlier_factor_":
+            raw_scores = score_fn
+        elif callable(score_fn):
+            raw_scores = score_fn(validation_frame)
+        else:
+            raise InvocationError("Pipeline lacks the declared anomaly score method")
+        scores = diagnostics.finite_vector(raw_scores, len(validation_frame), "Anomaly scores").tolist()
+        signals = diagnostics.anomaly(scores, predictions, direction=spec["scoreDirection"], anomaly_label=spec["anomalyLabel"])
+        signals["scoreProvenance"] = {"kind": "anomaly", "method": spec["scoreMethod"], "direction": spec["scoreDirection"]}
+        measurement = {}
     result = {
         "schemaVersion": SCHEMA_VERSION,
         "experimentId": invocation.experiment_id,
@@ -99,36 +147,46 @@ def _run_fold(invocation: Invocation, pipeline_factory: Any, fold: ConcreteFold,
         "durationSeconds": time.monotonic() - fold_started,
         "seededParameters": seeded_parameters,
         "metrics": measurement,
+        "diagnostics": signals,
+        "fitSeconds": fit_seconds,
+        "measurementKind": task_kind,
+        "execution": "batch" if batch else "inductive",
+        "fitRows": len(validation_frame) if batch else len(train_frame),
+        "convergence": summarise_convergence(estimator, raised),
     }
     if config_id is not None:
         result["configId"] = config_id
         result["fitSeconds"] = fit_seconds
-    if convergence:
-        result["convergence"] = summarise_convergence(estimator, raised)
     rows: list[dict[str, Any]] = []
     for offset, index in enumerate(fold.validation):
         rows.append({
             "id": ids[index],
             "repeat": fold.repeat,
             "fold": fold.fold,
-            "prediction": predictions[offset],
+            "prediction": predictions[offset] if predictions is not None else "",
             "score": "" if scores is None else scores[offset],
         })
     return result, rows
 
 
 def _summarise(invocation: Invocation, folds: Sequence[ConcreteFold], completed: Sequence[dict[str, Any]],
-               oof_rows: Sequence[dict[str, Any]], ids: Sequence[str], y: Sequence[int],
+               oof_rows: Sequence[dict[str, Any]], ids: Sequence[str], y: Sequence[Any] | None,
                manifest: dict[str, Any], started: float, interrupted: bool) -> dict[str, Any]:
     complete = len(completed) == len(folds) and not interrupted
     promotion_eligible = invocation.scope.kind == "promotion" and complete
     aggregate = None
-    if oof_rows:
+    task_kind = measurement_kind(invocation)
+    if oof_rows and task_kind == "classification":
         labels_by_id = {ids[index]: int(y[index]) for index in range(len(ids))}
         aggregate = _measure(
             [labels_by_id[row["id"]] for row in oof_rows],
             [int(row["prediction"]) for row in oof_rows],
         )
+    elif task_kind == "clustering" and y is not None and completed:
+        aggregate = {"adjustedRandIndex": float(np.mean([fold["metrics"]["adjustedRandIndex"] for fold in completed])),
+                     "aggregation": "mean of validation-batch ARI; cluster IDs never pooled"}
+    if task_kind != "classification" and (task_kind == "anomaly_detection" or y is None):
+        promotion_eligible = False
     status = "interrupted" if interrupted else ("completed" if complete else "partial")
     summary = {
         "schemaVersion": SCHEMA_VERSION,
@@ -142,11 +200,18 @@ def _summarise(invocation: Invocation, folds: Sequence[ConcreteFold], completed:
         "manifestSha256": manifest["sha256"],
         "durationSeconds": time.monotonic() - started,
         "metrics": aggregate,
+        "measurementKind": task_kind,
+        "diagnostics": diagnostics.summary(task_kind, completed, oof_rows,
+                                            (invocation.measurement or {}).get("scoreDirection", "higher_is_anomalous")),
     }
     if invocation.source:
         # Commit, tree, branch, and subject: a score traces back to exact code.
         summary["source"] = {key: invocation.source[key] for key in ("commit", "tree", "branch", "subject")
                              if invocation.source.get(key) is not None}
+    if invocation.measurement:
+        summary["measurement"] = invocation.measurement
+        if task_kind == "anomaly_detection" or y is None:
+            summary["promotionIneligibleReason"] = "unlabelled_proxy_evidence"
     return summary
 
 
@@ -154,6 +219,7 @@ def execute(document: dict[str, Any]) -> dict[str, Any]:
     global _stop_requested
     _stop_requested = False
     invocation = parse_invocation(document)
+    task_kind = measurement_kind(invocation)
     # Agent code always comes from the trial's own source: a worktree of the
     # recorded commit for versioned trials, never the live, mutable folder.
     project_root = invocation.code_root
@@ -171,7 +237,9 @@ def execute(document: dict[str, Any]) -> dict[str, Any]:
 
     with events.stage("data"):
         frame, y, ids = _prepare_data(invocation)
-        events.emit("data_loaded", rows=len(frame), classCounts={str(label): y.count(label) for label in sorted(set(y))})
+        events.emit("data_loaded", rows=len(frame), measurementKind=measurement_kind(invocation),
+                    measurement=invocation.measurement,
+                    classCounts={str(label): y.count(label) for label in sorted(set(y))} if y is not None else None)
     with events.stage("folds"):
         saved = persisted_folds(invocation, ids)
         if saved:
@@ -199,7 +267,7 @@ def execute(document: dict[str, Any]) -> dict[str, Any]:
             with events.stage("champion"):
                 champion = rerun(document, invocation, Path(__file__).resolve(), events)
         with events.stage("artifacts"):
-            outputs = write_search_outputs(invocation, output_dir, outcome, manifest, dict(zip(ids, y)), champion)
+            outputs = write_search_outputs(invocation, output_dir, outcome, manifest, dict(zip(ids, y)) if y is not None else {}, champion)
             summary = _summarise(invocation, folds, best.folds if best else [], best.oof if best else [],
                                  ids, y, manifest, started, bool(outcome["stopReason"]))
             summary["promotionEligible"] = False
@@ -241,11 +309,12 @@ def execute(document: dict[str, Any]) -> dict[str, Any]:
 
     with events.stage("metrics"):
         summary = _summarise(invocation, folds, completed, oof_rows, ids, y, manifest, started, _stop_requested)
-    if invocation.champion and summary["status"] == "completed" and not _stop_requested:
+    if invocation.champion and summary["status"] == "completed" and summary["promotionEligible"] and not _stop_requested:
         from smartlab_trial.champion import rerun, compare
         with events.stage("champion"):
             champion = rerun(document, invocation, Path(__file__).resolve(), events)
-            summary["championComparison"] = compare(completed, oof_rows, champion, dict(zip(ids, y)), output_dir)
+            summary["championComparison"] = compare(completed, oof_rows, champion, dict(zip(ids, y)), output_dir,
+                                                    task_kind=task_kind)
     with events.stage("artifacts"):
         write_summary(output_dir, summary)
     events.emit("trial_finished", status=summary["status"], promotionEligible=summary["promotionEligible"],

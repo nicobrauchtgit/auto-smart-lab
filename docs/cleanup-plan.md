@@ -34,12 +34,12 @@ with this file, this file wins.
    without the user. Ask before anything outward-facing: submissions (3 attempts
    per task, they count), pushes, writes on the SmartLab VM.
 
-## Current state (2026-10-07)
+## Current state (2026-10-08)
 
 - **Branch** `solve-stage-hardening`, ahead of
   `origin/solve-stage-hardening` (not pushed). Remote:
   `git@github.com:nicobrauchtgit/auto-smart-lab.git`.
-- **Tests (2026-10-08):** locally 430 TypeScript tests pass (4 skipped), all
+- **Tests (2026-10-08):** locally 439 TypeScript tests pass (4 skipped), all
   Python suites pass. Without downloaded spam1 data, four additional integration
   tests skip explicitly. The VM has not received the quick-fix commits yet.
 - **Toolchain:** `./dev` + `mise.toml` (bun 1.3.13, uv 0.12.5, ripgrep, fd) and
@@ -54,8 +54,10 @@ with this file, this file wins.
   `id`/`text` frame) and starts trials through `experiment_*` tools; Python
   workers own folds, seeds, fits, predictions and metrics.
 - **Biggest structural limit:** the harness assumes a zip of text files,
-  binary `0`/`1` labels and balanced accuracy everywhere. Only unit 1 fits;
-  see section "Lab tasks" and work item H1.
+  binary `0`/`1` labels and balanced accuracy in the registered task adapters.
+  Only unit 1 fits end to end. The training API now supports opaque sample
+  manifests and clustering/anomaly measurements; H1/H2 must still connect the
+  lab task declarations, research/workspace preparation, evaluation and refit.
 - **Official lab attempts:** every task 0 of 3 used, except task 4.1 (1 of 3,
   score 0.0, 2026-08-13). spam1 has two uncounted submissions (2026-08-18,
   scored 0.9645, marked FAILURE).
@@ -87,7 +89,9 @@ with this file, this file wins.
 - [ ] Tool sets (W1): should the orchestrator get read-only knowledge search? Who gets a tool for the lab service on the VM?
 - [ ] Run the agents on the VM with a copy of `.env` there? (The VM checkout has no `.env` yet; see "Environment and access".)
 - [ ] `~/.local/bin/herdr` on the VM: origin unknown, not from this project. Keep or remove?
-- [ ] Recommended, not yet confirmed: build the canary (C1), held-back confirmation (C2) and quality signals (C3) inside the modular harness (H1) rather than before it, so they are not written twice for binary classification only.
+- [ ] Recommended, not yet confirmed: build the canary (C1) and held-back
+  confirmation (C2) inside the modular harness (H1). The user approved the first
+  measurement packet; C3/C5 are implemented in the shared training path.
 
 ## Work queue
 
@@ -186,6 +190,11 @@ Lab facts are in [Lab tasks](#lab-tasks-verified-2026-10-07).
   `smartlab_trial/metrics.py`, `search.py`, `champion.py`, the solve prompt
   (`agent/prompts/solve/start.md`), `solve/folds.ts`, `solve/workspace.ts` and
   `evaluation/diagnostics.py`.
+  The training/measurement foundation is now available: controller-declared
+  opaque sample metadata, inductive/batch execution, K-fold/group-held-out folds,
+  ARI scoring/search/champion comparison and label-free diagnostics. See
+  [the first measurement packet](harness-measurements.md). This does not complete
+  task declaration, stage adapters, generic terminal refit or submission.
 - [ ] **H2 The orchestrator chooses the task kind** and applies the matching
   harness parts.
 - [ ] **H3 Escape hatch (D10):** expose the generic `experiment_*` tools to
@@ -215,17 +224,26 @@ Lab facts are in [Lab tasks](#lab-tasks-verified-2026-10-07).
 
 - [ ] **C1 ID leakage canary (D1).** Spec: [ID leakage canary](#id-leakage-canary).
 - [ ] **C2 Held-back confirmation (D2).** Spec: [Held-back confirmation](#held-back-confirmation).
-- [ ] **C3 Pipeline-quality signals for the solve agent.** Today a finished
-  trial reaches the agent as one `balancedAccuracy` in the leaderboard
-  (`TrainingService.leaderboard`). Compute on the harness's own OOF predictions
-  and show in the trial result and leaderboard: per-fold spread and the paired
-  interval against the champion; per-class recall and confusion; ROC AUC /
-  average precision; `threshold_sweep` (balanced accuracy at the best threshold
-  vs. the default, report only per D4); `calibration`; corrected vs. introduced
-  errors against the champion (already computed in `smartlab_trial/champion.py`,
-  not shown); convergence (`reachedLimit`) and fit time. The removed
-  `smartlab_eval.metrics` implementations are recoverable with
-  `git show 6496825:libs/smartlab-eval/smartlab_eval/metrics.py`.
+- [x] **C3 Pipeline-quality signals for the solve agent.** Done: shared worker
+  diagnostics expose per-fold spread, class precision/recall/F1/confusion,
+  fold-wise ROC AUC/AP, advisory threshold sweeps, probability provenance,
+  calibration bins and Brier/log loss, convergence and fit time through trial
+  status and leaderboard rows. Champion corrected/introduced errors and the
+  existing rule's explicitly approximate paired interval are visible. Detailed
+  diagnostics remain in hashed trial/fold artifacts and survive checkpoint
+  recovery. No threshold or promotion rule changes automatically. Tests:
+  `python/test_measurements.py`, `measurements.test.ts`, existing training suites.
+
+- [x] **C5 First clustering/anomaly measurement packet.** User approved and
+  implemented in the shared training service/worker: clustering ARI, split/merge
+  diagnostics, contingency/pair counts and coverage; common-ID partition/ranking
+  stability across repeats; anomaly score health and threshold sensitivity.
+  Opaque metadata preflight precedes agent code imports; family targets never
+  enter unsupervised fit calls; batch clusterers need no `predict`. Label-free
+  evidence cannot promote. Clustering search and paired champion reruns use
+  batch-scoped ARI, never pooled cluster IDs; cost projections use actual fit
+  rows for batch and inductive execution. Scope/limits and deferred research
+  options are recorded in [harness-measurements.md](harness-measurements.md).
 
 - [ ] **C4 Champion vs. unpromoted pipelines, across runs.** The goal is
   knowing what works pipeline-wise: the best pipeline (the champion) plus the

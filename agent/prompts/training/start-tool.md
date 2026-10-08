@@ -10,7 +10,8 @@ as `maxRows` or `maxFolds`. A pilot validates assumptions and estimates cost but
 cannot promote a model. Use `scope.kind: "promotion"` only when the preceding
 evidence justifies complete validation.
 
-A built-in CV request uses stratified K-fold. A factory CV request points to
+A built-in CV request supports stratified_kfold, kfold, or group_kfold (whole
+families/groups held out, when supplied by the task). A factory CV request points to
 your project-relative Python module and factory, allowing grouped, temporal, or
 other custom splitting logic without changing the harness.
 
@@ -37,6 +38,13 @@ Start the report's fixed-parameter confirmation request to validate the winner
 on fresh folds. The champion is rerun from its frozen commit on those folds.
 A challenger replaces the champion only when its paired lead on those folds
 exceeds fold noise (more than 2 standard errors of the per-fold differences).
+
+Read experiment_status after fixed trials to inspect the recorded quality
+diagnostics before designing the next experiment. Per-fold spread is not a
+confidence interval. The paired interval uses the existing approximate fold
+noise rule, whose independence assumption is imperfect because training rows
+overlap. Advisory threshold optima were selected on validation rows and do not
+change the pipeline's threshold automatically.
 
 A measured cost above the harness threshold stops gracefully with retained
 work. Decide whether the cost is justified and set search.acceptEstimatedSeconds

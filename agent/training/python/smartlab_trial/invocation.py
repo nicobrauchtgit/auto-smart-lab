@@ -27,6 +27,7 @@ class CvSpec:
     module: str | None
     factory: str | None
     options: Any
+    scheme: str = "stratified_kfold"
 
 
 @dataclass(frozen=True)
@@ -91,6 +92,7 @@ class Invocation:
     champion: dict[str, Any] | None = None
     caveats: tuple[str, ...] = ()
     request: dict[str, Any] = field(default_factory=dict)
+    measurement: dict[str, Any] | None = None
 
     @property
     def code_root(self) -> Path:
@@ -120,7 +122,7 @@ def parse_invocation(document: dict[str, Any]) -> Invocation:
     if not isinstance(pipeline.get("factory"), str) or not pipeline["factory"]:
         raise InvocationError("request.pipeline.factory must be a non-empty string")
     cv = _object(request, "cv")
-    if cv.get("kind") == "builtin" and cv.get("scheme") == "stratified_kfold":
+    if cv.get("kind") == "builtin" and cv.get("scheme") in ("stratified_kfold", "kfold", "group_kfold"):
         if not isinstance(cv.get("folds"), int) or cv["folds"] < 2:
             raise InvocationError("built-in stratified_kfold requires folds >= 2")
     elif cv.get("kind") == "factory":
@@ -140,7 +142,11 @@ def parse_invocation(document: dict[str, Any]) -> Invocation:
         if name in scope and (not isinstance(scope[name], int) or scope[name] < 1):
             raise InvocationError(f"request.scope.{name} must be a positive integer")
     inputs = _object(document, "inputs")
-    for name in ("projectRoot", "zipPath", "labelsPath", "outputDir"):
+    from .measurement import validate_config
+    measurement = validate_config(document["measurement"]) if "measurement" in document else None
+    if measurement and request.get("search") and measurement["kind"] == "anomaly_detection":
+        raise InvocationError("Label-free search has no trusted primary metric; run fixed trials and inspect proxy diagnostics")
+    for name in (("projectRoot", "outputDir") if measurement else ("projectRoot", "zipPath", "labelsPath", "outputDir")):
         if not isinstance(inputs.get(name), str) or not inputs[name]:
             raise InvocationError(f"inputs.{name} must be a non-empty path")
     seeds = _object(document, "seeds")
@@ -172,11 +178,11 @@ def parse_invocation(document: dict[str, Any]) -> Invocation:
         experiment_id=document["experimentId"],
         hypothesis=request["hypothesis"],
         pipeline=PipelineSpec(pipeline["module"], pipeline["factory"], pipeline.get("parameters", {}), dict(estimator_params)),
-        cv=CvSpec(cv["kind"], repeats, cv.get("folds"), cv.get("module"), cv.get("factory"), cv.get("options", {})),
+        cv=CvSpec(cv["kind"], repeats, cv.get("folds"), cv.get("module"), cv.get("factory"), cv.get("options", {}), cv.get("scheme", "stratified_kfold")),
         scope=Scope(scope["kind"], scope.get("maxRows"), scope.get("maxFolds")),
         project_root=project_root,
-        zip_path=inputs["zipPath"],
-        labels_path=inputs["labelsPath"],
+        zip_path=inputs.get("zipPath", ""),
+        labels_path=inputs.get("labelsPath", ""),
         output_dir=Path(inputs["outputDir"]).resolve(),
         experiment_seed=seeds["experiment"],
         # Legacy invocations omit trial; service invocations persist it.
@@ -188,6 +194,7 @@ def parse_invocation(document: dict[str, Any]) -> Invocation:
         champion=champion,
         caveats=tuple(caveats),
         request=request,
+        measurement=measurement,
     )
 
 

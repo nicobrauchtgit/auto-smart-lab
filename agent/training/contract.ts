@@ -277,14 +277,14 @@ function parseCv(raw: unknown, issues: Issues): CvRequest | undefined {
 	if (!value) return undefined;
 	if (value.kind === "builtin") {
 		rejectUnknown(value, ["kind", "scheme", "folds", "repeats"], "cv", issues);
-		if (value.scheme !== "stratified_kfold") {
-			issues.add("cv.scheme", "unsupported built-in scheme", value.scheme, '"stratified_kfold"',
-				"Use stratified_kfold, or a factory CV for any other splitting logic.");
+		if (!["stratified_kfold", "kfold", "group_kfold"].includes(String(value.scheme))) {
+			issues.add("cv.scheme", "unsupported built-in scheme", value.scheme, '"stratified_kfold", "kfold", or "group_kfold"',
+				"Choose a supported scheme, or a factory CV for any other splitting logic.");
 		}
 		const folds = integerAtLeast(value.folds, 2, "cv.folds", issues, "Use at least two folds.");
 		const repeats = integerAtLeast(value.repeats, 1, "cv.repeats", issues, "Use 1 for a single partition.");
-		if (folds === undefined || repeats === undefined || value.scheme !== "stratified_kfold") return undefined;
-		return { kind: "builtin", scheme: "stratified_kfold", folds, repeats } satisfies BuiltinCvRequest;
+		if (folds === undefined || repeats === undefined || !["stratified_kfold", "kfold", "group_kfold"].includes(String(value.scheme))) return undefined;
+		return { kind: "builtin", scheme: value.scheme as BuiltinCvRequest["scheme"], folds, repeats } satisfies BuiltinCvRequest;
 	}
 	if (value.kind === "factory") {
 		rejectUnknown(value, ["kind", "module", "factory", "repeats", "options"], "cv", issues);

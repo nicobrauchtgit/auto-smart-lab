@@ -25,6 +25,7 @@ from .artifacts import EventWriter, _atomic_json, _write_oof
 from .folds import ConcreteFold
 from .invocation import Invocation, SearchSpec
 from .metrics import _measure
+from .measurement import primary_score, kind as measurement_kind
 from .seeds import _derive_seed
 
 FACTORY_PREFIX = "factory."
@@ -90,7 +91,7 @@ class ConfigResult:
 
     @property
     def scores(self) -> list[float]:
-        return [fold["metrics"]["balancedAccuracy"] for fold in self.folds]
+        return [primary_score(fold["metrics"]) for fold in self.folds]
 
     @property
     def mean(self) -> float | None:
@@ -111,7 +112,7 @@ class ConfigResult:
             "params": self.params,
             "status": self.status,
             **({"reason": self.reason} if self.reason else {}),
-            "foldScores": [{"repeat": fold["repeat"], "fold": fold["fold"], "balancedAccuracy": fold["metrics"]["balancedAccuracy"],
+            "foldScores": [{"repeat": fold["repeat"], "fold": fold["fold"], **fold["metrics"],
                             "fitSeconds": fold.get("fitSeconds", fold["durationSeconds"])} for fold in self.folds],
             "foldResults": self.folds,
             "meanScore": self.mean,
@@ -139,11 +140,12 @@ class RuntimeGuard:
         self.folds = len(folds)
         self.started = started
         self.fits: list[float] = []
-        train_rows = statistics.fmean([len(fold.train) for fold in folds]) if folds else 0
+        batch = invocation.measurement is not None and invocation.measurement["execution"] == "batch"
+        fit_rows = statistics.fmean([len(fold.validation if batch else fold.train) for fold in folds]) if folds else 0
         self.prior: float | None = None
         if self.spec.prior_fit_seconds is not None:
-            # Fit time is assumed to scale linearly with training rows.
-            scale = train_rows / self.spec.prior_train_rows if self.spec.prior_train_rows else 1.0
+            # Fit time is assumed to scale linearly with the actually fitted rows.
+            scale = fit_rows / self.spec.prior_train_rows if self.spec.prior_train_rows else 1.0
             self.prior = self.spec.prior_fit_seconds * scale
         self.accepted: float | None = None
 
@@ -267,7 +269,7 @@ def _paired(left: ConfigResult | dict[str, Any], right_scores: dict[tuple[int, i
             left_scores: dict[tuple[int, int], float] | None = None) -> dict[str, Any]:
     """Per-fold differences on identical folds and whether the lead exceeds fold noise."""
     left_scores = left_scores if left_scores is not None else {
-        (fold["repeat"], fold["fold"]): fold["metrics"]["balancedAccuracy"] for fold in left.folds}  # type: ignore[union-attr]
+        (fold["repeat"], fold["fold"]): primary_score(fold["metrics"]) for fold in left.folds}  # type: ignore[union-attr]
     keys = sorted(set(left_scores) & set(right_scores))
     differences = [left_scores[key] - right_scores[key] for key in keys]
     if not differences:
@@ -283,13 +285,15 @@ def _paired(left: ConfigResult | dict[str, Any], right_scores: dict[tuple[int, i
         "foldsFavoringSecond": sum(1 for value in differences if value < 0),
         "ties": sum(1 for value in differences if value == 0),
         "standardError": error,
+        "approximateInterval95": [mean - 1.96 * error, mean + 1.96 * error] if error is not None else None,
+        "intervalAssumesIndependentFoldDifferences": True,
         "leadExceedsNoise": bool(error is not None and abs(mean) > 2 * error and mean != 0),
         "noiseRule": "|mean difference| > 2 x standard error of the per-fold differences (folds share training rows, so this is approximate)",
     }
 
 
 def fold_scores(folds: Sequence[dict[str, Any]]) -> dict[tuple[int, int], float]:
-    return {(fold["repeat"], fold["fold"]): fold["metrics"]["balancedAccuracy"] for fold in folds}
+    return {(fold["repeat"], fold["fold"]): primary_score(fold["metrics"]) for fold in folds}
 
 
 def confirmation_request(invocation: Invocation, best: ConfigResult) -> dict[str, Any]:
@@ -485,9 +489,9 @@ def run_search(invocation: Invocation, events: EventWriter, output_dir: Path, pi
                 result.oof.extend(rows)
                 measured_fit = fold_result.get("fitSeconds", fold_result["durationSeconds"])
                 guard.fits.append(measured_fit)
-                score = fold_result["metrics"]["balancedAccuracy"]
+                score = primary_score(fold_result["metrics"])
                 events.emit("fold_completed", configId=result.config_id, params=result.params, repeat=fold.repeat,
-                            fold=fold.fold, balancedAccuracy=score, fitSeconds=measured_fit,
+                            fold=fold.fold, metrics=fold_result["metrics"], fitSeconds=measured_fit,
                             convergence=fold_result.get("convergence"))
                 trial.report(statistics.fmean(result.scores), step)
                 if search.pruning and step < len(folds) - 1 and trial.should_prune():
@@ -685,6 +689,8 @@ def write_search_outputs(invocation: Invocation, output_dir: Path, outcome: dict
     }
     _atomic_json(output_dir / "search-report.json", _jsonable(report))
     aggregate = None
-    if best is not None:
+    if best is not None and measurement_kind(invocation) == "classification":
         aggregate = _measure([labels_by_id[row["id"]] for row in best.oof], [int(row["prediction"]) for row in best.oof])
+    elif best is not None:
+        aggregate = {"adjustedRandIndex": best.mean}
     return {"report": report, "metrics": aggregate}
