@@ -91,11 +91,25 @@ export type SearchDistribution = IntDistribution | FloatDistribution | Categoric
 
 export type SearchSampler = "tpe" | "random" | "grid";
 
+export interface DiagnosticRequest {
+	representation?: { source: "pipeline_features" | "method"; method?: string;
+		metric?: "euclidean" | "cosine"; maxRows?: number; dbcv?: boolean };
+	predictionStrength?: boolean;
+}
+
+export interface ProxyObjective {
+	kind: "proxy";
+	metric: "silhouette" | "calinskiHarabasz" | "daviesBouldin" | "dbcv" | "estimator_score";
+	direction: "maximize" | "minimize";
+}
+
 /**
  * A harness-run hyperparameter search. Plain names target `set_params`;
  * `factory.<name>` entries are merged into the factory's parameters.
  */
 export interface SearchRequest {
+	/** Explicit advisory objective; never changes the controller's promotion metric. */
+	objective?: ProxyObjective;
 	space: Record<string, SearchDistribution>;
 	sampler?: SearchSampler;
 	/** Required for `tpe` and `random`; a smaller grid ignores it. */
@@ -116,6 +130,7 @@ export interface ExperimentRequest {
 	commit?: string;
 	pipeline: PipelineRequest;
 	search?: SearchRequest;
+	diagnostics?: DiagnosticRequest;
 	cv: CvRequest;
 	scope: ExperimentScope;
 }

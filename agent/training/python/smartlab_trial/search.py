@@ -31,6 +31,10 @@ from .seeds import _derive_seed
 FACTORY_PREFIX = "factory."
 
 
+def selection_score(fold: dict[str, Any]) -> float:
+    return float(fold["searchScore"]) if "searchScore" in fold else primary_score(fold["metrics"])
+
+
 def _optuna() -> Any:
     import optuna
     optuna.logging.set_verbosity(optuna.logging.WARNING)
@@ -91,7 +95,7 @@ class ConfigResult:
 
     @property
     def scores(self) -> list[float]:
-        return [primary_score(fold["metrics"]) for fold in self.folds]
+        return [selection_score(fold) for fold in self.folds]
 
     @property
     def mean(self) -> float | None:
@@ -113,6 +117,7 @@ class ConfigResult:
             "status": self.status,
             **({"reason": self.reason} if self.reason else {}),
             "foldScores": [{"repeat": fold["repeat"], "fold": fold["fold"], **fold["metrics"],
+                            **({"searchScore": fold["searchScore"], "objective": fold["searchObjective"]} if "searchScore" in fold else {}),
                             "fitSeconds": fold.get("fitSeconds", fold["durationSeconds"])} for fold in self.folds],
             "foldResults": self.folds,
             "meanScore": self.mean,
@@ -269,7 +274,7 @@ def _paired(left: ConfigResult | dict[str, Any], right_scores: dict[tuple[int, i
             left_scores: dict[tuple[int, int], float] | None = None) -> dict[str, Any]:
     """Per-fold differences on identical folds and whether the lead exceeds fold noise."""
     left_scores = left_scores if left_scores is not None else {
-        (fold["repeat"], fold["fold"]): primary_score(fold["metrics"]) for fold in left.folds}  # type: ignore[union-attr]
+        (fold["repeat"], fold["fold"]): selection_score(fold) for fold in left.folds}  # type: ignore[union-attr]
     keys = sorted(set(left_scores) & set(right_scores))
     differences = [left_scores[key] - right_scores[key] for key in keys]
     if not differences:
@@ -292,8 +297,9 @@ def _paired(left: ConfigResult | dict[str, Any], right_scores: dict[tuple[int, i
     }
 
 
-def fold_scores(folds: Sequence[dict[str, Any]]) -> dict[tuple[int, int], float]:
-    return {(fold["repeat"], fold["fold"]): primary_score(fold["metrics"]) for fold in folds}
+def fold_scores(folds: Sequence[dict[str, Any]], selection: bool = False) -> dict[tuple[int, int], float]:
+    score = selection_score if selection else lambda fold: primary_score(fold["metrics"])
+    return {(fold["repeat"], fold["fold"]): score(fold) for fold in folds}
 
 
 def confirmation_request(invocation: Invocation, best: ConfigResult) -> dict[str, Any]:
@@ -314,6 +320,8 @@ def confirmation_request(invocation: Invocation, best: ConfigResult) -> dict[str
     }
     if invocation.source and invocation.source.get("commit"):
         request["commit"] = invocation.source["commit"]
+    if "diagnostics" in invocation.request:
+        request["diagnostics"] = invocation.request["diagnostics"]
     return request
 
 
@@ -489,7 +497,7 @@ def run_search(invocation: Invocation, events: EventWriter, output_dir: Path, pi
                 result.oof.extend(rows)
                 measured_fit = fold_result.get("fitSeconds", fold_result["durationSeconds"])
                 guard.fits.append(measured_fit)
-                score = primary_score(fold_result["metrics"])
+                score = selection_score(fold_result)
                 events.emit("fold_completed", configId=result.config_id, params=result.params, repeat=fold.repeat,
                             fold=fold.fold, metrics=fold_result["metrics"], fitSeconds=measured_fit,
                             convergence=fold_result.get("convergence"))
@@ -638,7 +646,8 @@ def write_search_outputs(invocation: Invocation, output_dir: Path, outcome: dict
     comparison: dict[str, Any] = {}
     if best is not None and runner_up is not None:
         comparison["bestVersusRunnerUp"] = {"best": best.config_id, "runnerUp": runner_up.config_id,
-                                            **_paired(best, fold_scores(runner_up.folds))}
+                                            "proxyEvidence": invocation.search.objective is not None,
+                                            **_paired(best, fold_scores(runner_up.folds, selection=True))}
     else:
         comparison["bestVersusRunnerUp"] = {"available": False, "reason": "fewer than two completed configurations"}
     if champion and best is not None and champion.get("folds"):
@@ -656,6 +665,8 @@ def write_search_outputs(invocation: Invocation, output_dir: Path, outcome: dict
                      if os.environ.get(variable)},
         "source": invocation.source,
         "manifestSha256": manifest["sha256"],
+        "objective": invocation.search.objective or {"kind": "controller_primary_metric"},
+        "proxyEvidence": invocation.search.objective is not None,
         "sampler": {"name": invocation.search.sampler, "seed": seed, "pruning": invocation.search.pruning},
         "configs": {"planned": outcome["planned"], "evaluated": evaluated, "completed": len(completed),
                     "pruned": sum(1 for result in results if result.status == "pruned"),
@@ -691,6 +702,6 @@ def write_search_outputs(invocation: Invocation, output_dir: Path, outcome: dict
     aggregate = None
     if best is not None and measurement_kind(invocation) == "classification":
         aggregate = _measure([labels_by_id[row["id"]] for row in best.oof], [int(row["prediction"]) for row in best.oof])
-    elif best is not None:
-        aggregate = {"adjustedRandIndex": best.mean}
+    elif best is not None and measurement_kind(invocation) == "clustering" and "adjustedRandIndex" in best.folds[0]["metrics"]:
+        aggregate = {"adjustedRandIndex": statistics.fmean(primary_score(fold["metrics"]) for fold in best.folds)}
     return {"report": report, "metrics": aggregate}

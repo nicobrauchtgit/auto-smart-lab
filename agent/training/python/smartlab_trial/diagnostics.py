@@ -194,6 +194,7 @@ def summary(kind: str, folds: Sequence[dict[str, Any]], rows: Sequence[dict[str,
               "fitSeconds": sum(fold.get("fitSeconds", fold["durationSeconds"]) for fold in folds),
               "reachedLimit": any(fold.get("convergence", {}).get("reachedLimit", False) for fold in folds),
               "folds": [{"repeat": fold["repeat"], "fold": fold["fold"], "metrics": fold["metrics"],
+                         **({"searchObjective": fold["searchObjective"]} if "searchObjective" in fold else {}),
                          "diagnostics": fold.get("diagnostics", {})} for fold in folds],
               "foldSpreadIsConfidenceInterval": False}
     if kind != "classification":

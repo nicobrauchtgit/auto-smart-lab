@@ -28,6 +28,7 @@ from smartlab_trial.invocation import SCHEMA_VERSION, InvocationError, Invocatio
 from smartlab_trial.metrics import _measure, _scores, score_observation
 from smartlab_trial import diagnostics
 from smartlab_trial.measurement import kind as measurement_kind, load_samples
+from smartlab_trial.extra_measurements import run as extra_measurements, proxy_score
 from smartlab_trial.seeds import _derive_seed
 from smartlab_trial.recovery import persisted_folds, save_checkpoint, load_checkpoint, validate_single
 from smartlab_trial.convergence import capture_convergence_warnings, summarise_convergence
@@ -43,7 +44,7 @@ def _handle_stop(_signum: int, _frame: Any) -> None:
 def _prepare_data(invocation: Invocation) -> tuple[Any, list[Any] | None, list[str]]:
     if invocation.measurement:
         frame, y, _digest = load_samples(invocation.measurement)
-        if invocation.search and y is None:
+        if invocation.search and y is None and not invocation.search.objective:
             raise InvocationError("Search selection requires a trusted primary metric; label-free trials report proxies only")
         if invocation.scope.kind == "pilot" and invocation.scope.max_rows is not None:
             maximum = min(invocation.scope.max_rows, len(frame))
@@ -136,6 +137,10 @@ def _run_fold(invocation: Invocation, pipeline_factory: Any, fold: ConcreteFold,
         signals = diagnostics.anomaly(scores, predictions, direction=spec["scoreDirection"], anomaly_label=spec["anomalyLabel"])
         signals["scoreProvenance"] = {"kind": "anomaly", "method": spec["scoreMethod"], "direction": spec["scoreDirection"]}
         measurement = {}
+    extra, diagnostic_fit_seconds = extra_measurements(invocation, estimator, fold, train_frame, validation_frame,
+                                                       predictions, validation_y)
+    signals.update(extra)
+    objective = proxy_score(invocation, estimator, validation_frame, validation_y, signals)
     result = {
         "schemaVersion": SCHEMA_VERSION,
         "experimentId": invocation.experiment_id,
@@ -148,7 +153,9 @@ def _run_fold(invocation: Invocation, pipeline_factory: Any, fold: ConcreteFold,
         "seededParameters": seeded_parameters,
         "metrics": measurement,
         "diagnostics": signals,
-        "fitSeconds": fit_seconds,
+        "fitSeconds": fit_seconds + diagnostic_fit_seconds,
+        "primaryFitSeconds": fit_seconds,
+        "diagnosticFitSeconds": diagnostic_fit_seconds,
         "measurementKind": task_kind,
         "execution": "batch" if batch else "inductive",
         "fitRows": len(validation_frame) if batch else len(train_frame),
@@ -156,7 +163,9 @@ def _run_fold(invocation: Invocation, pipeline_factory: Any, fold: ConcreteFold,
     }
     if config_id is not None:
         result["configId"] = config_id
-        result["fitSeconds"] = fit_seconds
+    if objective:
+        result["searchObjective"] = objective
+        result["searchScore"] = objective["value"]
     rows: list[dict[str, Any]] = []
     for offset, index in enumerate(fold.validation):
         rows.append({
@@ -263,7 +272,7 @@ def execute(document: dict[str, Any]) -> dict[str, Any]:
                                  lambda: _stop_requested, _run_fold)
         best = outcome["best"]
         champion = None
-        if invocation.champion and best is not None and not outcome["stopReason"] and not _stop_requested:
+        if invocation.champion and best is not None and not invocation.search.objective and not outcome["stopReason"] and not _stop_requested:
             with events.stage("champion"):
                 champion = rerun(document, invocation, Path(__file__).resolve(), events)
         with events.stage("artifacts"):
@@ -274,6 +283,8 @@ def execute(document: dict[str, Any]) -> dict[str, Any]:
             if not outcome["stopReason"]:
                 summary["status"] = "completed" if best else "failed"
             summary["search"] = {**outputs["report"]["configs"], "bestConfigId": best.config_id if best else None,
+                                 "objective": outputs["report"]["objective"], "proxyEvidence": outputs["report"]["proxyEvidence"],
+                                 "selectionMean": best.mean if best else None,
                                  "reportPath": str(output_dir / "search-report.json")}
             if outcome["guard"]:
                 summary["runtimeGuard"] = outcome["guard"]

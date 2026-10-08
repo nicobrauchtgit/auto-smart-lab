@@ -148,6 +148,28 @@ test("missing score direction fails setup and label-free search consumes no tria
     } finally { await valid.training.close(); }
 }, 30000);
 
+test("label-free geometry search has an explicit proxy objective, retained feature diagnostics, and no champion", async () => {
+    const { training, project } = fixture("clustering", false);
+    try {
+        const started = await training.service.start({ ...request(6, "kfold"), pipeline: { ...request().pipeline, parameters: {} },
+            diagnostics: { representation: { source: "pipeline_features", metric: "euclidean", dbcv: true } },
+            search: { sampler: "grid", objective: { kind: "proxy", metric: "silhouette", direction: "maximize" },
+                space: { "factory.clusters": { type: "categorical", choices: [2, 6] } } } });
+        const result = await finish(training, started);
+        expect(result.status).toBe("completed");
+        expect(result.metrics).toBeNull();
+        expect(result.search.proxyEvidence).toBe(true);
+        expect(result.search.selectionMean).toBe(1);
+        expect(result.diagnostics.folds[0].diagnostics.geometry.silhouette.available).toBe(true);
+        expect((await collectTrainingTrial(started.directory)).valid).toBe(true);
+        expect(tagMessage(project.solutionsRoot, "champion")).toBeUndefined();
+        const report = JSON.parse(readFileSync(join(started.directory, "search-report.json"), "utf8"));
+        const confirmed = await training.service.start(report.nextStep.confirmationRequest);
+        expect((await finish(training, confirmed)).promotionEligible).toBe(false);
+        expect((await collectTrainingTrial(confirmed.directory)).eligible).toBe(false);
+    } finally { await training.close(); }
+}, 45000);
+
 test("metadata edits after readiness cannot silently change a trial's dataset", async () => {
     const { training, path } = fixture("clustering");
     try {

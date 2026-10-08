@@ -12,6 +12,8 @@ import type {
 	CvRequest,
 	ExperimentRequest,
 	ExperimentScope,
+	DiagnosticRequest,
+	ProxyObjective,
 	FactoryCvRequest,
 	JsonScalar,
 	JsonValue,
@@ -445,8 +447,20 @@ export function distributionSize(distribution: SearchDistribution): number {
 function parseSearch(raw: unknown, pipeline: PipelineRequest | undefined, issues: Issues): SearchRequest | undefined {
 	const value = objectAt(raw, "search", issues, "Provide {space, sampler, maxConfigs, pruning}.");
 	if (!value) return undefined;
-	rejectUnknown(value, ["space", "sampler", "maxConfigs", "pruning", "acceptEstimatedSeconds"], "search", issues);
+	rejectUnknown(value, ["space", "sampler", "maxConfigs", "pruning", "acceptEstimatedSeconds", "objective"], "search", issues);
 	const before = issues.list.length;
+	let objective: ProxyObjective | undefined;
+	if (value.objective !== undefined) {
+		const raw = objectAt(value.objective, "search.objective", issues, "Declare the proxy metric and its direction.");
+		if (raw) {
+			rejectUnknown(raw, ["kind", "metric", "direction"], "search.objective", issues);
+			if (raw.kind !== "proxy") issues.add("search.objective.kind", "unsupported objective", raw.kind, "proxy", "Trusted primary scoring is supplied by the controller; omit objective to use it.");
+			if (!["silhouette", "calinskiHarabasz", "daviesBouldin", "dbcv", "estimator_score"].includes(String(raw.metric)))
+				issues.add("search.objective.metric", "unsupported metric", raw.metric, "a supported proxy metric", "Choose geometry or the estimator's explicit score().");
+			if (!["maximize", "minimize"].includes(String(raw.direction))) issues.add("search.objective.direction", "missing or invalid direction", raw.direction, "maximize or minimize", "Declare which direction is preferable.");
+			objective = raw as unknown as ProxyObjective;
+		}
+	}
 	let sampler: SearchSampler = "tpe";
 	if (value.sampler !== undefined) {
 		if (!SAMPLERS.includes(value.sampler as SearchSampler)) {
@@ -536,6 +550,7 @@ function parseSearch(raw: unknown, pipeline: PipelineRequest | undefined, issues
 	if (issues.list.length !== before) return undefined;
 	return {
 		space,
+		...(objective ? { objective } : {}),
 		...(value.sampler === undefined ? {} : { sampler }),
 		...(maxConfigs === undefined ? {} : { maxConfigs }),
 		...(value.pruning === undefined ? {} : { pruning: value.pruning as boolean }),
@@ -544,7 +559,30 @@ function parseSearch(raw: unknown, pipeline: PipelineRequest | undefined, issues
 }
 
 const V1_KEYS = ["schemaVersion", "hypothesis", "pipeline", "cv", "scope"] as const;
-const V2_KEYS = ["schemaVersion", "hypothesis", "commit", "pipeline", "search", "cv", "scope"] as const;
+function parseDiagnostics(raw: unknown, issues: Issues): DiagnosticRequest | undefined {
+	const value = objectAt(raw, "diagnostics", issues, "Declare only the extra measurements you need.");
+	if (!value) return undefined;
+	rejectUnknown(value, ["representation", "predictionStrength"], "diagnostics", issues);
+	if (value.predictionStrength !== undefined && typeof value.predictionStrength !== "boolean")
+		issues.add("diagnostics.predictionStrength", "not a boolean", value.predictionStrength, "true or false", "This requests one additional harness-owned fit per fold.");
+	if (value.representation !== undefined) {
+		const spec = objectAt(value.representation, "diagnostics.representation", issues, "Choose pipeline_features or a fitted-estimator method.");
+		if (spec) {
+			rejectUnknown(spec, ["source", "method", "metric", "maxRows", "dbcv"], "diagnostics.representation", issues);
+			if (!["pipeline_features", "method"].includes(String(spec.source))) issues.add("diagnostics.representation.source", "unsupported source", spec.source, "pipeline_features or method", "Use the already fitted feature prefix or a custom measurement method.");
+			if (spec.source === "method" && (typeof spec.method !== "string" || !PARAMETER_NAME.test(spec.method) || spec.method.startsWith("_")))
+				issues.add("diagnostics.representation.method", "missing or invalid method", spec.method, "a public Python method name", "The method returns features for the supplied frame without fitting.");
+			if (spec.source === "pipeline_features" && spec.method !== undefined) issues.add("diagnostics.representation.method", "does not apply", spec.method, "no method for pipeline_features", "Remove method.");
+			if (spec.metric !== undefined && !["euclidean", "cosine"].includes(String(spec.metric))) issues.add("diagnostics.representation.metric", "unsupported distance", spec.metric, "euclidean or cosine", "Match the representation's geometry.");
+			if (spec.maxRows !== undefined && (!Number.isInteger(spec.maxRows) || (spec.maxRows as number) < 3 || (spec.maxRows as number) > 2048))
+				issues.add("diagnostics.representation.maxRows", "outside diagnostic bounds", spec.maxRows, "integer from 3 to 2048", "This bounds pairwise diagnostic cost, without limiting model inputs.");
+			if (spec.dbcv !== undefined && typeof spec.dbcv !== "boolean") issues.add("diagnostics.representation.dbcv", "not a boolean", spec.dbcv, "true or false", "Enable density validation explicitly.");
+		}
+	}
+	return value as DiagnosticRequest;
+}
+
+const V2_KEYS = ["schemaVersion", "hypothesis", "commit", "pipeline", "search", "diagnostics", "cv", "scope"] as const;
 
 /** Collect every structural problem. `request` is set only when there are none. */
 export function validateExperimentRequest(raw: unknown): { request?: ExperimentRequest; issues: ValidationIssue[] } {
@@ -577,6 +615,7 @@ export function validateExperimentRequest(raw: unknown): { request?: ExperimentR
 	}
 	const pipeline = parsePipeline(value.pipeline, version, issues);
 	const search = version === 2 && value.search !== undefined ? parseSearch(value.search, pipeline, issues) : undefined;
+	const diagnostics = version === 2 && value.diagnostics !== undefined ? parseDiagnostics(value.diagnostics, issues) : undefined;
 	const cv = parseCv(value.cv, issues);
 	const scope = parseScope(value.scope, issues);
 	if (issues.list.length > 0 || hypothesis === undefined || pipeline === undefined || cv === undefined || scope === undefined) {
@@ -589,6 +628,7 @@ export function validateExperimentRequest(raw: unknown): { request?: ExperimentR
 			...(commit === undefined ? {} : { commit }),
 			pipeline,
 			...(search === undefined ? {} : { search }),
+			...(diagnostics === undefined ? {} : { diagnostics }),
 			cv,
 			scope,
 		},

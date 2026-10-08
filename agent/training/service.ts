@@ -179,7 +179,7 @@ export function compactDiagnostics(result: Record<string, any> | undefined): Rec
 			const detail = fold.diagnostics ?? {};
 			const external = detail.external;
 			const structure = detail.structure;
-			return { repeat: fold.repeat, fold: fold.fold, metrics: fold.metrics,
+			return { repeat: fold.repeat, fold: fold.fold, metrics: fold.metrics, searchObjective: fold.searchObjective,
 				diagnostics: { ...detail,
 					...(external ? { external: { ...external, contingency: undefined, contingencySparse: undefined, families: undefined, clusters: undefined } } : {}),
 					...(structure ? { structure: { ...structure, clusterSizes: undefined } } : {}) } };
@@ -584,9 +584,9 @@ export class TrainingService {
 		}
 		const request = structural.request;
 		const measurement = this.checkMeasurement();
-		if (measurement && !measurement.hasTargets && request.search) {
+		if (measurement && !measurement.hasTargets && request.search && !request.search.objective) {
 			throw new ExperimentRequestError([{ path: "search", problem: "no trusted primary metric for label-free search",
-				received: "search", expected: "fixed candidate trials", hint: "Compare the advisory ranking and threshold diagnostics in fixed trials; label-free proxies cannot authorize promotion." }]);
+				received: "search", expected: "an explicitly declared proxy objective", hint: "Declare search.objective metric and direction, or compare fixed trials. Label-free proxies cannot authorize promotion." }]);
 		}
 		const budgetLimit = Math.min(this.options.maxExperiments ?? Infinity, this.durableBudgetLimit ?? Infinity);
         if (this.started >= budgetLimit) {

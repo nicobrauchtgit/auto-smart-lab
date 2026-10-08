@@ -5,6 +5,26 @@ scope. The harness supplies all seeds, materializes the fold assignments, owns
 every fit, and writes the authoritative predictions and metrics. Do not include
 a seed in the request.
 
+Optional schemaVersion 2 diagnostics request the measurements you need:
+representation: {source:"pipeline_features", metric:"euclidean", maxRows:512,
+dbcv:true}, or {source:"method", method:"diagnostic_features"} for a custom
+fitted estimator. Feature methods return row-aligned numeric matrices without
+fitting. Geometry is measured in that declared space and sampled with harness
+randomness. Noise coverage accompanies internal scores. predictionStrength:true
+requests one additional harness fit on validation inputs for inductive
+clustering, comparing independent validation clusters with train-model
+predictions; no targets enter either unsupervised fit.
+
+Label-free searches require an explicit advisory search.objective:
+{kind:"proxy", metric:"silhouette", direction:"maximize"}. Other metrics are
+calinskiHarabasz, daviesBouldin, dbcv, or estimator_score. Geometry objectives
+require representation diagnostics; dbcv requires dbcv:true. estimator_score
+calls the fitted estimator's score() on validation inputs. Lower-is-better
+objectives use direction:"minimize". Proxy selection is distinct from the
+controller primary metric and cannot promote label-free candidates. Fixed
+follow-up requests preserve diagnostics; inspect their evidence before choosing
+the next experiment.
+
 Start a new idea with `scope.kind: "pilot"` and deliberately reduced work, such
 as `maxRows` or `maxFolds`. A pilot validates assumptions and estimates cost but
 cannot promote a model. Use `scope.kind: "promotion"` only when the preceding

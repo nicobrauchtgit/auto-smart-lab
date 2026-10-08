@@ -1,4 +1,4 @@
-# Harness measurements: first packet
+# Harness measurements
 
 Implemented 2026-10-08. These measurements run in the existing training worker,
 including manual trials, supervised/clustering searches, champion reruns, and
@@ -147,10 +147,76 @@ points are advisory score cutoffs; they do not infer the pipeline's actual
 decision boundary or optimize BACC.
 
 Label-free trials can complete the requested full validation scope, but remain
-ineligible for promotion. Search selection without trusted targets is rejected
-before agent code is imported or a trial budget is consumed; compare fixed
-candidates through their diagnostics instead. Evidence-label scoring and an
-explicit proxy-search objective are future adapters, not inferred permissions.
+ineligible for promotion. Searches need an explicitly declared proxy objective;
+without one, setup rejects selection before a fit or experiment budget is
+consumed. See the representation/search packet below.
+
+## Packet 2: representation geometry and advisory search
+
+Schema version 2 requests can declare:
+
+```json
+{
+  "diagnostics": {
+    "representation": {
+      "source": "pipeline_features", "metric": "euclidean", "maxRows": 512,
+      "dbcv": true
+    },
+    "predictionStrength": true
+  },
+  "search": {
+    "objective": {"kind": "proxy", "metric": "silhouette", "direction": "maximize"},
+    "sampler": "grid",
+    "space": {"model__n_clusters": {"type": "categorical", "choices": [2, 3, 4]}}
+  }
+}
+```
+
+`pipeline_features` transforms inputs through the already fitted pipeline prefix.
+Custom estimators can declare `source:"method", method:"diagnostic_features"`;
+the method takes the supplied frame and returns row-aligned numeric features
+without fitting. The harness samples up to `maxRows` (default 512, maximum 2048)
+with a seed shared across configurations, bounding dense pairwise computation.
+Dense conversion is bounded to two million cells. These bounds apply only to
+the optional measurement, never to fitting or the model's actual representation.
+Invalid/unavailable representations have explicit unavailable diagnostics.
+
+The packet measures feature dimension, constant dimensions, zero norms, norm
+spread, silhouette distribution/negative fraction/per-cluster spread, and
+Euclidean Calinski–Harabasz and Davies–Bouldin scores. Silhouette supports cosine
+distance too. Internal geometry excludes noise and reports sampled coverage;
+external ARI still includes every row. Metrics are proxies tied to the declared
+representation and distance; they are not comparable across arbitrary feature
+spaces, and compact/convex-cluster preferences can mislead.
+
+Opt-in DBCV uses Euclidean all-points core distances, internal
+mutual-reachability spanning trees, inter-cluster density separation, and cluster
+size weights retaining noise in the denominator. Small/star trees without an
+internal edge use all tree edges, explicitly recorded. Clusters with fewer than
+three sampled rows and fully collapsed zero-distance partitions are unavailable.
+Its definition follows [the authors' DBCV implementation](https://github.com/pajaskowiak/dbcv)
+and [the reference API](https://hdbscan.readthedocs.io/en/latest/api.html).
+
+Prediction strength is available for inductive clustering: the primary model
+predicts validation rows from its train-only fit; one independent, cloned model
+clusters validation inputs using another harness seed. The diagnostic measures
+the minimum within-reference-cluster co-membership recovery, following
+[Tibshirani and Walther](https://sites.stat.washington.edu/wxs/Stat592-w2011/Literature/tibshirani-walther-prediction-strength-2005.pdf).
+Both fits omit family targets. Extra fits record lifecycle, rows, seed,
+convergence and cost under the same run/invocation; measured fit cost includes
+them. Singleton reference clusters are unavailable; predicted noise is not a
+successful co-membership. Batch clusterers remain supported and simply lack this
+inductive diagnostic. No extra fit occurs unless requested.
+
+Explicit proxy search supports `silhouette`, `calinskiHarabasz`, `daviesBouldin`,
+`dbcv`, or `estimator_score`. Geometry objectives require the corresponding
+diagnostics; `estimator_score` calls the fitted model's `score()` on validation
+inputs. Direction is required; minimization negates only the search selection
+score while retaining its raw value. Fold `searchObjective`/`searchScore` and the
+search report identify proxy selection separately from trusted primary metrics.
+Unavailable objectives fail that search configuration. Label-free results never
+receive fabricated ARI/BACC or champion tags. Follow-up fixed requests retain
+the diagnostics; their controller evidence rules determine eligibility.
 
 ## Stability
 
@@ -201,8 +267,7 @@ and [probability calibration definitions](https://scikit-learn.org/stable/module
 The [outlier model-selection study](https://arxiv.org/abs/2104.01422) supports
 keeping label-free proxies distinct from demonstrated detection accuracy.
 
-Deferred options from the research: silhouette distributions, CH/DB/DBCV,
-prediction strength, contamination sensitivity, evidence labels and synthetic
+Remaining options from the research: contamination sensitivity, evidence labels and synthetic
 anomaly challenge sets, Mass–Volume/Excess–Mass curves, reconstruction/likelihood
 and embedding diagnostics, learning curves, low-FPR operating points, robustness
 slices, and corrected CV uncertainty. These are not prerequisites for this packet.

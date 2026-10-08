@@ -245,6 +245,14 @@ Lab facts are in [Lab tasks](#lab-tasks-verified-2026-10-07).
   rows for batch and inductive execution. Scope/limits and deferred research
   options are recorded in [harness-measurements.md](harness-measurements.md).
 
+- [x] **C6 Representation and proxy-search packet.** Added opt-in sampled
+  silhouette distributions, Euclidean CH/DB and DBCV, embedding health, and
+  inductive prediction strength through one observed additional harness fit.
+  Label-free search accepts explicit named proxy objectives and directions;
+  proxy scores stay separate from controller metrics and cannot promote.
+  Measurement options survive fixed follow-up requests and fold checkpoints.
+  Tests: `python/test_geometry.py` and the live measurement integration suite.
+
 - [ ] **C4 Champion vs. unpromoted pipelines, across runs.** The goal is
   knowing what works pipeline-wise: the best pipeline (the champion) plus the
   delta of every other pipeline against it. Each promotion trial already stores

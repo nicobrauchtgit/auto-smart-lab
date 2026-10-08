@@ -14,6 +14,9 @@ package:
 | `metrics.py` | Prediction scores and authoritative measurements. |
 | `diagnostics.py` | Per-batch classification/clustering/anomaly signals and common-ID repeat stability; no fitting. |
 | `measurement.py` | Controller measurement declaration, opaque sample metadata, identity/target checks and primary metric selection. |
+| `geometry.py` | Bounded fitted-feature geometry, density validity and prediction-strength pair counts. |
+| `extra_measurements.py` | Opt-in diagnostics and explicitly observed additional fits. |
+| `options.py` | Worker-boundary validation of requested diagnostics and proxy objectives. |
 | `validation.py` | Bounded no-fit construction and parameter constraint validation. |
 | `search.py` | Optuna ask/tell, pruning, journal/checkpoint continuation, runtime guard and report. |
 | `champion.py` | Frozen champion rerun in a separate interpreter on the challenger manifest. |

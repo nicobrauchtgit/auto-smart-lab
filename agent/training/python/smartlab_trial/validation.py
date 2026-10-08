@@ -107,6 +107,11 @@ def _check_value(estimator: Any, name: str, value: Any, path: str) -> dict[str, 
 
 
 def validate_request(source_root: Path, request: dict[str, Any], measurement: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    from .options import validate_options
+    try:
+        validate_options(request)
+    except ValueError as error:
+        return [_issue("diagnostics", "invalid measurement options", request.get("diagnostics"), "valid opt-in diagnostic options", str(error))]
     issues: list[dict[str, Any]] = []
     expose_project(source_root)
     pipeline = request.get("pipeline", {})
@@ -161,6 +166,17 @@ def validate_request(source_root: Path, request: dict[str, Any], measurement: di
 
     # Factory values can change the pipeline's structure, so a plain name is
     # valid if any variant exposes it.
+    representation = request.get("diagnostics", {}).get("representation")
+    if representation:
+        if representation["source"] == "method" and not callable(getattr(base, representation["method"], None)):
+            issues.append(_issue("diagnostics.representation.method", "method unavailable", representation["method"], "a callable on the constructed estimator", "Expose this fitted-feature method or choose pipeline_features."))
+        if representation["source"] == "pipeline_features":
+            from sklearn.pipeline import Pipeline
+            if not isinstance(base, Pipeline) or len(base.steps) < 2 or not callable(getattr(base[:-1], "transform", None)):
+                issues.append(_issue("diagnostics.representation.source", "feature prefix unavailable", "pipeline_features", "a Pipeline with a transform-capable prefix", "Expose a custom representation method for other model designs."))
+    objective = (request.get("search") or {}).get("objective")
+    if objective and objective["metric"] == "estimator_score" and not callable(getattr(base, "score", None)):
+        issues.append(_issue("search.objective", "score() unavailable", objective, "a model exposing score()", "Choose a supported geometry metric or expose an advisory score method."))
     variants = [base]
     for key, spec in factory_space.items():
         for suffix, value in _candidates(spec):
