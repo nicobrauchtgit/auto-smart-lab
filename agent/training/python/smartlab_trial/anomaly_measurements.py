@@ -66,7 +66,7 @@ def evidence(frame: Any, raw_scores: Any, predictions: list[int] | None, metadat
     measured = labelled([labels[frame.id.iloc[i]] for i in indices], np.asarray(raw_scores)[indices],
                         [predictions[i] for i in indices] if predictions is not None else None,
                         spec["scoreDirection"], spec["anomalyLabel"])
-    return {"available": True, **result, **measured}
+    return {"available": True, **result, **measured, "promotionEvidence": bool(spec.get("selection")) and measured["ranking"]["available"]}
 
 
 def model_signals(estimator: Any, train: Any, validation: Any, option: dict[str, Any], seed: int,

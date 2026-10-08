@@ -18,6 +18,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
+import type { EvidenceSelection } from "../training/types.js";
 import { HARNESS_CONFIG } from "../harness/config.js";
 import { PROJECT_ROOT, resolveTask } from "./resolve_task.js";
 
@@ -44,6 +45,7 @@ export interface TaskConfiguration {
 	/** The harness's development metric; `none` means no trusted development score. */
 	metric: "balanced_accuracy" | "adjusted_rand_index" | "none";
 	anomaly?: AnomalyScoring;
+	selection?: EvidenceSelection;
 	/** Terminal refit: fit all training rows then predict test, or fit/predict the test batch. */
 	refit: "fit_training_predict_test" | "fit_predict_test_batch";
 	submission: { format: "id_semicolon_prediction"; predictions: "binary" | "cluster_id" };
@@ -82,7 +84,7 @@ function fileName(value: unknown, path: string): string {
 
 /** Validate shape and cross-field consistency. Errors are all reported together. */
 export function parseTaskConfiguration(raw: unknown): TaskConfiguration {
-	const value = object(raw, "taskConfiguration", ["schemaVersion", "kind", "samples", "targets", "execution", "holdout", "metric", "refit", "submission"], ["anomaly"]);
+	const value = object(raw, "taskConfiguration", ["schemaVersion", "kind", "samples", "targets", "execution", "holdout", "metric", "refit", "submission"], ["anomaly", "selection"]);
 	if (value.schemaVersion !== 1) throw new Error("taskConfiguration.schemaVersion must be 1");
 	const kind = oneOf(value.kind, "kind", KINDS);
 	const samples = object(value.samples, "samples", ["source", "train", "test"]);
@@ -116,6 +118,15 @@ export function parseTaskConfiguration(raw: unknown): TaskConfiguration {
 			anomalyLabel: anomaly.anomalyLabel as number,
 		};
 	}
+	if (value.selection !== undefined) {
+		const selection = object(value.selection, "selection", ["basis", "metric", "direction", "population"]);
+		configuration.selection = {
+			basis: oneOf(selection.basis, "selection.basis", ["evidence"] as const),
+			metric: oneOf(selection.metric, "selection.metric", ["evidence_average_precision", "evidence_roc_auc"] as const),
+			direction: oneOf(selection.direction, "selection.direction", ["maximize"] as const),
+			population: oneOf(selection.population, "selection.population", ["development"] as const),
+		};
+	}
 	const errors = consistencyErrors(configuration);
 	if (errors.length) throw new Error(`Inconsistent task configuration:\n- ${errors.join("\n- ")}`);
 	return configuration;
@@ -125,6 +136,7 @@ export function parseTaskConfiguration(raw: unknown): TaskConfiguration {
 function consistencyErrors(c: TaskConfiguration): string[] {
 	const errors: string[] = [];
 	const expect = (condition: boolean, message: string) => { if (!condition) errors.push(message); };
+	expect(c.selection === undefined || c.kind === "anomaly_detection", "evidence selection currently applies only to anomaly_detection");
 	const refit = c.execution === "batch" ? "fit_predict_test_batch" : "fit_training_predict_test";
 	expect(c.refit === refit, `refit must be ${refit} for ${c.execution} execution, so the terminal fit matches what was measured`);
 	if (c.samples.source === "pcap_tcp_connections" && c.kind !== "anomaly_detection") errors.push("pcap_tcp_connections currently requires anomaly_detection");

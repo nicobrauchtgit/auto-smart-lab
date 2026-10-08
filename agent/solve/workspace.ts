@@ -122,7 +122,7 @@ export function prepareSolveWorkspace(taskId: string, options: PrepareOptions = 
 	const root = join(projectRoot, "runs", taskId, "solve");
 	const dataOut = join(root, "data");
 	const researchDir = join(root, "research");
-	for (const directory of [root, dataOut, researchDir]) mkdirSync(directory, { recursive: true });
+	for (const directory of [root, dataOut, researchDir, ...(configuration.selection ? [join(root, "agent")] : [])]) mkdirSync(directory, { recursive: true });
 	const { solutionsRoot, entrypointPath } = prepareSolutionsWorkspace(projectRoot, taskId);
 	const taskPath = join(root, "task.md");
 	const prompt = readFileSync(join(taskDir, "prompt.md"), "utf8");
@@ -146,7 +146,7 @@ export function prepareSolveWorkspace(taskId: string, options: PrepareOptions = 
 		? { kind: "classification", execution: "inductive", sampleManifestPath }
 		: configuration.kind === "clustering"
 			? { kind: "clustering", execution: configuration.execution, sampleManifestPath }
-			: { kind: "anomaly_detection", execution: configuration.execution, sampleManifestPath, ...configuration.anomaly! };
+			: { kind: "anomaly_detection", execution: configuration.execution, sampleManifestPath, ...configuration.anomaly!, ...(configuration.selection ? { selection: configuration.selection, evidence: { path: join(root, "agent", "evidence.json"), source: "agent_provided" as const } } : {}) };
 	const described = describeTargets(configuration, split.devIds, targets, relative(projectRoot, sampleManifestPath), split.sealedGroups);
 	const groups = configuration.targets.kind === "families" ? new Set(split.devIds.map(id => targets.get(id))).size : undefined;
 	return {

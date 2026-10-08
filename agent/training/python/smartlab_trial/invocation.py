@@ -147,7 +147,7 @@ def parse_invocation(document: dict[str, Any]) -> Invocation:
     measurement = validate_config(document["measurement"]) if "measurement" in document else None
     from .options import validate_options
     validate_options(request)
-    if measurement and request.get("search") and measurement["kind"] == "anomaly_detection" and not request["search"].get("objective"):
+    if measurement and request.get("search") and measurement["kind"] == "anomaly_detection" and not request["search"].get("objective") and not measurement.get("selection"):
         raise InvocationError("Label-free search has no trusted primary metric; run fixed trials and inspect proxy diagnostics")
     for name in (("projectRoot", "outputDir") if measurement else ("projectRoot", "zipPath", "labelsPath", "outputDir")):
         if not isinstance(inputs.get(name), str) or not inputs[name]:

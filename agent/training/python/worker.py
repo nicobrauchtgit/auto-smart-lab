@@ -27,7 +27,7 @@ from smartlab_trial.folds import ConcreteFold, _manifest, _materialize_folds, _p
 from smartlab_trial.invocation import SCHEMA_VERSION, InvocationError, Invocation, parse_invocation
 from smartlab_trial.metrics import _measure, _scores, score_observation
 from smartlab_trial import diagnostics, id_leakage
-from smartlab_trial.measurement import kind as measurement_kind, load_samples
+from smartlab_trial.measurement import kind as measurement_kind, load_samples, selection_receipt
 from smartlab_trial.extra_measurements import run as extra_measurements, proxy_score
 from smartlab_trial.seeds import _derive_seed
 from smartlab_trial.recovery import persisted_folds, save_checkpoint, load_checkpoint, validate_single
@@ -44,7 +44,7 @@ def _handle_stop(_signum: int, _frame: Any) -> None:
 def _prepare_data(invocation: Invocation) -> tuple[Any, list[Any] | None, list[str]]:
     if invocation.measurement:
         frame, y, _digest = load_samples(invocation.measurement)
-        if invocation.search and y is None and not invocation.search.objective:
+        if invocation.search and y is None and not invocation.search.objective and not invocation.measurement.get("selection"):
             raise InvocationError("Search selection requires a trusted primary metric; label-free trials report proxies only")
         if invocation.scope.kind == "pilot" and invocation.scope.max_rows is not None:
             maximum = min(invocation.scope.max_rows, len(frame))
@@ -115,7 +115,7 @@ def _run_fold(invocation: Invocation, pipeline_factory: Any, fold: ConcreteFold,
         if np.any(values != np.floor(values)):
             raise InvocationError("Predictions must be integer labels")
         predictions = values.astype(int).tolist()
-    if task_kind != "anomaly_detection" and predictions is None:
+    if (task_kind != "anomaly_detection" or (invocation.measurement or {}).get("selection")) and predictions is None:
         raise InvocationError("Pipeline must supply predictions for this measurement kind")
     scores = None
     if task_kind == "classification":
@@ -146,6 +146,9 @@ def _run_fold(invocation: Invocation, pipeline_factory: Any, fold: ConcreteFold,
                                                        predictions, validation_y, scores, evidence_metadata, estimator_seed,
                                                        train_y, signals.get("scoreProvenance"))
     signals.update(extra)
+    selection = selection_receipt(invocation.measurement or {}, signals.get("evidence", {}))
+    if selection and selection["available"]:
+        measurement["selectionScore"] = selection["value"]
     objective = proxy_score(invocation, estimator, validation_frame, validation_y, signals)
     result = {
         "schemaVersion": SCHEMA_VERSION,
@@ -169,6 +172,8 @@ def _run_fold(invocation: Invocation, pipeline_factory: Any, fold: ConcreteFold,
     }
     if leakage:
         result["idLeakage"] = leakage
+    if selection:
+        result["selection"] = selection
     if config_id is not None:
         result["configId"] = config_id
     if objective:
@@ -202,7 +207,13 @@ def _summarise(invocation: Invocation, folds: Sequence[ConcreteFold], completed:
     elif task_kind == "clustering" and y is not None and completed:
         aggregate = {"adjustedRandIndex": float(np.mean([fold["metrics"]["adjustedRandIndex"] for fold in completed])),
                      "aggregation": "mean of validation-batch ARI; cluster IDs never pooled"}
-    if task_kind != "classification" and (task_kind == "anomaly_detection" or y is None):
+    evidence_selection = task_kind == "anomaly_detection" and (invocation.measurement or {}).get("selection")
+    if evidence_selection and completed:
+        usable = all(fold.get("selection", {}).get("available") is True for fold in completed)
+        if usable:
+            aggregate = {"selectionScore": float(np.mean([fold["metrics"]["selectionScore"] for fold in completed]))}
+        promotion_eligible = promotion_eligible and usable and all(row["prediction"] != "" for row in oof_rows)
+    elif task_kind != "classification" and (task_kind == "anomaly_detection" or y is None):
         promotion_eligible = False
     status = "interrupted" if interrupted else ("completed" if complete else "partial")
     summary = {
@@ -233,8 +244,13 @@ def _summarise(invocation: Invocation, folds: Sequence[ConcreteFold], completed:
                              if invocation.source.get(key) is not None}
     if invocation.measurement:
         summary["measurement"] = invocation.measurement
-        if task_kind == "anomaly_detection" or y is None:
-            summary["promotionIneligibleReason"] = "unlabelled_proxy_evidence"
+        if evidence_selection:
+            evidence = invocation.measurement.get("evidence", {})
+            summary["selection"] = {**evidence_selection, "evidenceSha256": invocation.measurement.get("evidenceManifestSha256"),
+                                    "source": evidence.get("source"), "folds": [fold.get("selection") for fold in completed],
+                                    "limitations": "Agent-provided evidence does not establish official accuracy or label correctness"}
+        if not promotion_eligible and (task_kind == "anomaly_detection" or y is None):
+            summary["promotionIneligibleReason"] = "incomplete_selection_evidence" if evidence_selection else "unlabelled_proxy_evidence"
     return summary
 
 
@@ -338,7 +354,7 @@ def execute(document: dict[str, Any]) -> dict[str, Any]:
         from smartlab_trial.champion import rerun, compare
         with events.stage("champion"):
             champion = rerun(document, invocation, Path(__file__).resolve(), events)
-            summary["championComparison"] = compare(completed, oof_rows, champion, dict(zip(ids, y)), output_dir,
+            summary["championComparison"] = compare(completed, oof_rows, champion, dict(zip(ids, y)) if y is not None else {}, output_dir,
                                                     task_kind=task_kind)
             if summary["championComparison"].get("idLeakage"):
                 summary["idLeakage"] = {**summary["championComparison"]["idLeakage"], "role": "champion"}

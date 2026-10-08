@@ -39,10 +39,11 @@ export async function prepareEvidence(upstream: StageArtifact[], signal: AbortSi
  if (seedPlan.taskId !== taskId) throw new Error("Selected trial belongs to a different task");
  const invocationPath = join(directory, "invocation.json");
  // Development targets: the labels file of binary classification, or the sample manifest of a sample task.
- const measurement = JSON.parse(readFileSync(invocationPath, "utf8")).measurement as { kind: string; sampleManifestPath: string } | undefined;
+ const measurement = JSON.parse(readFileSync(invocationPath, "utf8")).measurement as { kind: string; sampleManifestPath: string; evidence?: { path: string } } | undefined;
  const targetsPath = measurement ? measurement.sampleManifestPath : trial.invocation?.inputs.labelsPath;
  if (typeof targetsPath !== "string") throw new Error("Selected trial has no development targets");
  sources.push({ ...artifact(measurement ? "evaluation_development_samples" : "evaluation_development_labels", targetsPath), experimentId: trial.experimentId } as typeof sources[number]);
+ if (measurement?.evidence) sources.push({ ...artifact("evaluation_selection_evidence", measurement.evidence.path), experimentId: trial.experimentId } as typeof sources[number]);
  sources.push({ ...artifact("evaluation_invocation", invocationPath), experimentId: trial.experimentId } as typeof sources[number]);
  const { stdout } = await promisify(execFile)(readPythonEnvironment().executable,
   [new URL("./diagnostics.py", import.meta.url).pathname, directory],

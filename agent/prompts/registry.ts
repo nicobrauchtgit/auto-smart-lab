@@ -67,6 +67,7 @@ export const PROMPTS = {
 	"solve.start": { file: "solve/start.md", variables: ["taskId", "workspace", "datasetPaths", "targets", "rowCount", "targetSummary", "foldRecommendation", "researchState", "maxIterations", "taskContract"] , optionalVariables: ["guidance"] },
 	"solve.task-binary_classification": { file: "solve/task-binary_classification.md", variables: ["taskId"] },
 	"solve.task-clustering": { file: "solve/task-clustering.md", variables: ["taskId", "execution"] },
+	"solve.evidence-selection": { file: "solve/evidence-selection.md", variables: ["evidencePath", "metric"] },
 	"solve.task-anomaly_detection": { file: "solve/task-anomaly_detection.md", variables: ["taskId", "execution", "scoreMethod", "scoreDirection", "anomalyLabel"] },
 	"solve.label-free": { file: "solve/label-free.md", variables: [] },
 	"solve.observable-fits": { file: "solve/observable-fits.md", variables: [] },

@@ -225,6 +225,7 @@ export async function runHarnessSolveSession(
 	});
 
 	const opening = prepareSolvePrompts(prompts, {
+        ...(workspace.measurement.kind === "anomaly_detection" && workspace.measurement.evidence ? { evidencePath: workspace.measurement.evidence.path } : {}),
  guidance: options.guidance,
 		taskId,
 		configuration: workspace.configuration,

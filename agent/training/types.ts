@@ -41,6 +41,14 @@ export interface FactoryCvRequest {
 
 export type CvRequest = BuiltinCvRequest | FactoryCvRequest;
 
+/** Explicit score semantics; evidence is for scoring only, never estimator fit targets. */
+export interface EvidenceSelection {
+	basis: "evidence";
+	metric: "evidence_average_precision" | "evidence_roc_auc";
+	direction: "maximize";
+	population: "development";
+}
+
 /** Controller metadata, never an agent request or a model-design constraint. */
 export type MeasurementConfig = {
 	/** Binary classification over opaque sample descriptors; targets are 0/1. */
@@ -58,6 +66,7 @@ export type MeasurementConfig = {
 	scoreMethod: "score_samples" | "decision_function" | "negative_outlier_factor_";
 	scoreDirection: "higher_is_anomalous" | "lower_is_anomalous";
 	anomalyLabel: number;
+	selection?: EvidenceSelection;
 	evidence?: { path: string; source: "trusted" | "agent_provided" };
 };
 

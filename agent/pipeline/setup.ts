@@ -1,6 +1,6 @@
 /** Fail-fast prerequisites shared by pipeline and standalone stage execution. */
-import { accessSync, constants, statSync } from "node:fs";
-import { join } from "node:path";
+import { accessSync, constants, statSync, existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { initializeModel } from "../model_provider.js";
 import { loadPipelineConfig } from "../pipeline_config.js";
@@ -60,6 +60,23 @@ export class SetupSession {
 function readable(path: string): void {
  accessSync(path, constants.R_OK);
  if (!statSync(path).isFile() || statSync(path).size === 0) throw new Error("Missing or empty file");
+}
+
+/** Agent evidence may not exist yet; validate its writable destination without creating it. */
+export function checkEvidenceDestination(path: string): void {
+ let current = path;
+ if (existsSync(current)) {
+  if (!statSync(current).isFile()) throw new Error("Evidence destination must be a file");
+  accessSync(current, constants.R_OK | constants.W_OK);
+ }
+ current = dirname(current);
+ while (!existsSync(current)) {
+  const parent = dirname(current);
+  if (parent === current) throw new Error("Evidence destination has no existing parent");
+  current = parent;
+ }
+ if (!statSync(current).isDirectory()) throw new Error("Evidence parent must be a directory");
+ accessSync(current, constants.R_OK | constants.W_OK | constants.X_OK);
 }
 
 export function setupChecks(requirements: readonly SetupRequirement[], options: {
@@ -124,6 +141,10 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
   });
  }
  if (needs.has("training")) {
+  if (options.taskConfiguration?.selection) add(`training-selection:${options.taskId}`, "local", "Restore the evidence-selection prompt and make runs/<task>/solve/agent/evidence.json writable. The agent creates evidence; missing evidence labels are checked at trial acceptance, not at setup.", () => {
+   options.prompts.render("solve.evidence-selection", { evidencePath: join(PROJECT_ROOT, "runs", options.taskId, "solve", "agent", "evidence.json"), metric: options.taskConfiguration!.selection!.metric });
+   checkEvidenceDestination(join(PROJECT_ROOT, "runs", options.taskId, "solve", "agent", "evidence.json"));
+  });
   add("training-recovery", "local", "Run solve on Linux (/proc) or Darwin (libproc) with process birth identities and local flock support; durable worker recovery requires both. Use the project Devbox Python (fcntl is standard library).", () => {
    if (!processIdentity(process.pid)) throw new Error("Process birth identities unavailable");
    for (const name of ["runner.py", "worker.py", "smartlab_trial/recovery.py"]) accessSync(join(PROJECT_ROOT, "agent/training/python", name), constants.R_OK);

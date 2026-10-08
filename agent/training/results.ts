@@ -400,10 +400,11 @@ async function collectTrial(directory: string, experimentId: string): Promise<Tr
 		}
 	}
 
-	const measurement = invocation?.measurement as { kind?: string; hasTargets?: boolean; sampleManifestSha256?: string } | undefined;
+	const measurement = invocation?.measurement as { kind?: string; hasTargets?: boolean; sampleManifestSha256?: string; sampleManifestPath?: string; evidence?: { path: string; source: string }; evidenceManifestSha256?: string; selection?: { basis: string; metric: string; direction: string; population: string } } | undefined;
 	const clustering = measurement?.kind === "clustering";
-	const unlabelled = measurement?.kind === "anomaly_detection" || (clustering && measurement.hasTargets !== true);
-	const balancedAccuracy = clustering ? result?.metrics?.adjustedRandIndex : result?.metrics?.balancedAccuracy;
+	const evidenceSelection = measurement?.kind === "anomaly_detection" && measurement.selection !== undefined;
+	const unlabelled = (measurement?.kind === "anomaly_detection" && !evidenceSelection) || (clustering && measurement.hasTargets !== true);
+	const balancedAccuracy = evidenceSelection ? result?.metrics?.selectionScore : clustering ? result?.metrics?.adjustedRandIndex : result?.metrics?.balancedAccuracy;
 	if (result?.metrics !== null && result?.metrics !== undefined
 		&& (!finiteNumber(balancedAccuracy) || balancedAccuracy < (clustering ? -1 : 0) || balancedAccuracy > 1)) {
 		error(errors, experimentId, "invalid_result", `trial-result.json primary metric must be between ${clustering ? -1 : 0} and 1`, "trial-result.json");
@@ -418,6 +419,66 @@ async function collectTrial(directory: string, experimentId: string): Promise<Tr
 		}
 		if (!isObject(result?.diagnostics) || result.diagnostics.kind !== measurement.kind) {
 			error(errors, experimentId, "invalid_diagnostics", "Task diagnostics are missing or have the wrong measurement kind", "trial-result.json");
+		}
+	}
+
+	if (evidenceSelection && result?.status !== "failed") {
+		const selection = measurement!.selection!;
+		if (selection.basis !== "evidence" || !["evidence_average_precision", "evidence_roc_auc"].includes(selection.metric)
+			|| selection.direction !== "maximize" || selection.population !== "development")
+			error(errors, experimentId, "invalid_selection", "Invalid explicit evidence selection contract", "invocation.json");
+		if (resolve(measurement!.evidence?.path ?? "") !== join(directory, "evidence.json")) {
+			error(errors, experimentId, "invalid_evidence", "Evidence must be the trial-owned snapshot", "invocation.json");
+		} else {
+			const bytes = await read("evidence.json", "training_selection_evidence");
+			if (bytes && sha256(bytes) !== measurement!.evidenceManifestSha256)
+				error(errors, experimentId, "integrity_mismatch", "Evidence snapshot hash changed", "evidence.json");
+			if (bytes && loaded.oof && foldRows) {
+				try {
+					const evidence = JSON.parse(bytes.toString("utf8"));
+					if (evidence.schemaVersion !== 1 || Object.keys(evidence).sort().join() !== "labels,schemaVersion" || !Array.isArray(evidence.labels) || !evidence.labels.length) throw new Error("Invalid evidence labels");
+					const labels = new Map<string, number>();
+					const sampleBytes = await readFile(String(measurement!.sampleManifestPath));
+                    if (sha256(sampleBytes) !== measurement!.sampleManifestSha256) throw new Error("Development sample manifest changed");
+                    const known = new Set(JSON.parse(sampleBytes.toString("utf8")).samples.map((row: any) => row.id));
+					for (const row of evidence.labels) {
+						if (Object.keys(row).sort().join() !== "id,target" || !known.has(row.id) || labels.has(row.id) || ![0, 1].includes(row.target)) throw new Error("Invalid or unknown evidence ID/target");
+						labels.set(row.id, row.target);
+					}
+					const observations = loaded.oof.trim().split(/\r?\n/).slice(1).map(line => line.split(";"));
+                    const completedKeys = new Set(foldRows.map(foldKey));
+                    const expected = (loaded.manifest?.assignments as JsonObject[] ?? []).filter(row => completedKeys.has(foldKey(row)));
+                    const key = (row: unknown[]) => JSON.stringify([row[0], Number(row[1]), Number(row[2])]);
+                    const observedKeys = observations.map(key);
+                    const expectedKeys = expected.map(row => JSON.stringify([row.id, row.repeat, row.fold]));
+                    if (observedKeys.length !== expectedKeys.length || new Set(observedKeys).size !== observedKeys.length || !sameJson([...observedKeys].sort(), [...expectedKeys].sort())) throw new Error("OOF evidence rows do not match completed manifest folds");
+                    if (observations.some(row => row[3] === "" || !Number.isInteger(Number(row[3])))) throw new Error("Selection requires integer predictions");
+					for (const fold of foldRows) {
+						const rows = observations.filter(row => Number(row[1]) === fold.repeat && Number(row[2]) === fold.fold && labels.has(row[0]));
+						const scores = rows.map(row => ({ truth: labels.get(row[0])!, score: Number(row[4]) * ((measurement as any).scoreDirection === "lower_is_anomalous" ? -1 : 1) }));
+						if (rows.some(row => !row[4] || !Number.isFinite(Number(row[4])))) throw new Error("Non-finite or missing evidence scores");
+						const classes = new Set(scores.map(row => row.truth));
+						const receipt = fold.selection as Record<string, unknown> | undefined;
+						if (receipt?.evidenceSha256 !== measurement!.evidenceManifestSha256 || receipt?.metric !== selection.metric || receipt?.source !== measurement!.evidence?.source
+                            || receipt?.basis !== selection.basis || receipt?.direction !== selection.direction || receipt?.population !== selection.population
+                            || receipt?.labelledRows !== rows.length || receipt?.positiveRows !== scores.filter(row => row.truth === 1).length
+                            || receipt?.negativeRows !== scores.filter(row => row.truth === 0).length
+                            || receipt?.validationRows !== fold.validationRows || receipt?.labelCoverage !== rows.length / Number(fold.validationRows)) throw new Error("Fold selection identity mismatch");
+						if (classes.size !== 2) {
+							if (receipt.available === true || (fold.metrics as any)?.selectionScore !== undefined || result?.promotionEligible) throw new Error("One-class evidence fold cannot select or promote");
+							continue;
+						}
+						const expected = evidenceRanking(scores, selection.metric);
+						if (!finiteNumber(receipt.value) || !finiteNumber((fold.metrics as any)?.selectionScore) || receipt.available !== true || Math.abs(Number(receipt.value) - expected) > 1e-10 || Math.abs(Number((fold.metrics as any)?.selectionScore) - expected) > 1e-10) throw new Error("Recomputed fold selection score differs");
+					}
+					const usable = foldRows.every(fold => finiteNumber((fold.metrics as any)?.selectionScore));
+					if (usable && foldRows.length && (!finiteNumber(balancedAccuracy) || Math.abs(Number(balancedAccuracy) - foldRows.reduce((sum, fold) => sum + Number((fold.metrics as any).selectionScore), 0) / foldRows.length) > 1e-10)) throw new Error("Recomputed selection mean differs");
+                    const summarySelection = result?.selection as Record<string, unknown> | undefined;
+                    if (summarySelection?.basis !== selection.basis || summarySelection.metric !== selection.metric || summarySelection.direction !== selection.direction || summarySelection.population !== selection.population
+                        || summarySelection.evidenceSha256 !== measurement!.evidenceManifestSha256 || summarySelection.source !== measurement!.evidence?.source
+                        || !sameJson(summarySelection.folds, foldRows.map(fold => fold.selection))) throw new Error("Selection summary identity/receipts differ");
+				} catch (cause) { error(errors, experimentId, "invalid_selection_evidence", String(cause), "evidence.json"); }
+			}
 		}
 	}
 
@@ -516,4 +577,21 @@ export async function collectTrainingResults(root: string): Promise<TrainingColl
 export async function collectTrainingTrial(directory: string): Promise<TrainingTrialResult> {
 	const path = resolve(directory);
 	return collectTrial(path, basename(path));
+}
+
+/** Ranking metrics with score ties handled as one threshold, matching sklearn. */
+function evidenceRanking(rows: { truth: number; score: number }[], metric: string): number {
+ const positives = rows.filter(row => row.truth === 1).length;
+ const negatives = rows.length - positives;
+ rows.sort((a, b) => b.score - a.score);
+ let tp = 0, fp = 0, ap = 0, auc = 0;
+ for (let i = 0; i < rows.length;) {
+  let end = i + 1;
+  while (end < rows.length && rows[end].score === rows[i].score) end++;
+  const oldTp = tp, oldFp = fp;
+  for (; i < end; i++) { if (rows[i].truth) tp++; else fp++; }
+  ap += (tp - oldTp) / positives * tp / (tp + fp);
+  auc += (fp - oldFp) / negatives * (tp + oldTp) / (2 * positives);
+ }
+ return metric === "evidence_average_precision" ? ap : auc;
 }

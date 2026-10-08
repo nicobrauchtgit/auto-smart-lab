@@ -189,3 +189,26 @@ test("missing shared metric prerequisites block the solve stage before execution
   rmSync(directory, { recursive: true, force: true });
  }
 });
+
+test("evidence setup checks a writable destination before execution and permits absent agent-created labels", async () => {
+ const { checkEvidenceDestination } = await import("./setup.js");
+ const { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } = await import("node:fs");
+ const { tmpdir } = await import("node:os");
+ const { join } = await import("node:path");
+ const root = mkdtempSync(join(tmpdir(), "evidence-setup-"));
+ try {
+  const destination = join(root, "agent", "evidence.json");
+  checkEvidenceDestination(destination);
+  expect(existsSync(destination)).toBe(false);
+  writeFileSync(join(root, "agent"), "blocking file");
+  let started = false;
+  await expect(new SetupSession().check([{ id: "evidence-destination", phase: "local", remedy: "Repair the evidence directory", run() { checkEvidenceDestination(destination); } }], signal(), () => {}).then(() => { started = true; })).rejects.toThrow("Repair the evidence directory");
+  expect(started).toBe(false);
+  const config: TaskConfiguration = { schemaVersion: 1, kind: "anomaly_detection", samples: { source: "zip_members", train: "train.zip", test: "test.zip" }, targets: { kind: "none" },
+   execution: "inductive", holdout: "none", metric: "none", anomaly: { scoreMethod: "score_samples", scoreDirection: "higher_is_anomalous", anomalyLabel: -1 },
+   selection: { basis: "evidence", metric: "evidence_average_precision", direction: "maximize", population: "development" }, refit: "fit_training_predict_test", submission: { format: "id_semicolon_prediction", predictions: "binary" } };
+  const checks = setupChecks(["training"], { taskId: "fixture", taskConfiguration: config, prompts: loadPromptSnapshot() });
+  expect(checks.some(check => check.id === "training-selection:fixture")).toBe(true);
+  expect(checks.some(check => check.phase === "remote")).toBe(false);
+ } finally { rmSync(root, { recursive: true, force: true }); }
+});

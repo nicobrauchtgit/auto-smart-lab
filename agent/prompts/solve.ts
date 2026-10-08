@@ -7,6 +7,7 @@ export interface SolveStartInput {
 	taskId: string;
 	configuration: TaskConfiguration;
 	workspace: string;
+	evidencePath?: string;
 	datasetPaths: string[];
 	/** Where the development targets are, or their absence. */
 	targets: string;
@@ -18,7 +19,7 @@ export interface SolveStartInput {
 }
 
 /** The task contract for the configured kind: input frame, harness calls and scoring. */
-function taskContract(prompts: PromptSnapshot, taskId: string, configuration: TaskConfiguration): RenderedPrompt[] {
+function taskContract(prompts: PromptSnapshot, taskId: string, configuration: TaskConfiguration, evidencePath: string): RenderedPrompt[] {
 	const contract = configuration.kind === "binary_classification"
 		? prompts.render("solve.task-binary_classification", { taskId })
 		: configuration.kind === "clustering"
@@ -26,6 +27,9 @@ function taskContract(prompts: PromptSnapshot, taskId: string, configuration: Ta
 			: prompts.render("solve.task-anomaly_detection", { taskId, execution: configuration.execution,
 				scoreMethod: configuration.anomaly!.scoreMethod, scoreDirection: configuration.anomaly!.scoreDirection.replaceAll("_", " "),
 				anomalyLabel: String(configuration.anomaly!.anomalyLabel) });
+	if (configuration.selection) return [contract, prompts.render("solve.evidence-selection", {
+        evidencePath, metric: configuration.selection.metric,
+    })];
 	return configuration.metric === "none" ? [contract, prompts.render("solve.label-free", {})] : [contract];
 }
 
@@ -33,7 +37,7 @@ function taskContract(prompts: PromptSnapshot, taskId: string, configuration: Ta
 export function prepareSolvePrompts(prompts: PromptSnapshot, input: SolveStartInput) {
 	const guidance = guidanceBlock(prompts, input.guidance);
 	const system = prompts.render("solve.system", { taskId: input.taskId });
-	const contract = taskContract(prompts, input.taskId, input.configuration);
+	const contract = taskContract(prompts, input.taskId, input.configuration, input.evidencePath ?? `${input.workspace}/evidence.json`);
 	const start = prompts.render("solve.start", {
 		taskId: input.taskId,
         guidance: guidance?.text ?? "",

@@ -61,7 +61,7 @@ export function frameworkHash(root = FRAMEWORK_ROOT): string {
 
 /** The measurement declaration a sample trial ran under, as the training service hashed it. */
 function measuredDeclaration(measurement: Record<string, unknown>): Record<string, unknown> {
- const { sampleManifestSha256: _hash, hasTargets: _targets, evidenceManifestSha256: _evidence, ...declaration } = measurement;
+ const { sampleManifestSha256: _hash, hasTargets: _targets, evidenceManifestSha256: _evidence, evidence: _evidencePath, ...declaration } = measurement;
  return declaration;
 }
 
@@ -70,6 +70,7 @@ function assertMeasuredConfiguration(configuration: TaskConfiguration, measureme
  if (!measurement) throw new Error("Champion was measured on the retired decoded-text frame; promote a champion on raw sample input first");
  const kind = configuration.kind === "binary_classification" ? "classification" : configuration.kind;
  if (measurement.kind !== kind || measurement.execution !== configuration.execution) throw new Error("Champion measurement kind/execution differs from the task configuration");
+ if (canonical(configuration.selection ?? null) !== canonical(measurement.selection ?? null)) throw new Error("Champion selection differs from task configuration");
  if (configuration.kind === "anomaly_detection" && ["scoreMethod", "scoreDirection", "anomalyLabel"].some(key => measurement[key] !== (configuration.anomaly as Record<string, unknown>)[key])) throw new Error("Champion anomaly score semantics differ from the task configuration");
 }
 

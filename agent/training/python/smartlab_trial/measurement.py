@@ -14,7 +14,7 @@ from .invocation import InvocationError
 def validate_config(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise InvocationError("measurement must be a controller-supplied object")
-    allowed = {"kind", "sampleManifestPath", "sampleManifestSha256", "hasTargets", "execution", "scoreMethod", "scoreDirection", "anomalyLabel", "evidence", "evidenceManifestSha256"}
+    allowed = {"kind", "sampleManifestPath", "sampleManifestSha256", "hasTargets", "execution", "scoreMethod", "scoreDirection", "anomalyLabel", "evidence", "evidenceManifestSha256", "selection"}
     if set(value) - allowed:
         raise InvocationError("measurement contains unknown fields")
     if value.get("kind") not in ("classification", "clustering", "anomaly_detection"):
@@ -34,13 +34,19 @@ def validate_config(value: Any) -> dict[str, Any]:
             raise InvocationError("anomaly measurement requires an explicit scoreDirection")
         if type(value.get("anomalyLabel")) is not int:
             raise InvocationError("anomaly measurement requires an integer anomalyLabel")
+        if "selection" in value:
+            selection = value["selection"]
+            if (not isinstance(selection, dict) or set(selection) != {"basis", "metric", "direction", "population"}
+                    or selection["basis"] != "evidence" or selection["metric"] not in ("evidence_average_precision", "evidence_roc_auc")
+                    or selection["direction"] != "maximize" or selection["population"] != "development"):
+                raise InvocationError("Selection requires explicit evidence AP/ROC AUC, maximize, development population")
         if "evidence" in value:
             evidence = value["evidence"]
             if (not isinstance(evidence, dict) or set(evidence) != {"path", "source"}
                     or not isinstance(evidence["path"], str) or not evidence["path"]
                     or evidence["source"] not in ("trusted", "agent_provided")):
                 raise InvocationError("Evidence requires a path and explicit trusted/agent_provided source")
-    elif any(key in value for key in ("scoreMethod", "scoreDirection", "anomalyLabel", "evidence", "evidenceManifestSha256")):
+    elif any(key in value for key in ("scoreMethod", "scoreDirection", "anomalyLabel", "evidence", "evidenceManifestSha256", "selection")):
         raise InvocationError(f"anomaly score fields do not apply to {value['kind']}")
     return dict(value)
 
@@ -121,7 +127,24 @@ def kind(invocation: Any) -> str:
 
 
 def primary_score(metrics: dict[str, Any]) -> float:
-    for name in ("balancedAccuracy", "adjustedRandIndex"):
+    for name in ("selectionScore", "balancedAccuracy", "adjustedRandIndex"):
         if name in metrics:
             return float(metrics[name])
     raise InvocationError("No trusted primary metric available; label-free diagnostics cannot authorize search selection or promotion")
+
+
+def selection_receipt(config: dict[str, Any], measured: dict[str, Any]) -> dict[str, Any] | None:
+    """The sole evidence score contract, shared by worker and read-only validators."""
+    declaration = config.get("selection")
+    if not declaration:
+        return None
+    ranking = measured.get("ranking", {})
+    name = {"evidence_average_precision": "averagePrecision", "evidence_roc_auc": "rocAuc"}[declaration["metric"]]
+    available = measured.get("available") is True and ranking.get("available") is True
+    return {**declaration, "available": available, "value": ranking[name] if available else None,
+            "reason": None if available else "Both explicit evidence classes are required in every scored fold",
+            "source": measured.get("source"), "evidenceSha256": measured.get("manifestSha256"),
+            "validationRows": measured.get("validationRows", 0), "labelledRows": measured.get("labelledRows", 0),
+            "positiveRows": measured.get("positiveRows", 0),
+            "negativeRows": measured.get("rows", 0) - measured.get("positiveRows", 0),
+            "labelCoverage": measured.get("labelCoverage", 0)}

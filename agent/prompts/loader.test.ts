@@ -128,6 +128,13 @@ test("the solve opening selects the task contract of the configured kind", () =>
 	assert.match(detected.prompt, /returning `-1` for anomalies/);
 	assert.match(detected.prompt, /lower is anomalous/);
 	assert.ok(detected.promptReferences.some(reference => reference.id === "solve.label-free"));
+    const selected = prepareSolvePrompts(snapshot, { ...base, configuration: { ...anomaly,
+        selection: { basis: "evidence", metric: "evidence_average_precision", direction: "maximize", population: "development" } },
+        evidencePath: "/tmp/solve/agent/evidence.json" });
+    assert.match(selected.prompt, /\/tmp\/solve\/agent\/evidence.json/);
+    assert.match(selected.prompt, /evidence_average_precision/);
+    assert.ok(selected.promptReferences.some(reference => reference.id === "solve.evidence-selection"));
+    assert.ok(!selected.promptReferences.some(reference => reference.id === "solve.label-free"));
 });
 
 test("research always supplies the separate test-input pass and its evidence limits", () => {

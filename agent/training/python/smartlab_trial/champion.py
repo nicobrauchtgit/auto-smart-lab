@@ -180,6 +180,7 @@ def compare(challenger_folds: Sequence[dict[str, Any]], challenger_oof: Sequence
         "noiseRule": paired.get("noiseRule"),
         "leadExceedsNoise": paired.get("leadExceedsNoise"),
         "perFold": paired.get("perFold"),
-        "metric": "adjustedRandIndex" if task_kind == "clustering" else "balancedAccuracy",
+        "metric": "selectionScore" if task_kind == "anomaly_detection" else ("adjustedRandIndex" if task_kind == "clustering" else "balancedAccuracy"),
+        **({"selection": challenger_folds[0].get("selection")} if task_kind == "anomaly_detection" else {}),
         **(changes if task_kind == "clustering" else {"correctedErrors": corrected, "introducedErrors": introduced}),
     }

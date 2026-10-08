@@ -128,11 +128,52 @@ def diagnose_clustering(directory: Path, invocation):
             ]}
 
 
+def diagnose_anomaly(directory: Path, invocation):
+    # Import the measured score contract, not agent code.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'training' / 'python'))
+    from smartlab_trial.measurement import load_samples, selection_receipt
+    from smartlab_trial.anomaly_measurements import evidence
+    spec = invocation['measurement']
+    if not spec.get('selection'):
+        raise ValueError('Anomaly review requires explicit selection evidence')
+    frame, _, _ = load_samples(spec)
+    rows, repeats = _checked_oof(directory, invocation, frame.id.tolist())
+    metadata = frame.attrs['diagnosticEvidence']
+    positions = {row_id: index for index, row_id in enumerate(frame.id)}
+    result = json.loads((directory / 'trial-result.json').read_text())
+    persisted = [json.loads(line) for line in (directory / 'fold-results.jsonl').read_text().splitlines() if line]
+    folds = []
+    for repeat, fold in sorted(set((int(r['repeat']), int(r['fold'])) for r in rows)):
+        batch = [r for r in rows if int(r['repeat']) == repeat and int(r['fold']) == fold]
+        validation = frame.iloc[[positions[row['id']] for row in batch]].reset_index(drop=True)
+        measured = evidence(validation, np.asarray([float(row['score']) for row in batch]),
+                            [int(row['prediction']) for row in batch], metadata, spec)
+        receipt = selection_receipt(spec, measured)
+        recorded = next(item for item in persisted if (item['repeat'], item['fold']) == (repeat, fold))
+        if not receipt['available'] or receipt != recorded['selection'] or not math.isclose(receipt['value'], recorded['metrics']['selectionScore'], abs_tol=1e-12):
+            raise ValueError('Recomputed evidence score differs from harness fold')
+        folds.append({'repeat': repeat, 'fold': fold, 'selection': receipt, 'evidence': measured})
+    mean = float(np.mean([fold['selection']['value'] for fold in folds]))
+    if not math.isclose(mean, result['metrics']['selectionScore'], abs_tol=1e-12):
+        raise ValueError('Recomputed selection mean differs from harness result')
+    return {'schemaVersion': 1, 'experimentId': result['experimentId'], 'measurementKind': 'anomaly_detection',
+            'summary': {'selectionScore': mean, 'selection': spec['selection'], 'source': metadata['source'],
+                        'evidenceSha256': metadata['sha256'], 'uniqueRows': len(frame), 'labelledRows': len(metadata['labels']),
+                        'positiveRows': sum(metadata['labels'].values()), 'negativeRows': len(metadata['labels']) - sum(metadata['labels'].values()),
+                        'labelCoverage': len(metadata['labels']) / len(frame), 'repeats': len(repeats)},
+            'folds': folds, 'limitations': ['Selection uses agent-provided evidence; labels are not verified by the harness.',
+                'Partial coverage does not establish official accuracy or generalization to unfamiliar attacks.',
+                'Evidence labels never enter estimator fitting; ranking AP does not choose the binary operating point.',
+                'Adaptive evidence selection and the independent-fold noise approximation can make selection optimistic.']}
+
+
 def diagnose(directory: Path):
     invocation = json.loads((directory / 'invocation.json').read_text())
     measurement = invocation.get('measurement')
     if measurement and measurement['kind'] == 'clustering':
         return diagnose_clustering(directory, invocation)
+    if measurement and measurement['kind'] == 'anomaly_detection':
+        return diagnose_anomaly(directory, invocation)
     if measurement and measurement['kind'] != 'classification':
         raise ValueError('Only labelled clustering and binary classification evidence can be reviewed')
     # The invocation points to development targets, never the original/sealed labels.

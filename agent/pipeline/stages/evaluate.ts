@@ -94,7 +94,7 @@ export function createEvaluateStage(deps = { prepareEvidence, runSession }): Sta
    return { artifacts: [evidenceArtifact, artifact("evaluation_report", reportPath), ...curveArtifacts, ...code.artifacts()], attempts: 1,
     validation: report.validation, summary: { experiment_id: evidence.experimentId,
      review_status: review?.status, readiness_score: review?.readinessScore, task_kind: stageConfiguration(context.input).kind,
-     development_metric: evidence.diagnostics.summary.balancedAccuracy ?? evidence.diagnostics.summary.adjustedRandIndex, advisory_only: true } };
+     development_metric: evidence.diagnostics.summary.selectionScore ?? evidence.diagnostics.summary.balancedAccuracy ?? evidence.diagnostics.summary.adjustedRandIndex, advisory_only: true } };
   },
  };
 }

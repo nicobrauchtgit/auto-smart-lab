@@ -26,6 +26,8 @@ export function controllerTools(controller: Coordinator, prompts: PromptSnapshot
   metric: literal("balanced_accuracy", "adjusted_rand_index", "none"),
   anomaly: Type.Optional(Type.Object({ scoreMethod: literal("score_samples", "decision_function", "negative_outlier_factor_"),
    scoreDirection: literal("higher_is_anomalous", "lower_is_anomalous"), anomalyLabel: Type.Integer() })),
+  selection: Type.Optional(Type.Object({ basis: Type.Literal("evidence"), metric: literal("evidence_average_precision", "evidence_roc_auc"),
+   direction: Type.Literal("maximize"), population: Type.Literal("development") })),
   refit: literal("fit_training_predict_test", "fit_predict_test_batch"),
   submission: Type.Object({ format: Type.Literal("id_semicolon_prediction"), predictions: literal("binary", "cluster_id") }),
  });

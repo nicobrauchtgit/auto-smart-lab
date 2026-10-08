@@ -12,7 +12,7 @@
 import { assertDevelopmentCandidate, isTerminalCandidate, selectionClaimAsync } from "./terminal.js";
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, openSync, readSync, closeSync } from "node:fs";
 import { mkdir, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -160,7 +160,7 @@ function readJsonLines(path: string): Record<string, any>[] {
 }
 
 const mean = (values: number[]) => values.reduce((sum, value) => sum + value, 0) / values.length;
-const primaryScore = (result: Record<string, any> | undefined) => result?.metrics?.adjustedRandIndex ?? result?.metrics?.balancedAccuracy ?? -Infinity;
+const primaryScore = (result: Record<string, any> | undefined) => result?.metrics?.selectionScore ?? result?.metrics?.adjustedRandIndex ?? result?.metrics?.balancedAccuracy ?? -Infinity;
 
 /** Compact status view; detailed batch diagnostics remain in hashed trial artifacts. */
 function compactDetail(value: any): any {
@@ -211,13 +211,13 @@ function canonical(value: any): string {
 function comparisonCohort(value: any): unknown {
 	const declaration = measurementDeclaration(value) as Record<string, unknown> | null;
 	if (!declaration) return { kind: "legacy_text_classification" };
-	const { sampleManifestPath: _path, evidence: _evidence, ...cohort } = declaration;
+	const { sampleManifestPath: _path, evidence: _evidence, selection: _selection, ...cohort } = declaration;
 	return cohort;
 }
 
 function measurementDeclaration(value: any): unknown {
 	if (!value) return null;
-	const { sampleManifestSha256: _hash, hasTargets: _targets, evidenceManifestSha256: _evidenceHash, ...declaration } = value;
+	const { sampleManifestSha256: _hash, hasTargets: _targets, evidenceManifestSha256: _evidenceHash, evidence: _evidence, ...declaration } = value;
 	return declaration;
 }
 
@@ -249,11 +249,7 @@ export class TrainingService {
         if (this.options.measurement) {
             const path = this.options.measurement.sampleManifestPath;
             if (!existsSync(path)) return "unavailable";
-            const hash = createHash("sha256").update(canonical(this.options.measurement)).update(readFileSync(path));
-            if (this.options.measurement.kind === "anomaly_detection" && this.options.measurement.evidence) {
-                if (!existsSync(this.options.measurement.evidence.path)) return "unavailable";
-                hash.update(readFileSync(this.options.measurement.evidence.path));
-            }
+            const hash = createHash("sha256").update(canonical(measurementDeclaration(this.options.measurement))).update(readFileSync(path));
             return hash.digest("hex");
         }
         if (!this.options.zipPath || !this.options.labelsPath || !existsSync(this.options.zipPath) || !existsSync(this.options.labelsPath)) return "unavailable";
@@ -312,10 +308,10 @@ export class TrainingService {
     }
 
     /** Same no-fit metadata/import check before readiness and every trial launch. */
-    private checkMeasurement(): (MeasurementConfig & { sampleManifestSha256: string; hasTargets: boolean; evidenceManifestSha256?: string }) | undefined {
+    private checkMeasurement(declaration: MeasurementConfig = this.options.measurement!, requireEvidence = false): (MeasurementConfig & { sampleManifestSha256: string; hasTargets: boolean; evidenceManifestSha256?: string }) | undefined {
         if (!this.options.measurement) return undefined;
         const probe = spawnSync(this.options.pythonExecutable, [join(PYTHON_ROOT, "check_measurement.py"),
-            "--config", JSON.stringify(this.options.measurement)],
+            "--config", JSON.stringify(requireEvidence ? declaration : Object.fromEntries(Object.entries(declaration).filter(([key]) => key !== "evidence")))],
             { env: this.options.env, encoding: "utf8", timeout: 10_000, maxBuffer: 64 * 1024 });
         let metadata: { sha256?: string; hasTargets?: boolean; evidenceManifestSha256?: string | null; error?: { message?: string } } = {};
         try { metadata = JSON.parse(probe.stdout ?? "{}"); } catch { /* Report bounded setup instructions below. */ }
@@ -324,12 +320,12 @@ export class TrainingService {
             sampleManifestPath: this.options.measurement.sampleManifestPath, sampleManifestSha256: metadata.sha256,
             evidenceManifestSha256: metadata.evidenceManifestSha256 });
         if (!valid) throw new Error(`Measurement setup failed: ${metadata.error?.message ?? "metadata or metric dependencies unavailable"}. Run ./dev setup and repair the development sample manifest before starting an agent.`);
-        const identity = `${metadata.sha256}:${metadata.evidenceManifestSha256 ?? ""}`;
+        const identity = metadata.sha256!;
         if (this.measurementHash && this.measurementHash !== identity) {
-            throw new Error("Development sample or evidence metadata changed after setup; create a new controller invocation with the new dataset identity.");
+            throw new Error("Development sample metadata changed after setup; create a new controller invocation with the new dataset identity.");
         }
         this.measurementHash = identity;
-        return { ...this.options.measurement, sampleManifestSha256: metadata.sha256!, hasTargets: metadata.hasTargets!,
+        return { ...declaration, sampleManifestSha256: metadata.sha256!, hasTargets: metadata.hasTargets!,
             ...(metadata.evidenceManifestSha256 ? { evidenceManifestSha256: metadata.evidenceManifestSha256 } : {}) };
     }
 
@@ -618,8 +614,10 @@ export class TrainingService {
 			throw new ExperimentRequestError(structural.issues);
 		}
 		const request = structural.request;
-		const measurement = this.checkMeasurement();
-		if (measurement && !measurement.hasTargets && request.search && !request.search.objective) {
+		let measurement = this.checkMeasurement();
+        if (measurement?.kind === "anomaly_detection" && measurement.selection && !measurement.evidence)
+            throw new Error("Explicit evidence selection requires an evidence path and source before trial acceptance");
+		if (measurement && !measurement.hasTargets && !(measurement.kind === "anomaly_detection" && measurement.selection) && request.search && !request.search.objective) {
 			throw new ExperimentRequestError([{ path: "search", problem: "no trusted primary metric for label-free search",
 				received: "search", expected: "an explicitly declared proxy objective", hint: "Declare search.objective metric and direction, or compare fixed trials. Label-free proxies cannot authorize promotion." }]);
 		}
@@ -650,6 +648,25 @@ export class TrainingService {
 		const sourceRoot = versioned ? join(directory, "source") : undefined;
 		let champion: ReturnType<TrainingService["champion"]>;
 		try {
+			if (measurement?.kind === "anomaly_detection" && measurement.evidence) {
+				const evidencePath = join(directory, "evidence.json");
+                const file = openSync(measurement.evidence.path, "r");
+                let bytes: Buffer;
+                try {
+                    const buffer = Buffer.alloc(8 * 1024 * 1024 + 1);
+                    let length = 0;
+                    while (length < buffer.length) {
+                        const count = readSync(file, buffer, length, buffer.length - length, null);
+                        if (!count) break;
+                        length += count;
+                    }
+                    if (length > 8 * 1024 * 1024) throw new Error("Evidence metadata exceeds 8 MiB");
+                    bytes = buffer.subarray(0, length);
+                } finally { closeSync(file); }
+				await writeFile(evidencePath, bytes, { flag: "wx" });
+				measurement = this.checkMeasurement({ ...measurement, evidence: { ...measurement.evidence, path: evidencePath } }, true);
+				this.options.record?.("training_evidence_snapshotted", { experiment_id: id, path: evidencePath, sha256: measurement?.evidenceManifestSha256, source: measurement?.kind === "anomaly_detection" ? measurement.evidence?.source : undefined, selection: measurement?.kind === "anomaly_detection" ? measurement.selection : undefined });
+			}
 			if (versioned) {
 				const worktree = join(sourceRoot!, prefix!);
 				addWorktree(this.options.solutionsRoot!, worktree, source!.commit);
@@ -832,6 +849,8 @@ export class TrainingService {
 			// be used in a paired rerun after full refit.
 			const current = this.champion();
 			const selected = current ? own : collection.trials.filter(entry => entry.eligible && entry.invocation?.source?.commit
+                && canonical((entry.invocation?.measurement as any)?.selection ?? null) === canonical((own.invocation?.measurement as any)?.selection ?? null)
+                && (!(own.invocation?.measurement as any)?.selection || (entry.invocation?.measurement as any)?.evidenceManifestSha256 === (own.invocation?.measurement as any)?.evidenceManifestSha256)
 				&& entry.request && !isTerminalCandidate(root, this.options.taskId, entry.invocation.source.commit as string, entry.request.pipeline))
 				.sort((a, b) => primaryScore(b.result) - primaryScore(a.result))[0];
 			const selectedTrial = selected ? this.trials.get(selected.experimentId) : undefined;
@@ -851,6 +870,7 @@ export class TrainingService {
 				balancedAccuracy: selected.result?.metrics?.balancedAccuracy,
 				adjustedRandIndex: selected.result?.metrics?.adjustedRandIndex,
 				measurement: selectedTrial.measurement ?? null,
+				selection: selected.result?.selection ?? null,
 				pipeline: selectedTrial.request.pipeline,
 				cv: selectedTrial.request.cv,
 				subject: selectedTrial.source.subject,

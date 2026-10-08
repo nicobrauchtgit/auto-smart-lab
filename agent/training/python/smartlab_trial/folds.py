@@ -87,8 +87,10 @@ def _materialize_folds(
                 splitter = (KFold if cv.scheme == "kfold" else StratifiedKFold)(n_splits=cv.folds, shuffle=True, random_state=repeat_seed)
                 pairs = list(splitter.split(frame, y))
         else:
+            factory_frame = frame.copy()
+            factory_frame.attrs.clear()
             raw = custom_factory({
-                "frame": frame.copy(),
+                "frame": factory_frame,
                 "y": list(y) if y is not None else None,
                 "seed": repeat_seed,
                 "repeat": repeat,

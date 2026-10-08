@@ -15,7 +15,7 @@ requests one additional harness fit on validation inputs for inductive
 clustering, comparing independent validation clusters with train-model
 predictions; no targets enter either unsupervised fit.
 
-Label-free searches require an explicit advisory search.objective:
+Label-free searches without controller-declared evidence selection require an explicit advisory search.objective:
 {kind:"proxy", metric:"silhouette", direction:"maximize"}. Other metrics are
 calinskiHarabasz, daviesBouldin, dbcv, or estimator_score. Geometry objectives
 require representation diagnostics; dbcv requires dbcv:true. estimator_score
@@ -58,7 +58,10 @@ Controller-supplied anomaly evidence distinguishes trusted from agent-provided
 labels and reports partial coverage. Missing labels are not normal by default.
 evidence_roc_auc/evidence_average_precision are available explicit search
 objectives; labelled evidence and synthetic results do not automatically change
-the task's promotion policy. Diagnostic hooks must not fit or mutate models.
+the task's promotion policy. When the controller explicitly declares evidence
+selection, search and fixed confirmation use that score, requiring both explicit
+classes per fold; the champion is rerun on the challenger's snapshot and folds.
+Evidence remains scoring-only and never enters estimator fitting. Diagnostic hooks must not fit or mutate models.
 
 Start a new idea with `scope.kind: "pilot"` and deliberately reduced work, such
 as `maxRows` or `maxFolds`. A pilot validates assumptions and estimates cost but
