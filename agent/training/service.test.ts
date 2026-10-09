@@ -7,9 +7,30 @@ import { join } from "node:path";
 import type { ExperimentSpec, ExperimentView } from "../experiments/types.js";
 import { TrainingService } from "./service.js";
 
+import { PYTHON, writeCorpus, writeSampleManifest } from "./testing.js";
+
+function measurement(root: string) {
+	const corpus = writeCorpus(root, 4);
+	return writeSampleManifest(root, corpus.zipPath, corpus.labelsPath).measurement;
+}
+
 const noPipelineChecks = async () => [];
 
 describe("TrainingService", () => {
+    test("retired text-only input is refused before spawning", async () => {
+        const root = mkdtempSync(join(tmpdir(), "training-retired-"));
+        let calls = 0;
+        const service = new TrainingService({
+            supervisor: { start() { calls++; throw new Error("should not spawn"); } },
+            pythonExecutable: PYTHON, projectRoot: root, trainingRoot: join(root, "experiments"),
+            taskId: "task", datasetSha256: "a".repeat(64), rootSeed: 13,
+            zipPath: "train.zip", labelsPath: "train.labels", validatePipeline: noPipelineChecks,
+        });
+        await expect(service.ready()).rejects.toThrow("Retired decoded-text training");
+        expect(calls).toBe(0);
+        await service.close();
+    });
+
 	test("turns a seed-free request into one fixed, fully attributed worker invocation", async () => {
 		const root = mkdtempSync(join(tmpdir(), "training-service-"));
 		mkdirSync(join(root, "solutions", "tasks"), { recursive: true });
@@ -23,7 +44,7 @@ describe("TrainingService", () => {
 			},
 		};
 		const service = new TrainingService({
-			supervisor, pythonExecutable: "/venv/bin/python", projectRoot: root,
+			supervisor, pythonExecutable: PYTHON, measurement: measurement(root), projectRoot: root,
 			trainingRoot: join(root, "runs", "task", "solve", "experiments"), taskId: "task",
 			datasetSha256: createHash("sha256").update("dataset").digest("hex"), rootSeed: 13,
 			zipPath: join(root, "train.zip"), labelsPath: join(root, "train.labels"),
@@ -39,7 +60,7 @@ describe("TrainingService", () => {
 		expect(spawned?.id).toBe(started.id);
 		expect(spawned?.tool).toBe("tool-1");
 		expect(spawned?.spec.argv.slice(-4)).toEqual([
-			"/venv/bin/python", join(root, "agent", "training", "python", "worker.py"),
+			PYTHON, join(root, "agent", "training", "python", "worker.py"),
 			"--invocation", join(started.directory, "invocation.json"),
 		]);
 		expect(spawned?.spec.argv.join(" ")).not.toContain("character features");
@@ -57,7 +78,7 @@ describe("TrainingService", () => {
 		const root = mkdtempSync(join(tmpdir(), "training-service-"));
 		const service = new TrainingService({
 			supervisor: { start() { throw new Error("should not spawn"); } },
-			pythonExecutable: "python", projectRoot: root, trainingRoot: join(root, "experiments"),
+			pythonExecutable: PYTHON, measurement: measurement(root), projectRoot: root, trainingRoot: join(root, "experiments"),
 			taskId: "task", datasetSha256: "a".repeat(64), rootSeed: 13,
 			zipPath: "train.zip", labelsPath: "train.labels", validatePipeline: noPipelineChecks,
 		});
@@ -77,7 +98,7 @@ describe("TrainingService", () => {
 		let calls = 0;
 		const service = new TrainingService({
 			supervisor: { start() { calls++; throw new Error("should not spawn"); } },
-			pythonExecutable: "python", projectRoot: root, trainingRoot: join(root, "experiments"),
+			pythonExecutable: PYTHON, measurement: measurement(root), projectRoot: root, trainingRoot: join(root, "experiments"),
 			taskId: "task", datasetSha256: "a".repeat(64), rootSeed: 13,
 			zipPath: "train.zip", labelsPath: "train.labels", validatePipeline: noPipelineChecks,
 		});
@@ -96,7 +117,7 @@ describe("TrainingService", () => {
 		const service = new TrainingService({
 			supervisor: { start(spec, _tool, id) { calls++; return { id: id!, status: "running", scope: spec.scope,
 				hypothesis: spec.hypothesis, elapsedSeconds: 0, linesEmitted: 0, cursor: 0, logPath: "log" }; } },
-			pythonExecutable: "python", projectRoot: root, trainingRoot: join(root, "experiments"),
+			pythonExecutable: PYTHON, measurement: measurement(root), projectRoot: root, trainingRoot: join(root, "experiments"),
 			taskId: "task", datasetSha256: "a".repeat(64), rootSeed: 13,
 			zipPath: "train.zip", labelsPath: "train.labels", maxExperiments: 1, validatePipeline: noPipelineChecks,
 		});

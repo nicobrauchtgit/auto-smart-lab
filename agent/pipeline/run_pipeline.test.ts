@@ -1,3 +1,4 @@
+import { testTelemetry, traceEvents, traceEventsForDirectory, telemetryForDirectory } from "../telemetry/testing.js";
 import { afterEach, describe, expect, test } from "bun:test";
 import { spamConfiguration } from "./task_configuration.testing.js";
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
@@ -9,7 +10,7 @@ import { STAGE_REGISTRY } from "./registry.js";
 import type { StageDefinition, StageName, StageResult } from "./types.js";
 
 // No trace database here either, so runs exercise the local mirror.
-process.env.AGENT_DATABASE_PORT = "1";
+
 
 const workspaces: string[] = [];
 const realStages = { ...STAGE_REGISTRY };
@@ -49,14 +50,7 @@ function stage(name: StageName, next: StageName | undefined, run: () => Promise<
 	};
 }
 
-function events(runsDir: string, taskId: string, pipelineRunId: string) {
-	// Trace files lead with a timestamp, so find this run by its id suffix
-	// rather than reconstructing a name the writer chose.
-	const directory = join(runsDir, taskId, "pipeline");
-	const name = readdirSync(directory).find((entry) => entry.endsWith(`-${pipelineRunId.slice(0, 8)}.jsonl`));
-	if (!name) throw new Error(`No trace for ${pipelineRunId} in ${directory}: ${readdirSync(directory).join(", ")}`);
-	return readFileSync(join(directory, name), "utf8").trim().split("\n").map((line) => JSON.parse(line));
-}
+function events(_runsDir: string, _taskId: string, pipelineRunId: string) { return traceEvents(pipelineRunId); }
 
 describe("runPipeline", () => {
 	test("shares one prompt snapshot across stages and records its fingerprint", async () => {
@@ -73,23 +67,23 @@ describe("runPipeline", () => {
 		STAGE_REGISTRY.solve = {
 			...stage("solve", undefined, async () => ({ artifacts: [] })),
 			async run(context) {
-				expect(context.prompts).toBe(snapshot);
+				expect(context.prompts).toBe(snapshot!);
 				return { artifacts: [] };
 			},
 		};
 		const runsDir = workspace();
-		const result = await runPipeline({
+		const result = await runPipeline({ telemetry: telemetryForDirectory(runsDir),
 			taskId: "spam1", runsDir,
 			configPath: configFile(runsDir, { research: { enabled: true }, solve: { enabled: true } }),
 		});
 		expect(result.outcome).toBe("success");
 		const recorded = events(runsDir, "spam1", result.pipelineRunId);
-		expect(recorded.find(event => event.event_type === "pipeline_prompt_snapshot").payload.prompt_snapshot_sha256)
+		expect(recorded.find(event => event.event_type === "pipeline_prompt_snapshot")!.payload.prompt_snapshot_sha256)
 			.toBe(snapshot!.fingerprint);
 		const reference = recorded.find(event => event.event_type === "prompt_reference_test");
-		expect(reference.payload.prompt).toEqual(snapshot!.render("solve.system", { taskId: "spam1" }).reference);
-		expect(reference.pipeline_run_id).toBe(result.pipelineRunId);
-		expect(reference.stage_invocation_id).toBe(result.invocations[0].invocationId);
+		expect(reference!.payload.prompt).toEqual(snapshot!.render("solve.system", { taskId: "spam1" }).reference);
+		expect(reference!.pipeline_run_id).toBe(result.pipelineRunId);
+		expect(reference!.stage_invocation_id).toBe(result.invocations[0].invocationId);
 	});
 
 	test("follows the stage chain while the next stage is enabled", async () => {
@@ -103,7 +97,7 @@ describe("runPipeline", () => {
 			return { artifacts: [] };
 		});
 		const runsDir = workspace();
-		const result = await runPipeline({
+		const result = await runPipeline({ telemetry: telemetryForDirectory(runsDir),
 			taskId: "spam1",
 			runsDir,
 			configPath: configFile(runsDir, { research: { enabled: true }, solve: { enabled: true }, evaluate: { enabled: false } }),
@@ -129,7 +123,7 @@ describe("runPipeline", () => {
 			return { artifacts: [] };
 		});
 		const runsDir = workspace();
-		const result = await runPipeline({
+		const result = await runPipeline({ telemetry: telemetryForDirectory(runsDir),
 			taskId: "spam1",
 			runsDir,
 			stopAfter: "research",
@@ -152,7 +146,7 @@ describe("runPipeline", () => {
 			return { artifacts: [] };
 		});
 		const runsDir = workspace();
-		const result = await runPipeline({
+		const result = await runPipeline({ telemetry: telemetryForDirectory(runsDir),
 			taskId: "spam1",
 			runsDir,
 			configPath: configFile(runsDir, { research: { enabled: true }, solve: { enabled: true } }),
@@ -160,7 +154,7 @@ describe("runPipeline", () => {
 
 		expect(solved).toBe(false);
 		expect(result.outcome).toBe("failure");
-		const end = events(runsDir, "spam1", result.pipelineRunId).at(-1);
+		const end = events(runsDir, "spam1", result.pipelineRunId).at(-1)!;
 		expect(end.event_type).toBe("pipeline_run_end");
 		expect(end.payload.outcome).toBe("failure");
 	});
@@ -171,12 +165,10 @@ describe("runPipeline", () => {
 		STAGE_REGISTRY.research = stage("research", "solve", async () => ({ artifacts: [] }));
 		STAGE_REGISTRY.solve = stage("solve", undefined, async () => ({ artifacts: [] }));
 
-		await expect(runPipeline({ taskId: "spam1", runsDir, configPath, entryStage: "solve" }))
+		await expect(runPipeline({ telemetry: telemetryForDirectory(runsDir), taskId: "spam1", runsDir, configPath, entryStage: "solve" }))
 			.rejects.toThrow(/not enabled/);
 
-		const traceDir = join(runsDir, "spam1", "pipeline");
-		const file = readFileSync(join(traceDir, readdirSync(traceDir)[0]), "utf8");
-		const end = file.trim().split("\n").map((line) => JSON.parse(line)).at(-1);
+		const end = traceEventsForDirectory(runsDir).at(-1)!;
 		expect(end.event_type).toBe("pipeline_run_end");
 		expect(end.payload.outcome).toBe("failure");
 		expect(end.payload.stopped_because).toContain("not enabled");
@@ -194,7 +186,7 @@ describe("runPipeline", () => {
 			return { artifacts: [] };
 		});
 		const runsDir = workspace();
-		const result = await runPipeline({
+		const result = await runPipeline({ telemetry: telemetryForDirectory(runsDir),
 			taskId: "spam1",
 			runsDir,
 			signal: controller.signal,
@@ -218,7 +210,7 @@ describe("seeded upstream artifacts", () => {
 		};
 		const runsDir = workspace();
 		const seed = { kind: "research_document", path: "/prior/research.md", sha256: "abc123" };
-		const result = await runPipeline({
+		const result = await runPipeline({ telemetry: telemetryForDirectory(runsDir),
 			taskId: "spam1", runsDir, entryStage: "solve", seedArtifacts: [seed],
 			configPath: configFile(runsDir, { research: { enabled: true }, solve: { enabled: true } }),
 		});
@@ -229,39 +221,38 @@ describe("seeded upstream artifacts", () => {
 		expect(result.invocations.map((invocation) => invocation.stage)).toEqual(["solve"]);
 		const start = events(runsDir, "spam1", result.pipelineRunId)
 			.find((event) => event.event_type === "pipeline_run_start");
-		expect(start.payload.seeded_artifacts).toEqual([seed]);
+		expect(start!.payload.seeded_artifacts).toEqual([seed]);
 	});
 
 	test("records an empty seed list when the run starts from the beginning", async () => {
 		STAGE_REGISTRY.research = stage("research", undefined, async () => ({ artifacts: [] }));
 		const runsDir = workspace();
-		const result = await runPipeline({
+		const result = await runPipeline({ telemetry: telemetryForDirectory(runsDir),
 			taskId: "spam1", runsDir,
 			configPath: configFile(runsDir, { research: { enabled: true } }),
 		});
 		const start = events(runsDir, "spam1", result.pipelineRunId)
 			.find((event) => event.event_type === "pipeline_run_start");
-		expect(start.payload.seeded_artifacts).toEqual([]);
+		expect(start!.payload.seeded_artifacts).toEqual([]);
 	});
 });
 
 test("a missing later-stage prerequisite blocks every stage and records the failure", async () => {
- expect(realStages.solve.setupRequirements).toContain("web-search");
+ expect(realStages.solve!.setupRequirements).toContain("web-search");
  const before = process.env.TAVILY_API_KEY;
  process.env.TAVILY_API_KEY = "";
  let ran = false;
  const runsDir = workspace();
  try {
   STAGE_REGISTRY.research = stage("research", "solve", async () => { ran = true; return { artifacts: [] }; });
-  STAGE_REGISTRY.solve = { ...stage("solve", undefined, async () => { ran = true; return { artifacts: [] }; }), setupRequirements: realStages.solve.setupRequirements?.filter(requirement => requirement === "web-search") };
+  STAGE_REGISTRY.solve = { ...stage("solve", undefined, async () => { ran = true; return { artifacts: [] }; }), setupRequirements: realStages.solve!.setupRequirements?.filter(requirement => requirement === "web-search") };
   const configPath = configFile(runsDir, { research: { enabled: true }, solve: { enabled: true } });
-  await expect(runPipeline({ taskId: "spam1", runsDir, configPath })).rejects.toThrow("TAVILY_API_KEY");
+  await expect(runPipeline({ telemetry: telemetryForDirectory(runsDir), taskId: "spam1", runsDir, configPath })).rejects.toThrow("TAVILY_API_KEY");
   expect(ran).toBe(false);
-  const dir = join(runsDir, "spam1", "pipeline");
-  const records = readFileSync(join(dir, readdirSync(dir)[0]), "utf8").trim().split("\n").map(line => JSON.parse(line));
+  const records = traceEventsForDirectory(runsDir);
   expect(records.some(record => record.event_type === "setup_finished" && record.payload.valid === false)).toBe(true);
   expect(records.some(record => record.event_type === "stage_started")).toBe(false);
-  expect(records.at(-1).payload.outcome).toBe("failure");
+  expect(records.at(-1)!.payload.outcome).toBe("failure");
  } finally {
   if (before === undefined) delete process.env.TAVILY_API_KEY; else process.env.TAVILY_API_KEY = before;
  }
@@ -273,7 +264,7 @@ test("setup-only runs do not execute stages; stop-after excludes later requireme
  STAGE_REGISTRY.solve = { ...stage("solve", undefined, async () => ({ artifacts: [] })), setupRequirements: ["web-search"] };
  const runsDir = workspace();
  const configPath = configFile(runsDir, { research: { enabled: true }, solve: { enabled: true } });
- const result = await runPipeline({ taskId: "spam1", runsDir, configPath, stopAfter: "research", checkSetupOnly: true });
+ const result = await runPipeline({ telemetry: telemetryForDirectory(runsDir), taskId: "spam1", runsDir, configPath, stopAfter: "research", checkSetupOnly: true });
  expect(result.outcome).toBe("success");
  expect(result.invocations).toHaveLength(0);
  expect(ran).toBe(false);
@@ -287,7 +278,7 @@ test("invalid later guidance prevents every stage before any session, including 
  const runsDir = workspace();
  const body = { id: "later", version: 1, taskId: "other-task", stage: "solve" as const, content: "Investigate shift", evidence: [] };
  const guidance = { solve: { ...body, contentSha256: guidanceHash(body) } };
- await expect(runPipeline({ taskId: "spam1", runsDir, guidance,
+ await expect(runPipeline({ telemetry: telemetryForDirectory(runsDir), taskId: "spam1", runsDir, guidance,
   configPath: configFile(runsDir, { research: { enabled: true }, solve: { enabled: true } }) })).rejects.toThrow(/binding/);
  expect(ran).toBe(0);
 });

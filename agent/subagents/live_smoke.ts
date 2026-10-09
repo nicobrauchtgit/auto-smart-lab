@@ -32,8 +32,9 @@ export async function runLiveSmoke() {
 	const { resolved, config } = await loadResolvedPipelineConfig();
 	const model = await initializeModel({ config });
 	const pipelineRunId = randomUUID();
-	const trace = await createPipelineTrace({ taskId: "subagents-live-smoke", pipelineRunId, runsDir: resolve("runs") });
-	console.log(JSON.stringify({ event: "live_smoke_started", model: model.modelId, workspace, trace: trace.localPath }));
+	const events: any[] = [];
+ const trace = await createPipelineTrace({ telemetry: { onRecord(record) { if (events.length < 10000) events.push({ agent_run_id: record.agentRunId, stage_invocation_id: record.identity?.stageInvocationId, event_type: record.eventType, payload: record.payload }); } }, taskId: "subagents-live-smoke", pipelineRunId, runsDir: resolve("runs") });
+	console.log(JSON.stringify({ event: "live_smoke_started", model: model.modelId, workspace, trace: trace.traceUrl ?? trace.traceId }));
 	trace.event("pipeline_run_start", { kind: "subagents_live_smoke", model: model.modelId,
 		prompt_snapshot_sha256: prompts.fingerprint, workspace });
 	let stoppedAfterSuccess = false;
@@ -52,7 +53,7 @@ export async function runLiveSmoke() {
 				artifact: join(workspace, "TASK.md"), content_sha256: hash(task.text), prompt: task.reference });
 			const scope = createSubagents({ cwd: workspace, agentDir, ...model, prompts,
 				sharedInstructions: [python.prompt], inputs: [python.input],
-				env: { PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: process.env.TMPDIR, ...python.env },
+				env: { HOME: process.env.HOME, TMPDIR: process.env.TMPDIR, ...python.env },
 				observe: context.report.observation(1), signal: context.signal,
 				limits: { maxChildren: 1, maxConcurrent: 1 }, turnTimeoutMs: 5 * 60_000 });
 			let parent: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
@@ -76,7 +77,7 @@ export async function runLiveSmoke() {
 					if (event.type !== "tool_execution_end") return;
 					console.log(JSON.stringify({ event: "parent_tool_end", tool: event.toolName, isError: event.isError }));
 					if (event.toolName !== "subagent_wait" || event.isError || stoppedAfterSuccess) return;
-					const text = event.result.content.find(block => block.type === "text");
+					const text = event.result.content.find((block: { type: string; text?: string }) => block.type === "text");
 					if (text?.type !== "text") return;
 					let reply;
 					try { reply = JSON.parse(text.text); } catch { return; }
@@ -111,7 +112,7 @@ export async function runLiveSmoke() {
 			config: resolved, trace, prompts, reason: "live_smoke", optionOverrides: {} });
 		trace.event("pipeline_run_end", { outcome: invocation.outcome, stoppedAfterSuccess });
 		await trace.close();
-		const events = readFileSync(trace.localPath, "utf8").trim().split("\n").map(line => JSON.parse(line));
+
 		const parentId = children?.list()[0]?.parentAgentRunId;
 		const childId = children?.list()[0]?.agentRunId;
 		const contextAssessment = assessSmokeContext(events, parentId, childId);
@@ -127,10 +128,10 @@ export async function runLiveSmoke() {
 			bothSessionsClosed: events.filter(event => event.event_type === "agent_run_end").length === 2,
 			sharedInvocation: events.filter(event => event.event_type === "agent_run_start").every(event => event.stage_invocation_id === invocation.invocationId),
 		};
-		const summary = { model: model.modelId, workspace, trace: trace.localPath, invocation, checks,
+		const summary = { model: model.modelId, workspace, trace: trace.traceUrl ?? trace.traceId, invocation, checks,
 			replyQuality: contextAssessment.replyQuality,
 			verification, traceDegraded: trace.degraded(), traceFailures: trace.failures() };
-		const summaryPath = trace.localPath.replace(/\.jsonl$/, ".summary.json");
+		const summaryPath = `${trace.artifactRoot}.summary.json`;
 		writeFileSync(summaryPath, JSON.stringify(summary, null, 2));
 		console.log(JSON.stringify({ event: "live_smoke_finished", summaryPath, checks, outcome: invocation.outcome, traceDegraded: trace.degraded() }));
 		return invocation.outcome === "success" && Object.values(checks).every(Boolean);

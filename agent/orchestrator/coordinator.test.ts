@@ -1,3 +1,4 @@
+import { testTelemetry, traceEvents } from "../telemetry/testing.js";
 import { expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -114,7 +115,7 @@ test("preexisting two official attempts leave one autonomous try", async () => {
 test("no-submit chooses local validated artifacts with zero upload calls", async () => { await scenario([], { authorized: false, expectedSubmissions: 0, expectedSolves: 1 }); });
 async function scenario(scores: number[], expected: { authorized?: boolean; consumed?: number; expectedSubmissions: number; expectedSolves: number; best?: number }) {
  const f = fixture(expected.authorized ?? true), original = { ...STAGE_REGISTRY };
- const trace = await createPipelineTrace({ taskId: "fixture", pipelineRunId: f.state.runId, runsDir: f.directory });
+ const trace = await createPipelineTrace({ telemetry: testTelemetry(), taskId: "fixture", pipelineRunId: f.state.runId, runsDir: f.directory });
  let uploads = 0, solves = 0, reviews = 0, freezes = 0, receivedGoal: any;
  const stages: StageName[] = ["research", "solve", "evaluate", "refit", "submit"];
  for (const name of stages) STAGE_REGISTRY[name] = { name, version: 1, description: name, parseOptions: raw => raw ?? {}, checkInput() {}, async run(context) {
@@ -138,7 +139,7 @@ async function scenario(scores: number[], expected: { authorized?: boolean; cons
   await runDecisionAgent({ coordinator: c, prompts: f.prompts, report, taskDescription: "fixture goal", signal: new AbortController().signal, attempt: 1 }, async options => {
    expect(options.tools).toEqual([]); expect(options.extensions).toBe(false); expect(options.extensionPaths).toEqual([]); expect(options.knowledge).toBeUndefined();
    receivedGoal = JSON.parse(options.prompt.split("\n").filter(line => line.startsWith('{')).at(-1)!);
-   const call = async (name: string, args: any) => { c.executionGuard.beforeModelRequest(); c.executionGuard.beforeToolCall(); const result = await options.customTools!.find(t => t.name === name)!.execute(`tool-${name}`, args, new AbortController().signal); return JSON.parse((result.content[0] as any).text); };
+   const call = async (name: string, args: any) => { c.executionGuard.beforeModelRequest(); c.executionGuard.beforeToolCall(); const result = await options.customTools!.find(t => t.name === name)!.execute(`tool-${name}`, args, new AbortController().signal, undefined, undefined as never); return JSON.parse((result.content[0] as any).text); };
    const read = () => call("pipeline_status", {});
    const start = async (stage: StageName, guidance?: string) => {
     const state = await read(); const choose = (kind: string) => state.artifacts.filter((a: any) => a.kind === kind).at(-1)?.id;
@@ -258,7 +259,7 @@ test("unknown submission reservations consume reported budget and block another 
 test("production recovery invokes reconcile with no ledger/source and never upload runner", async () => {
  const { reconcileOwnedInvocation } = await import("./run.js");
  const f = fixture(), original = STAGE_REGISTRY.submit;
- const trace = await createPipelineTrace({ taskId: "fixture", pipelineRunId: f.state.runId, runsDir: f.directory }); let uploads = 0, reconciles = 0;
+ const trace = await createPipelineTrace({ telemetry: testTelemetry(), taskId: "fixture", pipelineRunId: f.state.runId, runsDir: f.directory }); let uploads = 0, reconciles = 0;
  STAGE_REGISTRY.submit = { name: "submit", version: 1, description: "mock ledger", parseOptions: () => ({}), checkInput() {},
   async run() { uploads++; throw new Error("Upload must never run in recovery"); },
   async reconcile() { reconciles++; return { artifacts: [], validation: { valid: false, errors: ["no intent; no POST"] }, summary: { state: "unknown", newAttempt: false } }; },
@@ -296,7 +297,7 @@ test("bounded status retains required stage inputs after many training artifact 
 test("coordinator recovery reconciles an actual pending submit when its original upstream result was removed", async () => {
  const { reconcileOwnedInvocation } = await import("./run.js");
  const f = fixture(); let owned!: ReturnType<typeof controllable>;
- const original = STAGE_REGISTRY.submit; const trace = await createPipelineTrace({ taskId: "fixture", pipelineRunId: f.state.runId, runsDir: f.directory });
+ const original = STAGE_REGISTRY.submit; const trace = await createPipelineTrace({ telemetry: testTelemetry(), taskId: "fixture", pipelineRunId: f.state.runId, runsDir: f.directory });
  const c = new Coordinator(f.store, { start: work => { owned = controllable(work); return owned.handle; } });
  c.start(request(c, "refit", "frozen")); const refit = c.state.works[0], path = join(f.directory, "original-refit-result.json"); writeFileSync(path, "{}");
  const artifact = { kind: "terminal_refit_result", path, sha256: hash("{}"), provenance: { artifactId: "real-upstream-reference", taskId: "fixture", pipelineRunId: f.state.runId, invocationId: refit.id, sha256: hash("{}") } };

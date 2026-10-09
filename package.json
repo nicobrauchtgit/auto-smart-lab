@@ -9,8 +9,9 @@
     "research": "bun agent/research_cli.ts",
     "test:py": "\"${VENV_DIR:-$PWD/.venv}/bin/python\" -m unittest discover -s agent/setup/tests && \"${VENV_DIR:-$PWD/.venv}/bin/python\" -m unittest discover -s agent/training/python -p 'test_*.py' && \"${VENV_DIR:-$PWD/.venv}/bin/python\" -m unittest discover -s agent/evaluation -p 'test_*.py'",
     "pi:hi": "bun agent/pi_sdk.ts",
-    "traces": "next dev agent/dashboard -p 3001",
+    "telemetry:smoke": "bun agent/telemetry/smoke.ts",
     "test": "bun test",
+    "typecheck": "tsc --noEmit",
     "evaluate-stage": "bun agent/evaluate_cli.ts",
     "solve-stage": "bun agent/solve_cli.ts",
     "refit-stage": "bun agent/refit_cli.ts",
@@ -19,13 +20,16 @@
   "dependencies": {
     "@earendil-works/pi-ai": "0.84.1",
     "@earendil-works/pi-coding-agent": "0.84.1",
-    "next": "^16.3.2",
-    "postgres": "^3.4.9",
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "@langfuse/client": "5.13.1",
+    "@langfuse/otel": "5.13.1",
+    "@langfuse/tracing": "5.13.1",
+    "@opentelemetry/api": "1.9.1",
+    "@opentelemetry/otlp-transformer": "0.223.0",
+    "@opentelemetry/sdk-trace-base": "2.12.0",
+    "@opentelemetry/sdk-trace-node": "2.12.0"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4.3.3",
-    "tailwindcss": "^4.3.3"
+    "@types/bun": "1.3.13",
+    "typescript": "7.0.2"
   }
 }

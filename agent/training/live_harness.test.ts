@@ -10,6 +10,8 @@ import { ExperimentSupervisor } from "../experiments/supervisor.js";
 import { TrainingService } from "./service.js";
 import type { Update } from "../experiments/types.js";
 
+import { writeSampleManifest } from "./testing.js";
+
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 async function until(predicate: () => boolean, timeoutMs = 30_000): Promise<boolean> {
@@ -68,6 +70,7 @@ test("a supervised pilot can be checked while running and produces non-promotabl
 			taskId: "synthetic-smoke",
 			datasetSha256: createHash("sha256").update(readFileSync(zipPath)).update(readFileSync(labelsPath)).digest("hex"),
 			rootSeed: 13,
+			measurement: writeSampleManifest(temporary, zipPath, labelsPath).measurement,
 			zipPath,
 			labelsPath,
 			allowedModuleRoots: ["agent/training/python/fixtures"],

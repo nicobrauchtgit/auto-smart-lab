@@ -14,8 +14,9 @@ import type { PromptSnapshot } from "../prompts/loader.js";
 import { KnowledgeStore } from "../knowledge/store.js";
 import { selectedKnowledge } from "../knowledge/service.js";
 import { submissionSetupChecks, submissionRecoverySetupChecks } from "../submission/setup.js";
+import type { Telemetry } from "../telemetry/runtime.js";
 
-export type SetupRequirement = "model" | "python" | "task" | "training" | "evaluation" | "refit" | "web-search" | "knowledge" | "submission" | "submission-recovery" | "orchestrator" | "solve-isolation" | "confirmation";
+export type SetupRequirement = "observability" | "model" | "python" | "task" | "training" | "evaluation" | "refit" | "web-search" | "knowledge" | "knowledge-history" | "submission" | "submission-recovery" | "orchestrator" | "solve-isolation" | "confirmation";
 export interface SetupCheck {
  id: string;
  phase: "local" | "remote";
@@ -81,6 +82,7 @@ export function checkEvidenceDestination(path: string): void {
 }
 
 export function setupChecks(requirements: readonly SetupRequirement[], options: {
+ telemetry?: Pick<Telemetry, "checkLocal" | "checkAccess">;
  taskId: string;
  /** The resolved harness parts: declared, or from pipeline.config.json. */
  taskConfiguration?: TaskConfiguration;
@@ -96,6 +98,16 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
  const checks: SetupCheck[] = [];
  const add = (id: string, phase: SetupCheck["phase"], remedy: string, run: SetupCheck["run"]) => checks.push({ id, phase, remedy, run });
  const needs = new Set(requirements);
+ if (needs.has("observability")) {
+  add("langfuse-configuration", "local", "Set LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY and the HTTPS LANGFUSE_BASE_URL in the project .env; run ./dev setup and make the emergency trace destination writable.", () => {
+   if (!options.telemetry) throw new Error("Missing shared telemetry runtime");
+   options.telemetry.checkLocal();
+  });
+  add("langfuse-access", "remote", "Check the Langfuse project API keys, Cloud region and network access. The bounded read-only project probe must pass before agents start.", async signal => {
+   if (!options.telemetry) throw new Error("Missing shared telemetry runtime");
+   await options.telemetry.checkAccess(signal);
+  });
+ }
  if (needs.has("solve-isolation")) add("solve-filesystem-isolation", "local", "Solve requires Linux bubblewrap with working user, mount and PID namespaces, plus bash/git/rg/fd/uv. Install bubblewrap through the host administrator or set SOLVE_BWRAP to an existing executable; no agent starts without this boundary.", () => {
   checkSolveSandbox(options.executables?.bwrap);
   options.prompts.render("solve.isolation", { workspace: "preflight" });
@@ -108,9 +120,15 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
  });
  if (needs.has("submission")) checks.push(...submissionSetupChecks({ taskId: options.taskId, taskConfiguration: options.taskConfiguration, policy: options.submissionPolicy, candidateProducedUpstream: options.candidateProducedUpstream }));
  if (needs.has("submission-recovery")) checks.push(...submissionRecoverySetupChecks({ taskId: options.taskId, policy: options.submissionPolicy }));
+ if (needs.has("knowledge-history")) add("knowledge-history-git", "local", "Install git through the execution machine's system setup; experiment comparisons read frozen solutions revisions without fitting or changing them.", () => {
+  const result = spawnSync(options.executables?.git ?? "git", ["--version"], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });
+  if (result.error || result.status !== 0) throw new Error("History source comparison requires git");
+ });
  if (needs.has("knowledge")) {
   add("knowledge-skills", "local", "Restore the registered agent/prompts/knowledge skills and tool template; runtime selection requires the validated prompt snapshot.", () => {
-   selectedKnowledge(options.prompts); options.prompts.render("knowledge.tool", {});
+   selectedKnowledge(options.prompts);
+   for (const id of ["knowledge.tool", "knowledge.history-tool", "knowledge.compare-tool", "knowledge.compare-notes-tool"] as const) options.prompts.render(id, {});
+   readable(join(PROJECT_ROOT, "agent/knowledge/experiments.ts"));
    readable(join(PROJECT_ROOT, "agent/knowledge/service.ts"));
    readable(join(PROJECT_ROOT, "agent/knowledge/verify_evidence.py"));
   });

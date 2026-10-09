@@ -11,7 +11,7 @@ export interface KnowledgeOrigin { taskId: string; datasetSha256: string; pipeli
 export interface EvidenceReceipt {
  producer: "training-harness"; experimentId: string; taskId: string; datasetSha256: string;
  pipelineRunId?: string; stageInvocationId?: string; scope: string; source: unknown; parameters: unknown; cv: unknown;
- metrics: { balancedAccuracy: number }; artifacts: { path: string; sha256: string }[];
+ metrics: { balancedAccuracy?: number; adjustedRandIndex?: number; selectionScore?: number }; artifacts: { path: string; sha256: string }[];
 }
 export interface KnowledgeDraft {
  title: string; summary: string; body: string; tags: string[]; status: KnowledgeStatus;
@@ -49,9 +49,13 @@ export function validateDraft(draft: KnowledgeDraft) {
  if (Buffer.byteLength(JSON.stringify(draft), "utf8") > 16 * 1024) throw new Error("Knowledge draft exceeds 16 KiB serialized bound; shorten or split the lesson");
 }
 function validateReceipt(receipt: EvidenceReceipt, origin: KnowledgeOrigin) {
+ const metrics = Object.entries(receipt.metrics ?? {});
+ const validMetric = metrics.length === 1 && metrics.every(([key, value]) =>
+  ["balancedAccuracy", "adjustedRandIndex", "selectionScore"].includes(key) && typeof value === "number"
+   && Number.isFinite(value) && value >= (key === "adjustedRandIndex" ? -1 : 0) && value <= 1);
  if (receipt.producer !== "training-harness" || receipt.taskId !== origin.taskId || receipt.datasetSha256 !== origin.datasetSha256
-  || !["pilot", "promotion"].includes(receipt.scope) || !Number.isFinite(receipt.metrics?.balancedAccuracy)
-  || receipt.metrics.balancedAccuracy < 0 || receipt.metrics.balancedAccuracy > 1 || !Array.isArray(receipt.artifacts) || !receipt.artifacts.length || receipt.artifacts.length > 30) throw new Error("Invalid harness receipt");
+  || !["pilot", "promotion"].includes(receipt.scope) || !validMetric
+  || !Array.isArray(receipt.artifacts) || !receipt.artifacts.length || receipt.artifacts.length > 30) throw new Error("Invalid harness receipt");
  for (const artifact of receipt.artifacts) if (typeof artifact.path !== "string" || !HASH.test(artifact.sha256)) throw new Error("Invalid evidence artifact");
 }
 /** Refuse symlink components, including a non-existent root's existing ancestors. */

@@ -9,11 +9,14 @@ import { PROJECT_ROOT } from "../pipeline/resolve_task.js";
 import type { PromptSnapshot } from "../prompts/loader.js";
 import type { SuppliedInput } from "../pipeline/types.js";
 import { digest, KnowledgeStore, safePath, validateOrigin, type EvidenceReceipt, type KnowledgeDraft, type KnowledgeOrigin, type KnowledgeNote } from "./store.js";
+import { compareExperiments, experimentDirectory, experimentHistory, type ExperimentReference } from "./experiments.js";
 
 export interface KnowledgeOptions {
  root: string; origin: KnowledgeOrigin;
  /** Controller-selected roots only; agents supply experiment IDs, never filesystem paths. */
  trainingRoots?: readonly string[];
+ /** Controller-selected solutions repository for bounded read-only source diffs. */
+ solutionsRoot?: string;
  record?: (type: string, payload: Record<string, unknown>) => void;
  reportInput?: (input: SuppliedInput) => void;
 }
@@ -55,11 +58,10 @@ async function harnessEvidence(root: string, id: string, origin: KnowledgeOrigin
  const seed = JSON.parse(readFileSync(join(trial.directory, "seed-plan.json"), "utf8"));
  if (seed.taskId !== origin.taskId || seed.datasetSha256 !== origin.datasetSha256) throw new Error("Harness evidence task/dataset mismatch");
  const invocation = trial.invocation;
- // verify_evidence.py recomputes binary classification measurements only.
  const measurement = JSON.parse(readFileSync(join(trial.directory, "invocation.json"), "utf8")).measurement as { kind?: string; sampleManifestPath?: string } | undefined;
- if (measurement && measurement.kind !== "classification") throw new Error("Knowledge evidence citations support binary classification trials only; cite clustering and anomaly trials by experiment ID in prose");
- // The development data the solve fingerprint covers: archive bytes plus the manifest (or legacy labels).
- const data = [invocation.inputs.zipPath, measurement ? measurement.sampleManifestPath : invocation.inputs.labelsPath];
+ if (!measurement?.sampleManifestPath) throw new Error("Retired decoded-text evidence: raw sample metadata is required");
+ // The development data the solve fingerprint covers: archive bytes plus the raw manifest.
+ const data = [invocation.inputs.zipPath, measurement.sampleManifestPath];
  if (!data.every(path => typeof path === "string" && existsSync(path))) throw new Error("Harness development data unavailable");
  if (digest(Buffer.concat(data.map(path => readFileSync(safePath(path as string))))) !== origin.datasetSha256) throw new Error("Harness development dataset changed");
  const checkpoint = join(trial.directory, trial.request.search ? "search-checkpoint.json" : "single-checkpoint.json");
@@ -78,7 +80,8 @@ async function harnessEvidence(root: string, id: string, origin: KnowledgeOrigin
   { env: sanitizeTrainingEnvironment(process.env), encoding: "utf8", timeout: 10000, maxBuffer: 100000 });
  if (verification.error || verification.status !== 0) throw new Error("Harness prediction/checkpoint measurement verification failed");
  const verified = JSON.parse(verification.stdout);
- if (verified.verified !== true || verified.metrics.balancedAccuracy !== trial.result.metrics.balancedAccuracy) throw new Error("Harness measurement verification failed");
+ const metric = measurement?.kind === "clustering" ? "adjustedRandIndex" : measurement?.kind === "anomaly_detection" ? "selectionScore" : "balancedAccuracy";
+ if (typeof trial.result.metrics[metric] !== "number" || verified.verified !== true || verified.metrics[metric] !== trial.result.metrics[metric]) throw new Error("Harness measurement verification failed");
  const recovery = existsSync(recoveryPath) ? JSON.parse(readFileSync(safePath(recoveryPath), "utf8")) : undefined;
  if (recovery) {
   if (recovery.taskId !== origin.taskId || recovery.datasetSha256 !== origin.datasetSha256 || recovery.invocationHash !== digest(readFileSync(join(trial.directory, "invocation.json")))) throw new Error("Harness origin receipt mismatch");
@@ -90,8 +93,9 @@ async function harnessEvidence(root: string, id: string, origin: KnowledgeOrigin
   ...(recovery?.originStageInvocationId ? { stageInvocationId: recovery.originStageInvocationId } : {}),
   scope: trial.result.scope!, source: invocation.source ?? null,
   parameters: { factory: trial.request.pipeline.parameters ?? null, estimator: trial.request.pipeline.estimatorParams ?? {}, ...(verified.parameters ? { searchWinner: verified.parameters } : {}) },
-  cv: { design: trial.request.cv, completedFolds: trial.result.completedFolds, search: !!trial.request.search },
-  metrics: { balancedAccuracy: trial.result.metrics.balancedAccuracy }, artifacts };
+  cv: { design: trial.request.cv, completedFolds: trial.result.completedFolds, search: !!trial.request.search,
+   ...(measurement?.kind !== "classification" ? { measurement: trial.invocation.measurement } : {}) },
+  metrics: { [metric]: trial.result.metrics[metric] as number }, artifacts };
 }
 
 export class TaskKnowledge {
@@ -127,11 +131,13 @@ export class TaskKnowledge {
   this.options.reportInput?.({ ...knowledgeInput(this.options), retrieved_ids: matches.map(m => m.id), query });
   return matches;
  }
- async read(id: string) {
+ async read(id: string, revision?: number) {
   if (!/^[a-f0-9]{32}$/.test(id)) throw new Error("Invalid knowledge ID");
   const note = this.store.notes().find(note => note.id === id);
   if (!note) throw new Error("Knowledge note unavailable");
-  const latest = note.revisions.at(-1)!;
+  if (revision !== undefined && (!Number.isInteger(revision) || revision < 1)) throw new Error("Invalid knowledge revision");
+  const latest = revision === undefined ? note.revisions.at(-1)! : note.revisions.find(value => value.revision === revision);
+  if (!latest) throw new Error("Knowledge revision unavailable");
   let value: unknown;
   if (!this.same(note)) {
    if (!latest.reusable) throw new Error("Knowledge dataset mismatch");
@@ -152,7 +158,8 @@ export class TaskKnowledge {
    value = { id, origin: note.origin, ...latest,
     ...(latest.evidence ? { evidence: { ...latest.evidence, source: boundedMetadata(latest.evidence.source), parameters: boundedMetadata(latest.evidence.parameters), cv: boundedMetadata(latest.evidence.cv), artifacts: boundedMetadata(latest.evidence.artifacts) } } : {}),
     evidenceStatus, authoritativeForCurrentRun: false,
-    history: note.revisions.slice(0, -1).map(r => ({ revision: r.revision, at: r.at, status: r.status, lifecycle: r.lifecycle ?? "active", sha256: r.sha256 })) };
+    historicalRevision: latest.revision !== note.revisions.at(-1)!.revision,
+    history: note.revisions.filter(r => r.revision < latest.revision).map(r => ({ revision: r.revision, at: r.at, status: r.status, lifecycle: r.lifecycle ?? "active", sha256: r.sha256 })) };
   }
   if (Buffer.byteLength(JSON.stringify(value)) > 32768) throw new Error("Knowledge read exceeds 32 KiB response bound; inspect the retained scoped artifacts");
   const hash = digest(JSON.stringify(value));
@@ -160,12 +167,32 @@ export class TaskKnowledge {
   this.options.reportInput?.({ ...knowledgeInput(this.options), note_id: id, revision: latest.revision, content_sha256: hash });
   return value;
  }
- async capture(draft: KnowledgeDraft, experiment?: { rootIndex: number; id: string }, update?: { id: string; expectedRevision: number }) {
+ history(offset = 0, limit = 8) {
+  const value = experimentHistory(this.options.trainingRoots ?? [], this.origin, offset, limit);
+  this.record("experiment_history", { offset, limit, content_sha256: digest(JSON.stringify(value)), input: value });
+  this.options.reportInput?.({ ...knowledgeInput(this.options), content_sha256: digest(JSON.stringify(value)), experiment_references: value.experiments.map(row => row.reference) });
+  return value;
+ }
+ compare(left: ExperimentReference, right: ExperimentReference) {
+  const value = compareExperiments(this.options.trainingRoots ?? [], this.origin, left, right, this.options.solutionsRoot ?? join(PROJECT_ROOT, "solutions"));
+  this.record("experiment_compare", { left, right, content_sha256: digest(JSON.stringify(value)), input: value });
+  this.options.reportInput?.({ ...knowledgeInput(this.options), content_sha256: digest(JSON.stringify(value)), experiment_references: [left, right] });
+  return value;
+ }
+ async compareNotes(left: string, right: string, leftRevision?: number, rightRevision?: number) {
+  const before = await this.read(left, leftRevision), after = await this.read(right, rightRevision);
+  const value = { left: before, right: after,
+   limitation: "Compare observations, outcomes and caveats, then capture a reusable lesson. Unverified signals and agent assertions do not establish a measured or causal improvement. No champion is required." };
+  this.record("knowledge_compare", { left, right, leftRevision, rightRevision, content_sha256: digest(JSON.stringify(value)) });
+  return value;
+ }
+ async capture(draft: KnowledgeDraft, experiment?: ExperimentReference, update?: { id: string; expectedRevision: number }) {
   let evidence: EvidenceReceipt | undefined;
   if (experiment) {
    const roots = this.options.trainingRoots ?? [];
    if (!Number.isInteger(experiment.rootIndex) || experiment.rootIndex < 0 || !roots[experiment.rootIndex]) throw new Error("Harness root unavailable");
-   evidence = await harnessEvidence(roots[experiment.rootIndex], experiment.id, this.origin);
+   const directory = experimentDirectory(roots, experiment);
+   evidence = await harnessEvidence(dirname(directory), experiment.id, this.origin);
   }
   const captured = this.store.capture(this.origin, draft, evidence, update);
   this.record("knowledge_capture", { id: captured.note.id, revision: captured.note.revisions.length, deduplicated: captured.deduplicated,
@@ -176,11 +203,23 @@ export class TaskKnowledge {
 export function createKnowledgeTools(service: TaskKnowledge, prompts: PromptSnapshot) {
  const description = prompts.render("knowledge.tool", {}).text;
  const result = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value) }], details: {} });
+ const reference = () => Type.Object({ rootIndex: Type.Integer({ minimum: 0 }), run: Type.Optional(Type.String()), id: Type.String() });
  return [
+  ...(service.options.trainingRoots?.length ? [
+  defineTool({ name: "experiment_history", label: "Read previous experiments", description: prompts.render("knowledge.history-tool", {}).text,
+   parameters: Type.Object({ offset: Type.Optional(Type.Integer({ minimum: 0 })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 12 })) }),
+   async execute(_, args) { return result(service.history(args.offset, args.limit)); } }),
+  defineTool({ name: "experiment_compare", label: "Compare previous experiments", description: prompts.render("knowledge.compare-tool", {}).text,
+   parameters: Type.Object({ left: reference(), right: reference() }),
+   async execute(_, args) { return result(service.compare(args.left, args.right)); } }),
+  ] : []),
+  defineTool({ name: "knowledge_compare", label: "Compare observations and lessons", description: prompts.render("knowledge.compare-notes-tool", {}).text,
+   parameters: Type.Object({ left: Type.String(), right: Type.String(), leftRevision: Type.Optional(Type.Integer({ minimum: 1 })), rightRevision: Type.Optional(Type.Integer({ minimum: 1 })) }),
+   async execute(_, args) { return result(await service.compareNotes(args.left, args.right, args.leftRevision, args.rightRevision)); } }),
   defineTool({ name: "knowledge_search", label: "Search task knowledge", description, parameters: Type.Object({ query: Type.String(), limit: Type.Optional(Type.Integer()) }),
    async execute(_, args) { return result(service.search(args.query, args.limit)); } }),
-  defineTool({ name: "knowledge_read", label: "Read task knowledge", description, parameters: Type.Object({ id: Type.String() }),
-   async execute(_, args) { return result(await service.read(args.id)); } }),
+  defineTool({ name: "knowledge_read", label: "Read task knowledge", description, parameters: Type.Object({ id: Type.String(), revision: Type.Optional(Type.Integer({ minimum: 1 })) }),
+   async execute(_, args) { return result(await service.read(args.id, args.revision)); } }),
   defineTool({ name: "knowledge_capture", label: "Capture or update task knowledge", description,
    parameters: Type.Object({ draft: Type.Object({
     title: Type.String({ minLength: 1, maxLength: 160 }), summary: Type.String({ minLength: 1, maxLength: 400 }),
@@ -189,7 +228,7 @@ export function createKnowledgeTools(service: TaskKnowledge, prompts: PromptSnap
     applicability: Type.String({ minLength: 1, maxLength: 1000 }), caveats: Type.String({ minLength: 1, maxLength: 1000 }),
     lifecycle: Type.Optional(Type.Union([Type.Literal("active"), Type.Literal("stale"), Type.Literal("superseded")])),
     reusable: Type.Optional(Type.Object({ lesson: Type.String({ minLength: 1, maxLength: 1200 }), applicability: Type.String({ minLength: 1, maxLength: 1000 }), caveats: Type.String({ minLength: 1, maxLength: 1000 }) })),
-   }), experiment: Type.Optional(Type.Object({ rootIndex: Type.Integer({ minimum: 0 }), id: Type.String() })), update: Type.Optional(Type.Object({ id: Type.String(), expectedRevision: Type.Integer({ minimum: 1 }) })) }),
+   }), experiment: Type.Optional(reference()), update: Type.Optional(Type.Object({ id: Type.String(), expectedRevision: Type.Integer({ minimum: 1 }) })) }),
    async execute(_, args) { return result(await service.capture(args.draft, args.experiment, args.update)); } }),
  ];
 }

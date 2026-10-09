@@ -19,13 +19,20 @@ class TerminalRefitTest(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.inputs = {key: str(self.root / key) for key in ('labelsPath', 'trainZip', 'testZip', 'devLabelsPath', 'devZip')}
+        self.inputs = {key: str(self.root / key) for key in ('targetsPath', 'trainZip', 'testZip', 'devManifest', 'devZip')}
         self.train = ['train/a.0', 'train/b.1', 'train/c.0', 'train/d.1']
         self.test = ['test/a.x', 'test/b.x']
         for key, ids in [('trainZip', self.train), ('devZip', self.train[:2]), ('testZip', self.test)]:
             self.archive(key, ids)
-        Path(self.inputs['labelsPath']).write_text(''.join(f'{name};{i % 2}\n' for i, name in enumerate(self.train)))
-        Path(self.inputs['devLabelsPath']).write_text('train/a.0;0\ntrain/b.1;1\n')
+        Path(self.inputs['targetsPath']).write_text(''.join(f'{name};{i % 2}\n' for i, name in enumerate(self.train)))
+        self.inputs.update(kind='samples', task={'kind': 'classification', 'execution': 'inductive', 'targets': 'binary',
+                                                'measurement': {'kind': 'classification', 'execution': 'inductive'}})
+        self.write_development()
+
+    def write_development(self, targets=(0, 1)):
+        Path(self.inputs['devManifest']).write_text(json.dumps({'schemaVersion': 1, 'samples': [
+            {'id': row_id, 'input': {'archive': self.inputs['devZip'], 'member': row_id}, 'target': target}
+            for row_id, target in zip(self.train[:2], targets)]}))
 
     def archive(self, key, ids):
         with zipfile.ZipFile(self.inputs[key], 'w') as archive:
@@ -39,13 +46,13 @@ class TerminalRefitTest(unittest.TestCase):
             worker.data(self.inputs)
 
     def test_duplicate_labels_are_refused(self):
-        path = Path(self.inputs['labelsPath'])
+        path = Path(self.inputs['targetsPath'])
         path.write_text(path.read_text() + 'train/a.0;0\n')
-        with self.assertRaisesRegex(AssertionError, 'Duplicate'):
+        with self.assertRaisesRegex(ValueError, 'Repeated sample ID'):
             worker.data(self.inputs)
 
     def test_original_archive_accepts_only_its_verified_labels_sidecar(self):
-        labels = Path(self.inputs['labelsPath'])
+        labels = Path(self.inputs['targetsPath'])
         with zipfile.ZipFile(self.inputs['trainZip'], 'a') as archive:
             archive.writestr(labels.name, labels.read_bytes())
         self.assertEqual(worker.data(self.inputs)['trainRows'], len(self.train))
@@ -57,26 +64,28 @@ class TerminalRefitTest(unittest.TestCase):
 
     def test_embedded_original_labels_must_match_external_labels(self):
         with zipfile.ZipFile(self.inputs['trainZip'], 'a') as archive:
-            archive.writestr(Path(self.inputs['labelsPath']).name, 'train/a.0;1\n')
-        with self.assertRaisesRegex(AssertionError, 'Embedded training labels drifted'):
+            archive.writestr(Path(self.inputs['targetsPath']).name, 'train/a.0;1\n')
+        with self.assertRaisesRegex(ValueError, 'Embedded.*differs'):
             worker.data(self.inputs)
 
     def test_duplicate_test_ids_are_refused(self):
         with contextlib.redirect_stderr(io.StringIO()):
             self.archive('testZip', ['test/a.x', 'test/a.x'])
-        with self.assertRaisesRegex(AssertionError, 'duplicate'):
+        with self.assertRaisesRegex(ValueError, '[Dd]uplicate'):
             worker.data(self.inputs)
 
-    def test_labelled_test_ids_and_train_test_overlap_are_refused(self):
-        self.archive('testZip', ['test/a.0'])
-        with self.assertRaisesRegex(AssertionError, 'neutral'):
-            worker.data(self.inputs)
+    def test_train_test_overlap_is_refused(self):
         self.archive('testZip', ['train/a.0'])
         with self.assertRaisesRegex(AssertionError, 'overlap'):
             worker.data(self.inputs)
 
+    def test_retired_text_freeze_is_refused(self):
+        inputs = {key: value for key, value in self.inputs.items() if key != 'kind'}
+        with self.assertRaisesRegex(AssertionError, 'Retired decoded-text'):
+            worker.data(inputs)
+
     def test_development_label_drift_is_refused(self):
-        Path(self.inputs['devLabelsPath']).write_text('train/a.0;1\ntrain/b.1;1\n')
+        self.write_development((1, 1))
         with self.assertRaisesRegex(AssertionError, 'drifted'):
             worker.data(self.inputs)
 
@@ -88,6 +97,8 @@ class TerminalRefitTest(unittest.TestCase):
     def set_params(self, **parameters):
         assert parameters == {'winning': 7}
     def fit(self, frame, y):
+        assert set(frame.columns) == {'id', 'input'}
+        assert all(set(item) == {'archive', 'member'} for item in frame['input'])
         assert list(frame['id']) == ['train/a.0', 'train/b.1', 'train/c.0', 'train/d.1']
         assert list(y) == [0, 1, 0, 1]
         self.rows = len(y)
@@ -96,7 +107,7 @@ class TerminalRefitTest(unittest.TestCase):
         assert self.rows == 4
         return [0] * len(frame)
 def build(context):
-    assert context == {'parameters': {'fixed': 3}, 'seed': 11}
+    assert context == {'parameters': {'fixed': 3}, 'seed': 11, 'measurement': {'kind': 'classification', 'execution': 'inductive'}}
     return Estimator()
 ''')
         if not serializable:

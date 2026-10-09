@@ -60,7 +60,7 @@ function reporter() {
 	const report: StageReporter = {
 		event(type, payload) { events.push({ type, payload }); },
 		agentIdentity(attempt) { return { pipelineRunId: "pipeline-1", taskId: "task", stage: "solve", stageInvocationId: "stage-1", attempt }; },
-		observation(attempt) { return { identity: this.agentIdentity(attempt), sink: { record() {}, close() {}, databaseConnected: false, failures: [] } } as never; },
+		observation(attempt) { return { identity: this.agentIdentity(attempt), telemetry: { record() {}, close() {}, failures: [] } } as never; },
 		input(input) { inputs.push(input); },
 	};
 	return { report, events, inputs };

@@ -17,7 +17,7 @@ const request = (search = true, delay = 0.3) => ({ schemaVersion: 2, hypothesis:
  ...(search ? { search: { space: { model__C: { type: "categorical", choices: [0.1, 1] } }, sampler: "random", maxConfigs: 4 } } : {}) });
 function options(project: ReturnType<typeof temporaryProject>) {
  return { root: join(project.root, "training", "origin"), env: trainingEnvironment(), pythonExecutable: PYTHON,
- projectRoot: project.root, solutionsRoot: project.solutionsRoot, taskId: "fixture", datasetSha256: project.datasetSha256,
+ projectRoot: project.root, solutionsRoot: project.solutionsRoot, taskId: "fixture", datasetSha256: project.datasetSha256, measurement: project.measurement,
  rootSeed: 13, zipPath: project.zipPath, labelsPath: project.labelsPath, workerPath: WORKER, maxExperiments: 1,
  pipelineRunId: "origin-run", stageInvocationId: "origin-invocation", limits: { sampleIntervalMs: 25, stopGraceMs: 100 } };
 }
@@ -148,7 +148,7 @@ test("PID reuse birth mismatch is never ownership", () => {
 });
 for (const field of ["data", "invocation", "dependency", "metadata"] as const) test(`refuses incompatible/corrupt ${field} before another fit`, async () => {
  const f = await durableFixture(); const dir = f.started.directory;
- if (field === "data") writeFileSync(f.project.labelsPath, "changed");
+ if (field === "data") writeFileSync(f.project.sampleManifestPath, readFileSync(f.project.sampleManifestPath, "utf8") + " ");
  if (field === "invocation") writeFileSync(join(dir, "invocation.json"), "{}");
  if (field === "dependency") atomicJson(join(dir, "recovery.json"), { ...read(dir, "recovery.json"), environmentFingerprint: "different" });
  if (field === "metadata") writeFileSync(join(dir, "recovery.json"), "broken json");
@@ -161,7 +161,7 @@ test("two attempts bound recovery across restarts without extra experiment budge
   await expect(service.start(request())).rejects.toThrow("budget exhausted"); (service as any).releaseClaims();
  }
  expect(f.starts).toBe(3);
-});
+}, 30_000); // Restart metadata preflight imports the Python runtime each time.
 test("agent resume tool resumes intentional pause and requires cost acknowledgement", async () => {
  const f = await durableFixture(); const dir = f.started.directory;
  atomicJson(join(dir, "trial-result.json"), { status: "interrupted", runtimeGuard: { projectedSeconds: 50 } });
@@ -170,10 +170,10 @@ test("agent resume tool resumes intentional pause and requires cost acknowledgem
  try {
   await training.ready();
   const tool = training.tools.find(t => t.name === "experiment_resume")!;
-  await expect(tool.execute("resume", { id: f.started.id }, new AbortController().signal)).rejects.toThrow("acceptEstimatedSeconds");
-  await expect(tool.execute("resume", { id: f.started.id, acceptEstimatedSeconds: 1 }, new AbortController().signal)).rejects.toThrow("at least 50");
-  const result = await tool.execute("resume", { id: f.started.id, acceptEstimatedSeconds: 50 }, new AbortController().signal);
-  expect(result.content[0].text).toContain('"budgetConsumed":false');
+  await expect(tool.execute("resume", { id: f.started.id }, new AbortController().signal, undefined, undefined as never)).rejects.toThrow("acceptEstimatedSeconds");
+  await expect(tool.execute("resume", { id: f.started.id, acceptEstimatedSeconds: 1 }, new AbortController().signal, undefined, undefined as never)).rejects.toThrow("at least 50");
+  const result = await tool.execute("resume", { id: f.started.id, acceptEstimatedSeconds: 50 }, new AbortController().signal, undefined, undefined as never);
+  expect(result.content[0].type === "text" ? result.content[0].text : "").toContain('"budgetConsumed":false');
   expect(await until(() => training.supervisor.status(f.started.id).status !== "running")).toBe(true);
   expect(read(dir, "trial-result.json").status).toBe("completed");
  } finally { await training.close(); }

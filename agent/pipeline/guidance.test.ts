@@ -103,8 +103,8 @@ test("executor snapshots before awaits, rejects invalid guidance before stage, h
    calls++; expect(context.input.guidance?.content).toBe(note().content); expect(Object.isFrozen(context.input.guidance)).toBe(true);
    await new Promise<void>(resolve => { unblock = resolve; }); return { artifacts: [], validation: { valid: true, errors: [] } };
   } };
-  const config = resolvePipelineSettings({ pipeline: { entryStage: "research", stages: { research: { enabled: true } } }, agent: {}, providers: {} } as PipelineConfig);
-  const trace = { pipelineRunId: "run", localPath: join(root, "trace"), stage: () => ({ ...report(inputs, events), inputs: () => inputs }) } as any;
+  const config = resolvePipelineSettings({ pipeline: { entryStage: "research", stages: { research: { enabled: true } } }, agent: { cwd: ".", agentDir: ".", initialPrompt: "" }, providers: {}, defaultModel: "fixture/model" } as PipelineConfig);
+  const trace = { pipelineRunId: "run", artifactRoot: join(root, "trace"), telemetry: { checkLocal() {}, async checkAccess() {} }, stage: () => ({ ...report(inputs, events), inputs: () => inputs }) } as any;
   const n = note(); const handle = startStageInvocation({ stage: "research", input: { taskId: "fixture", taskConfiguration: spamConfiguration(), upstream: [], guidance: n }, config, trace, prompts });
   n.content = "changed after start";
   while (!unblock) await new Promise(resolve => setTimeout(resolve, 1));

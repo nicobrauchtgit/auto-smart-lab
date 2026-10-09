@@ -114,7 +114,9 @@ function persistentWrite(policy: SolveSandbox, value: unknown): boolean {
 
 /** Every SDK filesystem tool runs in a fresh restricted mount/PID namespace. */
 export function isolatedSolveTools(policy: SolveSandbox): ToolDefinition[] {
- return Object.entries(factories).map(([name, factory]) => ({ ...factory(policy.cwd), async execute(id, params, signal, onUpdate) {
+ // The SDK tool registry erases each factory's parameter schema. Preserve the
+ // factory renderers; dispatch still validates parameters through that schema.
+ return Object.entries(factories).map(([name, factory]) => ({ ...factory(policy.cwd), async execute(id: string, params: unknown, signal: AbortSignal | undefined, onUpdate: Parameters<ToolDefinition["execute"]>[3]) {
   signal?.throwIfAborted();
   if (["write", "edit"].includes(name) && !persistentWrite(policy, (params as any).path)) throw new Error("Write outside the persistent solve workspace is unavailable");
   return await new Promise<ToolResult>((accept, reject) => {
@@ -144,7 +146,7 @@ export function isolatedSolveTools(policy: SolveSandbox): ToolDefinition[] {
    });
    child.stdin.end(JSON.stringify({ name, id, params, cwd: policy.cwd }));
   });
- } }));
+ } })) as unknown as ToolDefinition[];
 }
 
 /** Trusted narrow service: dependency management stays outside filesystem tools. */
@@ -200,7 +202,7 @@ export function solvePythonEnvironmentTool(python: PythonEnvironment, descriptio
  * The trusted launch receipt writer stays outside; its child remains in the
  * same host process group (no --new-session), preserving group cancellation. */
 export function trainingSandboxCommand(base: SolveSandbox, command: string[], input: { directory: string; sourceRoots: readonly string[] }): string[] {
- const mounts = base.mounts.map(mount => ({ ...mount, writable: false }));
+ const mounts: SandboxMount[] = base.mounts.map(mount => ({ ...mount, writable: false }));
  mounts.push({ source: join(ROOT, "agent/training/python") });
  mounts.push({ source: input.directory, writable: true });
  for (const source of input.sourceRoots) if (existsSync(source)) mounts.push({ source });

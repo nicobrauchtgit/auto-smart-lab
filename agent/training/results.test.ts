@@ -274,7 +274,7 @@ test("eligible claims are rejected when either summary or fold records ID leakag
     document.idLeakage = { rows: 2, mismatches: 1 }; await writeFile(path, JSON.stringify(document));
    }
   } else {
-   const path = join(directory, "fold-results.jsonl"), rows = (await readFile(path, "utf8")).trim().split("\n").map(JSON.parse);
+   const path = join(directory, "fold-results.jsonl"), rows = (await readFile(path, "utf8")).trim().split("\n").map(line => JSON.parse(line));
    rows[0].idLeakage = { rows: 1, mismatches: 1 }; await writeFile(path, rows.map(row => JSON.stringify(row)).join("\n") + "\n");
   }
   const collection = await collectTrainingResults(root);

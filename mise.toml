@@ -17,10 +17,6 @@ UV_PROJECT_ENVIRONMENT = "{{config_root}}/.venv"
 # Only uv-managed Python: never pick up a Nix or system interpreter from PATH.
 UV_PYTHON_PREFERENCE = "only-managed"
 PI_CODING_AGENT_DIR = "{{config_root}}/.pi/agent"
-# Optional trace database; traces fall back to local JSONL when it is absent.
-AGENT_DATABASE_PORT = "55433"
-PGDATABASE = "postgres"
-PGPORT = "55433"
 
 [tasks.setup]
 description = "Create .venv with the pinned Python and dependencies, install the JS dependencies"
@@ -30,8 +26,8 @@ run = [
 ]
 
 [tasks.test]
-description = "Run the TypeScript and Python test suites"
-run = ["bun test", "bun run test:py"]
+description = "Check TypeScript types and run the TypeScript and Python test suites"
+run = ["bun run typecheck", "bun test", "bun run test:py"]
 
 [tasks.pi]
 description = "Interactive pi with the project agent directory"

@@ -34,6 +34,7 @@ Options:
   --stop-after <name>        stop after this stage
   --no-fetch                 do not download a missing unit
   --secure-tls               verify TLS when fetching a unit
+  --allow-telemetry-fallback  allow emergency tracing during an initial Cloud outage
   --echo-events              print every recorded trace event
   --check-setup              verify setup (including live API access), then exit
   --dry-run                  resolve the task and print the plan only
@@ -81,6 +82,7 @@ async function main(): Promise<void> {
 	const autoFetch = !takeFlag("--no-fetch");
 	const secureTls = takeFlag("--secure-tls");
 	const echoEvents = takeFlag("--echo-events");
+ const allowTelemetryFallback = takeFlag("--allow-telemetry-fallback");
 	const dryRun = takeFlag("--dry-run");
 	const checkSetupOnly = takeFlag("--check-setup");
 	const guidancePath = takeOption("--guidance");
@@ -159,7 +161,7 @@ async function main(): Promise<void> {
 	const result = await runPipeline({
 		taskId: resolvedTask.taskId,
  guidance: guidanceInputs.guidance, evidenceCatalog: guidanceInputs.evidenceCatalog,
-		checkSetupOnly,
+		checkSetupOnly, telemetry: { allowFallback: allowTelemetryFallback },
 		model,
 		entryStage,
 		stopAfter,
@@ -176,9 +178,10 @@ async function main(): Promise<void> {
 		for (const artifact of invocation.artifacts) console.log(`[pipeline]     ${artifact.kind}: ${artifact.path}`);
 	}
 	console.log(`[pipeline] Outcome: ${result.outcome} — ${result.stoppedBecause}`);
-	console.log(`[pipeline] Trace: ${result.localTracePath}`);
+	console.log(`[pipeline] Langfuse trace: ${result.traceUrl ?? result.traceId}`);
+ if (result.localTracePath) console.warn(`[pipeline] Emergency trace: ${result.localTracePath}`);
 	if (result.traceDegraded) {
-		console.warn(`[pipeline] Trace is incomplete: ${result.traceFailures.join("; ") || "database unavailable"}`);
+		console.warn(`[pipeline] Trace is incomplete: ${result.traceFailures.join("; ") || "export unavailable"}`);
 	}
 	if (result.outcome !== "success") process.exitCode = 1;
 }

@@ -43,5 +43,5 @@ test("recovery setup permits pending/exhausted status and makes no upload or acc
 test("submission stage options cannot carry authorization or transport credentials",async()=>{
  const {submitStage}=await import("../pipeline/stages/submit.js");
  for(const value of [{authorized:true},{cookie:"value"},{transport:{}},{toString:1}])expect(()=>submitStage.parseOptions(value)).toThrow("Unknown");
- expect(typeof submitStage.reconcile).toBe("function");expect(submitStage.recoverySetupRequirements).toEqual(["submission-recovery"]);
+ expect(typeof submitStage.reconcile).toBe("function");expect(submitStage.recoverySetupRequirements).toEqual(["observability","submission-recovery"]);
 });

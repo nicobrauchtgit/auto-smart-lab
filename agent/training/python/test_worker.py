@@ -20,13 +20,22 @@ from smartlab_trial.seeds import _derive_seed
 
 
 PIPELINE = '''
+import zipfile
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline, FunctionTransformer
 
+def read_text(frame):
+    assert set(frame.columns) == {"id", "input"}
+    texts = []
+    for item in frame["input"]:
+        with zipfile.ZipFile(item["archive"]) as archive:
+            texts.append(archive.read(item["member"]).decode("utf-8"))
+    return texts
+
 def build_pipeline(context):
     return Pipeline([
-        ("text", FunctionTransformer(lambda frame: frame["text"], validate=False)),
+        ("text", FunctionTransformer(read_text, validate=False)),
         ("tfidf", TfidfVectorizer()),
         ("model", LogisticRegression(max_iter=context["parameters"].get("max_iter", 100))),
     ])
@@ -64,6 +73,11 @@ class Worker(unittest.TestCase):
             encoding="utf-8",
         )
 
+        self.sample_path = self.root / "samples.json"
+        self.sample_path.write_text(json.dumps({"schemaVersion": 1, "samples": [
+            {"id": row_id, "input": {"archive": str(self.zip_path), "member": row_id},
+             "target": int(row_id.rsplit(".", 1)[1])} for row_id in reversed(self.ids)]}))
+
     def invocation(self, name="run", *, scope=None, cv=None):
         return {
             "schemaVersion": 1,
@@ -87,11 +101,19 @@ class Worker(unittest.TestCase):
                 "labelsPath": str(self.labels_path),
                 "outputDir": str(self.root / name),
             },
+            "measurement": {"kind": "classification", "execution": "inductive", "sampleManifestPath": str(self.sample_path)},
             "seeds": {"experiment": 1776},
         }
 
     def read_json(self, run, name):
         return json.loads((self.root / run / name).read_text(encoding="utf-8"))
+
+    def test_retired_text_invocation_is_rejected_before_loading_agent_code(self):
+        document = self.invocation()
+        del document["measurement"]
+        (self.root / "solutions/pipeline.py").write_text("raise AssertionError('agent imported')")
+        with self.assertRaisesRegex(ValueError, "Retired decoded-text"):
+            worker.execute(document)
 
     def test_seed_derivation_matches_the_persisted_typescript_plan(self):
         fixture = json.loads((Path(__file__).parents[1] / "seed-vectors.json").read_text())

@@ -27,7 +27,7 @@ function service(project: ReturnType<typeof temporaryProject>, supervisor = fake
 	return new TrainingService({
 		supervisor, pythonExecutable: "python", projectRoot: project.root,
 		trainingRoot: join(project.root, "runs", "training"), taskId: "fixture",
-		datasetSha256: project.datasetSha256, rootSeed: 13, zipPath: project.zipPath, labelsPath: project.labelsPath,
+		datasetSha256: project.datasetSha256, measurement: project.measurement, rootSeed: 13, zipPath: project.zipPath, labelsPath: project.labelsPath,
 		solutionsRoot: project.solutionsRoot, validatePipeline: async () => [],
 	});
 }

@@ -1,3 +1,4 @@
+import { testTelemetry, traceEvents } from "../telemetry/testing.js";
 import { expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -24,7 +25,7 @@ test("refit preflight has no provider requirements, checks full data before upst
  const upstream = setupChecks(refitStage.setupRequirements!, { ...base, candidateProducedUpstream: true });
  expect(upstream.some(c => c.id.startsWith("refit-candidate"))).toBe(false);
  expect(upstream.some(c => c.id.startsWith("refit-data"))).toBe(true);
- expect(upstream.some(c => c.phase === "remote" || c.id === "model-configuration")).toBe(false);
+ expect(upstream.some(c => (c.phase === "remote" && c.id !== "langfuse-access") || c.id === "model-configuration")).toBe(false);
  const standalone = setupChecks(refitStage.setupRequirements!, base);
  expect(standalone.some(c => c.id.startsWith("refit-candidate"))).toBe(true);
  const runtime = setupChecks(["refit"], { ...base, executables: { python: "/missing-python", git: "/missing-git" } }).filter(c => c.id === "refit-runtime");
@@ -38,7 +39,7 @@ test("whole chain rejects missing later refit inputs before solve starts", async
  STAGE_REGISTRY.solve = { ...solveStage, setupRequirements: [], checkInput() {}, async run() { called = true; return { artifacts: [] }; }, next: "refit" };
  STAGE_REGISTRY.refit = refitStage;
  try {
-  await expect(runPipeline({ taskId: "fixture-missing", entryStage: "solve", configPath: path, runsDir: root })).rejects.toThrow("refit-data");
+  await expect(runPipeline({ telemetry: testTelemetry(), taskId: "fixture-missing", entryStage: "solve", configPath: path, runsDir: root })).rejects.toThrow("refit-data");
   expect(called).toBe(false);
  } finally { STAGE_REGISTRY.solve = oldSolve; STAGE_REGISTRY.refit = oldRefit; }
 }, 30_000);
@@ -53,12 +54,12 @@ test("standalone refit calls the shared executor, records typed inputs/artifact 
   return { artifacts: [{ kind: "final_test_predictions", path: "/fixture/predictions.csv", sha256: "fixture" }], validation: { valid: true, errors: [] } };
  } };
  try {
-  const setup = await runRefitStage({ taskId: "fixture", configPath: path, runsDir: root, checkSetupOnly: true });
+  const setup = await runRefitStage({ telemetry: testTelemetry(), taskId: "fixture", configPath: path, runsDir: root, checkSetupOnly: true });
   expect(setup.outcome).toBe("success"); expect(calls).toBe(0);
-  const result = await runRefitStage({ taskId: "fixture", configPath: path, runsDir: root });
+  const result = await runRefitStage({ telemetry: testTelemetry(), taskId: "fixture", configPath: path, runsDir: root });
   expect(result.outcome).toBe("success"); expect(result.invocations[0].stage).toBe("refit"); expect(result.invocations[0].attempts).toBe(0);
-  const events = readFileSync(result.localTracePath!, "utf8").split("\n").filter(Boolean).map(s => JSON.parse(s));
-  expect(events.some(e => e.event_type === "stage_started" || e.type === "stage_started")).toBe(true);
+  const events = traceEvents(result.pipelineRunId);
+  expect(events.some(e => e.event_type === "stage_started")).toBe(true);
   expect(JSON.stringify(events)).toContain("frozen_candidate");
   expect(JSON.stringify(events)).toContain(result.pipelineRunId);
  } finally { STAGE_REGISTRY.refit = previous; }

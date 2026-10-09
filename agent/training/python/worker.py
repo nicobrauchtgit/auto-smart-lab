@@ -17,7 +17,6 @@ from pathlib import Path
 from typing import Any, Sequence
 
 import numpy as np
-from smartlab_eval import load_labelled
 
 from smartlab_trial.agent_code import (
     _call_pipeline_factory, _factory, _inject_random_states, _load_module, expose_project,
@@ -42,28 +41,16 @@ def _handle_stop(_signum: int, _frame: Any) -> None:
 
 
 def _prepare_data(invocation: Invocation) -> tuple[Any, list[Any] | None, list[str]]:
-    if invocation.measurement:
-        frame, y, _digest = load_samples(invocation.measurement)
-        if invocation.search and y is None and not invocation.search.objective and not invocation.measurement.get("selection"):
-            raise InvocationError("Search selection requires a trusted primary metric; label-free trials report proxies only")
-        if invocation.scope.kind == "pilot" and invocation.scope.max_rows is not None:
-            maximum = min(invocation.scope.max_rows, len(frame))
-            selected = _pilot_indices(y if y is not None else [0] * len(frame), maximum,
-                                      _derive_seed("pilot", [invocation.trial_seed]))
-            frame = frame.iloc[selected].reset_index(drop=True)
-            y = [y[index] for index in selected] if y is not None else None
-        return frame, y, frame["id"].tolist()
-    frame, y = load_labelled(invocation.zip_path, invocation.labels_path)
-    # Stable input order makes folds independent of labels-file ordering.
-    order = np.argsort(frame["id"].astype(str).to_numpy(), kind="stable")
-    frame = frame.iloc[order].reset_index(drop=True)
-    y = [int(y[index]) for index in order]
-    scope = invocation.scope
-    if scope.kind == "pilot" and scope.max_rows is not None:
-        selected = _pilot_indices(y, min(scope.max_rows, len(y)), _derive_seed("pilot", [invocation.trial_seed]))
+    frame, y, _digest = load_samples(invocation.measurement)
+    if invocation.search and y is None and not invocation.search.objective and not invocation.measurement.get("selection"):
+        raise InvocationError("Search selection requires a trusted primary metric; label-free trials report proxies only")
+    if invocation.scope.kind == "pilot" and invocation.scope.max_rows is not None:
+        maximum = min(invocation.scope.max_rows, len(frame))
+        selected = _pilot_indices(y if y is not None else [0] * len(frame), maximum,
+                                  _derive_seed("pilot", [invocation.trial_seed]))
         frame = frame.iloc[selected].reset_index(drop=True)
-        y = [y[index] for index in selected]
-    return frame, y, [str(value) for value in frame["id"]]
+        y = [y[index] for index in selected] if y is not None else None
+    return frame, y, frame["id"].tolist()
 
 
 def _run_fold(invocation: Invocation, pipeline_factory: Any, fold: ConcreteFold,

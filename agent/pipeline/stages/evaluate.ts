@@ -17,7 +17,7 @@ export function createEvaluateStage(deps = { prepareEvidence, runSession }): Sta
  return {
   name: "evaluate", version: 1, next: "refit",
   description: "Short advisory model review of harness OOF performance, validation risks and class disparities",
-  setupRequirements: ["knowledge", "model", "python", "evaluation"],
+  setupRequirements: ["observability", "knowledge", "knowledge-history", "model", "python", "evaluation"],
   parseOptions(raw) {
    if (raw !== undefined && (!raw || typeof raw !== "object" || Array.isArray(raw))) throw new Error("evaluate options must be an object");
    const options = (raw ?? {}) as Record<string, unknown>;
@@ -74,8 +74,8 @@ export function createEvaluateStage(deps = { prepareEvidence, runSession }): Sta
     const seed = existsSync(seedPath) ? JSON.parse(readFileSync(seedPath, "utf8")) : undefined;
     await deps.runSession({ prompts, system, prompt: [guide.text, start.text].filter(Boolean).join("\n\n"), feedback: context.feedback,
      ...(seed ? { knowledge: { root: join(PROJECT_ROOT, "knowledge"), origin: { taskId: context.input.taskId,
-      datasetSha256: seed.datasetSha256, pipelineRunId: context.report.agentIdentity(1).pipelineRunId,
-      stageInvocationId: context.report.agentIdentity(1).stageInvocationId }, trainingRoots: [dirname(evidence.directory), join(PROJECT_ROOT, "runs", context.input.taskId, "solve", "training")] } } : {}),
+      datasetSha256: seed.datasetSha256, pipelineRunId: context.report.agentIdentity(1).pipelineRunId ?? undefined,
+      stageInvocationId: context.report.agentIdentity(1).stageInvocationId ?? undefined }, trainingRoots: [dirname(evidence.directory), join(PROJECT_ROOT, "runs", context.input.taskId, "solve", "training")] } } : {}),
      promptReferences: [system.reference, guide.reference, start.reference, ...(guidance ? [guidance.reference] : []),
       prompts.render("review.detail-tool", {}).reference, prompts.render("review.report-tool", {}).reference, prompts.render("review.code-tool", {}).reference],
      model: context.input.model, tools: [], extensions: false, customTools: reviewer.tools,

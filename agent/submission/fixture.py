@@ -35,14 +35,17 @@ for args in [['init', '-q'], ['add', '.'], ['-c', 'user.name=Fixture', '-c', 'us
     subprocess.check_call(['git', '-C', str(source), *args], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 commit = subprocess.check_output(['git', '-C', str(source), 'rev-parse', 'HEAD']).decode().strip()
 tree = subprocess.check_output(['git', '-C', str(source), 'rev-parse', 'HEAD^{tree}']).decode().strip()
-inputs = {key: str(root / key) for key in ['labelsPath', 'trainZip', 'testZip', 'devLabelsPath', 'devZip']}
+inputs = {key: str(root / key) for key in ['targetsPath', 'trainZip', 'testZip', 'devManifest', 'devZip']}
 train = ['train/a.0', 'train/b.1', 'train/c.0', 'train/d.1']
 for key, ids in [('trainZip', train), ('devZip', train[:2]), ('testZip', ['test/a.x', 'test/b.x'])]:
     with zipfile.ZipFile(inputs[key], 'w') as archive:
         for name in ids:
             archive.writestr(name, 'mock corpus')
-Path(inputs['labelsPath']).write_text(''.join(name + ';' + name[-1] + '\n' for name in train))
-Path(inputs['devLabelsPath']).write_text('train/a.0;0\ntrain/b.1;1\n')
+Path(inputs['targetsPath']).write_text(''.join(name + ';' + name[-1] + '\n' for name in train))
+write(inputs['devManifest'], {'schemaVersion': 1, 'samples': [
+    {'id': name, 'input': {'archive': inputs['devZip'], 'member': name}, 'target': int(name[-1])} for name in train[:2]]})
+inputs.update(kind='samples', task={'kind': 'classification', 'execution': 'inductive', 'targets': 'binary',
+                                  'measurement': {'kind': 'classification', 'execution': 'inductive'}})
 pipeline = {'module': 'solutions/tasks/fixture.py', 'factory': 'build', 'parameters': {'variant': sys.argv[3]}, 'estimatorParams': {}}
 identity = hashlib.sha256(json.dumps({'taskId': 'fixture', 'commit': commit, 'pipeline': pipeline}, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 evidence_path = root / 'evidence.json'

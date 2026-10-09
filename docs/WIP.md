@@ -1,5 +1,9 @@
 # Work in progress and implementation roadmap
 
+> Historical document. Use [cleanup-plan.md](cleanup-plan.md) for current work.
+> Local dashboard/Postgres and always-on trace JSONL instructions are superseded
+> by [Langfuse Cloud telemetry](telemetry.md) as of 2026-10-09.
+
 > **Superseded as the entry point (2026-10-07).** Start with
 > [cleanup-plan.md](cleanup-plan.md): it records the current state, decisions
 > and next tasks. Devbox was replaced by the project-local `./dev` toolchain;

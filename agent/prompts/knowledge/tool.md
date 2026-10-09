@@ -1,1 +1,4 @@
-Access bounded task knowledge. Search returns summaries; read returns a selected note and current evidence status. Capture records a non-obvious finding or updates an existing ID with expectedRevision. Empirical notes require a harness experiment from supplied training roots; measurements and provenance are controller-derived. Reusable lessons are separate abstractions with applicability and caveats, never raw task data. Notes cannot authorize training, promotion, refit or submission.
+Search bounded summaries, read selected notes/revisions, or capture findings with
+applicability and caveats. Updates require expectedRevision; empirical notes require
+a verified experiment reference. Reusable lessons omit raw task data. Notes never
+authorize training, selection or submission.

@@ -80,11 +80,11 @@ test("an agent-authored pipeline deliberately starts the harness-owned promotion
 				pipeline: { module, factory: "build_pipeline", parameters: {} },
 				cv: { kind: "builtin", scheme: "stratified_kfold", folds: 2, repeats: 1 },
 				scope: { kind: "promotion" },
-			}, undefined as never);
+			}, undefined, undefined, undefined as never);
 			const id = JSON.parse(started.content[0].type === "text" ? started.content[0].text : "{}").id;
 			const deadline = Date.now() + 30_000;
 			while (Date.now() < deadline) {
-				const view = await status!.execute("agent-tool-2", { id }, undefined as never);
+				const view = await status!.execute("agent-tool-2", { id }, undefined, undefined, undefined as never);
 				const state = JSON.parse(view.content[0].type === "text" ? view.content[0].text : "{}");
 				if (state.status !== "running") break;
 				await Bun.sleep(25);

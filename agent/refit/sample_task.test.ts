@@ -94,7 +94,7 @@ test.skipIf(!hasZip)("a declared clustering task runs from sealed families throu
 	expect(manifest.samples[0].input).toEqual({ archive: workspace.devZip, member: manifest.samples[0].id });
 	expect(workspace.measurement).toEqual({ kind: "clustering", execution: "batch", sampleManifestPath: workspace.sampleManifestPath });
 	expect(workspace.recommendation.scheme).toBe("group_kfold");
-	expect(workspace.devLabelsPath).toBeUndefined();
+	expect("devLabelsPath" in workspace).toBe(false);
 
 	writeFileSync(join(project.solutionsRoot, "tasks", "fixture.py"), PIPELINE);
 	commitAll(project.solutionsRoot, "First-word family clusterer");

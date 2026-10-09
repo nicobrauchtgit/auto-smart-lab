@@ -72,7 +72,7 @@ function parseFoldPolicy(raw: unknown): SolveOptions["foldPolicy"] {
 
 export const solveStage: StageDefinition<SolveOptions> = {
 	name: "solve",
-	setupRequirements: ["knowledge", "model", "python", "task", "training", "web-search", "solve-isolation", "confirmation"],
+	setupRequirements: ["observability", "knowledge", "knowledge-history", "model", "python", "task", "training", "web-search", "solve-isolation", "confirmation"],
 	version: 1,
 	description: "Build and iteratively improve a model, judged on recomputed out-of-fold measurements",
 	next: "evaluate",
@@ -138,7 +138,7 @@ export const solveStage: StageDefinition<SolveOptions> = {
 			// task draw different partitions and a fixed split cannot be ground down.
 			runId: context.report.agentIdentity(1).stageInvocationId ?? undefined,
 		});
-		const artifacts = result.collection.artifacts.map(({ kind, path, bytes, sha256 }) => ({
+		const artifacts: StageArtifact[] = result.collection.artifacts.map(({ kind, path, bytes, sha256 }) => ({
 			kind, path, bytes, sha256,
 		}));
 		if (result.collection.selected) {

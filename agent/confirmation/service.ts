@@ -118,8 +118,8 @@ export async function runConfirmation(options: ConfirmationOptions): Promise<Con
     const workerDirectory = join(directory, "worker");
     supervisor = new ExperimentSupervisor({ root: workerDirectory, env: sanitizeTrainingEnvironment(options.env),
      deliver() {},
-     record: (type, payload) => options.report?.event(type, payload), pipelineRunId: options.report?.agentIdentity(1).pipelineRunId,
-     stageInvocationId: options.report?.agentIdentity(1).stageInvocationId });
+     record: (type, payload) => options.report?.event(type, payload), pipelineRunId: options.report?.agentIdentity(1).pipelineRunId ?? undefined,
+     stageInvocationId: options.report?.agentIdentity(1).stageInvocationId ?? undefined });
     const ownerPath = join(workerDirectory, "worker-owner.json");
     const experimentPath = join(workerDirectory, "experiment.json");
     const owner = existsSync(ownerPath) ? json(ownerPath) : undefined;

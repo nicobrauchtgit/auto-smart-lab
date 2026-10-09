@@ -12,7 +12,7 @@ const lines = (dir: string, name: string) => readFileSync(join(dir, name), "utf8
 function harness(project: ReturnType<typeof temporaryProject>, extra = {}) {
  return createHarnessTraining({ root: join(project.root, "training"), env: trainingEnvironment(), record() {},
   pythonExecutable: PYTHON, projectRoot: project.root, solutionsRoot: project.solutionsRoot,
-  taskId: "fixture", datasetSha256: project.datasetSha256, rootSeed: 13, zipPath: project.zipPath,
+  taskId: "fixture", datasetSha256: project.datasetSha256, measurement: project.measurement, rootSeed: 13, zipPath: project.zipPath,
   labelsPath: project.labelsPath, prompts: loadPromptSnapshot(), workerPath: WORKER,
   pipelineRunId: "search-pipeline", stageInvocationId: "search-invocation", ...extra });
 }

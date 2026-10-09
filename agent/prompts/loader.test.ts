@@ -4,6 +4,7 @@ import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { expect } from "bun:test";
 import { loadPromptSnapshot } from "./loader.js";
 import { PROMPTS, type PromptId } from "./registry.js";
 import { prepareResearchPrompts } from "./research.js";

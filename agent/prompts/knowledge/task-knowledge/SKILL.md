@@ -7,6 +7,13 @@ Search `knowledge_search` before consequential data, feature, validation, or exp
 
 Capture discoveries that would prevent substantial rediscovery: data quirks, failed approaches, measured ablations, validation pitfalls, or useful runtime techniques. Search for overlap first; update the existing ID with its expected revision when correcting or extending it. No useful new discovery means no required write; scientific artifact validation remains independent of notes.
 
+When supplied, use `experiment_history` and `experiment_compare` to compare earlier pipelines,
+including champions and worse attempts. Without harness trials or champions,
+capture observations from useful turns and compare their IDs with `knowledge_compare`.
+Distill what changed, what signals improved or worsened, uncertainty and the next
+test into a reusable lesson. Failed attempts can teach useful lessons; causal
+explanations remain hypotheses unless tested.
+
 Use `hypothesis` for untested explanations, `observation` for agent analyses or local fits, and `empirical` only with a supplied harness experiment reference. The service validates and records measurements; prose scores and agent-run fits are never promotion evidence. State what the evidence actually supports, including negative results, comparison limitations, code/parameter/fold scope, and uncertainty. An empirical receipt authenticates the measured run, not your causal interpretation.
 
 Task notes belong to the supplied task and dataset. A reusable lesson is a separate short abstraction with explicit applicability and caveats; omit row IDs, examples, labels, predictions, secrets and provider payloads. Its origin remains recorded, and a new task must validate applicability. Never copy task data into notes. Do not access sealed labels or post-refit scores, create test pseudo-targets, or train terminal candidates. Knowledge does not authorize promotion, terminal refitting or submission, override harness contracts, prescribe a model, or convert historical evidence into current proof.

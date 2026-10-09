@@ -3,9 +3,10 @@
 import { buildResearchContext, researchContextHash } from "./research/context.js";
 import { loadPromptSnapshot } from "./prompts/loader.js";
 import { prepareResearchPrompts } from "./prompts/research.js";
+import { printTelemetry } from "./telemetry/cli.js";
 
 function usage(): never {
-	console.error("Usage: npm run research -- <task_id> [--model <provider/model>] [--no-startup-context] [--preview-context]");
+	console.error("Usage: npm run research -- <task_id> [--model <provider/model>] [--no-startup-context] [--preview-context] [--allow-telemetry-fallback]");
 	process.exit(1);
 }
 
@@ -19,6 +20,7 @@ async function main(): Promise<void> {
 	}
 	const injectStartupContext = !takeFlag("--no-startup-context");
 	const preview = takeFlag("--preview-context");
+ const allowFallback = takeFlag("--allow-telemetry-fallback");
 	const modelIndex = args.indexOf("--model");
 	let model: string | undefined;
 	if (modelIndex >= 0) {
@@ -41,11 +43,13 @@ async function main(): Promise<void> {
 	// exactly like a scheduled run.
 	const { runResearchStage } = await import("./pipeline/run_research.js");
 	const result = await runResearchStage({
+  telemetry: { allowFallback },
 		taskId,
 		model,
 		injectStartupContext,
 		invokedBy: { kind: "cli", command: "research" },
 	});
+ printTelemetry(result, "[research]");
 	if (result.outcome !== "success") {
 		console.error(`[research] Failed: ${result.error ?? result.stoppedBecause}`);
 		process.exitCode = 1;

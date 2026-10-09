@@ -78,8 +78,6 @@ class Invocation:
     cv: CvSpec
     scope: Scope
     project_root: Path
-    zip_path: str
-    labels_path: str
     output_dir: Path
     experiment_seed: int
     trial_seed: int
@@ -144,12 +142,14 @@ def parse_invocation(document: dict[str, Any]) -> Invocation:
             raise InvocationError(f"request.scope.{name} must be a positive integer")
     inputs = _object(document, "inputs")
     from .measurement import validate_config
-    measurement = validate_config(document["measurement"]) if "measurement" in document else None
+    if "measurement" not in document:
+        raise InvocationError("Retired decoded-text invocation: supply a raw sample manifest through measurement")
+    measurement = validate_config(document["measurement"])
     from .options import validate_options
     validate_options(request)
     if measurement and request.get("search") and measurement["kind"] == "anomaly_detection" and not request["search"].get("objective") and not measurement.get("selection"):
         raise InvocationError("Label-free search has no trusted primary metric; run fixed trials and inspect proxy diagnostics")
-    for name in (("projectRoot", "outputDir") if measurement else ("projectRoot", "zipPath", "labelsPath", "outputDir")):
+    for name in ("projectRoot", "outputDir"):
         if not isinstance(inputs.get(name), str) or not inputs[name]:
             raise InvocationError(f"inputs.{name} must be a non-empty path")
     seeds = _object(document, "seeds")
@@ -184,8 +184,6 @@ def parse_invocation(document: dict[str, Any]) -> Invocation:
         cv=CvSpec(cv["kind"], repeats, cv.get("folds"), cv.get("module"), cv.get("factory"), cv.get("options", {}), cv.get("scheme", "stratified_kfold")),
         scope=Scope(scope["kind"], scope.get("maxRows"), scope.get("maxFolds")),
         project_root=project_root,
-        zip_path=inputs.get("zipPath", ""),
-        labels_path=inputs.get("labelsPath", ""),
         output_dir=Path(inputs["outputDir"]).resolve(),
         experiment_seed=seeds["experiment"],
         # Legacy invocations omit trial; service invocations persist it.

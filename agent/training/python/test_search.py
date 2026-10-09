@@ -19,7 +19,7 @@ class Search(unittest.TestCase):
         self.folds = [ConcreteFold(repeat=0, fold=i, train=(0, 1), validation=(2, 3), seed=i) for i in range(3)]
         self.clock = 0.0
         self.inv = Invocation('fixture', 'test search', PipelineSpec('solutions/pipeline.py', 'build', {}),
-            CvSpec('builtin', 1, 3, None, None, {}), Scope('promotion', None, None), self.root, 'zip', 'labels', self.root, 13, 17,
+            CvSpec('builtin', 1, 3, None, None, {}), Scope('promotion', None, None), self.root, self.root, 13, 17,
             search=SearchSpec({'quality': {'type': 'categorical', 'choices': [0, 1]}}, 'random', 12, True, None),
             runtime=RuntimeGuard(confirm_above_seconds=1000, max_seconds=1000),
             request={'pipeline': {}, 'cv': {'kind': 'builtin', 'scheme': 'stratified_kfold', 'folds': 3, 'repeats': 1}})

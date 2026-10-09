@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 import { fauxProvider, fauxAssistantMessage, fauxToolCall, InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import { createAgentSession, ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
-import { observeAgentSession, type EventRecord, type EventSink } from "../observability.js";
+import { observeAgentSession, type TelemetryRecord, type ObservationTelemetry } from "../observability.js";
 import { loadPromptSnapshot } from "../prompts/loader.js";
 import { createSubagents } from "./index.js";
 import { createChildBashTool, loadChildResources } from "./pi.js";
@@ -52,9 +52,9 @@ test("concurrent bash tools receive separate immutable environments without proc
 test("real Pi children execute tools, preserve follow-up context, and keep transcripts out of parent replies", async () => {
 	const root = mkdtempSync(join(tmpdir(), "subagent-pi-"));
 	const agentDir = join(root, "agent"); mkdirSync(agentDir);
-	const events: EventRecord[] = [];
+	const events: TelemetryRecord[] = [];
 	let sinkClosed = false;
-	const sink: EventSink = { databaseConnected: false, failures: [],
+	const sink: ObservationTelemetry = { failures: [],
 		record: event => events.push(event), async close() { sinkClosed = true; } };
 	const faux = fauxProvider({ provider: "child-test", tokensPerSecond: 1_000_000 });
 	const runtime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath: null, refreshOnCreate: false });
@@ -81,7 +81,7 @@ test("real Pi children execute tools, preserve follow-up context, and keep trans
 	const scope = createSubagents({ cwd: root, agentDir, model: faux.getModel(), modelRuntime: runtime,
 		prompts, sharedInstructions: [],
 		env: { PATH: process.env.PATH }, inputs: [], parentAgentRunId,
-		observe: { identity: { pipelineRunId, stageInvocationId, stage: "solve", attempt: 1 }, sink } });
+		observe: { identity: { pipelineRunId, stageInvocationId, stage: "solve", attempt: 1 }, telemetry: sink } });
 	try {
 		const execute = async (name: string, args: unknown) => {
 			const result = await scope.tools.find(tool => tool.name === name)!
@@ -116,9 +116,9 @@ test("real Pi children execute tools, preserve follow-up context, and keep trans
 test("an observed Pi parent can spawn and collect a child through the optional tools", async () => {
 	const root = mkdtempSync(join(tmpdir(), "subagent-parent-"));
 	const agentDir = join(root, "agent"); mkdirSync(agentDir);
-	const events: EventRecord[] = [];
-	const sink: EventSink = { databaseConnected: false, failures: [], record: event => events.push(event), async close() {} };
-	const observe = { identity: { pipelineRunId: randomUUID(), stageInvocationId: randomUUID(), attempt: 2, stage: "solve" }, sink };
+	const events: TelemetryRecord[] = [];
+	const sink: ObservationTelemetry = { failures: [], record: event => events.push(event), async close() {} };
+	const observe = { identity: { pipelineRunId: randomUUID(), stageInvocationId: randomUUID(), attempt: 2, stage: "solve" }, telemetry: sink };
 	const runtime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath: null, refreshOnCreate: false });
 	const parentProvider = fauxProvider({ provider: "test-parent", tokensPerSecond: 1_000_000 });
 	const childProvider = fauxProvider({ provider: "test-child", tokensPerSecond: 1_000_000 });
@@ -175,8 +175,8 @@ test("an observed Pi parent can spawn and collect a child through the optional t
 test("Pi child handoffs preserve logical identity and expose the replacement physical IDs", async () => {
 	const root = mkdtempSync(join(tmpdir(), "child-context-"));
 	const agentDir = join(root, "agent"); mkdirSync(agentDir);
-	const events: EventRecord[] = [];
-	const sink: EventSink = { databaseConnected: false, failures: [], record: event => events.push(event), async close() {} };
+	const events: TelemetryRecord[] = [];
+	const sink: ObservationTelemetry = { failures: [], record: event => events.push(event), async close() {} };
 	const faux = fauxProvider({ provider: "child-context", tokensPerSecond: 1_000_000, tokenSize: { min: 600_000, max: 600_000 } });
 	const runtime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath: null, refreshOnCreate: false });
 	runtime.registerNativeProvider(faux.provider);
@@ -188,7 +188,7 @@ test("Pi child handoffs preserve logical identity and expose the replacement phy
 		}]);
 	const scope = createSubagents({ cwd: root, agentDir, model: faux.getModel(), modelRuntime: runtime,
 		prompts, sharedInstructions: [], env: {}, inputs: [], parentAgentRunId: "parent",
-		observe: { identity: { stage: "solve", stageInvocationId: "invocation", attempt: 1 }, sink } });
+		observe: { identity: { stage: "solve", stageInvocationId: "invocation", attempt: 1 }, telemetry: sink } });
 	try {
 		const child = scope.manager.spawn("Complete implementation", "spawn");
 		const result = await scope.manager.wait(child.logicalAgentId);

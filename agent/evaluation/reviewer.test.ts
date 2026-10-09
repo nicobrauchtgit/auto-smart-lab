@@ -1,3 +1,4 @@
+import { testTelemetry, traceEvents } from "../telemetry/testing.js";
 import { guidanceHash } from "../pipeline/guidance.js";
 import { expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -16,7 +17,7 @@ const review = { readinessScore: 3, readinessRationale: "Concern 1: lower class 
 function evidence(directory: string): EvaluationEvidence {
  return { directory, experimentId: "fixture", sources: [],
   diagnostics: { summary: { balancedAccuracy: .75 }, curves: { available: false, reason: "No scores" }, folds: [], limitations: ["Development only"] },
-  candidate: { request: undefined, trialsConsidered: 1, eligibleTrials: 1, selectionRule: "fixture" } };
+  candidate: { request: undefined, trialsConsidered: 1, eligibleTrials: 1, measurementKind: "classification", selectionRule: "fixture" } };
 }
 test("review schema fails closed and preserves evidence-linked concerns", () => {
  expect(validateReview(review).status).toBe("concerns");
@@ -26,10 +27,10 @@ test("review schema fails closed and preserves evidence-linked concerns", () => 
 });
 test("inspection budget is advisory; tools allow more than fifteen lookups and one validated report", async () => {
  const reviewer = reviewerTools(evidence('/tmp/fixture'), loadPromptSnapshot());
- for (let i = 0; i < 16; i++) await reviewer.tools[0].execute('id', { section: 'folds' });
+ for (let i = 0; i < 16; i++) await reviewer.tools[0].execute('id', { section: 'folds' }, undefined, undefined, undefined as never);
  expect(loadPromptSnapshot().render("review.system", {}).text).toContain("budget of 15 turns");
- await reviewer.tools[1].execute('id', review as any);
- await expect(reviewer.tools[1].execute('id', review as any)).rejects.toThrow("already recorded");
+ await reviewer.tools[1].execute('id', review as any, undefined, undefined, undefined as never);
+ await expect(reviewer.tools[1].execute('id', review as any, undefined, undefined, undefined as never)).rejects.toThrow("already recorded");
  expect(reviewer.result()?.status).toBe("concerns");
 });
 for (const mode of ['success', 'no-report', 'session-failure', 'cancelled'] as const) {
@@ -37,7 +38,7 @@ for (const mode of ['success', 'no-report', 'session-failure', 'cancelled'] as c
   const directory = mkdtempSync(join(tmpdir(), 'evaluation-stage-'));
   const events: string[] = [], inputs: unknown[] = [];
   const controller = new AbortController();
-  const observation = {};
+  const observation = { identity: {}, sink: { record() {} } } as any;
   try {
    const guidanceBody = { id: "review-note", version: 1, taskId: "fixture", stage: "evaluate" as const, content: "REVIEW_GUIDANCE", evidence: [] };
    const guidance = { ...guidanceBody, contentSha256: guidanceHash(guidanceBody) };
@@ -51,12 +52,12 @@ for (const mode of ['success', 'no-report', 'session-failure', 'cancelled'] as c
     expect(options.promptReferences.map(p => p.id)).toContain('review.guide');
     if (mode === 'session-failure') throw new Error('SECRET provider exception');
     if (mode === 'cancelled') { controller.abort(); throw new Error('cancelled'); }
-    if (mode === 'success') await options.customTools![1].execute('id', review as any);
+    if (mode === 'success') await options.customTools![1].execute('id', review as any, undefined, undefined, undefined as never);
     return { output: 'Done; APPROVE' };
    } });
    const pending = stage.run({ prompts: loadPromptSnapshot(), input: { taskId: 'fixture', taskConfiguration: spamConfiguration(), upstream: [], guidance },
     options: stage.parseOptions(undefined), signal: controller.signal,
-    report: { event: type => events.push(type), input: i => inputs.push(i), agentIdentity: () => ({ stageInvocationId: 'invocation' }) as any, observation: () => observation as any } });
+    report: { event: type => events.push(type), input: (i: unknown) => inputs.push(i), agentIdentity: () => ({ stageInvocationId: 'invocation' }) as any, observation: () => observation as any } });
    if (mode === 'cancelled') { await expect(pending).rejects.toThrow(); return; }
    const result = await pending;
    expect(result.validation?.valid).toBe(mode === 'success');
@@ -94,7 +95,7 @@ test("evaluation prerequisites prevent execution and record failure under the in
    return super.check([{ ...checks.find(c => c.id === 'evaluation-diagnostics'), run() { throw new Error('missing sklearn'); } }], signal, record);
   }
  }
- const trace = await createPipelineTrace({ taskId: 'fixture', pipelineRunId: crypto.randomUUID(), runsDir: directory });
+ const trace = await createPipelineTrace({ telemetry: testTelemetry(), taskId: 'fixture', pipelineRunId: crypto.randomUUID(), runsDir: directory });
  try {
   STAGE_REGISTRY.evaluate = { ...createEvaluateStage(), async run() { ran = true; return { artifacts: [] }; } };
   const config = resolvePipelineSettings({ pipeline: { entryStage: 'evaluate', stages: { evaluate: { enabled: true } } }, agent: { cwd: '.', agentDir: '.', initialPrompt: '' }, providers: {}, defaultModel: 'fixture/model' } as any);
@@ -103,7 +104,7 @@ test("evaluation prerequisites prevent execution and record failure under the in
   expect(invocation.error).toContain('evaluation-diagnostics');
   expect(ran).toBe(false);
   await trace.close();
-  const events = readFileSync(trace.localPath, 'utf8');
+  const events = JSON.stringify(traceEvents(trace.pipelineRunId));
   expect(events).toContain('setup_check');
   expect(events).toContain(invocation.invocationId);
  } finally { STAGE_REGISTRY.evaluate = before; await trace.close(); rmSync(directory, { recursive: true, force: true }); }
@@ -120,7 +121,7 @@ test("readiness scores are bounded and anchored to concern severity", () => {
 });
 test("unavailable implementation prevents high readiness", async () => {
  const reviewer = reviewerTools(evidence('/tmp/fixture'), loadPromptSnapshot(), undefined, false);
- await expect(reviewer.tools[1].execute('id', { ...review, readinessScore: 5, concerns: [] } as any)).rejects.toThrow('Uninspected');
+ await expect(reviewer.tools[1].execute('id', { ...review, readinessScore: 5, concerns: [] } as any, undefined, undefined, undefined as never)).rejects.toThrow('Uninspected');
  expect(reviewer.result()).toBeUndefined();
 });
 test("code inspection rejects outside files and retains exact reviewed bytes", async () => {
@@ -133,7 +134,7 @@ test("code inspection rejects outside files and retains exact reviewed bytes", a
   writeFileSync(join(directory, 'secret.py'), 'not allowed');
   symlinkSync(join(directory, 'secret.py'), join(directory, 'solutions/link.py'));
   const inputs: any[] = [];
-  const reader = codeReader(directory, directory, { input: i => inputs.push(i) } as any);
+  const reader = codeReader(directory, directory, { input: (i: unknown) => inputs.push(i) } as any);
   expect(reader.read('solutions/model.py').text).toContain('return 1');
   writeFileSync(join(directory, 'solutions/model.py'), 'changed');
   expect(reader.read('solutions/model.py').text).toContain('return 1');

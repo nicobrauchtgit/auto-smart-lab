@@ -16,7 +16,7 @@ export function refitInputs(taskId: string, configuration: TaskConfiguration, tr
   ...(paths.targetsPath ? { labelsPath: paths.targetsPath } : {}), trainZip: paths.trainZip, testZip: paths.testZip };
 }
 export const refitStage: StageDefinition<RefitStageOptions> = {
- name: "refit", version: 1, setupRequirements: ["python", "task", "refit"],
+ name: "refit", version: 1, setupRequirements: ["observability", "python", "task", "refit"],
  description: "Freeze the authoritative champion and repeat its measured fit on the original data for final test predictions",
  parseOptions(raw) {
   if (raw !== undefined && (!raw || typeof raw !== "object" || Array.isArray(raw))) throw new Error("refit options must be an object");

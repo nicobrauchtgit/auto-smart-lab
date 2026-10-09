@@ -19,10 +19,28 @@ knowledge for older/non-knowledge session callers; no skill or tool is added.
 
 ## Agent-facing API
 
+- `experiment_history({offset?, limit?})`: bounded, paginated summaries of earlier
+  experiments in controller-supplied roots, including pilots, unpromoted, partial
+  and failed attempts. Exact task/dataset matches only; corrupt/incompatible
+  entries are counted as omitted. Direct roots and run-parent roots are supported
+  and deduplicated. Returned references are `{rootIndex, run?, id}`.
+- `experiment_compare({left, right})`: compare any two experiment references;
+  no champion is required. Reports factory/estimator parameter changes, source,
+  CV/objective changes, cost, metrics and retained paired comparisons in their
+  original direction. Frozen source diffs use a controller-selected solutions
+  repository, with a three-second/16-KiB bound and external diff/textconv disabled.
+  Missing/large source diffs are explicitly unavailable. Historical summaries
+  remain unverified prior work; comparison neither fits nor selects.
+- `knowledge_compare({left, right, leftRevision?, rightRevision?})`: compare
+  observations or lessons from earlier attempts/turns with their evidence status.
+  Optional revisions also compare the same note before and after an update.
+  This works without harness trials or champion machinery. Agents distill useful
+  differences, failures, uncertainty and next tests into separately captured
+  reusable lessons; causal explanations remain hypotheses unless tested.
 - `knowledge_search({query, limit?})`: up to 12 relevant active summaries (8 by
   default); matches title/summary/tags for the exact task and dataset, and only
   reusable applicability text for other datasets. No full-store opening injection.
-- `knowledge_read({id})`: one bounded note with revision, caveats, history summary,
+- `knowledge_read({id, revision?})`: one bounded note with revision, caveats, history summary,
   origin and current evidence status. Other datasets receive only the separately
   authored reusable abstraction and origin, with no task body or measurement.
   Responses are capped at 32 KiB; metadata sections above 2 KiB expose their hash
@@ -33,9 +51,11 @@ knowledge for older/non-knowledge session callers; no skill or tool is added.
   `empirical`), `applicability`, `caveats`, optional `lifecycle`
   (`active`, `stale`, `superseded`) and optional `reusable`
   (`lesson`, `applicability`, `caveats`). No score or arbitrary metadata field.
-  Empirical capture requires `{rootIndex, id}` referring to an existing experiment
+  Empirical capture requires `{rootIndex, run?, id}` referring to an existing experiment
   under controller-supplied roots; agents cannot choose evidence paths or origin.
-  Current solve evidence uses root index 0. Ancestor training roots allow retained
+  History/comparison tools are exposed only when training roots are supplied;
+  note comparison is available to all knowledge sessions. Current solve evidence
+  uses root index 0. Ancestor training roots allow retained
   historical receipts to be checked on later invocations, not a new current proof.
 
 Research's identity is its source dataset snapshot. Solve/evaluation use the exact
@@ -60,6 +80,13 @@ reading test/sealed labels. Files must remain unchanged through verification.
 Search receipts retain winner parameters and search scope; they are not eligible
 confirmation evidence. Pilot scope stays pilot scope. Missing, altered or
 no-longer-supplied evidence reads as stale/unavailable; historical text remains.
+
+Verified empirical citations support raw classification, labelled clustering
+(per-validation-batch ARI, never pooled cluster IDs), and explicit anomaly
+evidence AP/ROC-AUC. Anomaly receipts retain the evidence population, labels'
+source/hash and fold coverage through hashed artifacts; agent-provided labels
+do not establish official accuracy. Label-free signals without a scored objective
+remain observations, not fabricated empirical quality scores.
 
 A verified receipt authenticates that measurement, not the agent's interpretation,
 causal explanation, comparison, or applicability on another task. Every retrieval
@@ -87,6 +114,8 @@ The shared whole-chain/standalone preflight declares `knowledge`, checks skill/t
 resources, verifier availability, existing Python imports and store accessibility
 before agents start. An absent store is valid if its parent is writable; setup
 checks do not create it. No credentials, environment or dependencies are added.
+Solve/evaluation also declare `knowledge-history`, which checks git before
+sessions start. Note-only research does not acquire this prerequisite.
 `knowledge_search`, `knowledge_read`, and `knowledge_capture` record scoped agent
 identities, retrieved input hashes and produced Markdown artifact hashes in the
 session observer under the enclosing pipeline/invocation. Retries and handoffs

@@ -1,3 +1,4 @@
+import { testTelemetry, traceEvents } from "../telemetry/testing.js";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spamConfiguration } from "./task_configuration.testing.js";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -13,7 +14,7 @@ import type { StageDefinition } from "./types.js";
 
 // The trace database is deliberately unreachable here, so these tests also cover
 // the degraded recording path and the local JSON-lines mirror.
-process.env.AGENT_DATABASE_PORT = "1";
+
 
 const workspaces: string[] = [];
 let originalSolve: typeof STAGE_REGISTRY.solve;
@@ -61,7 +62,7 @@ function fakeStage(run: StageDefinition<{ label: string }>["run"]): StageDefinit
 async function runFakeStage(stage: StageDefinition<{ label: string }>, taskId = "spam1") {
 	STAGE_REGISTRY.solve = stage;
 	const runsDir = workspace();
-	const trace = await createPipelineTrace({ taskId, pipelineRunId: crypto.randomUUID(), runsDir });
+	const trace = await createPipelineTrace({ telemetry: testTelemetry(), taskId, pipelineRunId: crypto.randomUUID(), runsDir });
 	const invocation = await invokeStage({
 		stage: "solve",
 		input: { taskId, upstream: [] },
@@ -70,7 +71,7 @@ async function runFakeStage(stage: StageDefinition<{ label: string }>, taskId = 
 		reason: "test",
 	});
 	await trace.close();
-	const events = readFileSync(trace.localPath, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+	const events = traceEvents(trace.pipelineRunId);
 	return { invocation, events, trace };
 }
 
@@ -96,7 +97,7 @@ describe("invokeStage", () => {
 		const types = events.map((event) => event.event_type);
 		// The task configuration is the first supplied input, recorded before setup.
 		expect(types).toEqual([
-			"stage_started", "stage_input", "setup_started", "setup_finished", "stage_input", "agent_attempt_start", "stage_summary", "stage_finished",
+			"stage_started", "stage_input", "setup_started", "setup_check", "setup_check", "setup_finished", "stage_input", "agent_attempt_start", "stage_summary", "stage_finished",
 		]);
 		expect(events[1].payload.input).toMatchObject({ kind: "task_configuration", source: "pipeline_config", task_kind: "binary_classification" });
 		// Stage events carry the shared identity and no PI session.
@@ -105,7 +106,7 @@ describe("invokeStage", () => {
 			expect(event.stage_invocation_id).toBe(invocation.invocationId);
 			expect(event.pi_session_id).toBeNull();
 		}
-		const finished = events.at(-1);
+		const finished = events.at(-1)!;
 		expect(finished.payload.outcome).toBe("success");
 		expect(finished.payload.supplied_inputs).toHaveLength(2);
 	});
@@ -163,7 +164,7 @@ describe("invokeStage", () => {
 			return { artifacts: [] };
 		});
 		const runsDir = workspace();
-		const trace = await createPipelineTrace({ taskId: "spam1", pipelineRunId: crypto.randomUUID(), runsDir });
+		const trace = await createPipelineTrace({ telemetry: testTelemetry(), taskId: "spam1", pipelineRunId: crypto.randomUUID(), runsDir });
 		const controller = new AbortController();
 		const pending = invokeStage({
 			stage: "solve",
@@ -181,7 +182,7 @@ describe("invokeStage", () => {
 	test("a disabled stage is refused and the refusal is recorded", async () => {
 		STAGE_REGISTRY.solve = fakeStage(async () => ({ artifacts: [] }));
 		const runsDir = workspace();
-		const trace = await createPipelineTrace({ taskId: "spam1", pipelineRunId: crypto.randomUUID(), runsDir });
+		const trace = await createPipelineTrace({ telemetry: testTelemetry(), taskId: "spam1", pipelineRunId: crypto.randomUUID(), runsDir });
 		const config = resolvePipelineSettings({
 			pipeline: { entryStage: "research", stages: { research: { enabled: true }, solve: { enabled: false } } },
 			agent: { cwd: ".", agentDir: ".pi/agent", initialPrompt: "hi" },
@@ -195,13 +196,13 @@ describe("invokeStage", () => {
 			trace,
 		})).rejects.toThrow(/not enabled/);
 		await trace.close();
-		const events = readFileSync(trace.localPath, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+		const events = traceEvents(trace.pipelineRunId);
 		expect(events.map((event) => event.event_type)).toEqual(["stage_rejected"]);
 	});
 
-	test("recording degradation is reported rather than hidden", async () => {
+	test("healthy recording needs no emergency file", async () => {
 		const { trace } = await runFakeStage(fakeStage(async () => ({ artifacts: [] })));
-		expect(trace.degraded()).toBe(true);
-		expect(trace.failures().join(" ")).toContain("trace database unavailable");
+		expect(trace.degraded()).toBe(false);
+		expect(trace.localPath).toBeUndefined();
 	});
 });

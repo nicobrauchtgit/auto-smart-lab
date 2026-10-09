@@ -8,9 +8,10 @@
 
 import { runSolveStage } from "./pipeline/run_solve.js";
 import { positionalSelector, resolveTask } from "./pipeline/resolve_task.js";
+import { printTelemetry } from "./telemetry/cli.js";
 
 function usage(): never {
-	console.error("Usage: npm run solve-stage -- <task> [--use-existing-research] [--iterations N] [--model M] [--events]");
+	console.error("Usage: npm run solve-stage -- <task> [--use-existing-research] [--iterations N] [--model M] [--events] [--allow-telemetry-fallback]");
 	console.error("  npm run solve-stage -- spam1 --use-existing-research --iterations 3");
 	console.error("  npm run solve-stage -- unit 1 task 1");
 	process.exit(2);
@@ -32,6 +33,7 @@ const task = resolveTask(positionalSelector(positional));
 
 const iterations = value("--iterations");
 const result = await runSolveStage({
+ telemetry: { allowFallback: flag("--allow-telemetry-fallback") },
 	taskId: task.taskId,
 	model: value("--model"),
 	maxIterations: iterations === undefined ? undefined : Number(iterations),
@@ -50,6 +52,5 @@ if (solve) {
 	}
 	for (const artifact of solve.artifacts) console.log(`[solve-stage]   artifact ${artifact.kind}: ${artifact.path}`);
 }
-if (result.traceDegraded) console.warn(`[solve-stage] trace degraded: ${result.traceFailures.join("; ")}`);
-if (result.localTracePath) console.log(`[solve-stage] trace: ${result.localTracePath}`);
+printTelemetry(result, "[solve-stage]");
 process.exit(result.outcome === "success" ? 0 : 1);

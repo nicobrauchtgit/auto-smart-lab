@@ -1,5 +1,9 @@
 # Auto SmartLab: Autonomous Experimentation and Safety Plan
 
+> Historical document. Use [cleanup-plan.md](cleanup-plan.md) for current work.
+> Local dashboard/Postgres and always-on trace JSONL instructions are superseded
+> by [Langfuse Cloud telemetry](telemetry.md) as of 2026-10-09.
+
 ## 1. Purpose
 
 Auto SmartLab should autonomously solve machine-learning challenges, evaluate its own work, and submit results without requiring human approval during the normal workflow.

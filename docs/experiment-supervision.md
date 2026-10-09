@@ -257,7 +257,7 @@ and never mutate `process.env`.
 
 Mirror lifecycle and decision events through `StageReporter.event`, which
 already attaches `pipelineRunId`, `stageInvocationId`, and `attempt` and writes
-to both `agent_events` and the local JSONL mirror. Do not build a parallel sink.
+through the shared Langfuse reporter, with JSONL only on delivery failure. Do not build a parallel sink.
 
 A detached process can outlive the whole run, so the recorded process group ID
 is what lets a later run clean up strays. Durable recovery across a supervisor

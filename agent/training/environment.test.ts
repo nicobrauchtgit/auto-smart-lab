@@ -11,6 +11,7 @@ import { createHarnessTraining } from "./index.js";
 const roots: string[] = [];
 const prompts = {
 	fingerprint: "test-prompts",
+	serialize: () => ({}),
 	render: (id: string) => ({
 		text: id,
 		reference: { id, template_sha256: "template", rendered_sha256: "rendered" },

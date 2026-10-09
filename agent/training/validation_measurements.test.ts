@@ -19,11 +19,16 @@ class DiagnosticPipeline(Pipeline):
         return super().predict(frame, **kwargs)
     def diagnostic_slices(self, frame):
         return {"all": np.ones(len(frame), dtype=bool),
-                "offers": frame.text.str.contains("prize").to_numpy(),
+                "offers": np.array(["prize" in text for text in TextColumn().transform(frame)]),
                 "empty": np.zeros(len(frame), dtype=bool)}
     def diagnostic_changes(self, frame, context):
         changed = frame.copy()
-        changed["text"] = "unknown words"
+        import zipfile
+        path = frame["input"].iloc[0]["archive"] + ".perturbed.zip"
+        with zipfile.ZipFile(path, "w") as archive:
+            for descriptor in frame["input"]:
+                archive.writestr(descriptor["member"], "unknown words")
+        changed["input"] = [{"archive": path, "member": item["member"]} for item in frame["input"]]
         return [{"name": "identity", "frame": frame.copy(), "labelPreserving": True},
                 {"name": "unknown-labels", "frame": changed, "labelPreserving": False}]
 def build_pipeline(context):`).replace("return Pipeline([", "return DiagnosticPipeline([");
@@ -34,7 +39,7 @@ test("supervised diagnostic fits stay within training folds and preserve primary
     commitAll(project.solutionsRoot, "Slice, curve and perturbation fixture");
     const training = createHarnessTraining({ root: join(project.root, "training"), projectRoot: project.root,
         solutionsRoot: project.solutionsRoot, pythonExecutable: PYTHON, env: trainingEnvironment(),
-        taskId: "fixture", datasetSha256: project.datasetSha256, rootSeed: 13,
+        taskId: "fixture", datasetSha256: project.datasetSha256, measurement: project.measurement, rootSeed: 13,
         zipPath: project.zipPath, labelsPath: project.labelsPath, workerPath: WORKER,
         pipelineRunId: "validation-packet", stageInvocationId: "validation-invocation",
         prompts: loadPromptSnapshot(), record() {}, limits: { sampleIntervalMs: 25 } });

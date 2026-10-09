@@ -7,7 +7,7 @@ import { fauxProvider, fauxAssistantMessage, fauxToolCall, InMemoryCredentialSto
 import { createAgentSession, ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
 import { loadChildResources } from "../subagents/pi.js";
 import { createSubagents } from "../subagents/index.js";
-import { observeAgentSession, type EventRecord, type EventSink } from "../observability.js";
+import { observeAgentSession, type TelemetryRecord, type ObservationTelemetry } from "../observability.js";
 import { loadPromptSnapshot } from "../prompts/loader.js";
 import { spamConfiguration } from "../pipeline/task_configuration.testing.js";
 import type { TaskConfiguration } from "../pipeline/task_configuration.js";
@@ -21,9 +21,9 @@ async function fixture(thresholdTokens = CONTEXT_HANDOFF_TOKENS) {
 	const provider = fauxProvider({ provider: "context-test", tokensPerSecond: 1_000_000 });
 	const runtime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath: null, refreshOnCreate: false });
 	runtime.registerNativeProvider(provider.provider);
-	const events: EventRecord[] = [];
-	const sink: EventSink = { databaseConnected: false, failures: [], record: event => events.push(event), async close() {} };
-	const observe = { identity: { pipelineRunId: "pipeline", stageInvocationId: "invocation", stage: "solve", attempt: 1 }, sink };
+	const events: TelemetryRecord[] = [];
+	const sink: ObservationTelemetry = { failures: [], record: event => events.push(event), async close() {} };
+	const observe = { identity: { pipelineRunId: "pipeline", stageInvocationId: "invocation", stage: "solve", attempt: 1 }, telemetry: sink };
 	const scope = createSubagents({ cwd: root, agentDir, model: provider.getModel(), modelRuntime: runtime,
 		prompts, sharedInstructions: [], env: {}, inputs: [], observe });
 	let created = 0;
@@ -240,7 +240,7 @@ test("module guidance appears in assembled openings and every replacement while 
    f.provider.setResponses([
     context => { assert.match(JSON.stringify(context.messages), /INVOCATION_GUIDANCE/); f.sessions[0].getContextUsage = () => ({ tokens: 6000, contextWindow: 200000, percent: 3 }); return fauxAssistantMessage("Progress"); },
     fauxAssistantMessage("Read the current artifact"),
-    context => { assert.match(JSON.stringify(context.messages), /INVOCATION_GUIDANCE \{\{literal\}\}/); f.sessions.at(-1)!.getContextUsage = () => undefined; assert.doesNotMatch(context.systemPrompt, /DEVELOPMENT_CONTEXT_EXCLUDED/); return fauxAssistantMessage("Complete"); },
+    context => { assert.match(JSON.stringify(context.messages), /INVOCATION_GUIDANCE \{\{literal\}\}/); f.sessions.at(-1)!.getContextUsage = () => undefined; assert.doesNotMatch(context.systemPrompt ?? "", /DEVELOPMENT_CONTEXT_EXCLUDED/); return fauxAssistantMessage("Complete"); },
    ]);
    await f.logical.prompt(prompts.render("context.task", { task: opening }));
    assert.equal(f.created(), 2);

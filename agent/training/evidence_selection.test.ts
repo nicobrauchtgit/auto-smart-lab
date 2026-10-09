@@ -175,11 +175,11 @@ test("growing evidence is snapshotted; search, paired champion, recovery, valida
    expect(options.promptReferences.map(reference => reference.id)).not.toContain("review.guide");
    expect(options.prompt).toContain("agent-provided labels into verified truth");
    expect(options.prompt).toContain("evidence_average_precision");
-   const curves = await options.customTools![0].execute("detail", { section: "curves" });
+   const curves = await options.customTools![0].execute("detail", { section: "curves" }, undefined, undefined, undefined as never);
    expect(JSON.parse((curves.content[0] as any).text).available).toBe(false);
    await options.customTools![1].execute("report", { readinessScore: 3, readinessRationale: "Evidence labels are agent-provided and source inspection is incomplete", status: "concerns",
     assessment: "AP is 1 on the supplied evidence, without verified official accuracy", concerns: [{ severity: "medium", finding: "Unverified labels", evidence: "source=agent_provided" }],
-    limitations: ["Evidence coverage does not establish transfer to unfamiliar attacks"], recommendations: ["Verify representative labels"] });
+    limitations: ["Evidence coverage does not establish transfer to unfamiliar attacks"], recommendations: ["Verify representative labels"] }, undefined, undefined, undefined as never);
    return { output: "Recorded advisory review" };
   } });
  stage.checkInput({ taskId: "fixture", taskConfiguration: CONFIG, upstream });

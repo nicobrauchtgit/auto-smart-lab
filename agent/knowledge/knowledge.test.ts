@@ -152,7 +152,7 @@ test("selected skill snapshots remain immutable and distinct from typed knowledg
  expect(selectedKnowledge(loadPromptSnapshot(root))[0].reference.template_sha256).not.toBe(before[0].reference.template_sha256);
  expect(before.map(s => s.reference.id)).toEqual(["knowledge.task", "knowledge.refresh"]);
  expect(knowledgeInput({ root, origin })).not.toHaveProperty("template_sha256");
- expect(createKnowledgeTools(make(), snapshot).map(t => t.name)).toEqual(["knowledge_search", "knowledge_read", "knowledge_capture"]);
+ expect(createKnowledgeTools(make(), snapshot).map(t => t.name)).toEqual(["knowledge_compare", "knowledge_search", "knowledge_read", "knowledge_capture"]);
 });
 
 // Real supervised worker output, no provider. Knowledge neither trains nor promotes.
@@ -164,11 +164,15 @@ test("existing harness evidence validates measurements and origin; wrong dataset
  writeFileSync(labels, Array.from({ length: 8 }, (_, i) => `row-${i};${i % 2}\n`).join(""));
  const made = spawnSync(PYTHON, ["-c", 'import zipfile,sys\nwith zipfile.ZipFile(sys.argv[1], "w") as z:\n for i in range(8): z.writestr(f"row-{i}", f"text {i}")', zip], { env: trainingEnvironment(), encoding: "utf8" });
  expect(made.status).toBe(0);
- const datasetSha256 = digest(Buffer.concat([readFileSync(zip), readFileSync(labels)]));
+ const manifest = join(root, "samples.json");
+ writeFileSync(manifest, JSON.stringify({ schemaVersion: 1, samples: Array.from({ length: 8 }, (_, i) =>
+  ({ id: `row-${i}`, input: { archive: zip, member: `row-${i}` }, target: i % 2 })) }));
+ const measurement = { kind: "classification", execution: "inductive", sampleManifestPath: manifest, sampleManifestSha256: digest(readFileSync(manifest)), hasTargets: true };
+ const datasetSha256 = digest(Buffer.concat([readFileSync(zip), readFileSync(manifest)]));
  const request = { schemaVersion: 1, hypothesis: "fixture", pipeline: { module: "solutions/model.py", factory: "build_pipeline" }, cv: { kind: "builtin", scheme: "stratified_kfold", folds: 2, repeats: 1 }, scope: { kind: "promotion" } };
  const seeds = createSeedPlan({ rootSeed: 1, taskId: origin.taskId, datasetSha256, experimentId: "fixture" });
  writeFileSync(join(directory, "seed-plan.json"), serializeSeedPlan(seeds)); writeFileSync(join(directory, "request.json"), JSON.stringify(request));
- const invocation = { schemaVersion: 1, experimentId: "fixture", request, inputs: { projectRoot: root, zipPath: zip, labelsPath: labels, outputDir: directory }, seeds: { experiment: seeds.experimentSeed, trial: deriveTrialSeed(seeds, 0) } };
+ const invocation = { schemaVersion: 1, experimentId: "fixture", request, measurement, inputs: { projectRoot: root, zipPath: zip, labelsPath: labels, outputDir: directory }, seeds: { experiment: seeds.experimentSeed, trial: deriveTrialSeed(seeds, 0) } };
  writeFileSync(join(directory, "invocation.json"), JSON.stringify(invocation));
  const fitted = spawnSync(PYTHON, [WORKER, "--invocation", join(directory, "invocation.json")], { env: trainingEnvironment(), encoding: "utf8", timeout: 30000 });
  if (fitted.status !== 0) throw new Error(fitted.stderr);
@@ -218,6 +222,6 @@ test("existing harness evidence validates measurements and origin; wrong dataset
  await expect(service.capture(empirical, { rootIndex: 0, id: "../refit" })).rejects.toThrow("Invalid harness");
  writeFileSync(join(directory, "oof_predictions.csv"), readFileSync(join(directory, "oof_predictions.csv"), "utf8") + "\n");
  expect((await service.read(first.id) as any).evidenceStatus).toBe("stale_or_unavailable");
- writeFileSync(labels, "changed development data\n");
+ writeFileSync(manifest, readFileSync(manifest, "utf8") + " ");
  await expect(service.capture({ ...empirical, title: "new result" }, { rootIndex: 0, id: "fixture" })).rejects.toThrow("dataset changed");
 }, 60000);

@@ -15,7 +15,7 @@ function harness(project: ReturnType<typeof temporaryProject>, events: { type: s
 		limits: { sampleIntervalMs: 25, updateIntervalMs: 100, stopGraceMs: 5_000 },
 		pipelineRunId: "pipeline-versioned", stageInvocationId: "invocation-versioned",
 		pythonExecutable: PYTHON, projectRoot: project.root, solutionsRoot: project.solutionsRoot,
-		taskId: "fixture", datasetSha256: project.datasetSha256, rootSeed: 13,
+		taskId: "fixture", datasetSha256: project.datasetSha256, measurement: project.measurement, rootSeed: 13,
 		zipPath: project.zipPath, labelsPath: project.labelsPath, prompts: loadPromptSnapshot(), workerPath: WORKER,
 	});
 }
@@ -31,7 +31,8 @@ test("a branch switch during a run does not change the code it executes, includi
 	commitAll(project.solutionsRoot, "Break the feature helper");
 	git(project.solutionsRoot, ["switch", "--quiet", "main"]);
 
-	const training = harness(project);
+	const recorded: { type: string; payload: Record<string, unknown> }[] = [];
+	const training = harness(project, recorded);
 	try {
 		const started = await training.service.start({
 			schemaVersion: 2, hypothesis: "a slow parallel pipeline survives a branch switch",
@@ -51,9 +52,14 @@ test("a branch switch during a run does not change the code it executes, includi
 		expect(result.completedFolds).toBe(3);
 		expect(result.metrics.balancedAccuracy).toBe(1);
 		expect(result.source).toMatchObject({ commit: project.head, branch: "main" });
+  const observed = recorded.find(event => event.type === "training_trial_result")!.payload;
+  expect(observed).toMatchObject({ experiment_id: started.id, status: "completed", promotion_eligible: false,
+   dataset_sha256: project.datasetSha256, commit: project.head });
+  expect(observed.fold_manifest_sha256).toBe(result.manifestSha256);
+  expect(observed.sample_manifest_sha256).toBeTruthy();
 		const trialStarted = events(started.directory).find((event) => event.type === "trial_started");
-		expect(trialStarted.source.commit).toBe(project.head);
-		expect(trialStarted.pipelineRunId).toBe("pipeline-versioned");
+		expect(trialStarted!.source.commit).toBe(project.head);
+		expect(trialStarted!.pipelineRunId).toBe("pipeline-versioned");
 		// The worktree is gone; the commit stays in the repository.
 		expect(existsSync(join(started.directory, "source", "solutions"))).toBe(false);
 		expect(git(project.solutionsRoot, ["cat-file", "-e", project.head]).status).toBe(0);

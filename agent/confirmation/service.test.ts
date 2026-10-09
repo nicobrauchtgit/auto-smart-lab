@@ -122,11 +122,13 @@ test("confirmation canary catches a model leaking only after its full-developmen
 }, 60_000);
 
 test("cancellation consumes the attempt and never automatically fits the sealed population again", async () => {
- const f = await fixture(1);
+ // Hold the confirmation fit until cancellation; a short sleep can finish
+ // during the supervisor's graceful-stop interval on a loaded test run.
+ const f = await fixture(0, false, true);
  const controller = new AbortController();
  const events: string[] = [];
  const pending = runConfirmation({ ...f.options, signal: controller.signal,
-  report: { event: type => events.push(type), input() {}, agentIdentity: () => ({ pipelineRunId: "c2", stageInvocationId: "cancel" }), observation: () => { throw new Error("no agent"); } } as any });
+  report: { event: (type: string) => events.push(type), input() {}, agentIdentity: () => ({ pipelineRunId: "c2", stageInvocationId: "cancel" }), observation: () => { throw new Error("no agent"); } } as any });
  expect(await until(() => events.includes("holdout_confirmation_started"), 20000)).toBe(true);
  controller.abort(new Error("cancel fixture"));
  await expect(pending).rejects.toThrow("cancel fixture");
@@ -167,7 +169,7 @@ test("service death reattaches the confirmation worker with one fit and one reco
   }, 20000)).toBe(true);
   const exited = new Promise(resolve => child.once("exit", resolve)); child.kill("SIGKILL"); await exited;
   const events: string[] = [];
-  const resumed = runConfirmation({ ...f.options, report: { event: type => events.push(type), input() {},
+  const resumed = runConfirmation({ ...f.options, report: { event: (type: string) => events.push(type), input() {},
    agentIdentity: () => ({ pipelineRunId: "c2", stageInvocationId: "resume" }), observation: () => { throw new Error("no agent"); } } as any });
   expect(await until(() => events.includes("experiment_reattached"), 20000)).toBe(true);
   await expect(runConfirmation(f.options)).rejects.toThrow("owned by another service");

@@ -86,15 +86,12 @@ class TextColumn(BaseEstimator, TransformerMixin):
         return self
 
     def transform(self, frame):
-        # Raw sample input: read each member's bytes, as agent code does in production.
-        if "input" in frame:
-            import zipfile
-            texts = []
-            for descriptor in frame["input"]:
-                with zipfile.ZipFile(descriptor["archive"]) as archive:
-                    texts.append(archive.read(descriptor["member"]).decode("utf-8", "replace"))
-            return texts
-        return frame["text"]
+        import zipfile
+        texts = []
+        for descriptor in frame["input"]:
+            with zipfile.ZipFile(descriptor["archive"]) as archive:
+                texts.append(archive.read(descriptor["member"]).decode("utf-8", "replace"))
+        return texts
 `;
 
 /**
@@ -130,7 +127,8 @@ export function temporaryProject(prefix = "training-project-") {
 	writeFileSync(join(solutionsRoot, "features.py"), FEATURES_MODULE);
 	writeFileSync(join(solutionsRoot, "tasks", "fixture.py"), PIPELINE_MODULE);
 	const repository = ensureSolutionsRepository(solutionsRoot);
-	return { root, solutionsRoot, head: repository.head!, ...writeCorpus(root) };
+	const corpus = writeCorpus(root);
+	return { root, solutionsRoot, head: repository.head!, ...corpus, ...writeSampleManifest(root, corpus.zipPath, corpus.labelsPath) };
 }
 
 export function commitAll(solutionsRoot: string, message: string): string {

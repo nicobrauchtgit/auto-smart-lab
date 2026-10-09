@@ -276,8 +276,8 @@ export async function runHarnessSolveSession(
 		env: workerEnvironment(python),
 		record: (eventType, payload) => report?.event(eventType, payload),
 		environmentFingerprint: python.fingerprint,
-		pipelineRunId: identity?.pipelineRunId,
-		stageInvocationId: identity?.stageInvocationId,
+		pipelineRunId: identity?.pipelineRunId ?? undefined,
+		stageInvocationId: identity?.stageInvocationId ?? undefined,
 		pythonExecutable: python.executable,
 		// Module paths are relative to the directory holding solutions/, which is
 		// the project root in production and a temporary project in tests.
@@ -321,7 +321,7 @@ export async function runHarnessSolveSession(
 	try {
 		const { output, agentRunId } = await dependencies.runAgentSession({
 			knowledge: { root: join(PROJECT_ROOT, "knowledge"), origin: { taskId, datasetSha256: fingerprint,
-				pipelineRunId: identity?.pipelineRunId, stageInvocationId: identity?.stageInvocationId }, trainingRoots: [trainingRoot, join(workspace.root, "training")] },
+				pipelineRunId: identity?.pipelineRunId ?? undefined, stageInvocationId: identity?.stageInvocationId ?? undefined }, trainingRoots: [trainingRoot, join(workspace.root, "training")] },
 			prompts,
 			system: opening.system,
 			prompt: opening.prompt,

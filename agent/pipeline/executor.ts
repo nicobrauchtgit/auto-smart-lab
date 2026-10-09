@@ -17,6 +17,7 @@ import { listTasks, PROJECT_ROOT } from "./resolve_task.js";
 import { ensureTaskData } from "../setup/task_data.js";
 import { getStage } from "./registry.js";
 import { loadResolvedPipelineConfig, type ResolvedPipelineConfig } from "./config.js";
+import type { TelemetryOptions } from "../telemetry/runtime.js";
 import { createPipelineTrace, type PipelineTrace } from "./trace.js";
 import { loadPromptSnapshot, type PromptSnapshot } from "../prompts/loader.js";
 import { resolveTaskConfiguration } from "./task_configuration.js";
@@ -73,7 +74,7 @@ export function startStageInvocation(options: InvokeStageOptions): StageInvocati
  if (options.signal?.aborted) abort();
  const feedback = new InvocationFeedback({ stage: options.stage, taskId: input.taskId,
   catalog: [...input.upstream, ...(input.evidenceCatalog ?? [])], prompts, report,
-  journalPath: `${options.trace.localPath}.${invocationId}.feedback.jsonl` });
+  journalPath: `${options.trace.artifactRoot}.${invocationId}.feedback.jsonl` });
  controller.signal.addEventListener("abort", () => { void feedback.finish().catch(error => report.event("stage_feedback_error", { message: String(error) })); }, { once: true });
  if (controller.signal.aborted) void feedback.finish();
  const result = executeStage({ ...options, input, prompts, signal: controller.signal }, invocationId, report, feedback)
@@ -163,7 +164,7 @@ async function executeStage(options: InvokeStageOptions, invocationId: string,
 			: { kind: "task_configuration", version: 1, delivery: "none", status: "unavailable", reason: "reconciliation without a declared configuration" });
         if (input.guidance !== undefined) {
             input.guidance = validateGuidance(input.guidance, options.stage, input.taskId, [...input.upstream, ...(input.evidenceCatalog ?? [])]);
-            const path = `${trace.localPath}.${invocationId}.guidance.json`;
+            const path = `${trace.artifactRoot}.${invocationId}.guidance.json`;
             mkdirSync(dirname(path), { recursive: true });
             const snapshot = JSON.stringify({ schemaVersion: 1, pipelineRunId: trace.pipelineRunId, stageInvocationId: invocationId, note: input.guidance }, null, 2) + "\n";
             writeFileSync(path, snapshot, { flag: "wx", flush: true });
@@ -172,7 +173,7 @@ async function executeStage(options: InvokeStageOptions, invocationId: string,
                 stage: input.guidance.stage, task_id: input.taskId, author: input.guidance.author, evidence: input.guidance.evidence });
         }
 		await (options.setupSession ?? new SetupSession()).check(
-			setupChecks(options.mode === "reconcile" ? stage.recoverySetupRequirements ?? [] : stage.setupRequirements ?? [], { taskId: input.taskId, taskConfiguration: input.taskConfiguration, model: input.model, configPath: options.configPath, prompts, submissionPolicy: input.submissionPolicy, refitTrainingRoot: options.stage === "refit" ? (effective as { trainingRoot?: string })?.trainingRoot : undefined }),
+			setupChecks(["observability", ...(options.mode === "reconcile" ? stage.recoverySetupRequirements ?? [] : stage.setupRequirements ?? [])], { telemetry: trace.telemetry, taskId: input.taskId, taskConfiguration: input.taskConfiguration, model: input.model, configPath: options.configPath, prompts, submissionPolicy: input.submissionPolicy, refitTrainingRoot: options.stage === "refit" ? (effective as { trainingRoot?: string })?.trainingRoot : undefined }),
 			options.signal ?? new AbortController().signal, report.event,
 		);
 		stage.checkInput(input);
@@ -217,6 +218,7 @@ async function executeStage(options: InvokeStageOptions, invocationId: string,
 }
 
 export interface RunPipelineOptions {
+ telemetry?: TelemetryOptions;
 	/** Verify prerequisites without executing any stage. */
 	checkSetupOnly?: boolean;
  guidance?: Partial<Record<StageName, StageGuidance>>;
@@ -260,7 +262,7 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
 		const { runOrchestrator } = await import("../orchestrator/run.js");
 		// The generic chain API never grants uploading; autonomous CLI/API invocation
 		// must explicitly choose an immutable submission policy.
-		return runOrchestrator({ taskId: options.taskId, model: options.model, configPath: options.configPath, noSubmit: true, checkSetupOnly: options.checkSetupOnly, signal: options.signal, runsDir: options.runsDir });
+		return runOrchestrator({ taskId: options.taskId, model: options.model, configPath: options.configPath, noSubmit: true, telemetry: options.telemetry, checkSetupOnly: options.checkSetupOnly, signal: options.signal, runsDir: options.runsDir });
 	}
 	for (const warning of resolved.warnings) console.warn(`[pipeline] ${warning}`);
 
@@ -269,7 +271,7 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
 		taskId: options.taskId,
 		pipelineRunId,
 		runsDir: options.runsDir ?? `${PROJECT_ROOT}/runs`,
-		echo: options.echoEvents,
+		echo: options.echoEvents, telemetry: options.telemetry,
 	});
 
 	const invocations: StageInvocation[] = [];
@@ -308,7 +310,7 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
 			if (!resolved.settings.stages[plannedStage]?.enabled) throw new Error(`Stage "${plannedStage}" is not enabled`);
 			planned.push(plannedStage);
 			if (plannedStage === options.stopAfter) break;
-			const successor = getStage(plannedStage).next;
+			const successor: StageName | undefined = getStage(plannedStage).next;
 			plannedStage = successor && resolved.settings.stages[successor]?.enabled ? successor : undefined;
 		}
 		for (const [name, note] of Object.entries(requestedGuidance)) {
@@ -320,11 +322,11 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
 			getStage(name).parseOptions({ ...(resolved.settings.stages[name].options as Record<string, unknown> ?? {}),
 				...(options.optionOverrides?.[name] as Record<string, unknown> ?? {}) });
 		}
-		await setupSession.check(setupChecks(planned.flatMap(name => [...(getStage(name).setupRequirements ?? [])]), {
+		await setupSession.check(setupChecks(["observability", ...planned.flatMap(name => [...(getStage(name).setupRequirements ?? [])])], { telemetry: trace.telemetry,
 			taskId: options.taskId, taskConfiguration: taskConfiguration.configuration, model: options.model, configPath: options.configPath, prompts,
             candidateProducedUpstream: planned.includes("solve"), refitTrainingRoot: (options.optionOverrides?.refit as { trainingRoot?: string })?.trainingRoot ?? (resolved.effectiveOptions.refit as { trainingRoot?: string })?.trainingRoot,
 		}), options.signal ?? new AbortController().signal, trace.event);
-		if (trace.degraded()) console.warn("[setup] Trace database unavailable; local JSONL recording remains active.");
+		if (trace.degraded()) console.warn("[setup] Langfuse delivery degraded; emergency recording is active.");
 		let next: StageName | undefined = options.checkSetupOnly ? undefined : planned[0];
 		if (options.checkSetupOnly) stoppedBecause = "setup checks passed; no stages executed";
 		while (next) {
@@ -405,6 +407,6 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
 		stoppedBecause,
 		traceDegraded: trace.degraded(),
 		traceFailures: trace.failures(),
-		localTracePath: trace.localPath,
+		localTracePath: trace.localPath, traceId: trace.traceId, traceUrl: trace.traceUrl,
 	};
 }

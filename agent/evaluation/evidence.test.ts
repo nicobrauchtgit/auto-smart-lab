@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -28,11 +29,15 @@ test("real harness trial becomes verified review evidence; changed artifacts and
   writeFileSync(labels, Array.from({ length: 8 }, (_, i) => `row-${i};${i % 2}\n`).join(''));
   const made = spawnSync(python, ['-c', 'import zipfile,sys\nwith zipfile.ZipFile(sys.argv[1], "w") as z:\n for i in range(8): z.writestr(f"row-{i}", f"text {i}")', zip], { encoding: 'utf8' });
   expect(made.status).toBe(0);
+  const manifest = join(root, 'samples.json');
+  writeFileSync(manifest, JSON.stringify({ schemaVersion: 1, samples: Array.from({ length: 8 }, (_, i) =>
+   ({ id: `row-${i}`, input: { archive: zip, member: `row-${i}` }, target: i % 2 })) }));
+  const measurement = { kind: 'classification', execution: 'inductive', sampleManifestPath: manifest, sampleManifestSha256: createHash('sha256').update(readFileSync(manifest)).digest('hex'), hasTargets: true };
   const request = { schemaVersion: 1, hypothesis: 'fixture', pipeline: { module: 'solutions/model.py', factory: 'build_pipeline' }, cv: { kind: 'builtin', scheme: 'stratified_kfold', folds: 2, repeats: 1 }, scope: { kind: 'promotion' } };
   const seeds = createSeedPlan({ rootSeed: 1, taskId: 'fixture-task', datasetSha256: 'a'.repeat(64), experimentId: 'fixture' });
   writeFileSync(join(directory, 'seed-plan.json'), serializeSeedPlan(seeds));
   writeFileSync(join(directory, 'request.json'), JSON.stringify(request));
-  writeFileSync(join(directory, 'invocation.json'), JSON.stringify({ schemaVersion: 1, experimentId: 'fixture', request,
+  writeFileSync(join(directory, 'invocation.json'), JSON.stringify({ schemaVersion: 1, experimentId: 'fixture', request, measurement,
    inputs: { projectRoot: root, zipPath: zip, labelsPath: labels, outputDir: directory }, source: { commit, tree, repository },
    seeds: { experiment: seeds.experimentSeed, trial: deriveTrialSeed(seeds, 0) } }));
   const trained = spawnSync(python, [worker, '--invocation', join(directory, 'invocation.json')], { encoding: 'utf8', timeout: 30_000 });

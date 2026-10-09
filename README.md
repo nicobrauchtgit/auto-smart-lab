@@ -8,7 +8,7 @@ The intended pipeline is:
 resolve task -> research -> solve and measure -> evaluate -> submit
 ```
 
-Research and solve currently run through the shared pipeline executor. Evaluation and submission still use a legacy path and are not safe for unattended use. See [Current status and next work](docs/WIP.md) before running anything that can spend a SmartLab submission.
+Research, solve, evaluation and refit run through the shared pipeline executor. Configured runs stop before submission; uploads require an explicit controller policy. See [Remaining work](docs/cleanup-plan.md) for current run blockers and the single active work queue.
 
 ## What the project is trying to do
 
@@ -20,7 +20,7 @@ A solver should be able to test ideas, observe meaningful progress, stop unprodu
 - pipeline and agent telemetry;
 - submission authorization, accounting, and packaging.
 
-Start with the [developer handover](docs/HANDOVER.md) and [implementation roadmap](docs/WIP.md). The design contract is in [Pipeline integration and observability](docs/pipeline-integration.md), and operational checks are in the [telemetry runbook](docs/telemetry.md).
+Start with [Remaining work](docs/cleanup-plan.md). Older handovers and roadmaps are historical inputs. The design contract is in [Pipeline integration and observability](docs/pipeline-integration.md), and operational checks are in the [telemetry runbook](docs/telemetry.md).
 
 ## Current state
 
@@ -29,15 +29,15 @@ Start with the [developer handover](docs/HANDOVER.md) and [implementation roadma
 | Task resolution and unit fetching | Implemented |
 | Research stage | Registered, instrumented, and enabled |
 | Solve stage | Registered, instrumented, and enabled |
-| Evaluation stage | Legacy implementation only, not registered |
-| Submission stage | Legacy implementation only, not registered |
-| PostgreSQL trace storage and dashboard | Implemented for registered stages |
-| Local JSONL trace mirror | Implemented for every pipeline run |
+| Evaluation stage | Registered, instrumented, advisory |
+| Submission stage | Registered; explicit controller upload policy required |
+| Langfuse Cloud observability | Shared pipeline, standalone and orchestration instrumentation |
+| Emergency JSONL trace | Failure-only; healthy runs create no mirror |
 | Optional subagent sessions | Implemented and tested in isolation, not enabled in the pipeline |
-| Live experiment supervision | Planned |
-| Safe unattended submission | Blocked by the issues in `docs/WIP.md` |
+| Live experiment supervision | Harness-owned processes, progress and recovery |
+| Terminal refit | Registered and deterministic |
 
-The configured run currently stops after solve because `evaluate` and `submit` are disabled in `pipeline.config.json`.
+The configured chain is research → solve → evaluate → refit and stops before submission.
 
 ## Pipeline architecture
 
@@ -56,12 +56,12 @@ agent/pipeline/executor.ts
         |
         +--> solve stage ----> measured candidate + champion artifacts
         |
-        +--> evaluate         not registered yet
+        +--> evaluate -------> advisory review
         |
-        +--> submit           not registered yet
+        +--> refit ----------> frozen terminal artifacts
         |
         v
-PostgreSQL event sink + per-run JSONL mirror
+Langfuse Cloud + failure-only emergency JSONL
 ```
 
 The main pieces have narrow responsibilities:
@@ -74,7 +74,7 @@ The main pieces have narrow responsibilities:
 - `agent/pipeline/trace.ts` and `agent/observability.ts` connect pipeline, stage, attempt, and Pi session events with shared IDs.
 - `agent/prompts/` provides one immutable prompt snapshot for a run. Prompt IDs and hashes make instruction changes distinguishable from data or model changes.
 
-A run has one `pipelineRunId`. Each stage execution gets a `stageInvocationId`, and each model attempt gets its own agent run ID and attempt number. This hierarchy lets the dashboard show which model session produced an artifact without treating model completion as proof that the artifact passed validation.
+A run has one `pipelineRunId`. Each stage execution gets a `stageInvocationId`, and each model attempt gets its own agent run ID and attempt number. This hierarchy lets Langfuse show which model session produced an artifact without treating model completion as proof that the artifact passed validation.
 
 Artifacts are the handoff between stages. Research returns a validated document and analysis references. Solve consumes those artifacts with the task data and returns measured result files. Future evaluation must approve one exact artifact, and future submission must upload that same artifact only after deterministic checks pass.
 
@@ -103,7 +103,7 @@ You need:
 - Linux (x86_64 or arm64) with `curl`, `git`, `zip` and `unzip`;
 - a SmartLab account for fetching tasks or submitting;
 - a SAIA/GWDG API key for agent runs;
-- PostgreSQL 17 only if you want the live trace dashboard.
+- Langfuse Cloud project API keys for executing stages.
 
 Everything else is pinned and installed by `./dev`: [mise](https://mise.jdx.dev/)
 (checksum-verified), bun, uv, ripgrep and fd from `mise.toml`, and the
@@ -252,7 +252,7 @@ A task can be selected by canonical ID or unit/task number:
 The main command uses `agent/pipeline/executor.ts` for every registered stage. It records one pipeline identity across stage lifecycle events, agent sessions, supplied inputs, and artifacts.
 
 ```bash
-# Run the configured chain, currently research followed by solve.
+# Run the configured chain through terminal refit.
 ./dev bun run pipeline -- spam1
 
 # Run and stop after research.
@@ -272,13 +272,9 @@ The standalone commands below still use the same stage executor:
 ./dev bun run solve-stage -- spam1 --use-existing-research --iterations 3
 ```
 
-Each pipeline run writes a local trace to:
-
-```text
-runs/<task-id>/pipeline/<timestamp>-<run-id>.jsonl
-```
-
-The local mirror is written even when PostgreSQL is unavailable. The CLI reports `Trace is incomplete` or `trace degraded` when database persistence fails.
+Each execution prints its Langfuse Cloud trace link. Stage lifecycle, typed inputs,
+physical sessions, generations, tools, trials and artifact checks share one trace.
+JSONL is created only when delivery fails; see [telemetry](docs/telemetry.md).
 
 ### Research output
 
@@ -314,74 +310,29 @@ Training member names may end in `.0` or `.1`, revealing their labels; test IDs 
 
 See [ID leakage canary](docs/id-leakage-canary.md) for the checked paths and limits.
 
-## Telemetry and trace dashboard
+## Langfuse Cloud observability
 
-Use the [telemetry runbook](docs/telemetry.md) for trace-ID queries, SSE checks, and degraded-storage troubleshooting.
-
-Telemetry has two parts:
-
-1. PostgreSQL stores events for live and historical dashboard queries.
-2. Every pipeline run also writes a JSONL mirror under `runs/<task-id>/pipeline/`.
-
-The dashboard reads PostgreSQL. It does not read the JSONL fallback.
-
-### Start telemetry
-
-The toolchain does not provide PostgreSQL. Run a local PostgreSQL 17 instance; `mise.toml` already sets `AGENT_DATABASE_PORT=55433` and `PGDATABASE=postgres`. Set `PGUSER` if it differs from your user:
+Configure `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL` and
+`LANGFUSE_TRACING_ENVIRONMENT` in the gitignored project `.env`. EU Cloud uses
+`https://cloud.langfuse.com`; match the origin to your project's region.
+Whole-chain preflight verifies project access before agents start.
 
 ```bash
-export AGENT_DATABASE_PORT=55433
-export PGDATABASE=postgres
-export PGUSER="$USER"
+./dev bun run pipeline -- spam1 --no-fetch --check-setup
+# Synthetic trace and score write/readback; no model or training fit:
+./dev bun run telemetry:smoke
 ```
 
-The current event sink connects to PostgreSQL on `127.0.0.1` with TLS disabled and no password in the connection URL. Configure local socket/TCP trust accordingly, or adapt `agent/observability.ts` and `agent/dashboard/lib/db.js` for your database setup.
+Use the printed Cloud trace link for inspection. The former dashboard, Postgres
+writer and `traces` command are removed. Healthy runs write no JSONL trace.
+Delivery failures activate emergency recording and appear in final results,
+including final flush. Initial outages require `--allow-telemetry-fallback`;
+invalid credentials block execution.
 
-Start the dashboard:
-
-```bash
-./dev bun run traces
-```
-
-Open [http://localhost:3001](http://localhost:3001).
-
-### Check that telemetry works
-
-Check the dashboard API:
-
-```bash
-curl -fsS http://127.0.0.1:3001/api/traces
-```
-
-Check PostgreSQL directly:
-
-```bash
-pg_isready -h 127.0.0.1 -p 55433 -d postgres
-psql -X -h 127.0.0.1 -p 55433 -d postgres -Atqc \
-  'select count(*), min(observed_at), max(observed_at) from agent_events'
-
-psql -X -h 127.0.0.1 -p 55433 -d postgres -P pager=off -c \
-  'select agent_run_id, event_type, observed_at, stage from agent_events order by observed_at desc limit 20'
-```
-
-Generate a trace by running a registered stage, then inspect its local mirror:
-
-```bash
-./dev bun run pipeline -- spam1 --stop-after research
-ls -lt runs/spam1/pipeline/
-tail -n 20 runs/spam1/pipeline/*.jsonl
-```
-
-If the dashboard is empty:
-
-- confirm PostgreSQL is running (`pg_isready -h 127.0.0.1 -p 55433`);
-- confirm the pipeline and dashboard use the same `AGENT_DATABASE_PORT`, `PGDATABASE`, and `PGUSER`;
-- query `agent_events` directly;
-- inspect the pipeline command for a degraded-trace warning;
-- inspect the JSONL mirror, which may contain the run even when the database was unavailable;
-- restart the Next.js dashboard after changing environment variables.
-
-Trace payloads currently include full model messages and tool results. Treat the database and `runs/` as sensitive development data. Large streamed messages can also make traces very large. Automated redaction and retention are outside the current scope.
+Harness artifacts, experiment records, recovery journals and authored prompts
+stay local. Langfuse scores do not replace validation, promotion or submission
+policy. See the [telemetry runbook](docs/telemetry.md) for configuration, hierarchy,
+usage/cost semantics, payload limits and emergency diagnostics.
 
 ## Optional subagents and context management
 
@@ -426,13 +377,13 @@ agent/
 ├── solve/              Measurement, sealed split, canary, and champion comparison
 ├── subagents/          Optional parent/child session manager, not pipeline-enabled
 ├── run/                Shared session code plus the legacy orchestration path
-├── dashboard/          Next.js trace dashboard
+├── telemetry/          Langfuse runtime, preflight, emergency journal and Cloud smoke
 ├── setup/              Unit fetching, SmartLab helpers, and Python environment manager
-└── observability.ts    PostgreSQL and local event sink
+└── observability.ts    Pi event and final-request adapter
 libs/smartlab-eval/     Corpus loading and measurement library
 solutions/              Agent-owned reusable model code
 units/                  Downloaded task prompts, metadata, and datasets
-runs/                   Generated workspaces and local traces
+runs/                   Harness artifacts, durable records and emergency traces
 pipeline.config.json    Enabled stages, options, providers, and default model
 pyproject.toml          Declared Python dependencies
 uv.lock                 Locked Python environment

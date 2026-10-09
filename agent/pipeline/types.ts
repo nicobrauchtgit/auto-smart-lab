@@ -9,7 +9,7 @@ import type { SetupRequirement } from "./setup.js";
  * snapshots, and observability; stages never record lifecycle events themselves.
  */
 
-import type { AgentObservation, EventIdentity } from "../observability.js";
+import type { AgentObservation, TelemetryIdentity } from "../observability.js";
 import type { PromptSnapshot } from "../prompts/loader.js";
 import type { TaskConfiguration } from "./task_configuration.js";
 
@@ -66,7 +66,7 @@ export interface StageReporter {
 	/** Record a stage-scoped event under the enclosing invocation. */
 	event(eventType: string, payload: Record<string, unknown>): void;
 	/** Identity for one agent attempt inside this invocation. */
-	agentIdentity(attempt: number): EventIdentity;
+	agentIdentity(attempt: number): TelemetryIdentity;
 	/** Observation handle to attach to an agent session for this attempt. */
 	observation(attempt: number): AgentObservation;
 	/** Declare an input that was actually supplied to the stage. */
@@ -132,4 +132,6 @@ export interface PipelineRunResult {
 	traceDegraded: boolean;
 	traceFailures: string[];
 	localTracePath?: string;
+ traceId?: string;
+ traceUrl?: string;
 }

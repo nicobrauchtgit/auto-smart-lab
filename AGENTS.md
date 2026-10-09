@@ -8,6 +8,9 @@ work queue. Run project commands through `./dev` (see that file).
 
 When creating or changing a pipeline module, follow
 [the pipeline integration contract](docs/pipeline-integration.md).
+Langfuse Cloud is the shared observability backend; JSONL is emergency-only.
+Use `agent/telemetry/` and pipeline reporters, declare `observability` setup, and
+preserve authoritative harness/recovery records. See [telemetry](docs/telemetry.md).
 Observability is part of module completion: record stage lifecycle, typed
 configuration and input metadata, artifact results, and any agent sessions
 under shared pipeline and invocation IDs. Standalone module commands must use

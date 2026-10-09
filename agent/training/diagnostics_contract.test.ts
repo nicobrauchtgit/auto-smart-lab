@@ -1,11 +1,12 @@
 import { expect, test } from "bun:test";
+import type { ExperimentRequest } from "./types.js";
 import { validateExperimentRequest } from "./contract.js";
 
-const base = { schemaVersion: 2, hypothesis: "measure geometry", pipeline: { module: "solutions/model.py", factory: "build" },
+const base: ExperimentRequest = { schemaVersion: 2, hypothesis: "measure geometry", pipeline: { module: "solutions/model.py", factory: "build" },
     cv: { kind: "builtin", scheme: "kfold", folds: 3, repeats: 1 }, scope: { kind: "pilot" } };
 
 test("diagnostic options and explicit proxy direction survive structural validation", () => {
-    const request = { ...base, diagnostics: { representation: { source: "pipeline_features", metric: "euclidean", maxRows: 256 }, predictionStrength: true },
+    const request: ExperimentRequest = { ...base, diagnostics: { representation: { source: "pipeline_features", metric: "euclidean", maxRows: 256 }, predictionStrength: true },
         search: { sampler: "grid", objective: { kind: "proxy", metric: "daviesBouldin", direction: "minimize" },
             space: { model__n_clusters: { type: "categorical", choices: [2, 3] } } } };
     expect(validateExperimentRequest(request)).toEqual({ request, issues: [] });

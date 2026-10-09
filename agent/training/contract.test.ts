@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
 import { ExperimentRequestError, parseExperimentRequest, validateExperimentRequest } from "./contract.js";
-import type { ValidationIssue } from "./types.js";
+import type { ExperimentRequest, ValidationIssue } from "./types.js";
 
-const validRequest = () => ({
+const validRequest = (): ExperimentRequest => ({
 	schemaVersion: 1,
 	hypothesis: "word bigrams improve minority recall",
 	pipeline: {
@@ -21,7 +21,7 @@ describe("parseExperimentRequest", () => {
 	});
 
 	test("accepts a custom CV factory and promotion scope", () => {
-		const request = {
+		const request: ExperimentRequest = {
 			schemaVersion: 1,
 			hypothesis: "group-aware splits expose sender leakage",
 			pipeline: { module: "solutions/spam.py", factory: "pipeline" },

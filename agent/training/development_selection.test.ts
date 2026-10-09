@@ -16,7 +16,7 @@ test("a terminal champion stays frozen while a changed candidate earns fresh sta
  const project = temporaryProject("changed-after-terminal-"), root = join(project.root, "runs", "fixture", "solve", "training", "run");
  const events: { type: string; payload: Record<string, unknown> }[] = [];
  const training = createHarnessTraining({ root, projectRoot: project.root, solutionsRoot: project.solutionsRoot, taskId: "fixture", pythonExecutable: PYTHON,
-  env: trainingEnvironment(), datasetSha256: project.datasetSha256, rootSeed: 13, zipPath: project.zipPath, labelsPath: project.labelsPath, workerPath: WORKER,
+  env: trainingEnvironment(), datasetSha256: project.datasetSha256, measurement: project.measurement, rootSeed: 13, zipPath: project.zipPath, labelsPath: project.labelsPath, workerPath: WORKER,
   prompts: loadPromptSnapshot(), record: (type, payload) => events.push({ type, payload }), limits: { sampleIntervalMs: 25, stopGraceMs: 100 } });
  const request = { schemaVersion: 2, hypothesis: "baseline fixed promotion", pipeline: { module: "solutions/tasks/fixture.py", factory: "build_pipeline", parameters: { c: 1 } }, cv: { kind: "builtin", scheme: "stratified_kfold", folds: 2, repeats: 1 }, scope: { kind: "promotion" } };
  try {
@@ -55,11 +55,11 @@ test("solve hands over the tagged champion, even from an earlier run, never an u
  const project = temporaryProject("champion-selection-"), runs = join(project.root, "runs", "fixture", "solve", "training");
  const events: { type: string; payload: Record<string, unknown> }[] = [];
  const harness = (root: string) => createHarnessTraining({ root, projectRoot: project.root, solutionsRoot: project.solutionsRoot, taskId: "fixture", pythonExecutable: PYTHON,
-  env: trainingEnvironment(), datasetSha256: project.datasetSha256, rootSeed: 13, zipPath: project.zipPath, labelsPath: project.labelsPath, workerPath: WORKER,
+  env: trainingEnvironment(), datasetSha256: project.datasetSha256, measurement: project.measurement, rootSeed: 13, zipPath: project.zipPath, labelsPath: project.labelsPath, workerPath: WORKER,
   prompts: loadPromptSnapshot(), record: (type, payload) => events.push({ type, payload }), limits: { sampleIntervalMs: 25, stopGraceMs: 100 } });
  const request = { schemaVersion: 2, hypothesis: "first champion", pipeline: { module: "solutions/tasks/fixture.py", factory: "build_pipeline", parameters: { c: 1 } }, cv: { kind: "builtin", scheme: "stratified_kfold", folds: 2, repeats: 1 }, scope: { kind: "promotion" } };
  const first = harness(join(runs, "run-1"));
- let champion;
+ let champion: Awaited<ReturnType<typeof first.service.start>>;
  try {
   champion = await first.service.start(request);
   expect(await until(() => first.supervisor.status(champion.id).status !== "running")).toBe(true); await first.service.finalize(champion.id);

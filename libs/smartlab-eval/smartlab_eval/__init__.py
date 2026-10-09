@@ -2,8 +2,9 @@
 
     from smartlab_eval import load_labelled
 
-`corpus` reads the task archive in one pass and keeps member ids aligned with
-the labels file. The harness workers use it; scoring lives in the harness.
+`corpus` provides optional text parsing utilities for agent-authored pipelines
+and local research. Harness training and refit pass opaque raw sample inputs;
+they do not use these decoded-text loaders. Scoring lives in the harness.
 """
 from .corpus import (
     NEUTRAL_SUFFIX,

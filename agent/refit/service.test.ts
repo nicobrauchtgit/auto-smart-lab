@@ -194,7 +194,7 @@ test("authoritative chosen tag wins when a different eligible trial has a higher
  const selected = await training.service.start(request);
  expect(await until(() => training.supervisor.status(selected.id).status !== "running")).toBe(true);
  await training.service.finalize(selected.id); await training.close();
- const trials = (await collectTrainingResults(f.root)).trials, score = (id: string) => trials.find(t => t.experimentId === id)!.result!.metrics!.balancedAccuracy;
+ const trials = (await collectTrainingResults(f.root)).trials, score = (id: string) => trials.find(t => t.experimentId === id)!.result!.metrics!.balancedAccuracy!;
  expect(score(f.started.id)).toBeGreaterThan(score(selected.id));
  tagCommit(f.solutionsRoot, "champion/fixture", chosenCommit, JSON.stringify({ experimentId: selected.id, pipeline: request.pipeline, trainingRoot: f.root }), true);
  const frozen = await prepareRefit(f.options);

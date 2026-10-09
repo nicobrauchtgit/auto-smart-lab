@@ -28,14 +28,19 @@ class DiagnosticPipeline(Pipeline):
         return super().predict(frame)
     def diagnostic_slices(self, frame):
         assert not frame.attrs
-        return {"all": np.ones(len(frame), dtype=bool), "offers": frame.text.str.contains("offer").to_numpy(),
+        return {"all": np.ones(len(frame), dtype=bool), "offers": np.array(["offer" in text for text in read_text(frame)]),
                 "empty": np.zeros(len(frame), dtype=bool)}
     def diagnostic_perturbations(self, frame, context):
         assert not frame.attrs
         neutral, erased, unknown = frame.copy(), frame.copy(), frame.copy()
-        neutral["text"] = neutral.text.str.lower()
-        erased["text"] = "unseen words"
-        unknown["text"] = unknown.text.str.replace("limited offer prize", "project meeting agenda")
+        import zipfile
+        for name, variant, transform in [("lowercase", neutral, str.lower), ("erase", erased, lambda text: "unseen words"),
+                                         ("unknown", unknown, lambda text: text.replace("limited offer prize", "project meeting agenda"))]:
+            path = str(frame["input"].iloc[0]["archive"]) + "." + name + ".zip"
+            with zipfile.ZipFile(path, "w") as archive:
+                for descriptor, text in zip(frame["input"], read_text(frame)):
+                    archive.writestr(descriptor["member"], transform(text))
+            variant["input"] = [{"archive": path, "member": descriptor["member"]} for descriptor in frame["input"]]
         return [{"name": "lowercase", "frame": neutral, "labelPreserving": True},
                 {"name": "erase", "frame": erased, "labelPreserving": True},
                 {"name": "unknown-labels", "frame": unknown, "labelPreserving": False}]

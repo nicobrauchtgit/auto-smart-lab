@@ -20,6 +20,7 @@ import { Coordinator } from "./coordinator.js";
 import { runDecisionAgent } from "./session.js";
 import type { PipelineRunResult, StageInput } from "../pipeline/types.js";
 export interface OrchestratorOptions {
+ telemetry?: import("../telemetry/runtime.js").TelemetryOptions;
  taskId: string; targetScore?: number; maxSubmissions?: number; noSubmit?: boolean; checkSetupOnly?: boolean;
  model?: string; configPath?: string; runsDir?: string; resumeRunId?: string; limits?: Partial<Limits>; signal?: AbortSignal;
 }
@@ -46,6 +47,7 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Pip
  const controller = new AbortController();
  const cancel = () => controller.abort(); options.signal?.addEventListener("abort", cancel, { once: true }); if (options.signal?.aborted) cancel();
  let timer: ReturnType<typeof setTimeout> | undefined;
+ let finalResult: PipelineRunResult | undefined;
  let stoppedBecause = "", outcome: PipelineRunResult["outcome"] = "failure";
  try {
   const { resolved: config } = await loadResolvedPipelineConfig(options.configPath);
@@ -62,12 +64,14 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Pip
   if (options.resumeRunId && ((options.targetScore !== undefined && options.targetScore !== saved.goal.targetScore) || (options.maxSubmissions !== undefined && options.maxSubmissions !== saved.policy.maxSubmissions) || (options.noSubmit === true && saved.policy.authorized))) throw new Error("Resume policy is immutable; start a separate no-submit run instead");
   const prompts = restorePromptSnapshot(saved.promptTemplates);
   if (prompts.fingerprint !== saved.promptFingerprint) throw new Error("Persisted prompt fingerprint mismatch");
-  trace = await createPipelineTrace({ taskId: task.taskId, pipelineRunId: saved.runId, runsDir });
+  trace = await createPipelineTrace({ taskId: task.taskId, pipelineRunId: saved.runId, runsDir, telemetry: options.telemetry });
+  const previousTraceId = [...saved.journal].reverse().find(entry => entry.kind === "telemetry_execution_started")?.payload.traceId;
+  store.transaction("telemetry_execution_started", { traceId: trace.traceId, previousTraceId: previousTraceId ?? null, executionId: trace.telemetry.executionId }, () => {});
   const report = trace.stage("orchestrator", saved.controlInvocationId);
   const setup = new SetupSession();
   const available = saved.config.enabledStages.filter(name => name !== "submit" || saved.policy.authorized);
   trace.event("task_data_ready", { downloaded: taskData.downloaded, present: taskData.present, legacy: taskData.legacy });
-  trace.event("pipeline_run_start", { scheduling: "agent", resumed: !!options.resumeRunId, config_snapshot: saved.config.snapshot, config_fingerprint: saved.config.fingerprint, prompt_snapshot_sha256: prompts.fingerprint, policy: saved.policy, goal: saved.goal, available_modules: available });
+  trace.event("pipeline_run_start", { scheduling: "agent", resumed: !!options.resumeRunId, previousTraceId, config_snapshot: saved.config.snapshot, config_fingerprint: saved.config.fingerprint, prompt_snapshot_sha256: prompts.fingerprint, policy: saved.policy, goal: saved.goal, available_modules: available });
   coordinator = new Coordinator(store, {
    record: report.event,
    inspectTaskData: configuration => inspectTaskData(task.taskId, configuration, projectPython()),
@@ -81,8 +85,8 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Pip
     return reconcileOwnedInvocation(work, input, { config: saved.config, trace: trace!, prompts, setupSession: setup, signal: controller.signal, reason: "orchestrator_restart_reconciliation", optionOverrides: work.options });
    },
   });
-  const allSetup = () => setup.check(setupChecks(["orchestrator", "model", "python", "task", "knowledge", ...available.flatMap(name => [...(getStage(name).setupRequirements ?? [])])], {
-   taskId: task.taskId, model: options.model, configPath: options.configPath, prompts, submissionPolicy: saved.policy,
+  const allSetup = () => setup.check(setupChecks(["observability", "orchestrator", "model", "python", "task", "knowledge", ...available.flatMap(name => [...(getStage(name).setupRequirements ?? [])])], {
+   telemetry: trace!.telemetry, taskId: task.taskId, model: options.model, configPath: options.configPath, prompts, submissionPolicy: saved.policy,
    // The decision agent declares the configuration; its tool validates the task files then.
    taskConfiguration: coordinator!.state.taskConfiguration?.configuration ?? saved.config.taskConfigurations?.[task.taskId], taskConfigurationDeclaredLater: true,
    candidateProducedUpstream: available.includes("solve"), refitTrainingRoot: (saved.config.effectiveOptions.refit as { trainingRoot?: string })?.trainingRoot,
@@ -93,7 +97,7 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Pip
   // Read-only official/recovery access is checked before unrelated model probes.
   // Exhausted or already-achieved goals require no new provider session.
   const ready = await prepareDecisionLoop(coordinator, { resume: !!options.resumeRunId, allSetup, recoverySetup: async () => {
-   if (saved.policy.authorized) await setup.check(setupChecks(["submission-recovery"], { taskId: task.taskId, prompts, submissionPolicy: saved.policy }), controller.signal, trace!.event);
+   await setup.check(setupChecks(["observability", ...(saved.policy.authorized ? ["submission-recovery" as const] : [])], { telemetry: trace!.telemetry, taskId: task.taskId, prompts, submissionPolicy: saved.policy }), controller.signal, trace!.event);
   } });
   if (!ready) { stoppedBecause = coordinator.state.reason ?? coordinator.state.status; outcome = coordinator.state.status === "finished" ? "success" : "failure"; return result(); }
   const knowledge = new TaskKnowledge({ root: join(PROJECT_ROOT, "knowledge"), origin: { taskId: task.taskId, datasetSha256: context.dataset.snapshot_sha256, pipelineRunId: saved.runId, stageInvocationId: saved.controlInvocationId } });
@@ -125,8 +129,10 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Pip
  } finally {
   if (timer) clearTimeout(timer); options.signal?.removeEventListener("abort", cancel);
   trace?.event("pipeline_run_end", { outcome, stopped_because: stoppedBecause, revision: store?.state.revision });
-  await trace?.close(); coordinator?.close(); if (!coordinator) store?.close(); releaseWorkspace();
+  try { await trace?.close(); } finally { coordinator?.close(); if (!coordinator) store?.close(); releaseWorkspace(); }
+  if (finalResult && trace) Object.assign(finalResult, delivery());
  }
- function result(): PipelineRunResult { return { pipelineRunId: store!.state.runId, taskId: task.taskId, invocations: store!.state.works.flatMap(w => w.result ? [w.result] : []), outcome, stoppedBecause,
-  traceDegraded: trace!.degraded(), traceFailures: trace!.failures(), localTracePath: trace!.localPath }; }
+ function delivery() { return { traceDegraded: trace!.degraded(), traceFailures: trace!.failures(), localTracePath: trace!.localPath, traceId: trace!.traceId, traceUrl: trace!.traceUrl }; }
+ function result(): PipelineRunResult { return finalResult = { pipelineRunId: store!.state.runId, taskId: task.taskId, invocations: store!.state.works.flatMap(w => w.result ? [w.result] : []), outcome, stoppedBecause,
+  ...delivery() }; }
 }

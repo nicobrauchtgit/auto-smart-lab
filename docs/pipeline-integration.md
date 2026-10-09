@@ -1,9 +1,8 @@
 # Pipeline integration and observability
 
-Status: partially implemented, updated 2026-09-09. The shared executor, stage
-configuration, trace identity, and the research and solve stages exist.
-Evaluation and deterministic terminal refit are registered; submission is not registered yet. The dashboard shows
-pipeline runs. Dashboard filtering is outside the current scope.
+Updated 2026-10-09. Research, solve, advisory evaluation, terminal refit and
+policy-controlled submission are registered. Langfuse Cloud replaces the custom
+trace stack; JSONL is an emergency fallback. See [telemetry.md](telemetry.md).
 
 ## Running the pipeline
 
@@ -26,7 +25,7 @@ non-zero when it does not.
 | `agent/pipeline/executor.ts` | `invokeStage` and `runPipeline`: the one execution path |
 | `agent/pipeline/registry.ts` | Implemented stages |
 | `agent/pipeline/config.ts` | Validates the `pipeline` block; snapshot and fingerprint |
-| `agent/pipeline/trace.ts` | Pipeline run and stage reporters over the shared event sink |
+| `agent/pipeline/trace.ts` | Pipeline and stage reporters over shared Langfuse telemetry |
 | `agent/pipeline/stages/research.ts` | Research stage definition and artifacts |
 | `agent/pipeline/stages/solve.ts` | Solve stage definition and artifacts |
 | `agent/pipeline/run_research.ts` | Research-only entry used by standalone commands |
@@ -38,7 +37,7 @@ non-zero when it does not.
 | `agent/solve/canary.py` | Filename-leakage canary |
 | `agent/solve/champion.py` | Champion re-run under the challenger's folds |
 | `libs/smartlab-eval/` | Corpus loader and measurement library, installed into the venv |
-| `agent/observability.ts` | Event sink, schema migration, agent session observer |
+| `agent/observability.ts` | Pi event and final-request observer |
 
 ## Current entry points
 
@@ -53,7 +52,7 @@ non-zero when it does not.
 - `agent/pi_sdk.ts` remains a standalone experiment for the observability stack.
 - Legacy evaluation and submission still run through `orchestrate.ts` outside the
   executor. The new `evaluate` stage uses the review contract documented below;
-  submission remains unregistered. The
+  submission is registered and requires an explicit controller policy. The
   legacy `runSolverSession` path there is unchanged and separate from the
   registered `solve` stage.
 
@@ -92,21 +91,19 @@ Two boundaries are instrumented:
    retries, errors, and session completion. Flush pending events and release
    the observer and session on completion, error, and cancellation.
 
-Events carry a pipeline run ID, stage invocation ID, and agent run/attempt ID;
-`agent_events` gained nullable `pipeline_run_id`, `stage`, `stage_invocation_id`,
-`attempt`, and `task_id` columns, and `pi_session_id` is now nullable for stage
-events. Every run is also mirrored to `runs/<task>/pipeline/<run-id>.jsonl`, so a
-run stays readable when the database is unavailable — and that degradation is
-reported by the CLI rather than passed off as a complete trace. Retain
-parent invocation or triggering tool-call references for nested execution.
-Every repair session has its own attempt identity within the same stage.
-Session completion does not imply stage success: research can still fail
-artifact validation and require another attempt.
+Events retain pipeline run, invocation, attempt and physical agent/session IDs as
+metadata. Each execution creates a Langfuse trace; durable run IDs group resumed
+executions as Cloud sessions. Explicit parents retain hierarchy across concurrent
+stages, children, context handoffs and background trials. Generations capture
+final requests after controller hooks, terminal responses, provider/model,
+disjoint usage and Pi-calculated cost. Deltas do not duplicate usage.
 
-Extend the event model to support stage events without a PI session. Preserve
-existing agent run identities and compatibility with older traces. Recording
-failures must be visible; do not silently present an incomplete trace as a
-fully observed execution.
+Healthy runs create no JSONL trace. Delivery failures preserve affected sanitized
+batches/scores and subsequent events in an emergency journal. Failures, including
+final flush, are returned and printed. Artifact validation decides success.
+The artifact root is independent of the optional emergency path, preserving
+guidance, feedback and harness records. Session completion does not imply stage
+success. Every repair session retains an attempt within the same invocation.
 
 ## Typed metadata
 
@@ -133,7 +130,7 @@ For example, a dataset profile can be delivered through `initial_prompt` or
 availability. An enabled setting does not prove useful context was supplied.
 Keep parameter and input schemas validated at runtime as well as typed in code.
 
-Use stable metadata keys when comparing runs. Dashboard filtering is outside the current scope.
+Use stable metadata keys when comparing runs in Langfuse Cloud.
 Track tools made available separately from tools actually called. Correlate
 start and completion events by tool-call ID so streamed updates do not inflate
 usage counts. Hashes and artifact references support inspection; stable kinds,
@@ -348,9 +345,10 @@ small API charge; it uses no tools or dataset content. `setup.timeoutMs` and
 Setup events record check IDs, outcomes and fixed remediation text under the
 pipeline identity (or invocation identity for direct stage calls). Credentials
 and raw remote errors are never recorded. Successful probes are reused only
-within one run. The trace database remains optional with an explicit degradation
-warning and local JSONL fallback; Langfuse is not a required dependency until its
-exporter is integrated. Add prerequisite declarations and failure tests with
+within one run. Every executing stage also requires Langfuse configuration, a
+writable emergency destination and bounded read-only project access. Initial
+network/service outages need explicit controller fallback opt-in; invalid
+credentials block. Add prerequisite declarations and failure tests with
 new features; see AGENTS.md.
 
 ## Short evaluation stage
@@ -358,7 +356,7 @@ new features; see AGENTS.md.
 `evaluate` is now registered and enabled after solve. It reviews the selected
 harness trial's OOF metrics and implementation, returning an advisory submission
 readiness score out of 5 with evidence-linked issues and limitations. It cannot
-submit or promote a model. `submit` remains unregistered. See
+submit or promote a model. `submit` requires explicit controller authorization. See
 [model evaluation](../agent/evaluation/README.md) for tools, artifacts, the
 scoring rubric, setup checks and standalone usage.
 
@@ -389,14 +387,12 @@ provider credentials are added. See the [durable recovery contract](training-sea
 `agent/pipeline/stages/refit.ts` registers deterministic terminal training;
 `agent/pipeline/run_refit.ts` and `agent/refit_cli.ts` provide the standalone
 executor path (`npm run refit-stage -- <task-id> [--check-setup]`). The configured
-chain is research → solve → evaluate → refit. Submission stays unregistered and
-disabled. Refit has no successor or model session. Evaluation remains advisory.
+chain is research → solve → evaluate → refit. Configured chains stop before submission; uploads require an explicit controller policy. Refit has no successor or model session. Evaluation remains advisory.
 
 Refit resolves the chosen champion tag rather than the generic score-sorted
 selection artifact. It records typed freeze/evidence inputs, supervised process
 events and validated final predictions/model/result artifacts under shared
-pipeline/invocation IDs. Setup declares `python`, `task` and `refit`, without any
-model or web credentials. Whole-chain preflight checks data/runtime availability
+pipeline/invocation IDs. Setup declares `observability`, `python`, `task` and `refit`, without model or web credentials. Whole-chain preflight checks data/runtime availability
 before solve; candidate evidence is checked at refit invocation when solve is its
 producer. Standalone checks include chosen candidate integrity up front.
 

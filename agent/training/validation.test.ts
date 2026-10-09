@@ -22,7 +22,7 @@ function training(project: ReturnType<typeof temporaryProject>, maxExperiments =
 			},
 		},
 		pythonExecutable: PYTHON, projectRoot: project.root, trainingRoot: join(project.root, "runs", "training"),
-		taskId: "fixture", datasetSha256: project.datasetSha256, rootSeed: 13,
+		taskId: "fixture", datasetSha256: project.datasetSha256, measurement: project.measurement, rootSeed: 13,
 		zipPath: project.zipPath, labelsPath: project.labelsPath, solutionsRoot: project.solutionsRoot,
 		env: trainingEnvironment(), maxExperiments, record: (type, payload) => records.push({ type, payload }),
 	});
@@ -97,7 +97,7 @@ describe("pipeline validation before any fit", () => {
 		const service = new TrainingService({
 			supervisor: { start() { throw new Error("must not start"); } },
 			pythonExecutable: PYTHON, projectRoot: project.root, trainingRoot: join(project.root, "runs", "training"),
-			taskId: "fixture", datasetSha256: project.datasetSha256, rootSeed: 13, zipPath: project.zipPath,
+			taskId: "fixture", datasetSha256: project.datasetSha256, measurement: project.measurement, rootSeed: 13, zipPath: project.zipPath,
 			labelsPath: project.labelsPath, solutionsRoot: project.solutionsRoot, env: trainingEnvironment(),
 			search: { validationTimeoutSeconds: 1 },
 		});

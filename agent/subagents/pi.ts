@@ -1,3 +1,4 @@
+import { agentEnvironment } from "../telemetry/metadata.js";
 import { HARNESS_CONFIG } from "../harness/config.js";
 import { SmartContextSession } from "../context/session.js";
 import { createHash } from "node:crypto";
@@ -42,7 +43,7 @@ export function createChildBashTool(cwd: string, environment: Readonly<NodeJS.Pr
 	const env = Object.freeze({ ...environment });
 	return createBashToolDefinition(cwd, {
 		exposeSessionEnvironment: false,
-		spawnHook: context => ({ ...context, env: { ...env } }),
+		spawnHook: context => ({ ...context, env: agentEnvironment(env) }),
 	});
 }
 
@@ -78,7 +79,7 @@ export function createPiChildFactory(options: PiChildOptions): ChildSessionFacto
 	const timeoutMs = options.turnTimeoutMs ?? HARNESS_CONFIG.subagents.turnTimeoutMs;
 	if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2_147_483_647) throw new Error("Invalid child turn timeout");
 	const identity = { ...options.observe.identity };
-	const observe = { identity, sink: options.observe.sink };
+	const observe = { identity, telemetry: options.observe.telemetry };
 	// Snapshot declarative values; do not consult a mutable pipeline config on follow-up.
 	const { cwd, agentDir, model, modelRuntime, thinkingLevel } = options;
 
@@ -115,7 +116,7 @@ export function createPiChildFactory(options: PiChildOptions): ChildSessionFacto
 					customTools: [...availableTools.filter(tool => toolNames.includes(tool.name as ChildToolName)), ...knowledgeTools],
 				});
 				let observer: Awaited<ReturnType<typeof observeAgentSession>>;
-				try { observer = await observeAgentSession({ session, model: `${model.provider}/${model.id}`, ...observe }); }
+				try { observer = await observeAgentSession({ session, model: `${model.provider}/${model.id}`, ...observe, parentAgentRunId: child.parentAgentRunId }); }
 				catch (error) { session.dispose(); throw error; }
 				knowledgeRecord = observer.record;
 				knowledge?.bindAgent(observer.agentRunId);

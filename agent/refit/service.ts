@@ -74,7 +74,7 @@ function assertMeasuredConfiguration(configuration: TaskConfiguration, measureme
  const kind = configuration.kind === "binary_classification" ? "classification" : configuration.kind;
  if (measurement.kind !== kind || measurement.execution !== configuration.execution) throw new Error("Champion measurement kind/execution differs from the task configuration");
  if (canonical(configuration.selection ?? null) !== canonical(measurement.selection ?? null)) throw new Error("Champion selection differs from task configuration");
- if (configuration.kind === "anomaly_detection" && ["scoreMethod", "scoreDirection", "anomalyLabel"].some(key => measurement[key] !== (configuration.anomaly as Record<string, unknown>)[key])) throw new Error("Champion anomaly score semantics differ from the task configuration");
+ if (configuration.kind === "anomaly_detection" && (["scoreMethod", "scoreDirection", "anomalyLabel"] as const).some(key => measurement[key] !== configuration.anomaly![key])) throw new Error("Champion anomaly score semantics differ from the task configuration");
 }
 
 /** Worker inputs for original-data inspection, without development evidence. */

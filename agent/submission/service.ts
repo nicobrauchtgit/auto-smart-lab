@@ -78,7 +78,7 @@ export function buildFrozenBundle(options:SubmitRefitOptions, root:string) {
 }
 export async function submitRefit(options:SubmitRefitOptions):Promise<SubmissionResult> {
  const policy=validatePolicy(options.policy);
- options.report?.input({kind:"submission_policy",version:1,delivery:"none",status:"available",...policy});
+ options.report?.input({kind:"submission_policy",delivery:"none",status:"available",...policy});
  options.report?.input({kind:"terminal_refit_result",version:1,delivery:"none",status:"available",artifact:options.refitArtifact.path,content_sha256:options.refitArtifact.sha256});
  if(!policy.authorized)return {version:1,state:"disabled",officialScore:null,triesUsed:null,triesRemaining:null,reservedUnknown:0,effectiveTriesUsed:null,newAttempt:false,attemptId:null,bundleId:null,artifacts:[]};
  options.signal?.throwIfAborted();
@@ -130,7 +130,7 @@ export async function submitRefit(options:SubmitRefitOptions):Promise<Submission
 /** Restart recovery: status/authentication only, durable receipt writes, no bundle building or upload POST. */
 export async function reconcileSubmission(options:import("./types.js").ReconcileSubmissionOptions):Promise<SubmissionResult | null> {
  const policy=validatePolicy(options.policy);
- options.report?.input({kind:"submission_policy",version:1,delivery:"none",status:"available",...policy,recovery:true});
+ options.report?.input({kind:"submission_policy",delivery:"none",status:"available",...policy,recovery:true});
  if(!policy.authorized)return {version:1,state:"disabled",officialScore:null,triesUsed:null,triesRemaining:null,reservedUnknown:0,effectiveTriesUsed:null,newAttempt:false,attemptId:null,bundleId:null,artifacts:[]};
  const scope=digest({origin:new URL(options.transport.taskUrl).origin,taskUrl:new URL(options.transport.taskUrl).href,account:options.transport.username.trim().toLowerCase()});
  const root=join(options.accountingRoot,scope);

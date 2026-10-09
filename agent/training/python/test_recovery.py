@@ -18,7 +18,7 @@ class Recovery(unittest.TestCase):
         self.folds = [ConcreteFold(0, 0, (0, 1), (2, 3), 17)]
         self.ids = ['a', 'b', 'c', 'd']
         self.inv = Invocation('fixture', 'test', PipelineSpec('solutions/a.py', 'build', {}),
-            CvSpec('builtin', 1, 2, None, None, {}), Scope('pilot', None, 1), self.root, 'zip', 'labels', self.root, 13, 17,
+            CvSpec('builtin', 1, 2, None, None, {}), Scope('pilot', None, 1), self.root, self.root, 13, 17,
             search=SearchSpec({'quality': {'type': 'categorical', 'choices': [0, 1]}}, 'random', 2, False, None),
             runtime=RuntimeGuard(confirm_above_seconds=100, max_seconds=100), request={})
 

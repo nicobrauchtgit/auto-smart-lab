@@ -1,3 +1,4 @@
+import { testTelemetry, traceEvents } from "../telemetry/testing.js";
 import { expect, test } from "bun:test";
 import { SetupSession, setupChecks, type SetupCheck } from "./setup.js";
 import { loadPromptSnapshot } from "../prompts/loader.js";
@@ -127,7 +128,7 @@ test("a missing optuna or git prevents the solve stage from running", async () =
  const before = STAGE_REGISTRY.solve;
  const directory = mkdtempSync(join(tmpdir(), "solve-preflight-"));
  let ran = false;
- const trace = await createPipelineTrace({ taskId: "fixture", pipelineRunId: crypto.randomUUID(), runsDir: directory });
+ const trace = await createPipelineTrace({ telemetry: testTelemetry(), taskId: "fixture", pipelineRunId: crypto.randomUUID(), runsDir: directory });
  try {
   STAGE_REGISTRY.solve = { ...solveStage, checkInput() {}, async run() { ran = true; return { artifacts: [] }; } };
   const config = resolvePipelineSettings({ pipeline: { entryStage: "solve", stages: { solve: { enabled: true } } }, agent: { cwd: ".", agentDir: ".", initialPrompt: "" }, providers: {}, defaultModel: "fixture/model" } as any);
@@ -137,7 +138,7 @@ test("a missing optuna or git prevents the solve stage from running", async () =
   expect(invocation.error).toContain("training-git");
   expect(ran).toBe(false);
   await trace.close();
-  expect(readFileSync(trace.localPath, "utf8")).toContain(invocation.invocationId);
+  expect(JSON.stringify(traceEvents(trace.pipelineRunId))).toContain(invocation.invocationId);
  } finally {
   STAGE_REGISTRY.solve = before;
   await trace.close();
@@ -185,9 +186,9 @@ test("missing shared metric prerequisites block the solve stage before execution
    return super.check([missing], abort, record);
   }
  }
- const original = STAGE_REGISTRY.solve;
+ const original = STAGE_REGISTRY.solve!;
  const directory = mkdtempSync(join(tmpdir(), "metric-preflight-"));
- const trace = await createPipelineTrace({ taskId: "fixture", pipelineRunId: crypto.randomUUID(), runsDir: directory });
+ const trace = await createPipelineTrace({ telemetry: testTelemetry(), taskId: "fixture", pipelineRunId: crypto.randomUUID(), runsDir: directory });
  let ran = false;
  try {
   STAGE_REGISTRY.solve = { ...original, checkInput() {}, async run() { ran = true; return { artifacts: [] }; } };

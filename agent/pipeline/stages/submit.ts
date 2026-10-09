@@ -10,8 +10,8 @@ function inputPolicy(input:StageInput):SubmissionPolicy { return validatePolicy(
 export const submitStage:StageDefinition<SubmitStageOptions>={
  name:"submit",version:1,description:"Validate frozen terminal evidence and submit once under durable official attempt accounting",
  // Shared preflight skips submission credentials for disabled policy.
- setupRequirements:["task","python","submission"],
- recoverySetupRequirements:["submission-recovery"],
+ setupRequirements:["observability","task","python","submission"],
+ recoverySetupRequirements:["observability","submission-recovery"],
  parseOptions(raw) {
   if(raw!==undefined&&(!raw||typeof raw!=="object"||Array.isArray(raw)))throw new Error("submit options must be an object");
   const value=(raw??{}) as Record<string,unknown>;const defaults:SubmitStageOptions={timeoutMs:10000,pollTimeoutMs:30000,pollIntervalMs:1000};

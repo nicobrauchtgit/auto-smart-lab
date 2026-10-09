@@ -169,7 +169,7 @@ export async function runResearchSession(taskId: string, model?: string, options
 			});
 			const { output, agentRunId } = await runSession({
 				knowledge: { root: join(PROJECT_ROOT, "knowledge"), origin: { taskId, datasetSha256: context.dataset.snapshot_sha256,
-					pipelineRunId: report?.agentIdentity(attempts).pipelineRunId, stageInvocationId: report?.agentIdentity(attempts).stageInvocationId } },
+					pipelineRunId: report?.agentIdentity(attempts).pipelineRunId ?? undefined, stageInvocationId: report?.agentIdentity(attempts).stageInvocationId ?? undefined } },
 				...prepared,
 				prompts,
 				feedback: options.feedback,

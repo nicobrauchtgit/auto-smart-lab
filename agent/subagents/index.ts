@@ -21,7 +21,7 @@ export function createSubagents(options: PiChildOptions & {
 	const moduleRunId = randomUUID();
 	let sequence = 0;
 	const identity = { ...options.observe.identity };
-	const sink = options.observe.sink;
+	const sink = options.observe.telemetry;
 	let parentAgentRunId: string | undefined;
 	const record = (eventType: string, payload: Record<string, unknown>) => sink.record({
 		agentRunId: moduleRunId, piSessionId: null, sequence: sequence++,

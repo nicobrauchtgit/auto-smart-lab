@@ -250,15 +250,11 @@ export class TrainingService {
 
     private hashFile(path: string): string { return createHash("sha256").update(readFileSync(path)).digest("hex"); }
     private dataHash(): string {
-        if (this.options.measurement) {
-            const path = this.options.measurement.sampleManifestPath;
-            if (!existsSync(path)) return "unavailable";
-            const hash = createHash("sha256").update(canonical(measurementDeclaration(this.options.measurement))).update(readFileSync(path));
-            return hash.digest("hex");
-        }
-        if (!this.options.zipPath || !this.options.labelsPath || !existsSync(this.options.zipPath) || !existsSync(this.options.labelsPath)) return "unavailable";
-        return createHash("sha256").update(readFileSync(this.options.zipPath)).update(readFileSync(this.options.labelsPath)).digest("hex");
+        const path = this.options.measurement?.sampleManifestPath;
+        if (!path || !existsSync(path)) return "unavailable";
+        return createHash("sha256").update(canonical(measurementDeclaration(this.options.measurement))).update(readFileSync(path)).digest("hex");
     }
+
     private runtimeDependencyHash(): string {
         const probe = spawnSync(this.options.pythonExecutable, ["-I", "-c",
             "import importlib.metadata,json,platform; print(json.dumps({'python':platform.python_version(),'packages':sorted((d.metadata['Name'],d.version) for d in importlib.metadata.distributions())},sort_keys=True))"],
@@ -314,7 +310,7 @@ export class TrainingService {
 
     /** Same no-fit metadata/import check before readiness and every trial launch. */
     private checkMeasurement(declaration: MeasurementConfig = this.options.measurement!, requireEvidence = false): (MeasurementConfig & { sampleManifestSha256: string; hasTargets: boolean; evidenceManifestSha256?: string }) | undefined {
-        if (!this.options.measurement) return undefined;
+        if (!this.options.measurement) throw new Error("Retired decoded-text training: supply a raw development sample manifest through measurement before starting training.");
         const probe = spawnSync(this.options.pythonExecutable, [join(PYTHON_ROOT, "check_measurement.py"),
             "--config", JSON.stringify(requireEvidence ? declaration : Object.fromEntries(Object.entries(declaration).filter(([key]) => key !== "evidence")))],
             { env: this.options.env, encoding: "utf8", timeout: 10_000, maxBuffer: 64 * 1024 });
@@ -376,7 +372,7 @@ export class TrainingService {
         }
         const state = readJson(join(trial.directory, "supervisor-state.json"));
         const owner = readJson(join(trial.directory, "worker-owner.json"));
-        const identity: ProcessIdentity | undefined = owner?.token === meta.token ? owner.identity : state?.identity;
+        const identity: ProcessIdentity | undefined = owner && owner.token === meta.token ? owner.identity : state?.identity;
         let processRecord = readJson(join(trial.directory, "experiment.json")) as ExperimentRecord | undefined;
         const result = readJson(join(trial.directory, "trial-result.json"));
         const report = readJson(join(trial.directory, "search-report.json"));
@@ -407,7 +403,7 @@ export class TrainingService {
         const workerExit = readJson(join(trial.directory, "worker-exit.json"));
         // A normal error exit is deterministic; only missing receipts / signals
         // are unexpected interruption evidence. Do not retry import/launch errors.
-        const deterministicExit = workerExit?.token === meta.token && workerExit.exitCode > 0;
+        const deterministicExit = workerExit && workerExit.token === meta.token && workerExit.exitCode > 0;
         const terminal = meta.lifecycle === "failed_start" || deterministicExit || result?.status === "completed" || result?.status === "failed" || pause === "max_seconds";
         const intentional = !!stop || meta.lifecycle !== "active" || ["acknowledgement_required", "runtime_overrun"].includes(pause);
         // All report stop reasons are intentional guard pauses except worker death.
@@ -441,7 +437,7 @@ export class TrainingService {
             const runtime = readJson(join(trial.directory, "worker-runtime.json"));
             const checkpoint = readJson(join(trial.directory, "search-checkpoint.json"));
             const consumedSeconds = Math.max(checkpoint?.elapsedSeconds ?? 0, (meta.consumedSeconds ?? 0)
-                + (runtime?.token === meta.token ? runtime.seconds + (workerExit?.token === meta.token ? 0 : 0.25) : 0));
+                + (runtime && runtime.token === meta.token ? runtime.seconds + (workerExit?.token === meta.token ? 0 : 0.25) : 0));
             if (!Number.isFinite(consumedSeconds) || consumedSeconds < 0) throw new Error("Corrupt cumulative runtime accounting; restore worker-runtime.json.");
             if (trial.request.search && consumedSeconds >= meta.settings.maxSeconds) throw new Error("Original search hard cap exhausted; resume cannot extend it.");
             atomicJson(join(trial.directory, "recovery-runtime.json"), { consumedSeconds });
@@ -836,9 +832,18 @@ export class TrainingService {
             if (root && trial.source) assertDevelopmentCandidate(root, this.options.taskId, trial.source.commit, trial.request.pipeline);
             const state = readJson(join(trial.directory, "supervisor-state.json"));
             if (state?.status === "running" || (state?.identity && liveGroup(state.identity.pgid).length)) return;
+			const result = readJson(join(trial.directory, "trial-result.json"));
+            if (result) this.options.record?.("training_trial_result", {
+                experiment_id: id, status: result.status, metrics: result.metrics,
+                completed_folds: result.completedFolds, requested_folds: result.requestedFolds,
+                promotion_eligible: result.promotionEligible, selection: result.selection,
+                dataset_sha256: this.options.datasetSha256,
+                sample_manifest_sha256: trial.measurement?.sampleManifestSha256,
+                fold_manifest_sha256: readJson(join(trial.directory, "fold-manifest.json"))?.sha256,
+                commit: trial.source?.commit, artifact: join(trial.directory, "trial-result.json"),
+            });
             if (!root) return;
 			this.cleanupWorktrees(trial);
-			const result = readJson(join(trial.directory, "trial-result.json"));
 			if (result?.idLeakage && !existsSync(join(trial.directory, "id-leakage-notified.json"))) {
                 atomicJson(join(trial.directory, "id-leakage-notified.json"), { experimentId: id });
                 this.options.record?.("training_id_leakage", { experiment_id: id, ...result.idLeakage });
@@ -858,10 +863,10 @@ export class TrainingService {
 			// historical evidence and cannot win a new development selection or
 			// be used in a paired rerun after full refit.
 			const current = this.champion();
-			const selected = current ? own : collection.trials.filter(entry => entry.eligible && entry.invocation?.source?.commit
+			const selected = current ? own : collection.trials.filter(entry => entry.eligible && (entry.invocation?.source as { commit?: string } | undefined)?.commit
                 && canonical((entry.invocation?.measurement as any)?.selection ?? null) === canonical((own.invocation?.measurement as any)?.selection ?? null)
                 && (!(own.invocation?.measurement as any)?.selection || (entry.invocation?.measurement as any)?.evidenceManifestSha256 === (own.invocation?.measurement as any)?.evidenceManifestSha256)
-				&& entry.request && !isTerminalCandidate(root, this.options.taskId, entry.invocation.source.commit as string, entry.request.pipeline))
+				&& entry.request && !isTerminalCandidate(root, this.options.taskId, (entry.invocation!.source as { commit: string }).commit, entry.request.pipeline))
 				.sort((a, b) => primaryScore(b.result) - primaryScore(a.result))[0];
 			const selectedTrial = selected ? this.trials.get(selected.experimentId) : undefined;
 			if (!selected || !selectedTrial?.source) return;

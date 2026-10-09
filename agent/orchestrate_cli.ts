@@ -1,8 +1,9 @@
 import { resolveTask, type TaskSelector } from "./pipeline/resolve_task.js";
 import { runOrchestrator } from "./orchestrator/run.js";
+import { printTelemetry } from "./telemetry/cli.js";
 export function parseOrchestrateArgs(args: string[]) {
  const selector: TaskSelector = {};
- const options: { targetScore?: number; maxSubmissions?: number; noSubmit?: boolean; checkSetupOnly?: boolean; model?: string; configPath?: string; resumeRunId?: string } = {};
+ const options: { targetScore?: number; maxSubmissions?: number; noSubmit?: boolean; telemetry?: { allowFallback?: boolean }; checkSetupOnly?: boolean; model?: string; configPath?: string; resumeRunId?: string } = {};
  const positional: string[] = [];
  for (let i = 0; i < args.length; i++) {
   const arg = args[i], value = () => { const next = args[++i]; if (!next || next.startsWith("--")) throw new Error(`Missing value for ${arg}`); return next; };
@@ -11,6 +12,7 @@ export function parseOrchestrateArgs(args: string[]) {
   else if (arg === "--goal") options.targetScore = Number(value());
   else if (arg === "--max-submissions") options.maxSubmissions = Number(value());
   else if (arg === "--no-submit") options.noSubmit = true;
+  else if (arg === "--allow-telemetry-fallback") options.telemetry = { allowFallback: true };
   else if (arg === "--check-setup") options.checkSetupOnly = true;
   else if (arg === "--model") options.model = value();
   else if (arg === "--config") options.configPath = value();
@@ -33,7 +35,7 @@ export async function main(args = process.argv.slice(2)) {
  try {
   const result = await runOrchestrator({ ...parsed.options, taskId: task.taskId, signal: controller.signal });
   console.log(`[orchestrator] ${result.pipelineRunId}: ${result.outcome} — ${result.stoppedBecause}`);
-  console.log(`[orchestrator] Trace: ${result.localTracePath}`);
+  printTelemetry(result, "[orchestrator]");
   if (result.outcome !== "success") process.exitCode = 1;
  } finally { process.removeListener("SIGINT", cancel); process.removeListener("SIGTERM", cancel); }
 }

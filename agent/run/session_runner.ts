@@ -1,3 +1,4 @@
+import { agentEnvironment } from "../telemetry/metadata.js";
 import type { InvocationFeedback } from "../pipeline/feedback.js";
 /**
  * Shared helper: run a pi agent session with a given system prompt and initial user message.
@@ -11,7 +12,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 
 import {
-	createAgentSession,
+	createAgentSession, createBashToolDefinition, defineTool,
 	SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import type { InlineExtension, ToolDefinition } from "@earendil-works/pi-coding-agent";
@@ -132,6 +133,9 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 		const pipeline = await loadPipelineConfig();
 		const { cwd, agentDir } = pipeline;
 		const sessionCwd = options.cwd ? resolve(options.cwd) : cwd;
+  if ((options.tools === undefined || options.tools.includes("bash")) && !customTools.some(tool => tool.name === "bash")) {
+   customTools.push(defineTool(createBashToolDefinition(sessionCwd, { spawnHook: context => ({ ...context, env: agentEnvironment(context.env) }) })));
+  }
 		const extensionPaths = options.extensionPaths ?? [];
 
 		const resourceLoader = createPipelineResourceLoader({
@@ -166,13 +170,13 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 				let observability: Awaited<ReturnType<typeof observeAgentSession>> | undefined;
 				try {
 					observability = options.observe ? await observeAgentSession({
-						session, model: modelId, identity: options.observe.identity, sink: options.observe.sink,
+						session, model: modelId, identity: options.observe.identity, telemetry: options.observe.telemetry,
 					}) : undefined;
 					recordKnowledge = observability?.record;
 					knowledge?.bindAgent(observability?.agentRunId);
 					if (knowledge) observability?.record("runtime_input", { type: "runtime_input", input: knowledgeInput(knowledge.options) });
 					observability?.record("skill_snapshot", { skills: skills.map(skill => skill.reference),
-						tool_prompts: knowledge ? [options.prompts.render("knowledge.tool", {}).reference] : [] });
+						tool_prompts: knowledge ? (["knowledge.tool", "knowledge.compare-notes-tool", ...(knowledge.options.trainingRoots?.length ? ["knowledge.history-tool", "knowledge.compare-tool"] as const : [])] as const).map(id => options.prompts.render(id, {}).reference) : [] });
 					observability?.record("prompt_snapshot", {
 						type: "prompt_snapshot",
 						prompts: [...options.promptReferences, python.prompt.reference, opening.reference, ...skills.map(skill => skill.reference)],

@@ -34,7 +34,7 @@ def build_pipeline():
  const training = createHarnessTraining({ root: join(project.root, "training"), projectRoot: project.root, solutionsRoot: project.solutionsRoot,
   taskId: "fixture", pythonExecutable: PYTHON, env: trainingEnvironment(), datasetSha256: manifest.datasetSha256,
   rootSeed: 13, measurement: manifest.measurement, workerPath: WORKER, prompts: loadPromptSnapshot(),
-  session: { isStreaming: true, steer: async text => { delivered.push(text); }, followUp: async text => { delivered.push(text); } } as any,
+  session: { isStreaming: true, steer: async (text: string) => { delivered.push(text); }, followUp: async (text: string) => { delivered.push(text); } } as any,
   record: type => events.push(type), limits: { sampleIntervalMs: 25, stopGraceMs: 100 } });
  try {
   const trial = await training.service.start({ schemaVersion: 2, hypothesis: "identity integrity", pipeline: { module: "solutions/tasks/fixture.py", factory: "build_pipeline" },

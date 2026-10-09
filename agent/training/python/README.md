@@ -57,8 +57,13 @@ See [the first measurement packet](../../../docs/harness-measurements.md) for
 generic sample manifests, inductive/batch execution, score provenance, bounded
 stability comparisons, and advisory versus promotion evidence. `check_measurement.py`
 is the shared no-fit import/metadata preflight; `ready()` runs it before agent
-pipeline imports. Label-free trials cannot promote. Existing stage task adapters
-remain binary text adapters until H1/H2 connect generic controller declarations.
+pipeline imports. Every training invocation requires a controller measurement
+and an opaque `id`/`input` sample frame. The harness does not decode archive
+members; the agent's pipeline owns parsing and features. Invocations without a
+measurement and terminal freezes from the retired decoded-text frame are
+rejected before agent code loads. Their artifacts remain historical evidence;
+raw sample input needs a new promotion. Label-free trials without declared
+selection evidence cannot promote.
 
 ## Verification
 

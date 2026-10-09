@@ -4,8 +4,8 @@ Every task fits opaque `{archive, member}` descriptors the agent's code reads
 itself, following the measured execution: inductive tasks fit all training
 samples (binary classification with all labels, sealed rows included) and
 predict the test samples; batch tasks fit and predict the test batch. Only
-classification passes targets to fit. Freezes from the retired decoded-text
-frame (no `kind` in their inputs) remain verifiable through the legacy path.
+classification passes targets to fit. Retired decoded-text freezes are rejected;
+a champion must first be measured on raw sample input.
 """
 import argparse
 import csv
@@ -21,28 +21,11 @@ import zipfile
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'training' / 'python'))
 from smartlab_trial.agent_code import expose_project, _load_module, _factory, _call_pipeline_factory, _inject_random_states
 from smartlab_trial.artifacts import _atomic_json, EventWriter
-from smartlab_eval import load_labelled, load_corpus, load_labels
 from task_samples import archive_ids, read_targets, sample_descriptors
 
 
 def sha(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
-
-
-def ids(path, labels_path=None):
-    with zipfile.ZipFile(path) as archive:
-        assert archive.testzip() is None, 'Corrupt archive'
-        values = [e.filename for e in archive.infolist() if not e.is_dir()]
-        assert values and len(set(values)) == len(values), 'Empty or duplicate archive IDs'
-        # Official training ZIPs may embed the same labels file beside the
-        # sample members. Exclude only that exact, byte-verified sidecar.
-        if labels_path is not None:
-            sidecar = Path(labels_path).name
-            if sidecar in values:
-                assert archive.read(sidecar) == Path(labels_path).read_bytes(), 'Embedded training labels drifted'
-                values.remove(sidecar)
-    assert values, 'Empty archive IDs'
-    return values
 
 
 def sample_data(inputs):
@@ -76,26 +59,8 @@ def sample_data(inputs):
 
 
 def data(inputs):
-    if inputs.get('kind') == 'samples':
-        return sample_data(inputs)
-    lines = [line.strip() for line in Path(inputs['labelsPath']).read_text().splitlines() if line.strip()]
-    labels = load_labels(inputs['labelsPath'])
-    assert len(lines) == len(labels) and labels, 'Duplicate or empty labels'
-    train = ids(inputs['trainZip'], inputs['labelsPath'])
-    test = ids(inputs['testZip'])
-    assert set(train) == set(labels), 'Original archive/label coverage mismatch'
-    assert not set(train).intersection(test), 'Train/test overlap'
-    assert all(name.endswith('.x') for name in test), 'Test archive must have neutral IDs'
-    if 'devLabelsPath' not in inputs:
-        return {'trainRows': len(train), 'testRows': len(test)}
-    dev = load_labels(inputs['devLabelsPath'])
-    assert dev and all(labels.get(name) == label for name, label in dev.items()), 'Development labels drifted'
-    assert set(ids(inputs['devZip'])) == set(dev), 'Development archive coverage mismatch'
-    with zipfile.ZipFile(inputs['trainZip']) as original, zipfile.ZipFile(inputs['devZip']) as measured:
-        assert all(original.read(name) == measured.read(name) for name in dev), 'Original training content differs from measured development archive'
-    return {'trainIds': sorted(train), 'testIds': sorted(test), 'trainRows': len(train),
-            'developmentRows': len(dev), 'sealedRows': len(train) - len(dev), 'testRows': len(test),
-            'hashes': {key: sha(inputs[key]) for key in ('labelsPath', 'trainZip', 'testZip', 'devLabelsPath', 'devZip')}}
+    assert inputs.get('kind') == 'samples', 'Retired decoded-text freeze: promote a champion on raw sample input first'
+    return sample_data(inputs)
 
 
 def validate(directory, freeze):
@@ -185,17 +150,7 @@ def fit(directory, freeze):
         estimator.set_params(**pipeline['estimatorParams'])
     seeded = _inject_random_states(estimator, freeze['seed'])
     events = EventWriter(directory, freeze['identity'])
-    if freeze['inputs'].get('kind') == 'samples':
-        predicted, fit_rows, test_rows = fit_samples(estimator, freeze, events)
-    else:
-        frame, labels = load_labelled(freeze['inputs']['trainZip'], freeze['inputs']['labelsPath'], freeze['data']['trainIds'])
-        test = load_corpus(freeze['inputs']['testZip'], freeze['data']['testIds'])
-        with events.stage('terminal_fit', trainRows=len(labels)):
-            estimator.fit(frame, labels)
-        with events.stage('terminal_predict', testRows=len(test)):
-            predicted = list(estimator.predict(test))
-        assert len(predicted) == len(test) and all(value in (0, 1) for value in predicted), 'Invalid predictions'
-        fit_rows, test_rows = len(labels), len(test)
+    predicted, fit_rows, test_rows = fit_samples(estimator, freeze, events)
     # Completion is committed last. Interrupted fits never count as complete.
     with tempfile.NamedTemporaryFile(dir=directory, delete=False, mode='w', newline='') as stream:
         writer = csv.writer(stream)
