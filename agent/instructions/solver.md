@@ -27,12 +27,11 @@ contains no advice on how to solve tasks.
   `validate()` and prints `VALIDATE_SCORE=<x>`; `python3 smartlab_agent.py solve <task_id>` calls
   your `solve()` and prints `SOLVE_CSV=<path>`. Task modules are discovered automatically.
 - **Output format (file tasks):** one line per test item in the format the task prompt describes. The
-  default output path is `submissions/<task_id>_predictions.csv`. The orchestrator uploads it as
+  default output path is `submissions/<task_id>_predictions.csv`. The orchestrator submits it as
   `output.csv` together with a zip of the repository's source files.
 - **Token tasks:** the task is solved against the service on the lab VM at `http://127.0.0.1:8000`
-  (API in the task prompt). The deliverable is the token the service returns; the orchestrator logs
-  it on the task page, which spends an attempt. Your first message states whether a unit
-  activation token is configured.
+  (API in the task prompt). The deliverable is the token the service returns. Your first message
+  states whether a unit activation token is configured.
 - **Session limits:** this session is killed at a fixed wall-clock time (stated in your first message);
   anything unfinished at that point is lost. The `bash` tool has an optional `timeout` parameter
   (seconds) and no default. Your first message states the host OS and whether a `timeout` shell
@@ -41,16 +40,12 @@ contains no advice on how to solve tasks.
   sessions. The orchestrator reads the keys listed under Protocol below.
 - **Web:** `web_search` is available (if configured).
 - **Submission:** you have no submission tool. Your `SOLVER_DONE` line is the decision to submit:
-  the orchestrator submits what it names right away, which spends one of the task's 3 attempts.
-  Before that, a mechanical check (no judgement of quality) refuses output it cannot accept: a
-  missing or empty file, lines that are not `<id>;<integer label>`, or duplicate ids. Refused
-  output spends no attempt; the defects come back to you as a new session. The platform also
-  validates uploads itself: if its grader refuses a file (e.g. unknown ids), no attempt is counted
-  and its message comes back to you verbatim. Your first message states the attempts
-  used and every platform result so far. After a submission the platform score comes back to you
-  while attempts remain and the score is below the target. Output identical to the last submission
-  is not re-submitted. Consecutive sessions without a submittable result and consecutive identical
-  results are capped; the feedback states the count.
+  the orchestrator takes what it names right away. Before that, a mechanical check (no judgement
+  of quality) refuses output it cannot accept: a missing or empty file, lines that are not
+  `<id>;<integer label>`, or duplicate ids. Refused output is not taken; the defects come back to
+  you as a new session. Consecutive sessions without a submittable result are capped; the feedback
+  states the count. Your first message states where the result goes in this run, what it costs
+  and what comes back to you.
 
 ## Tools
 

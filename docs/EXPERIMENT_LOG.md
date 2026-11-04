@@ -270,3 +270,24 @@ token path works.
 attacks1 0.7750, **attacks2 failed** (platform refuses every id format, "2990 superfluous IDs", 0/3 used),
 code1 0.7147, code2 0.6908, code3 0.9096, offense1 0.8643, offense2 0.5077, defense1 0.7898 (1/3). Every task
 has now been attempted; only spam1, spam3 and documents1 reached the 0.97 target.
+
+---
+
+## 2026-11-02 — Harness: offline delivery (the lab no longer accepts uploads); local open model connected
+
+Since 2026-11 the lab refuses submissions; results go to the course instructor by hand. New `--offline` mode
+(see AGENT.md 3.2): no lab access, the first declared result that passes the output check is final and is stored
+in `logs/deliveries/<stamp>/<task>/` (`output.csv`/`token.txt`, `source.zip`, `manifest.json`); the solver's
+first message states this; `solver.md`'s Submission bullet is now mode-neutral (prompt hash `ebb246c7b8fd`);
+instructor scores go into `docs/instructor_scores.json` and `npm run report`. Local open model
+`qwen3.8-flash-next-a5b` on the chair's LiteLLM (`https://mythllm.mlsec.tu-berlin.de/v1`, public, 262k context):
+raw tool-calling request OK (6 s), returns `reasoning_content`, no rate limits, cost 0; pi provider `mythllm`.
+
+**Smoke test (not a measured result: Mac, Homebrew Python, uncommitted tree on 8f83712):**
+`solve-units --offline --only spam1 --model gwdg/qwen3-coder-next --solver-timeout 20`, 33.4 min. Session 1 was
+killed at the 20-min cap (long-running bash calls up to 180 s, used the missing GNU `timeout` once); session 2
+declared a keyword-scoring rule detector with local BACC **0.717** and was delivered at once
+(`logs/deliveries/2026-11-02T10-47-03/spam1/`, 15051 lines). No lab request was made, the delivery and the batch
+summary (`delivered`) are correct. Observation: with the result declared final and no feedback, qwen3-coder-next
+handed in a 0.717 local result; on 2026-09-10 the same model reached 0.99 local on spam1 (different runtime and
+prompt).

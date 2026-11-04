@@ -100,7 +100,19 @@ npm run solve-units -- --plan                # only show what would run
 npm run solve-units -- --no-submit           # solver + output check for every task, no uploads
 npm run solve-units -- --only spam1,spam3    # subset
 npm run solve-units -- --max-attempts 1      # spend at most 1 attempt per task this run
+npm run solve-units -- --offline             # no lab access: deliver results for the instructor (below)
 ```
+
+**Offline mode (since 2026-11: the lab no longer accepts uploads).** `--offline` (on `solve-units` and
+`solve`) never contacts the lab: it needs `units/` already fetched, runs every task (or `--only`)
+without status checks, and does not need `LAB_USER`/`LAB_PASS`. The first result the solver declares
+that passes the output check is final and is stored for the instructor in
+`logs/deliveries/<stamp>/<task>/` (`output.csv` or `token.txt`, `source.zip`, `manifest.json` with
+model, commit, prompt hash and local score); the task then ends (outcome `delivered`). The solver is
+told this in its first message. `logs/` is gitignored, survives `npm run reset`, and `remote.sh pull`
+copies the VM's deliveries. Send the folders to the instructor by hand and record the scores that come
+back in `docs/instructor_scores.json` as `{"<stamp>/<task>": {"score": 0.95, "note": "..."}}`;
+`npm run report` shows them as `local→instructor` (marked `i`).
 
 Before each task the driver reads the task's lab page and **skips** it when all attempts are used,
 when the best existing platform score already meets `--target` (override with `--retry-solved`),
@@ -197,6 +209,23 @@ Models are configured in `~/.pi/agent/models.json`. The GWDG Chat-AI provider is
 | `gwdg/deepseek-v4-flash-0731` | DeepSeek V4 Flash — fast |
 
 Pass `--model gwdg/<id>` to select one.
+
+**Local open model (TU mlsec LiteLLM, since 2026-11):** `--model mythllm/qwen3.8-flash-next-a5b`, served by
+vLLM behind `https://mythllm.mlsec.tu-berlin.de/v1` (public, no VPN; 262k context, tool calling and
+reasoning; no rate limits or cost reported). The token is `LITELLM_TOKEN` in `.env`. Provider entry for
+`~/.pi/agent/models.json` (pi reads `$LITELLM_TOKEN` from the environment):
+
+```json
+"mythllm": {
+  "baseUrl": "https://mythllm.mlsec.tu-berlin.de/v1",
+  "api": "openai-completions",
+  "apiKey": "$LITELLM_TOKEN",
+  "compat": { "supportsDeveloperRole": false, "supportsReasoningEffort": false },
+  "models": [{ "id": "qwen3.8-flash-next-a5b", "name": "Qwen3.8 Flash Next A5B", "reasoning": true,
+               "input": ["text"], "contextWindow": 262144, "maxTokens": 32768,
+               "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 } }]
+}
+```
 
 ---
 

@@ -17,6 +17,10 @@
  *   5. Print a results table; write logs/solve-units/<stamp>/{<task>.log,summary.json}.
  *
  * The per-task orchestrator is the unit of failure: a broken task never takes down the batch.
+ *
+ * --offline (since 2026-11, the lab no longer accepts uploads): no lab access. Needs units/ already
+ * fetched; runs every task (or --only), with no status check or skipping; each task's final result is
+ * delivered to logs/deliveries/<stamp>/<task>/ for the instructor (see deliver.ts).
  */
 
 import { spawn, spawnSync } from "node:child_process";
@@ -36,7 +40,7 @@ const ORCHESTRATE = join(HERE, "orchestrate.ts");
 const TSX = join(PROJECT_ROOT, "node_modules", ".bin", "tsx");
 const DEFAULT_TARGET = 0.97;
 
-type Outcome = "needs-vm-service" | "no-new-predictions" | "budget-exhausted" | "quota-exhausted" | "solved" | "attempts-exhausted" | "attempt-cap" | "below-target" | "dry-run" | "solver-failed" | "submit-failed" | "fatal" | "skipped";
+type Outcome = "delivered" | "needs-vm-service" | "no-new-predictions" | "budget-exhausted" | "quota-exhausted" | "solved" | "attempts-exhausted" | "attempt-cap" | "below-target" | "dry-run" | "solver-failed" | "submit-failed" | "fatal" | "skipped";
 
 interface TaskResult {
 	id: string;
@@ -53,12 +57,16 @@ interface TaskResult {
 	/** From the task's status file: the run conditions and each submission's local/platform score. */
 	conditions?: unknown;
 	submissions?: { iteration: number; local: number | null; platform: number | null; triesLeft: number | null }[];
+	/** --offline: where the task's result was stored, and its local score. */
+	delivery?: { dir: string; local: number | null; sha256: string; lines: number | null; session: number };
 }
 
 function usage(): never {
 	console.error(`Usage: npm run solve-units -- [--model <id>] [--target <score>] [--solver-timeout <min>]
                               [--max-attempts <n>] [--no-submit] [--refresh] [--reset once|each|none]
-                              [--only spam1,spam3] [--retry-solved] [--plan]
+                              [--only spam1,spam3] [--retry-solved] [--plan] [--offline]
+  --offline       no lab access (needs units/ fetched): run every task, deliver each final result to
+                  logs/deliveries/<stamp>/<task>/ instead of submitting; LAB_USER/LAB_PASS not needed
   --plan          only print what would run (fetch + status check), solve nothing
   --refresh       re-fetch units from the lab even if units/index.json exists
   --reset         once (default): full reset before the first task; each: per-task reset; none
@@ -96,7 +104,7 @@ function runOrchestrator(taskId: string, args: string[], logPath: string): Promi
 	});
 }
 
-function classify(before: TaskStatus | null, after: TaskStatus | null, exitCode: number | null, target: number, noSubmit: boolean, maxAttempts: number): [Outcome, string] {
+function classify(before: TaskStatus | null, after: TaskStatus | null, exitCode: number | null, target: number, noSubmit: boolean, maxAttempts: number, delivery?: TaskResult["delivery"]): [Outcome, string] {
 	if (exitCode === 9) return ["needs-vm-service", "token task: the local service on 127.0.0.1:8000 is not running here (run on the lab VM)"];
 	if (exitCode === 7) return ["no-new-predictions", "solver kept reproducing the last submission; remaining attempts unused"];
 	if (exitCode === 5) return ["budget-exhausted", "--max-cost budget spent (see task log)"];
@@ -104,6 +112,7 @@ function classify(before: TaskStatus | null, after: TaskStatus | null, exitCode:
 	if (exitCode === 99 || exitCode === null) return ["fatal", "orchestrator crashed"];
 	if (exitCode === 2) return ["solver-failed", "solver sessions in a row without a submittable result"];
 	if (exitCode === 3) return ["submit-failed", "upload/polling failed, or the platform refused 3 uploads in a row (see task log)"];
+	if (delivery && exitCode === 0) return ["delivered", `${delivery.dir}/ (local ${delivery.local ?? "none"}, solver session ${delivery.session})`];
 	if (noSubmit) return ["dry-run", "solver declared a result that passed the output check; not submitted (--no-submit)"];
 	const best = after?.bestScore ?? null;
 	const spent = (after?.attemptsUsed ?? 0) - (before?.attemptsUsed ?? 0);
@@ -129,6 +138,7 @@ async function main() {
 	takeFlag("--insecure"); // accepted for backwards compatibility; it is the default
 	const secure = takeFlag("--secure");
 	const noSubmit = takeFlag("--no-submit");
+	const offline = takeFlag("--offline");
 	const model = takeArg("--model");
 	const targetArg = takeArg("--target");
 	const target = targetArg !== undefined ? Number(targetArg) : DEFAULT_TARGET;
@@ -144,12 +154,13 @@ async function main() {
 	if (secure) process.env.LAB_INSECURE_TLS = "0";
 	else if (!process.env.LAB_INSECURE_TLS) process.env.LAB_INSECURE_TLS = "1";
 	const insecure = /^(1|true|yes|on)$/i.test(process.env.LAB_INSECURE_TLS.trim());
-	const missing = ["LAB_USER", "LAB_PASS"].filter(k => !process.env[k]);
+	const missing = offline ? [] : ["LAB_USER", "LAB_PASS"].filter(k => !process.env[k]);
 	if (missing.length) { console.error(`Missing required environment variables: ${missing.join(", ")}`); process.exit(1); }
 
 	const passthrough: string[] = [];
 	if (secure) passthrough.push("--secure");
 	if (noSubmit) passthrough.push("--no-submit");
+	if (offline) passthrough.push("--offline");
 	if (model) passthrough.push("--model", model);
 	passthrough.push("--target", String(target));
 	if (solverTimeout) passthrough.push("--solver-timeout", solverTimeout);
@@ -157,6 +168,10 @@ async function main() {
 	if (maxUnchanged) passthrough.push("--max-unchanged", maxUnchanged);
 
 	// 1. Fetch
+	if (offline && (refresh || !existsSync(INDEX_PATH))) {
+		console.error(`[units] --offline cannot fetch units: ${refresh ? "--refresh needs the lab" : "units/index.json is missing"}`);
+		process.exit(1);
+	}
 	if (refresh || !existsSync(INDEX_PATH)) {
 		const fetchArgs = secure ? ["--secure"] : [];
 		if (refresh) fetchArgs.push("--refresh");
@@ -169,7 +184,7 @@ async function main() {
 	if (!taskIds.length) { console.error("[units] no tasks to run"); process.exit(1); }
 
 	// 2. Status check → plan
-	console.log(`\n[units] checking ${taskIds.length} task(s) on the lab...`);
+	console.log(offline ? `\n[units] offline: no lab status check, all ${taskIds.length} task(s) run` : `\n[units] checking ${taskIds.length} task(s) on the lab...`);
 	const client = new SimpleClient(insecure);
 	const results: TaskResult[] = [];
 	const toRun: string[] = [];
@@ -177,7 +192,7 @@ async function main() {
 		const url = index[id];
 		let status: TaskStatus | null = null;
 		let reason = "";
-		try {
+		if (!offline) try {
 			status = await fetchTaskStatus(url, insecure, client);
 			if (status.exhausted) reason = `all ${status.attemptsMax} attempts used (best ${fmtScore(status.bestScore)})`;
 			else if (status.closed) reason = `not open (start ${fmtDate(status.startDate)}, deadline ${fmtDate(status.deadline)})`;
@@ -189,7 +204,7 @@ async function main() {
 		results.push(r);
 		if (!reason) toRun.push(id);
 		const s = status;
-		console.log(`  ${pad(id, 11)} ${pad(s?.title ?? "?", 44)} attempts ${s ? `${s.attemptsUsed ?? "?"}/${s.attemptsMax}` : "?"}  best ${fmtScore(s?.bestScore)}  ${reason ? "SKIP: " + reason : "RUN"}`);
+		if (!offline) console.log(`  ${pad(id, 11)} ${pad(s?.title ?? "?", 44)} attempts ${s ? `${s.attemptsUsed ?? "?"}/${s.attemptsMax}` : "?"}  best ${fmtScore(s?.bestScore)}  ${reason ? "SKIP: " + reason : "RUN"}`);
 	}
 	console.log(`\n[units] ${toRun.length} task(s) to run: ${toRun.join(", ") || "(none)"}`);
 	if (plan || !toRun.length) {
@@ -202,10 +217,12 @@ async function main() {
 	const logDir = join(PROJECT_ROOT, "logs", "solve-units", stamp);
 	mkdirSync(logDir, { recursive: true });
 	if (resetMode === "once" && !runPython(RESET_SCRIPT, [], "resetting all task state")) process.exit(1);
+	const deliveryDir = join("logs", "deliveries", stamp);
+	if (offline) { process.env.SMARTLAB_DELIVERY_DIR = deliveryDir; console.log(`[units] deliveries: ${deliveryDir}/`); }
 
 	// 4. Run, one task at a time
 	const publishRun = (extra: Record<string, unknown> = {}) => writeStatus(RUN_STATUS, {
-		stamp, logDir: logDir.replace(PROJECT_ROOT + "/", ""), target, noSubmit, model: model ?? null,
+		stamp, logDir: logDir.replace(PROJECT_ROOT + "/", ""), target, noSubmit, offline, model: model ?? null,
 		tasks: results.map(r => ({ id: r.id, title: r.title, outcome: r.outcome, reason: r.reason, run: toRun.includes(r.id),
 			attempts: r.after ? `${r.after.attemptsUsed ?? "?"}/${r.after.attemptsMax}` : "?", best: r.after?.bestScore ?? null, minutes: r.minutes, costUsd: r.costUsd, log: r.log })),
 		spentUsd: results.reduce((a, x) => a + (x.costUsd || 0), 0), maxCostUsd: maxCost ?? null,
@@ -230,15 +247,15 @@ async function main() {
 		}
 		r.exitCode = await runOrchestrator(id, taskArgs, logPath);
 		// Only trust task.json if this task wrote it (a task that exits early leaves the previous one's file).
-		const ts = readJson<{ task?: string; startedAt?: string; usage?: { costUsd?: number }; conditions?: unknown; submissions?: TaskResult["submissions"] }>(TASK_STATUS);
+		const ts = readJson<{ task?: string; startedAt?: string; usage?: { costUsd?: number }; conditions?: unknown; submissions?: TaskResult["submissions"]; delivery?: TaskResult["delivery"] }>(TASK_STATUS);
 		const own = ts?.task === id && ts.startedAt && Date.parse(ts.startedAt) >= t0 - 1000;
 		r.costUsd = own ? Number(ts!.usage?.costUsd ?? 0) || 0 : 0;
-		if (own) { r.conditions = ts!.conditions; r.submissions = ts!.submissions ?? []; }
+		if (own) { r.conditions = ts!.conditions; r.submissions = ts!.submissions ?? []; if (ts!.delivery) r.delivery = ts!.delivery; }
 		r.minutes = Math.round((Date.now() - t0) / 6000) / 10;
-		try { r.after = await fetchTaskStatus(r.url, insecure, client); } catch { /* keep before */ }
-		[r.outcome, r.reason] = classify(r.before, r.after, r.exitCode, target, noSubmit, maxAttempts);
+		if (!offline) try { r.after = await fetchTaskStatus(r.url, insecure, client); } catch { /* keep before */ }
+		[r.outcome, r.reason] = classify(r.before, r.after, r.exitCode, target, noSubmit, maxAttempts, r.delivery);
 		console.log(`\n[units] ${id} finished in ${r.minutes} min: ${r.outcome} — ${r.reason}`);
-		writeFileSync(join(logDir, "summary.json"), JSON.stringify({ stamp, target, noSubmit, model: model ?? null, args: process.argv.slice(2), results }, null, 2));
+		writeFileSync(join(logDir, "summary.json"), JSON.stringify({ stamp, target, noSubmit, offline, ...(offline ? { deliveryDir } : {}), model: model ?? null, args: process.argv.slice(2), results }, null, 2));
 		publishRun({ current: null });
 		if (r.outcome === "quota-exhausted" || r.outcome === "budget-exhausted") {
 			console.error(`[units] ${r.outcome === "budget-exhausted" ? "cost budget" : "model API quota"} exhausted — stopping the batch; remaining tasks were not started.`);

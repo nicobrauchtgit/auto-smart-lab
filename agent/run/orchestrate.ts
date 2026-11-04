@@ -6,10 +6,14 @@
  * decision to submit; a deterministic output check stops malformed output from spending one of the
  * 3 attempts. There is no LLM reviewer (removed 2026-10-03; see docs/AGENT.md).
  *
+ * --offline (since 2026-11, the lab no longer accepts uploads): no lab access at all; the first
+ * declared result that passes the output check is final and is stored for the instructor
+ * (deliver.ts) instead of being submitted.
+ *
  * Usage:
  *   npx tsx agent/run/orchestrate.ts <task_id>
  *
- * Required environment:
+ * Required environment (not with --offline):
  *   LAB_USER, LAB_PASS, LAB_INSECURE_TLS, SMARTLAB_TASK_URL
  *
  * Optional:
@@ -48,7 +52,8 @@ async function checkModel(modelId: string): Promise<void> {
 	if (!provider?.baseUrl) return; // unknown provider — skip
 
 	const baseUrl = provider.baseUrl.replace(/\/$/, "");
-	const apiKey = provider.apiKey ?? "";
+	// pi's config syntax: "$VAR" / "${VAR}" read the environment (e.g. "$LITELLM_TOKEN").
+	const apiKey = (provider.apiKey ?? "").replace(/\$\{(\w+)\}|\$(\w+)/g, (_, a, b) => process.env[a ?? b] ?? "");
 	const url = new URL(`${baseUrl}/chat/completions`);
 	const isHttps = url.protocol === "https:";
 	const body = Buffer.from(JSON.stringify({
@@ -184,6 +189,7 @@ import { ensureSolverScaffold } from "./scaffold.js";
 import { runSolverSession } from "./solver_session.js";
 import { checkCsv, checkToken } from "./output_check.js";
 import { fetchTaskStatus, runSubmitSession } from "./submit_session.js";
+import { deliver } from "./deliver.js";
 import { collectConditions, describeConditions } from "./conditions.js";
 import { getTaskMemory, updateTaskMemory } from "./memory_utils.js";
 import { taskEvent, taskStatus } from "./status.js";
@@ -221,9 +227,10 @@ function resolveReported(p: string): string {
 }
 
 function usage(): never {
-	console.error("Usage: npx tsx agent/run/orchestrate.ts <task_id|list> [--model <id>] [--task-url <url>] [--secure] [--no-submit] [--target <score>] [--solver-timeout <minutes>] [--max-attempts <n>] [--max-cost <usd>] [--max-unchanged <n>]");
+	console.error("Usage: npx tsx agent/run/orchestrate.ts <task_id|list> [--model <id>] [--task-url <url>] [--secure] [--offline] [--no-submit] [--target <score>] [--solver-timeout <minutes>] [--max-attempts <n>] [--max-cost <usd>] [--max-unchanged <n>]");
 	console.error(`Exit codes: 0 done (target reached, no attempts left, dry run or attempt cap), 1 no attempts before start, 2 solver failed (${MAX_SOLVER_FAILURES} sessions in a row without a submittable result), 3 submission failed (or the platform refused ${MAX_SOLVER_FAILURES} uploads in a row), 4 model API daily/monthly quota exhausted, 5 cost budget (--max-cost USD) exhausted, 7 solver kept reproducing the last submission (--max-unchanged, default 3), 9 token task without the VM's local service, 99 fatal (6 and 8 belonged to the removed eval agent)`);
-	console.error("Required env: LAB_USER, LAB_PASS");
+	console.error("Required env: LAB_USER, LAB_PASS (not with --offline)");
+	console.error("--offline: no lab access; the first result that passes the output check is final and is stored under logs/deliveries/ (exit 0)");
 	console.error("Examples:");
 	console.error("  npm run solve list                    # show all available task IDs");
 	console.error("  npm run solve spam3                   # solve task spam3");
@@ -256,6 +263,7 @@ async function main() {
 	takeFlag("--insecure"); // accepted for backwards compatibility; it is the default
 	const secure = takeFlag("--secure");
 	const noSubmit = takeFlag("--no-submit");
+	const offline = takeFlag("--offline");
 	const maxCostArg = takeArg("--max-cost");
 	if (maxCostArg !== undefined) {
 		const usd = Number(maxCostArg);
@@ -348,7 +356,7 @@ async function main() {
 		if (found) {
 			process.env.SMARTLAB_TASK_URL = found;
 			console.log(`[orchestrate] Resolved task URL from meta.json: ${found}`);
-		} else {
+		} else if (!offline) {
 			console.error(`[orchestrate] Could not resolve task URL for '${taskId}'.`);
 			console.error(`  Either set SMARTLAB_TASK_URL in the environment, pass --task-url <url>,`);
 			console.error(`  or run: python3 agent/setup/fetch_units.py`);
@@ -357,20 +365,22 @@ async function main() {
 	}
 
 	// Validate required env
-	const missing = ["LAB_USER", "LAB_PASS"].filter((k) => !process.env[k]);
+	const missing = offline ? [] : ["LAB_USER", "LAB_PASS"].filter((k) => !process.env[k]);
 	if (missing.length > 0) {
 		console.error(`Missing required environment variables: ${missing.join(", ")}`);
 		process.exit(1);
 	}
 
 	console.log(`\n[orchestrate] Starting ML challenge loop for task: ${taskId}`);
-	console.log(`[orchestrate] Max submissions: ${MAX_SUBMISSIONS}`);
+	console.log(offline
+		? `[orchestrate] Offline: no lab access; the first declared result that passes the output check is delivered to logs/deliveries/`
+		: `[orchestrate] Max submissions: ${MAX_SUBMISSIONS}`);
 
 	// Attempts already made on the platform (earlier runs, or by hand): sync them into memory so the
 	// solver's first message and the attempt checks use the platform's numbers, not a reset memory.
 	/** Platform results for this task, oldest first; `local` is known only for submissions of this run. */
 	const history: { local: number | null; platform: number | null }[] = [];
-	try {
+	if (!offline) try {
 		const st = await fetchTaskStatus(process.env.SMARTLAB_TASK_URL!, /^(1|true|yes|on)$/i.test(process.env.LAB_INSECURE_TLS ?? ""));
 		if (st.attemptsUsed !== null) {
 			const m = getTaskMemory(taskId);
@@ -384,7 +394,7 @@ async function main() {
 		console.warn(`[orchestrate] Could not read the task page for prior attempts (${err instanceof Error ? err.message : err}); using memory.`);
 	}
 	const initialMem = getTaskMemory(taskId);
-	if (initialMem.tries_used >= MAX_SUBMISSIONS) {
+	if (!offline && initialMem.tries_used >= MAX_SUBMISSIONS) {
 		console.error(`[orchestrate] No submissions left for task ${taskId} (${initialMem.tries_used}/${MAX_SUBMISSIONS} used).`);
 		process.exit(1);
 	}
@@ -414,11 +424,11 @@ async function main() {
 	let platformRejects = 0;
 	let lastRejectedHash: string | undefined;
 	let lastPlatformScore: number | null = null;
-	console.log(`[orchestrate] Target platform score: ${target}`);
+	if (!offline) console.log(`[orchestrate] Target platform score: ${target}`);
 	const py = detectPythonRuntime();
 	console.log(`[orchestrate] Python runtime: ${py ? `${py.executable} ${py.version}, ${py.packages.length} third-party packages${py.inVirtualenv ? ", virtualenv" : ""}` : "not detected"}`);
 	const conditions = collectConditions({
-		target, maxAttempts: maxAttemptsThisRun, maxUnchanged, maxSolverFailures: MAX_SOLVER_FAILURES, noSubmit, submission,
+		target, maxAttempts: maxAttemptsThisRun, maxUnchanged, maxSolverFailures: MAX_SOLVER_FAILURES, noSubmit, offline, submission,
 		solverTimeoutMin: Math.round(Number(process.env.PI_SESSION_TIMEOUT_MS || 0) / 60000) || null,
 		maxCostUsd: process.env.PI_MAX_COST_USD ? Number(process.env.PI_MAX_COST_USD) : null,
 	});
@@ -431,7 +441,7 @@ async function main() {
 
 	// Langfuse (optional): this run is one session; each stage below is a trace in it.
 	startRun({ taskId, model: process.env.PI_MODEL, metadata: {
-		target: String(target), no_submit: String(noSubmit), submission,
+		target: String(target), no_submit: String(noSubmit), offline: String(offline), submission,
 		commit: conditions.git.commit ?? "?", dirty: String(conditions.git.dirty.length),
 		...Object.fromEntries(Object.entries(conditions.prompts).map(([k, v]) => [`prompt_${k.replace(/\.md$/, "")}`, v])),
 		host: conditions.host, python: conditions.python?.version ?? "none",
@@ -456,11 +466,13 @@ async function main() {
 
 		// Re-check submission budget (updated by submit sessions writing to memory)
 		const mem = getTaskMemory(taskId);
-		if (mem.tries_used >= MAX_SUBMISSIONS) {
-			console.error(`[orchestrate] No submissions left (${mem.tries_used}/${MAX_SUBMISSIONS} used). Stopping.`);
-			await exitRun(1, "no_attempts_left");
+		if (!offline) {
+			if (mem.tries_used >= MAX_SUBMISSIONS) {
+				console.error(`[orchestrate] No submissions left (${mem.tries_used}/${MAX_SUBMISSIONS} used). Stopping.`);
+				await exitRun(1, "no_attempts_left");
+			}
+			console.log(`[orchestrate] Submissions: ${mem.tries_used}/${MAX_SUBMISSIONS} used, ${mem.tries_left ?? MAX_SUBMISSIONS - mem.tries_used} remaining`);
 		}
-		console.log(`[orchestrate] Submissions: ${mem.tries_used}/${MAX_SUBMISSIONS} used, ${mem.tries_left ?? MAX_SUBMISSIONS - mem.tries_used} remaining`);
 
 		// Step 1: Solver. Its SOLVER_DONE line is the decision to submit.
 		let solverResult: SolverResult;
@@ -468,7 +480,7 @@ async function main() {
 		try {
 			taskStatus({ phase: "solver" });
 			solverResult = await stage("solver", { iteration, input: { task: taskId, feedback: feedback ?? null } }, async (t) => {
-				const r = await runSolverSession(taskId, feedback, { submission, activationToken: unitToken, attemptsUsed: mem.tries_used, attemptsMax: MAX_SUBMISSIONS, history });
+				const r = await runSolverSession(taskId, feedback, { submission, activationToken: unitToken, offline, attemptsUsed: mem.tries_used, attemptsMax: MAX_SUBMISSIONS, history });
 				t.output(r);
 				if (r.valScore !== null) t.score("local_val_score", r.valScore);
 				return r;
@@ -512,6 +524,19 @@ async function main() {
 		if (noSubmit) {
 			console.log(`\n[orchestrate] DRY RUN (--no-submit) — solver declared ${what}; output check passed; skipping submission.`);
 			await exitRun(0, "dry_run");
+		}
+		if (offline) {
+			// Step 3 (offline): the declared result is final; store it for the instructor.
+			taskStatus({ phase: "deliver" });
+			const d = await stage("deliver", { iteration, input: submission === "token" ? { token: solverResult.token } : { csv: csvPath } }, async (t) => {
+				const r = deliver(taskId, submission === "token" ? { token: solverResult.token! } : { csvPath }, { localScore: solverResult.valScore, approach: solverResult.approach, iteration, conditions });
+				t.output(r);
+				return r;
+			});
+			taskStatus({ delivery: { dir: d.dir, local: solverResult.valScore, sha256: d.sha256, lines: d.lines, session: iteration } });
+			taskEvent(`delivered: ${d.dir} (local ${solverResult.valScore ?? "none"})`);
+			console.log(`\n[orchestrate] DELIVERED — ${d.dir}/ (${d.files.join(", ")}); local ${solverResult.valScore ?? "none"}. Not submitted (--offline).`);
+			await exitRun(0, "delivered");
 		}
 		// Never spend a try on output identical to the last submission.
 		const outHash = createHash("sha256").update(submission === "token" ? solverResult.token! : readFileSync(csvPath)).digest("hex");

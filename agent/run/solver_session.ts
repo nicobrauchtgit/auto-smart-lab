@@ -28,6 +28,8 @@ export interface SolverTaskFacts {
 	submission: "file" | "token";
 	/** Unit activation token for the VM's local service, when configured (token tasks). */
 	activationToken?: string;
+	/** No lab access (since 2026-11): the declared result is final and goes to the instructor. */
+	offline?: boolean;
 	attemptsUsed: number;
 	attemptsMax: number;
 	/** Platform results so far, oldest first; `local` is the solver's local score before it, when known. */
@@ -82,10 +84,18 @@ export async function runSolverSession(taskId: string, feedback: string | undefi
 }
 
 function describePlatform(t: SolverTaskFacts): string {
+	if (t.offline) {
+		return " Delivery: this run has no access to the SmartLab platform. The result your SOLVER_DONE line names is final:" +
+			" the orchestrator stores it" + (t.submission === "file" ? " together with a zip of the repository's source files" : "") +
+			" and ends the task. It is handed to the course instructor, who scores it after the run; no score comes back during the run.";
+	}
 	const results = t.history.length
 		? ` Platform results so far: ${t.history.map((h, i) => `#${i + 1} ${h.platform ?? "?"}${h.local !== null ? ` (your local score then: ${h.local})` : ""}`).join("; ")}.`
 		: "";
-	return ` Platform: ${t.attemptsUsed} of ${t.attemptsMax} attempts used.${results}`;
+	return ` Platform: each submission spends one of the task's ${t.attemptsMax} attempts; ${t.attemptsUsed} of ${t.attemptsMax} used.${results}` +
+		" If the platform's grader refuses an upload (e.g. unknown ids), no attempt is counted and its message comes back to you verbatim." +
+		" After a submission the platform score comes back to you while attempts remain and the score is below the target." +
+		" Output identical to the last submission is not re-submitted; consecutive identical results are capped and the feedback states the count.";
 }
 
 function describeSubmission(t: SolverTaskFacts): string {

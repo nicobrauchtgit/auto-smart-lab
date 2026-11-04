@@ -217,7 +217,8 @@ export function parseTaskPage(taskUrl: string, page: string, baseUrl: string): T
 // Source zip builder
 // ---------------------------------------------------------------------------
 
-const EXCLUDED_DIRS = new Set([".git","__pycache__",".pytest_cache","env","venv",".venv","data","downloaded_task_page","submissions","reports","node_modules"]);
+// logs/ holds run logs and, since 2026-11, the offline deliveries of other tasks: never part of a source upload.
+const EXCLUDED_DIRS = new Set([".git","__pycache__",".pytest_cache","env","venv",".venv","data","downloaded_task_page","submissions","reports","node_modules","logs"]);
 const EXCLUDED_NAMES = new Set(["lab-cookies.txt","source.zip","output.csv"]);
 const ALLOWED_SUFFIXES = new Set([".py",".sh",".ts",".md",".txt",".toml",".yaml",".yml",".json"]);
 const CRC_TABLE = (() => { const t=new Uint32Array(256); for (let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xedb88320^(c>>>1):c>>>1;t[n]=c>>>0;} return t; })();
@@ -237,7 +238,7 @@ function collectFiles(root: string): {rel:string;abs:string}[] {
 	walk(root,[]);
 	return out.sort((a,b)=>a.rel<b.rel?-1:a.rel>b.rel?1:0);
 }
-function buildZip(root: string): Buffer {
+export function buildZip(root: string): Buffer {
 	const files=collectFiles(root); const local: Buffer[]=[], central: Buffer[]=[]; let offset=0;
 	for (const {rel,abs} of files) {
 		const content=readFileSync(abs); const crc=crc32(content); const compressed=deflateRawSync(content); const name=Buffer.from(`source/${rel}`,"utf8");

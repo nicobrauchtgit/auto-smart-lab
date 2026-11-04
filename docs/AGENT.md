@@ -108,6 +108,21 @@ Remote execution (lab VM)          scripts/vm/remote.sh (Mac side), scripts/vm/b
 
 `--max-unchanged <n>` (default 3): if that many consecutive solver results reproduce the last submission byte-for-byte, the task stops with its remaining attempts unused (exit code 7); the solver is told the count and the limit as facts. Added after documents3 (2026-10-02) re-solved 12 times with identical output for about three hours.
 
+**Offline mode (`--offline`, since 2026-11).** The lab no longer accepts uploads; results go to the
+course instructor by hand. With `--offline` neither the orchestrator nor `solve_units` contacts the lab
+(no status check, no platform history, no `LAB_USER`/`LAB_PASS`; `units/` must already be fetched).
+Step 4 becomes **deliver** (`deliver.ts`): the first declared result that passes the output check is
+final and is written to `logs/deliveries/<stamp>/<task>/` — `output.csv` (or `token.txt`), the same
+`source.zip` an upload carried, and `manifest.json` (model, commit, prompt hashes, host, Python, local
+score, approach, sha256) — and the task exits 0 (outcome `delivered`). No score comes back during
+the run, so there is no score-driven iteration; output-check failures and the 3-sessions-without-result
+cap work as before. The solver's first message states the delivery facts (result final, handed to the
+instructor, scored after the run); the platform facts that used to be in `solver.md`'s Submission
+bullet moved into the first message of platform runs, so the system prompt is the same for both modes
+(prompt hash changed on 2026-11-02). Instructor scores are recorded in `docs/instructor_scores.json`
+and shown by `npm run report`. Comparable platform numbers for earlier runs: each task's **first**
+platform attempt, which was also made without score feedback (but the model then knew it had 3).
+
 `--no-submit` stops once a declared result passes the output check and spends no attempt. Exit
 codes: 0 done, 1 no attempts before start, 2 solver failed (3 sessions in a row without a
 submittable result), 3 submission failed, 4 model API quota exhausted, 5 cost budget exhausted,
@@ -167,6 +182,13 @@ configured in `~/.pi/agent/models.json`). Only some support tool calling, which 
 | `qwen3-coder-next` (used for all 2026-09-10 runs), `openai-gpt-oss-120b`, `devstral-2-123b-instruct-2512` | `qwen3.5-397b-a17b` (the old default), `mistral-medium-3.5-128b`, `glm-4.7`, `qwen3.6-35b-a3b`; some listed IDs 404 |
 
 Probe a model by POSTing a completion with a `tools` array and checking for 200.
+
+**Local open model (since 2026-11).** `qwen3.8-flash-next-a5b`, served by the chair (vLLM on
+`dgx2.mlsec.tu-berlin.de`) behind LiteLLM at `https://mythllm.mlsec.tu-berlin.de/v1`: public (no VPN),
+bearer token `LITELLM_TOKEN` in `.env`, 262,144-token context, OpenAI tool calling verified with a raw
+request (2026-11-02), returns `reasoning_content`, no rate limits on the key and cost reported as 0.
+pi provider `mythllm` in `~/.pi/agent/models.json` with `"apiKey": "$LITELLM_TOKEN"` (README, Models);
+the orchestrator's model pre-check expands `$VAR` keys the same way.
 
 **Google models (since 2026-10-01).** Gemini via Gemini Enterprise Agent Platform (Vertex AI), pi
 provider `google-vertex`, project `smartlab-agents` (752903476302), location `global`, ADC auth from
@@ -277,6 +299,7 @@ prompting:
 | Coaching stripped from prompts (2026-09-10) | The experiment measures the model, not our hints; a coached agent lives elsewhere. |
 | Tasks run sequentially | Parallel runs only trigger 429s under the per-minute quota. |
 | Every task run records its conditions (2026-10-03) | The harness changes often; a result without the commit, prompt hashes and caps it ran under cannot be compared with later ones. |
+| Offline delivery instead of submission (2026-11-02) | The lab stopped accepting uploads. The first declared result that passes the output check is final and goes to the instructor, so every model gets one deliverable per task and no score feedback; the solver is told this as a fact. |
 | Eval agent removed (2026-10-03) | Its decisions were a fixed rubric on the local score (approve ≥ 0.97) run by an LLM: in unit 2 it approved every candidate (local ≥ 0.97, platform 0.65–0.95), on attacks2 it rejected every candidate and ended the task unsubmitted, and its format check passed a CSV with the wrong ids. The thresholds were our submission strategy imposed on the model, and its rejection feedback was advice — both contrary to the barebones design. The solver now decides when to submit, informed by the attempts and platform history; a deterministic check replaces the format review. Code: git history before this change (`eval_session.ts`, `instructions/eval.md`). |
 
 ## 6. Where to look next
@@ -287,6 +310,22 @@ prompting:
 - `npm run report [-- --md --lab]` — every batch result (local and pulled from the VM) in one table
   with model, commit, eval mode (`on` only for runs before the eval agent's removal), and
   local→platform score per submission.
+- **Planned next (as of 2026-11-04): two full offline runs, one per model, same harness commit.**
+  The earlier lab results are not one model's: spam1–3 and documents1 came from `qwen3-coder-next`
+  (September harness, partly coached, eval agent), documents2–4 from Gemini 3.1 Pro, the rest from
+  Gemini 3.7 Flash. So both models run all tasks from scratch with `--offline`:
+  1. `google-vertex/gemini-3.7-flash` with a `--max-cost` cap (earlier runs cost ≈ $25 for 15 tasks
+     with up to 3 attempts each);
+  2. `mythllm/qwen3.8-flash-next-a5b` (free; add the `mythllm` provider from the README to
+     `~/.pi/agent/models.json` first; probe it with a short `--offline --only spam1` run).
+  Same caps for both (default 30-min sessions, 3 failed sessions per task), one task at a time, never
+  both models in one checkout at once (sessions read files other tasks left behind). Run on a machine
+  without antivirus for the malware units (3.6); if documents (15 GB) and clustering (11 GB) data do
+  not fit together, run them as separate batches. Token tasks (defense1, offense1–2) need the lab
+  VM's local service on 127.0.0.1:8000 (exit 9 elsewhere). Hand-off: the `logs/deliveries/<stamp>/`
+  folders, grouped per model, go to the instructor; scores back into `docs/instructor_scores.json`.
+  Open questions: whether the instructor scores tokens (defense1, offense1–2) and attacks2 (the
+  platform never accepted any id format for it). Compare with each task's first platform attempt.
 - Open ideas: compare models on the same reset state; run the coached agent on the same tasks for
   a coaching-on/off comparison; an offline test suite with a scripted fake model; add a per-run
   request budget so a run cannot exhaust the hourly quota for the next one.

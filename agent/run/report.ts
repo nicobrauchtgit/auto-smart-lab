@@ -13,6 +13,11 @@
  * Sources: logs/solve-units/<stamp>/summary.json (written by solve_units.ts) and the same under
  * logs/vm/<host>/ (scripts/vm/remote.sh pull). Runs made before conditions were recorded show "?"
  * for the commit; their model is taken from the task log when the summary lacks it.
+ *
+ * Offline runs (--offline, since 2026-11) deliver results to the instructor instead of the platform.
+ * Their scores come back by hand: record them in docs/instructor_scores.json as
+ * { "<batch stamp>/<task>": { "score": 0.95, "note": "..." } } (stamp = the deliveries/<stamp> dir);
+ * the report shows them as local→instructor (marked "i") and as the best score.
  */
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -23,6 +28,7 @@ import { fetchTaskStatus, SimpleClient } from "./submit_session.js";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(HERE, "..", "..");
 const LOGS = join(PROJECT_ROOT, "logs");
+const INSTRUCTOR_SCORES = join(PROJECT_ROOT, "docs", "instructor_scores.json");
 
 type Json = Record<string, any>;
 
@@ -77,10 +83,15 @@ function modelFromLog(logRoot: string, log: string | null): string | null {
 	} catch { return null; }
 }
 
+function instructorScores(): Record<string, { score?: number | null; note?: string }> {
+	try { return JSON.parse(readFileSync(INSTRUCTOR_SCORES, "utf8")); } catch { return {}; }
+}
+
 const fmt = (x: number | null | undefined, d = 4) => x === null || x === undefined ? "-" : x.toFixed(d);
 
 function rows(): Row[] {
 	const out: Row[] = [];
+	const instructor = instructorScores();
 	for (const { file, source, logRoot } of findSummaries()) {
 		let sum: Json;
 		try { sum = JSON.parse(readFileSync(file, "utf8")); } catch { continue; }
@@ -94,13 +105,15 @@ function rows(): Row[] {
 			if (modelFilter && !String(model).includes(modelFilter)) continue;
 			const a = r.after as Json | null;
 			const subs = (r.submissions ?? []) as Json[];
+			const d = r.delivery as Json | undefined;
+			const iScore = d ? instructor[`${stamp}/${r.id}`]?.score ?? null : null;
 			out.push({
-				source, stamp, task: r.id, model: String(model).replace(/^(gwdg|google-vertex)\//, ""),
+				source, stamp, task: r.id, model: String(model).replace(/^(gwdg|google-vertex|mythllm)\//, ""),
 				commit: c?.git?.commit ? `${c.git.commit}${c.git.dirty?.length ? "+" : ""}` : "?",
 				evalMode: c?.caps ? (c.caps.eval === true ? "on" : "off") : "?",
-				outcome: r.outcome, attempts: a ? `${a.attemptsUsed ?? "?"}/${a.attemptsMax}` : "?",
-				best: a?.bestScore ?? null,
-				submissions: subs.map(s => `${fmt(s.local, 3)}→${fmt(s.platform, 3)}`).join(" "),
+				outcome: r.outcome, attempts: d ? "offline" : a ? `${a.attemptsUsed ?? "?"}/${a.attemptsMax}` : "?",
+				best: d ? iScore : a?.bestScore ?? null,
+				submissions: d ? `${fmt(d.local, 3)}→${fmt(iScore, 3)}i` : subs.map(s => `${fmt(s.local, 3)}→${fmt(s.platform, 3)}`).join(" "),
 				minutes: Number(r.minutes) || 0, costUsd: Number(r.costUsd) || 0, reason: String(r.reason ?? ""),
 			});
 		}
@@ -123,7 +136,7 @@ function printRows(rs: Row[]) {
 		for (const c of cells) console.log(line(c));
 	}
 	const cost = rs.reduce((a, r) => a + r.costUsd, 0);
-	console.log(`\n${rs.length} task run(s)${cost ? `, $${cost.toFixed(2)} model spend` : ""}. local→platform: the solver's local score before each submission and the platform's result.`);
+	console.log(`\n${rs.length} task run(s)${cost ? `, $${cost.toFixed(2)} model spend` : ""}. local→platform: the solver's local score before each submission and the platform's result; "i" marks the instructor's score for an offline delivery (docs/instructor_scores.json).`);
 }
 
 async function printLab() {
