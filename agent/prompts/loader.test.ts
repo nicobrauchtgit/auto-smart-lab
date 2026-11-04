@@ -65,7 +65,7 @@ test("research uses the same opening task and adds factual feedback only after a
 	const retry = prepareResearchPrompts(snapshot, { ...input, failedChecks: ["missing sources"] });
 	assert.ok(retry.prompt.startsWith(initial.prompt));
 	assert.equal(initial.system.text, retry.system.text);
-	assert.match(initial.prompt, /leave sound existing work unchanged/);
+	assert.match(initial.prompt, /Keep a sound existing brief/);
 	assert.doesNotMatch(initial.prompt, /Migrate|missing sources|currently fails/);
 	assert.match(retry.prompt, /missing sources/);
 	assert.equal(retry.promptReferences.at(-1)?.id, "research.validation-feedback");
@@ -138,18 +138,16 @@ test("the solve opening selects the task contract of the configured kind", () =>
     assert.ok(!selected.promptReferences.some(reference => reference.id === "solve.label-free"));
 });
 
-test("research always supplies the separate test-input pass and its evidence limits", () => {
+test("research asks for a route-limited brief with checkable sources and the self-check tool", () => {
  const prompts = loadPromptSnapshot();
  const prepared = prepareResearchPrompts(prompts, { taskId: 'spam1', contextHash: 'fixed-fixture' });
- const guide = prompts.render('research.test-distribution', {});
- assert.ok(prepared.promptReferences.some(ref => ref.id === 'research.test-distribution' && ref.rendered_sha256 === guide.reference.rendered_sha256));
- assert.ok(prepared.prompt.includes(guide.text));
- assert.match(guide.text, /after releasing the training\s+data/);
- assert.match(guide.text, /Do not\s+discard a useful training finding/);
- assert.match(guide.text, /check it in both\s+splits/);
- assert.match(guide.text, /do not treat absence from a sample as absence\s+from the whole split/);
- assert.match(guide.text, /Never\s+infer targets from them/);
- assert.match(guide.text, /split: "training".*split: "test"/);
+ assert.ok(!prepared.promptReferences.some(ref => (ref.id as string) === 'research.test-distribution'));
+ const system = prepared.system.text;
+ assert.match(system, /one strong, state-of-the-art pipeline/);
+ assert.match(system, /limits\.max_alternates/);
+ assert.match(system, /\[profile:<record key>\]/);
+ assert.match(system, /check_brief/);
+ assert.match(prompts.render('research.check-brief-tool', {}).text, /same validator the controller uses/);
 });
 
 test("opening guidance is optional with explicit empty compatibility, rejects unknown/non-string variables and preserves literal braces", () => {

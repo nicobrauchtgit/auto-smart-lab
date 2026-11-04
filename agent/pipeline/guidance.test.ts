@@ -54,7 +54,7 @@ test("evidence must match unique producer/task/dataset/candidate and current byt
 test("unguided research and solve prompts remain byte-compatible; guidance is separate prompt identity", () => {
  const base = prepareResearchPrompts(prompts, { taskId: "fixture", contextHash: "context" });
  const guided = prepareResearchPrompts(prompts, { taskId: "fixture", contextHash: "context", guidance: note() });
- expect(base.prompt).toBe([prompts.render("research.start", { taskId: "fixture", contextHash: "context", startupContext: "" }).text, prompts.render("research.test-distribution", {}).text].join("\n\n"));
+ expect(base.prompt).toBe(prompts.render("research.start", { taskId: "fixture", contextHash: "context", startupContext: "" }).text);
  expect(guided.prompt).toContain("{{literal}}"); expect(guided.promptReferences.filter(p => p.id !== "shared.stage-guidance").map(p => [p.id, p.template_sha256])).toEqual(base.promptReferences.map(p => [p.id, p.template_sha256]));
  const input = { taskId: "fixture", workspace: "/tmp", datasetPaths: [], configuration: spamConfiguration(), targets: "/tmp/labels", rowCount: 10, targetSummary: "balanced", foldRecommendation: "two", researchState: "prior", maxIterations: 1 };
  const plain = prepareSolvePrompts(prompts, input); const withNote = prepareSolvePrompts(prompts, { ...input, guidance: note("solve") });

@@ -16,7 +16,7 @@ import { selectedKnowledge } from "../knowledge/service.js";
 import { submissionSetupChecks, submissionRecoverySetupChecks } from "../submission/setup.js";
 import type { Telemetry } from "../telemetry/runtime.js";
 
-export type SetupRequirement = "observability" | "model" | "python" | "task" | "training" | "evaluation" | "refit" | "web-search" | "knowledge" | "knowledge-history" | "submission" | "submission-recovery" | "orchestrator" | "solve-isolation" | "confirmation";
+export type SetupRequirement = "observability" | "model" | "python" | "task" | "training" | "evaluation" | "refit" | "web-search" | "knowledge" | "knowledge-history" | "submission" | "submission-recovery" | "orchestrator" | "solve-isolation" | "confirmation" | "data-profile";
 export interface SetupCheck {
  id: string;
  phase: "local" | "remote";
@@ -150,6 +150,10 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
    throw new Error("No task configuration");
   }
   inspectTaskData(options.taskId, configuration, options.executables?.python ?? projectPython());
+ });
+ if (needs.has("data-profile")) add("data-profile", "local", "Restore agent/research/python/data_profile.py and agent/training/python/task_samples.py; research profiles the declared data with them before the agent starts.", () => {
+  readable(join(PROJECT_ROOT, "agent/research/python/data_profile.py"));
+  readable(join(PROJECT_ROOT, "agent/training/python/task_samples.py"));
  });
  if (needs.has("task") && options.taskConfiguration?.samples.source === "pcap_tcp_connections") add("pcap-sample-runtime", "local", "Run ./dev setup to install dpkt; restore pcap_samples.py. Captures must contain non-fragmented TCP over Ethernet, raw IP or Linux cooked capture, with complete packet headers.", () => {
   readable(join(PROJECT_ROOT, "agent/training/python/pcap_samples.py"));

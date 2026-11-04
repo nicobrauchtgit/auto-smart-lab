@@ -5,9 +5,10 @@ import document from "../../harness.config.json";
 const fields = {
 	orchestrator: ["maxSessions", "maxModelRequests", "maxToolCalls", "maxStages", "maxTrials", "maxRetries", "maxWallMs", "maxSummaryBytes", "maxDetailBytes", "maxNotifications", "maxWaitMs"],
 	setup: ["timeoutMs", "modelMaxTokens"],
-	session: ["timeoutMs"], context: ["handoffTokens", "maxHandoffBytes"],
-	research: ["injectStartupContext", "maxAttempts", "webSearchCalls", "webSearchResults", "maxReportBytes", "maxAnalysisArtifactBytes", "maxFeatureRecommendations"],
-	solve: ["maxIterations", "seed", "foldPolicy", "experimentUpdateIntervalSeconds"],
+	pipeline: ["maxStageInvocations"],
+	session: ["maxWallMs", "stallMs", "stallRetries"], context: ["handoffTokens", "maxHandoffBytes"],
+	research: ["injectStartupContext", "maxAttempts", "webSearchCalls", "webSearchResults", "maxReportBytes", "maxAnalysisArtifactBytes", "maxFacts", "maxAlternates", "maxImprovements", "profileTimeoutMs", "profileTextMinPercent", "maxToolCalls", "finalizeToolCalls", "focusAtRemainingPercent", "wrapUpAtRemainingPercent", "bashTimeoutSeconds"],
+	solve: ["maxIterations", "seed", "foldPolicy", "experimentUpdateIntervalSeconds", "idleWakeMs"],
 	holdout: ["targetSmallestClassRows", "minSmallestClassRows", "maxFraction", "groupFraction"],
 	search: ["confirmAboveSeconds", "overrunFactor", "maxSeconds", "validationTimeoutSeconds"],
 	supervisor: ["updateIntervalMs", "linesPerUpdate", "minStallMs", "stallGapMultiple", "importPreludeMs", "idleCpuPercent", "sampleIntervalMs", "maxConcurrent", "stopGraceMs"],
@@ -41,6 +42,10 @@ export function parseHarnessConfig(raw: unknown): HarnessConfig {
 		}
 	}
 	if (typeof value.research.injectStartupContext !== "boolean") throw new Error("Invalid startup context setting");
+	if (value.research.profileTextMinPercent > 100) throw new Error("research.profileTextMinPercent must be at most 100");
+	if (!(value.research.wrapUpAtRemainingPercent < value.research.focusAtRemainingPercent && value.research.focusAtRemainingPercent < 100)) {
+		throw new Error("research budget tiers must satisfy wrapUpAtRemainingPercent < focusAtRemainingPercent < 100");
+	}
 	for (const key of ["maxFraction", "groupFraction"]) if (!(typeof value.holdout[key] === "number" && value.holdout[key] > 0 && value.holdout[key] < 0.5)) throw new Error(`Invalid holdout.${key}`);
 	if (value.holdout.minSmallestClassRows > value.holdout.targetSmallestClassRows) throw new Error("holdout minimum exceeds target");
 	if (!Number.isSafeInteger(value.solve.seed)) throw new Error("Invalid root seed");
@@ -57,7 +62,7 @@ export function parseHarnessConfig(raw: unknown): HarnessConfig {
 	for (const [key, count] of Object.entries(limits)) positive(count, key);
 	if (value.orchestrator.maxWaitMs > 60000 || value.orchestrator.maxWallMs > 2_147_483_647) throw new Error("Invalid orchestrator timer bound");
 	if (value.subagents.waitTimeoutMs > value.subagents.maxWaitTimeoutMs) throw new Error("Wait timeout exceeds maximum");
-	for (const timeout of [value.setup.timeoutMs, value.session.timeoutMs, value.subagents.turnTimeoutMs, value.subagents.maxWaitTimeoutMs]) {
+	for (const timeout of [value.setup.timeoutMs, value.session.maxWallMs, value.session.stallMs, value.solve.idleWakeMs, value.subagents.turnTimeoutMs, value.subagents.maxWaitTimeoutMs]) {
 		if (timeout > 2_147_483_647) throw new Error("Timeout exceeds timer range");
 	}
 	if (!Array.isArray(value.foldRecommendations) || !value.foldRecommendations.length) throw new Error("Missing fold recommendations");

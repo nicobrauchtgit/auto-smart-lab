@@ -1,6 +1,6 @@
 # Remaining work
 
-Single work queue for this repository. Updated 2026-10-09. Remove items when
+Single work queue for this repository. Updated 2026-11-02. Remove items when
 finished; implementation contracts and feature references stay in their own
 module documentation. Older handovers and design plans are historical inputs,
 not additional active queues.
@@ -18,13 +18,165 @@ from successful and worse attempts, with or without champions. Raw-input cleanup
 and strict TypeScript checking are implemented. See the [knowledge module README](../agent/knowledge/README.md)
 for tool scope, evidence status and reusable lessons.
 
-## Before the first real run
+## Next: research stage redesign
 
-Start with spam1: its data and typed task configuration are present locally.
+Decided with the user on 2026-11-03; decisions, rationale and sources are in
+[research-redesign.md](research-redesign.md). Work in this order and test each
+step on spam1–3 before the next overnight run:
+
+- [x] **Harness data profile.** Deterministic, full-corpus, citeable
+  records written to the research workspace before the agent starts. The
+  generic layer covers all tasks; the text format layer comes first. The
+  agent no longer rewrites the survey.
+- [x] **Short solution brief.** One recommended pipeline, at most two
+  alternates and at most three atomic next improvements. Sources can be any
+  profile record, artifact path or URL the harness can resolve, with number
+  and URL checks and a self-check tool. Remove the claim-audit and
+  Measured/Sampled rules.
+- [x] **Solve starts from the brief.** Fit the recommendation as the
+  baseline and compare the alternates on the harness hold-out.
+Steps 1–5 were implemented on 2026-11-03 and pass the offline tests. Every
+tuning value is in `harness.config.json`/`pipeline.config.json`, explained in
+[configuration.md](configuration.md).
+
+- [x] **Action budget.** A visible budget line after each tool call, a final
+  turn to write the brief, and a `partial` outcome instead of a stage failure.
+- [x] **Stall check.** Replace the 30-minute session race with a
+  "no streamed tokens for N minutes" check; `session.timeoutMs` stays only as
+  a safety limit.
+- [ ] **Write the official submission CSV without the submit stage.** Refit
+  writes `predictions.csv` (comma, header); the official `id;prediction` file is
+  only built by the disabled submit stage. Manual handover needs refit (or a
+  handover step) to write it, validated like `agent/submission/bundle.py`. The
+  exercise 1 queue uses `runs/exercise1-2026-11-03/export_submission.py` meanwhile.
+- [ ] **Orchestrator re-research.** On a solve plateau the orchestrator
+  decides, guided by few-shot examples rather than a fixed rule, whether to
+  start another research round with a focus and a typed diagnosis. It
+  records its reason for each decision.
+
+## Exercise 1 results (2026-11-04)
+
+The exercise 1 queue (`runs/exercise1-2026-11-03/`, local and ignored) finished
+on 2026-11-04 with all three spam tasks successful, using
+`mythllm/qwen3.8-flash-next-a5b` and the redesigned research stage. Validated
+CSVs in the official `id;prediction` format (no header, IDs equal to the test
+archive, labels 0/1) are in `runs/exercise1-2026-11-03/submissions/`, with the
+run history in that folder's `observations.md`. Nothing was uploaded. Scores
+are balanced accuracy; "sealed" is the confirmation split the agent never saw,
+measured on the frozen champion before terminal refit.
+
+| Task | Champion | Dev CV | Sealed | Test rows (positive) | Readiness |
+| --- | --- | --- | --- | --- | --- |
+| spam1 | `c53f6572` | 0.99558 | 0.99501 (2 errors / 401) | 15,051 (8,193) | 4 |
+| spam2 | `577fa2ad` | 0.99915 | 0.99641 (2 errors / 660) | 12,469 (7,753) | 3 |
+| spam3 | `b37d6818` | 0.99886 (20-fold) | 0.99550 (1 error / 712) | 2,757 (417) | 4 |
+
+Advisory review concerns, none of which block submission:
+
+- spam2: the 0.0027 dev-to-sealed gap was not explained (near-duplicate
+  leakage across folds was not checked), and the fixed decision offset of -0.1
+  was chosen without measuring the score distribution.
+- spam3: a page-template flag fires on 59% of training spam but on 8.9% of test
+  pages; the test score may be lower if the model relies on those features.
+
+Research redesign in practice: every brief passed validation on the first
+attempt, using 29–36 of the 40 tool calls; no model request stalled. Four
+infrastructure bugs were found and fixed during the run, each with a regression
+test: untyped `experiment_start` fields (the model sent JSON strings), solve
+ending while its own trials ran (now `solve.idleWakeMs`), an unbounded research
+bash call that exhausted RAM and swap (now `research.bashTimeoutSeconds`), and
+handoff context overflow from queued steering messages (now deferred to the
+next session, with a harness fallback handoff and `context.handoffTokens`
+80,000). Tasks were resumed from their last valid stage, reusing artifacts only
+when their hashes were unchanged. The CSV export is still a manual step
+(`runs/exercise1-2026-11-03/export_submission.py`, the same conversion as the
+submit bundle); see the queue item above.
+
+## Current execution approach: cloud data and manual submission
+
+The model endpoint is now `https://mythllm.mlsec.tu-berlin.de/v1`, with default
+model `mythllm/qwen3.8-flash-next-a5b` (the only model returned by the authenticated
+model listing on 2026-11-02). Use a separate `MYTHLLM_API_KEY` in the ignored
+`.env`; do not send the SAIA credential to this host. Existing shared
+`model-configuration` and `model-access` setup checks both passed, including a
+minimal live completion through the project adapter. This does not establish
+whole-chain readiness. The server metadata does not report token limits;
+128,000 context / 8,192 maximum output tokens are conservative operating values,
+not verified server limits. The handoff threshold is 80,000 tokens (lowered from
+100,000 after a handoff overflowed during exercise 1); the earlier 5,000 value was left over from testing and caused repeated handoffs below the
+base working-context size. Upstream Qwen3.8-Flash-Next documentation advertises
+262,144 native context tokens; a bounded 130k-repetition synthetic deployment
+probe did not return a usable completion, so deployment capacity remains
+unverified. Text input is configured; image and reasoning
+capabilities have not been verified. SAIA remains an explicit optional provider.
+
+The lab server is unavailable. The user supplied an mlsecCloud share as the
+dataset source: `https://cloud.mlsec.tu-berlin.de/s/wD5GSTRbeS8reZH`.
+The share is password-protected; keep the password out of repository files.
+Read-only authenticated WebDAV listing was verified on 2026-11-02. It contains
+`01-spam`, `02-maldoc`, `03-clust`, `04-tor`, and `05-anomaly` directories.
+Many archives are separately GPG-encrypted; share access does not establish
+that those archives can be decrypted. The listings inspected so far contain
+datasets, not verified task instructions or submission-format specifications.
+
+All challenges available in the share are in scope. “Only one” means one final
+submission attempt per challenge, not one challenge. The agent may run multiple
+local experiments and comparisons, then select its best supported solution when
+it judges further work unlikely to improve the result within the run's budget.
+There is no official-score feedback loop or automatic resubmission. Local
+evidence supports selection; it does not prove the best possible hidden-test score.
+
+The user will send the final CSVs to their professor manually. `submit` is disabled in
+`pipeline.config.json`; use research → solve → evaluate → refit to produce
+the validated prediction artifact. Do not use an uploading orchestrator command
+or infer upload authorization from the availability of data.
+
+- [ ] **Inventory all available cloud challenges.** Include the nested Tor
+  directories and map each dataset to its task instructions, labels, encryption
+  requirements and output contract. Start with spam1, then work through the
+  remaining available challenges; encrypted or unsupported tasks remain tracked
+  with their concrete blockers rather than silently omitted.
+- [ ] **Prepare each cloud dataset when needed.** Verify its instructions,
+  labels, archive contents/identity and CSV contract before declaring it ready.
+  Obtain separate decryption credentials if the selected files require them.
+  Reuse the existing task/harness path with local data and `--no-fetch`; do not
+  fall back to downloading from the unavailable lab server.
+- [ ] **Hand over one validated final CSV per challenge.** After the agent
+  finishes local search and chooses its best supported solution, freeze and
+  refit through the harness, then validate CSV format and test-ID coverage.
+  Record each file's path, selected candidate and local validation evidence.
+  Evaluation remains advisory, and the harness still validates artifacts.
+  Official scoring remains external and manual; do not invent official scores
+  or submission receipts.
+
+## Before the first real run (earlier server-based plan)
+
+An overnight local queue was launched on 2026-11-02 for spam1 → spam2 → spam3.
+It ended on 2026-11-03 at 00:02 Berlin time with all tasks stopped at research:
+spam1 exhausted its retained research budget after the context-test recovery;
+spam2 and spam3 hit their 30-minute session timeouts. No task reached training
+or produced a final CSV. Model requests took minutes; validated research was
+not completed within those budgets. Existing scripts and partial research
+measurements are preserved. No workers remain, and the T3 monitor is disabled.
+The latency was investigated on 2026-11-03: generation was slow on the server
+side, not in tools or our code. The resulting budget and research decisions are
+in [research-redesign.md](research-redesign.md). Do not treat these failed
+attempts as trained-model evidence.
+Operational status, configuration snapshot, input hashes, task results and dated
+observations live in `runs/overnight-spam-2026-11-02/`. A T3 task checks it every
+ten minutes and disables itself after completion or the overnight deadline.
+All three whole-chain preflights passed (including Langfuse and MythLLM) after
+adding project-local `.tools/bin/zip`. Existing local datasets require no old
+SmartLab server access. Submission stays disabled. The earlier missing-zip and
+unverified-service notes below are historical, superseded for this machine by
+these checks; VM readiness remains separate. Verify the live status before
+starting any other spam pipeline process.
+
+The earlier plan started with spam1: its data and typed task configuration are present locally.
 Run the configured research → solve → evaluate → refit chain; it stops before
 submission. No real unit 2–4 run has been validated yet.
 
-- [ ] **Restore lab/VPN access.** Latest probes on 2026-10-08: the lab website
+- [ ] **Restore lab/VPN access (deferred; not required for cloud/manual workflow).** Latest probes on 2026-10-08: the lab website
   and the VM's SSH port both timed out after 10 seconds. This establishes that
   they are unreachable from this machine, not that the servers are down.
 - [ ] **Prepare the execution machine.** The local spam1 whole-chain preflight

@@ -136,6 +136,10 @@ export class SmartContextSession implements Wakeable {
 					if (usage?.tokens != null && usage.tokens >= this.threshold) {
 						thresholdReached = true;
 						this.rotating = true;
+						// Queued steering (e.g. experiment updates) would otherwise start more turns
+						// and grow the context past the model window before the handoff.
+						const queued = session.clearQueue();
+						this.pending.push(...queued.steering, ...queued.followUp);
 						return true;
 					}
 					return await previousStop?.(context, signal) ?? false;
@@ -164,14 +168,20 @@ export class SmartContextSession implements Wakeable {
 						const effective = await previousPayload?.(payload, model) ?? payload;
 						return omitEmptyTools(effective);
 					};
+					let failure: string | undefined;
 					try { await session.prompt(this.handoffPrompt.text); }
+					catch (error) { failure = error instanceof Error ? error.message : String(error); }
 					finally { session.agent.onPayload = previousPayload; }
 					this.checkStopped();
-					this.checkResponse(session);
 					const last = session.messages.at(-1);
-					if (last?.role !== "assistant" || last.stopReason !== "stop") throw new Error("Context handoff did not finish normally");
-					const handoff = session.getLastAssistantText()?.trim();
-					if (!handoff || Buffer.byteLength(handoff) > MAX_HANDOFF_BYTES) throw new Error("Empty or oversized context handoff");
+					const written = session.getLastAssistantText()?.trim();
+					if (!failure && (last?.role !== "assistant" || last.stopReason !== "stop")) failure = `handoff ended with ${last?.role === "assistant" ? last.stopReason : "no response"}`;
+					if (!failure && (!written || Buffer.byteLength(written) > MAX_HANDOFF_BYTES)) failure = "empty or oversized handoff";
+					// A failed handoff must not end the stage: running experiments and the
+					// workspace persist, so a harness-written note lets the successor recover.
+					if (failure) handle.record("context_handoff_fallback", { handoffId, logicalSessionId: this.logicalSessionId,
+						generation: this.generation, reason: failure.slice(0, 300) });
+					const handoff = failure ? this.options.prompts.render("context.handoff-fallback", { reason: failure.slice(0, 200) }).text.trim() : written!;
 					const late = session.clearQueue();
 					this.pending.push(...late.steering, ...late.followUp);
 					opening = this.options.prompts.render("context.resume", {

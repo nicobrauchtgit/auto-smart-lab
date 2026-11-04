@@ -6,7 +6,12 @@ import type { PromptSnapshot } from "../prompts/loader.js";
 import { ExperimentRequestError } from "./contract.js";
 import type { TrainingService } from "./service.js";
 
-const json = Type.Any();
+/**
+ * A JSON object whose contents the harness validates itself. Declaring the
+ * type matters: with an untyped schema some models send the object as a JSON
+ * string, which the harness then rejects as "not an object".
+ */
+const json = Type.Object({}, { additionalProperties: true });
 const moduleReference = () => Type.Object({
 	module: Type.String({ minLength: 1, maxLength: 500 }),
 	factory: Type.String({ minLength: 1, maxLength: 200 }),

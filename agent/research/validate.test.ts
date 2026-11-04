@@ -4,131 +4,146 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { researchContextHash, type ResearchContext } from "./context.js";
-import { validateResearchDocument, validateResearchFile } from "./validate.js";
+import { extractSources, statedNumbers, validateResearchFile, WEB_SOURCES_LOG } from "./validate.js";
 
 const context: ResearchContext = {
 	schema_version: 1,
-	generated_at: "2026-09-01T00:00:00.000Z",
-	run_date: "2026-09-01",
+	generated_at: "2026-11-03T00:00:00.000Z",
+	run_date: "2026-11-03",
 	task: { id: "spam1", title: "Spam", unit: "Spam", task_dir: "units/spam", prompt_file: "task.md" },
 	dataset: {
-		data_dir: "units/spam/data",
-		total_files: 2,
-		total_bytes: 20,
-		file_types: { ".txt": { files: 2, bytes: 20 } },
-		primary_inputs: [],
-		snapshot_sha256: "dataset-hash",
+		data_dir: "units/spam/data", total_files: 2, total_bytes: 20,
+		file_types: { ".zip": { files: 2, bytes: 20 } }, primary_inputs: [], snapshot_sha256: "dataset-hash",
 	},
-	limits: { web_search_calls: 3, max_report_bytes: 40960, max_analysis_artifact_bytes: 65536, max_feature_recommendations: 10 },
+	limits: { web_search_calls: 3, max_report_bytes: 16384, max_analysis_artifact_bytes: 65536, max_facts: 8, max_alternates: 2, max_improvements: 3 },
 };
+const URL = "https://scikit-learn.org/stable/modules/feature_extraction.html";
 
-const validDocument = `# Research: Spam
-
-## Scope
+function brief(parts: Partial<Record<"facts" | "pipeline" | "alternates" | "improvements" | "risks" | "sources", string>> = {}): string {
+	return `# Brief: Spam
 
 Context snapshot: \`sha256:${researchContextHash(context)}\`
 
-## Evidence-backed findings
+## Dataset facts
 
-- **Measured:** There are two documents. [D001]
+${parts.facts ?? `- Training has 3,007 normal and 554 spam pages (15.56% spam) [profile:training.targets].
+- Spam pages have a median of 25 URLs [analysis/text.json#urls_median.spam].`}
 
-## Guidance for the solver
+## Recommended pipeline
 
-1. Test word tokens as a baseline. [D001] [S001]
+${parts.pipeline ?? `Word and character TF-IDF with a linear SVM, class weights balanced, 5-fold stratified CV [profile:training.targets; ${URL}].`}
 
-## Risks and unknowns
+## Alternates
 
-- Test distribution is unknown.
+${parts.alternates ?? `- Gradient boosting on structural HTML counts [analysis/text.json].`}
+
+## Next improvements
+
+${parts.improvements ?? `- Add URL-count features; measure balanced accuracy on the hold-out.`}
+
+## Leakage and risks
+
+${parts.risks ?? `- Member-name suffixes predict the label with accuracy 1.0 in training [profile:training.name_leakage]; never use names as features.`}
 
 ## Sources
 
-- [D001] Full-corpus count — script: \`analysis/analyze.py\`; artifact: \`analysis/summary.json\`
-- [S001] Example specification — https://example.com/spec
-
-## Revision log
-
-- 2026-09-01: Created the report.
+${parts.sources ?? `- ${URL} — scikit-learn text feature extraction`}
 `;
+}
 
-describe("validateResearchDocument", () => {
-	test("accepts traceable dataset and web research", () => {
-		expect(validateResearchDocument(validDocument, context)).toEqual({ valid: true, errors: [] });
+function workspace(document: string, options: { urls?: string[]; snapshot?: string } = {}) {
+	const root = mkdtempSync(join(tmpdir(), "brief-"));
+	mkdirSync(join(root, "profile")); mkdirSync(join(root, "analysis")); mkdirSync(join(root, ".harness"));
+	writeFileSync(join(root, "profile/profile.json"), JSON.stringify({
+		dataset_snapshot_sha256: options.snapshot ?? "dataset-hash",
+		evidence: {
+			"training.targets": { values: { counts: { "0": 3007, "1": 554 }, fractions: { "0": 0.8444, "1": 0.1556 } } },
+			"training.name_leakage": { values: { suffix: { majority_accuracy: 1.0 } } },
+		},
+	}));
+	writeFileSync(join(root, "analysis/text.json"), JSON.stringify({ urls_median: { spam: 25, ham: 9 } }));
+	writeFileSync(join(root, WEB_SOURCES_LOG), `${JSON.stringify({ query: "q", urls: options.urls ?? [URL] })}\n`);
+	writeFileSync(join(root, "research.md"), document);
+	return { path: join(root, "research.md"), close: () => rmSync(root, { recursive: true, force: true }) };
+}
+
+function check(document: string, options?: Parameters<typeof workspace>[1]) {
+	const fixture = workspace(document, options);
+	try { return validateResearchFile(fixture.path, context); } finally { fixture.close(); }
+}
+
+describe("solution brief", () => {
+	test("a brief with resolvable sources and supported numbers passes", () => {
+		expect(check(brief())).toEqual({ valid: true, errors: [] });
 	});
 
-	test("rejects legacy and undefined citations", () => {
-		const invalid = validDocument
-			.replace("[D001]", "[E001]")
-			.replace("https://example.com/spec", "no-url");
-		const result = validateResearchDocument(invalid, context);
+	test("routes are capped: alternates, facts and improvements", () => {
+		const result = check(brief({
+			alternates: "- A [analysis/text.json]\n- B [analysis/text.json]\n- C [analysis/text.json]",
+			improvements: "- one\n- two\n- three\n- four",
+		}));
+		expect(result.errors).toContain("Alternates has 3 alternates; at most 2. Keep only the strongest");
+		expect(result.errors).toContain("Next improvements has 4 improvements; at most 3. Keep only the strongest");
+	});
+
+	test("a number not in the cited data is reported against its fact", () => {
+		const result = check(brief({ facts: "- Training has 3,100 normal pages [profile:training.targets]." }));
 		expect(result.valid).toBe(false);
-		expect(result.errors.join("\n")).toContain("legacy controller-generated");
-		expect(result.errors.join("\n")).toContain("[S001] is not defined with a URL");
+		expect(result.errors.some(error => /3,100 is not in the cited data/.test(error))).toBe(true);
+	});
+
+	test("percentages, thousands separators and rounding match the cited fractions and counts", () => {
+		expect(check(brief({ facts: "- 15.6% of 3,561 is spam: 554 pages [profile:training.targets; analysis/text.json]." })).errors
+			.filter(error => error.includes("3,561"))).toHaveLength(1);
+		expect(check(brief({ facts: "- 84.4% are normal and 15.6% spam [profile:training.targets]." })).valid).toBe(true);
+	});
+
+	test("a fact without a dataset source is rejected, and a web source does not count as one", () => {
+		const result = check(brief({ facts: `- Spam is common in this corpus [${URL}].` }));
+		expect(result.errors.some(error => /Fact .* cites no dataset source/.test(error))).toBe(true);
+	});
+
+	test("URLs must come from this workspace's web searches", () => {
+		const invented = "https://example.org/made-up-paper";
+		const result = check(brief({ pipeline: `TF-IDF with a linear SVM [profile:training.targets; ${invented}].` }));
+		expect(result.errors).toContain(`[${invented}] was not returned by web_search in this workspace; cite a URL from your search results`);
+		expect(check(brief({ sources: `- [scikit-learn docs](${URL}#section)` })).valid).toBe(true);
+	});
+
+	test("unknown keys, missing files and a profile from another snapshot do not resolve", () => {
+		expect(check(brief({ facts: "- 554 spam pages [profile:training.missing]." })).errors)
+			.toContain("[profile:training.missing]: no key 'training.missing' in profile/profile.json");
+		expect(check(brief({ facts: "- 554 spam pages [analysis/absent.json]." })).errors)
+			.toContain("[analysis/absent.json]: file does not exist");
+		expect(check(brief(), { snapshot: "older" }).errors)
+			.toContain("[profile:training.targets]: the data profile belongs to another dataset snapshot");
+		expect(check(brief({ facts: "- 554 spam pages [../outside.json]." })).errors)
+			.toContain("[../outside.json] points outside the research workspace");
+	});
+
+	test("the recommended pipeline must be tied to dataset sources", () => {
+		expect(check(brief({ pipeline: `TF-IDF with a linear SVM [${URL}].` })).errors)
+			.toContain("Recommended pipeline cites no dataset source; tie it to the profile or your analysis artifacts");
+	});
+
+	test("structure, placeholders, size and the context snapshot are checked", () => {
+		const skeleton = brief({ alternates: "Pending." }).replace("## Sources", "## Extra\n\nx\n\n## Sources");
+		const result = check(skeleton.replace(researchContextHash(context), "stale"));
+		expect(result.errors).toContain("document still contains placeholder content");
+		expect(result.errors).toContain("unexpected section '## Extra'");
+		expect(result.errors.some(error => error.startsWith("the brief does not state the current context snapshot"))).toBe(true);
+		expect(check(brief({ risks: `- ${"x".repeat(17000)}` })).errors.some(error => /safety limit is 16384\. Condense it/.test(error))).toBe(true);
 	});
 });
 
-describe("validateResearchFile", () => {
-	test("checks the scope and snapshot of cited dataset evidence", () => {
-		const workspace = mkdtempSync(join(tmpdir(), "research-validation-"));
-		try {
-			mkdirSync(join(workspace, "analysis"));
-			writeFileSync(join(workspace, "research.md"), validDocument);
-			writeFileSync(join(workspace, "analysis", "analyze.py"), "# portable analysis\n");
-			writeFileSync(join(workspace, "analysis", "summary.json"), JSON.stringify({
-				dataset_snapshot_sha256: context.dataset.snapshot_sha256,
-				evidence: {
-					D001: { scope: "full", population: 2, method: "Counted every document.", values: { documents: 2 } },
-				},
-			}));
-
-			expect(validateResearchFile(join(workspace, "research.md"), context)).toEqual({ valid: true, errors: [] });
-
-			writeFileSync(join(workspace, "analysis", "summary.json"), JSON.stringify({
-				dataset_snapshot_sha256: "stale-dataset",
-				evidence: {
-					D001: { scope: "sampled", population: 2, method: "Sampled two documents.", values: { documents: 2 } },
-				},
-			}));
-			const result = validateResearchFile(join(workspace, "research.md"), context);
-			expect(result.valid).toBe(false);
-			expect(result.errors.join("\n")).toContain("current dataset snapshot");
-			expect(result.errors.join("\n")).toContain("Measured without citing full-scope evidence");
-		} finally {
-			rmSync(workspace, { recursive: true, force: true });
-		}
+describe("source and number extraction", () => {
+	test("sources: profile keys, artifacts with keys, URLs and markdown links; plain brackets are ignored", () => {
+		expect(extractSources(`[profile:a.b; analysis/x.json#k, ${URL}] [see above] [docs](${URL})`).map(source => source.kind))
+			.toEqual(["profile", "artifact", "url", "url"]);
 	});
-});
 
-describe("train/test comparison evidence", () => {
- test("requires cited evidence from both passes, with separate populations and truthful sample scope", () => {
-  const workspace = mkdtempSync(join(tmpdir(), 'research-transfer-'));
-  const comparedContext: ResearchContext = { ...context, dataset: { ...context.dataset, research_inputs: {
-   training: { path: 'train.zip', bytes: 1, sha256: 'a'.repeat(64) },
-   training_labels: { path: 'train.labels', bytes: 1, sha256: 'b'.repeat(64) },
-   test: { path: 'test.zip', bytes: 1, sha256: 'c'.repeat(64) },
-  } } };
-  // Fixed lexical-shift example: a literal disappears but the broader feature persists.
-  const record = (split: string, population: number, values: unknown) => ({ split, scope: 'full', population, method: 'Case-folded document frequency; one archive per pass.', values });
-  const training = record('training', 100, { winner: 20, url: 50 });
-  const testInput = record('test', 50, { winner: 0, url: 25 });
-  const document = validDocument.replace(researchContextHash(context), researchContextHash(comparedContext))
-   .replace('There are two documents.', 'Training winner frequency is 20/100 and URL frequency is 50/100.')
-   .replace('## Guidance for the solver', '**Measured:** Test winner frequency is 0/50 and URL frequency is 25/50. [D002]\n\n## Guidance for the solver')
-   .replace('Test word tokens as a baseline. [D001] [S001]', 'Retain URL presence as a candidate with 50% prevalence in both splits; validate its label association on training folds. The exact winner token is absent in this full test scan. [D001] [D002] [S001]')
-   .replace('- Test distribution is unknown.', '- Test labels and conditional performance remain unknown.')
-   .replace('- [S001]', '- [D002] Test pass — script: `analysis/analyze.py`; artifact: `analysis/summary.json`\n- [S001]');
-  try {
-   mkdirSync(join(workspace, 'analysis'));
-   writeFileSync(join(workspace, 'analysis/analyze.py'), '# sequential split analysis fixture\n');
-   writeFileSync(join(workspace, 'research.md'), document);
-   const save = (records: unknown) => writeFileSync(join(workspace, 'analysis/summary.json'), JSON.stringify({ dataset_snapshot_sha256: context.dataset.snapshot_sha256, evidence: records }));
-   save({ D001: training, D002: testInput });
-   expect(validateResearchFile(join(workspace, 'research.md'), comparedContext)).toEqual({ valid: true, errors: [] });
-   save({ D001: training, D002: { ...testInput, split: 'training' } });
-   expect(validateResearchFile(join(workspace, 'research.md'), comparedContext).errors.join('\n')).toContain('cited test evidence');
-   save({ D001: training, D002: { ...testInput, scope: 'sampled' } });
-   expect(validateResearchFile(join(workspace, 'research.md'), comparedContext).errors.join('\n')).toContain('Measured without citing full-scope');
-   save({ D001: training, D002: { ...testInput, split: 'invented' } });
-   expect(validateResearchFile(join(workspace, 'research.md'), comparedContext).valid).toBe(false);
-  } finally { rmSync(workspace, { recursive: true, force: true }); }
- });
+	test("numbers: code spans, sources, identifiers and small integers are not claims", () => {
+		const numbers = statedNumbers("Use `spam1-train.zip` with 5-fold CV on 3,561 rows, 14.8 KB median, label 1 [profile:x.2048].");
+		expect(numbers.map(number => [number.value, number.scale])).toEqual([[3561, 1], [14.8, 1000]]);
+	});
 });

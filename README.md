@@ -8,7 +8,7 @@ The intended pipeline is:
 resolve task -> research -> solve and measure -> evaluate -> submit
 ```
 
-Research, solve, evaluation and refit run through the shared pipeline executor. Configured runs stop before submission; uploads require an explicit controller policy. See [Remaining work](docs/cleanup-plan.md) for current run blockers and the single active work queue.
+Research, solve, evaluation and refit run through the shared pipeline executor. Configured runs stop before submission; uploads require an explicit controller policy. See [Remaining work](docs/cleanup-plan.md) for current run blockers and the single active work queue. Every tuning value (budgets, limits, timeouts, seeds, folds) lives in `harness.config.json` and `pipeline.config.json`; [the configuration reference](docs/configuration.md) explains each key.
 
 ## What the project is trying to do
 
@@ -102,7 +102,7 @@ You need:
 
 - Linux (x86_64 or arm64) with `curl`, `git`, `zip` and `unzip`;
 - a SmartLab account for fetching tasks or submitting;
-- a SAIA/GWDG API key for agent runs;
+- a MythLLM API key for agent runs;
 - Langfuse Cloud project API keys for executing stages.
 
 Everything else is pinned and installed by `./dev`: [mise](https://mise.jdx.dev/)
@@ -140,7 +140,7 @@ Edit the ignored `.env` file:
 
 ```dotenv
 # Required for agent sessions
-SAIA_API_KEY='...'
+MYTHLLM_API_KEY='...'
 
 # Optional, enables web search in research
 TAVILY_API_KEY='...'
@@ -151,6 +151,13 @@ LAB_PASS='...'
 ```
 
 Quote values containing spaces or shell metacharacters. The university SSH settings in `.env.example` are only needed by workflows that use that server.
+
+The default is `mythllm/qwen3.8-flash-next-a5b` at
+`https://mythllm.mlsec.tu-berlin.de/v1`. Its token limits are conservatively
+configured at 128,000 context and 8,192 output tokens, with a 100,000-token
+handoff threshold. The upstream model advertises 262,144 native context tokens,
+but the hosted deployment's limit remains unverified. SAIA remains available with an explicit `--model` override and its
+own `SAIA_API_KEY`.
 
 `./dev` loads `.env` for every command. Do not commit `.env`, cookies, traces, or credentials.
 
@@ -195,7 +202,7 @@ account credentials file also works through `GOOGLE_APPLICATION_CREDENTIALS`,
 but the JSON file must remain outside Git. The native adapter selects Vertex
 directly, so it does not need `GOOGLE_GENAI_USE_ENTERPRISE`.
 
-Keep SAIA as the default and select Gemini per run:
+Select Gemini instead of the configured default per run:
 
 ```bash
 ./dev bun run pipeline -- spam1 --model google-vertex/gemini-3.5-flash

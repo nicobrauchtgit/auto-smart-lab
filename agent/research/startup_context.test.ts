@@ -18,7 +18,7 @@ test("counts all unique training labels and distinguishes ordinary accuracy from
 	const text = renderStartupContext(profile);
 	assert.match(text, /Class 0: 3 \(75.00%\)/);
 	assert.match(text, /0.5 balanced accuracy/);
-	assert.match(text, /test class balance are unverified/);
+	assert.match(text, /data profile in profile\/profile\.json covers the inputs/);
 });
 
 test("does not publish partial counts for malformed or duplicate records", () => {

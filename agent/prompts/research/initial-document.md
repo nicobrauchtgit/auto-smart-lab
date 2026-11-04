@@ -1,26 +1,28 @@
-# Research: {{title}}
-
-## Scope
+# Brief: {{title}}
 
 Task ID: `{{taskId}}`
 Context snapshot: `sha256:{{contextHash}}`
 
-Pending grounded analysis.
-
-## Evidence-backed findings
+## Dataset facts
 
 Pending.
 
-## Guidance for the solver
+## Recommended pipeline
 
 Pending.
 
-## Risks and unknowns
+## Alternates
+
+Pending.
+
+## Next improvements
+
+Pending.
+
+## Leakage and risks
 
 Pending.
 
 ## Sources
 
 Pending.
-
-## Revision log

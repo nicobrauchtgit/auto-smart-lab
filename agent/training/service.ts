@@ -39,6 +39,7 @@ import { collectTrainingResults } from "./results.js";
 import { createSeedPlan, deriveTrialSeed, writeSeedPlan } from "./seeds.js";
 import type { ExperimentRequest, JsonValue, MeasurementConfig, ValidationIssue } from "./types.js";
 
+import { HARNESS_CONFIG } from "../harness/config.js";
 const PYTHON_ROOT = join(dirname(fileURLToPath(import.meta.url)), "python");
 import { championTag } from "./development_selection.js";
 export { championTag };
@@ -116,12 +117,8 @@ export interface StartedTrialRecord {
 	measurement?: MeasurementConfig & { sampleManifestSha256: string; hasTargets: boolean; evidenceManifestSha256?: string };
 }
 
-const DEFAULT_SEARCH: SearchSettings = {
-	confirmAboveSeconds: 900,
-	overrunFactor: 1.5,
-	maxSeconds: 7_200,
-	validationTimeoutSeconds: 60,
-};
+/** One source of truth: harness.config.json `search`. */
+const DEFAULT_SEARCH: SearchSettings = HARNESS_CONFIG.search;
 
 async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
 	const temporary = join(dirname(path), `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`);

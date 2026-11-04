@@ -11,9 +11,25 @@ import { TOOL_PROMPTS } from "../prompts/tools.js";
  * so the agent can fall back to its built-in knowledge.
  */
 
+import { appendFileSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import { request as httpsRequest } from "node:https";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+/**
+ * Append the returned URLs to the log named by WEB_SEARCH_LOG, so the harness
+ * can check that cited URLs came from real search results. Best effort: a
+ * failed write never fails the search.
+ */
+function recordResults(query: string, urls: string[]): void {
+	const path = process.env.WEB_SEARCH_LOG;
+	if (!path) return;
+	try {
+		mkdirSync(dirname(path), { recursive: true });
+		appendFileSync(path, `${JSON.stringify({ at: new Date().toISOString(), query, urls })}\n`);
+	} catch { /* the validator then reports the URLs as unverified */ }
+}
 
 interface TavilyResult {
 	title: string;
@@ -131,6 +147,7 @@ export default function webSearchExtension(pi: ExtensionAPI) {
 						snippet: r.content,
 					}));
 
+					recordResults(params.query, results.map(result => result.url));
 					return {
 						content: [{ type: "text", text: JSON.stringify({ results }, null, 2) }],
 						details: { results } as unknown as Record<string, unknown>,

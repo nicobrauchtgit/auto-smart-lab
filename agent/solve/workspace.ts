@@ -205,7 +205,8 @@ function writeDevelopmentZip(trainZip: string, dataOut: string, devIds: readonly
  * Those scripts are reusable evidence, not decoration: the solve agent can rerun
  * them rather than re-measuring the dataset from scratch.
  */
-function copyResearch(researchDir: string, taskId: string, upstream: StageArtifact[], projectRoot: string): string {
+/** Copy the selected brief, its analysis artifacts and the cited data profile into the solve workspace. */
+export function copyResearch(researchDir: string, taskId: string, upstream: StageArtifact[], projectRoot: string): string {
 	const document = upstream.find((artifact) => artifact.kind === "research_document")?.path
 		?? join(projectRoot, "runs", taskId, "research", "research.md");
 	const lines: string[] = [];
@@ -213,6 +214,11 @@ function copyResearch(researchDir: string, taskId: string, upstream: StageArtifa
 		const target = join(researchDir, "research.md");
 		copyFileSync(document, target);
 		lines.push(`- Research document: ${target}`);
+		const statusPath = join(projectRoot, "runs", taskId, "research", ".harness", "status.json");
+		try {
+			const status = JSON.parse(readFileSync(statusPath, "utf8")) as { valid?: boolean; errors?: string[] };
+			if (status.valid === false) lines.push(`- The brief is partial: ${status.errors?.length ?? 0} checks failed (for example: ${(status.errors ?? []).slice(0, 3).join("; ")}). Treat its unchecked parts with extra care.`);
+		} catch { /* no status recorded: an older or standalone brief */ }
 	} else {
 		lines.push("- No research document is available for this task.");
 	}
@@ -220,6 +226,13 @@ function copyResearch(researchDir: string, taskId: string, upstream: StageArtifa
 	if (existsSync(analysis)) {
 		cpSync(analysis, join(researchDir, "analysis"), { recursive: true });
 		lines.push(`- Research analysis scripts and artifacts: ${join(researchDir, "analysis")} (rerunnable)`);
+	}
+	// The brief cites `[profile:<key>]` records; keep them resolvable next to it.
+	const profile = join(projectRoot, "runs", taskId, "research", "profile", "profile.json");
+	if (existsSync(profile)) {
+		mkdirSync(join(researchDir, "profile"), { recursive: true });
+		copyFileSync(profile, join(researchDir, "profile", "profile.json"));
+		lines.push(`- Harness data profile cited by the brief: ${join(researchDir, "profile", "profile.json")}`);
 	}
 	return lines.join("\n");
 }

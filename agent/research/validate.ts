@@ -1,227 +1,256 @@
+/**
+ * Solution-brief validation.
+ *
+ * The brief names one recommended pipeline, a few alternates and atomic next
+ * improvements. The limit that matters is the number of routes, not bytes.
+ * Sources are checked mechanically rather than by instruction: every source must
+ * resolve, numbers in dataset facts must appear in the cited data, and URLs
+ * must have been returned by this workspace's web searches. The same checks are
+ * available to the agent as a self-check tool before it stops.
+ */
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { dirname, resolve, sep } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 
 import { researchContextHash, type ResearchContext } from "./context.js";
+import { DATA_PROFILE_PATH } from "./profile.js";
 
 export interface ResearchValidationResult {
 	valid: boolean;
 	errors: string[];
 }
 
-interface DatasetEvidenceRecord {
-	split?: "training" | "test";
-	scope: "full" | "sampled";
-	population: number;
-	method: string;
-	values: unknown;
-}
-
-interface DatasetEvidenceArtifact {
-	dataset_snapshot_sha256?: string;
-	evidence?: Record<string, DatasetEvidenceRecord>;
-}
-
-const REQUIRED_HEADINGS = [
-	"## Scope",
-	"## Evidence-backed findings",
-	"## Guidance for the solver",
-	"## Risks and unknowns",
+export const BRIEF_SECTIONS = [
+	"## Dataset facts",
+	"## Recommended pipeline",
+	"## Alternates",
+	"## Next improvements",
+	"## Leakage and risks",
 	"## Sources",
-	"## Revision log",
-];
+] as const;
 
-function idsIn(text: string, prefix: "D" | "S"): Set<string> {
-	return new Set(text.match(new RegExp(`\\b${prefix}\\d{3}\\b`, "g")) ?? []);
+/** Workspace-relative log of URLs returned by `web_search`, appended by the tool. */
+export const WEB_SOURCES_LOG = ".harness/web_sources.jsonl";
+
+const CREDENTIAL_PATTERNS = [/SAIA_API_KEY\s*=/i, /TAVILY_API_KEY\s*=/i, /MYTHLLM_API_KEY\s*=/i, /LAB_PASS\s*=/i, /SMARTLAB_SSH_PASSWORD\s*=/i];
+
+export type Source =
+	| { kind: "profile"; text: string; key: string }
+	| { kind: "artifact"; text: string; path: string; key?: string }
+	| { kind: "url"; text: string; url: string };
+
+interface Section { heading: string; body: string }
+
+function sections(document: string): Section[] {
+	const result: Section[] = [];
+	const headings = [...document.matchAll(/^## .+$/gm)];
+	headings.forEach((match, index) => {
+		const start = match.index! + match[0].length;
+		const end = index + 1 < headings.length ? headings[index + 1].index! : document.length;
+		result.push({ heading: match[0].trim(), body: document.slice(start, end) });
+	});
+	return result;
 }
 
-function section(document: string, start: string, end: string): string {
-	const startIndex = document.indexOf(start);
-	if (startIndex < 0) return "";
-	const endIndex = document.indexOf(end, startIndex + start.length);
-	return document.slice(startIndex, endIndex < 0 ? undefined : endIndex);
+/** Top-level list items, each with its indented continuation lines. */
+export function listItems(body: string): string[] {
+	const items: string[] = [];
+	for (const line of body.split(/\r?\n/)) {
+		if (/^(?:[-*]|\d+[.)])\s+\S/.test(line)) items.push(line);
+		else if (items.length && /^\s+\S/.test(line)) items[items.length - 1] += `\n${line}`;
+	}
+	return items;
 }
 
-export function validateResearchDocument(
-	document: string,
-	context: ResearchContext,
-): ResearchValidationResult {
-	const errors: string[] = [];
-	const byteLength = Buffer.byteLength(document, "utf8");
-	if (byteLength > context.limits.max_report_bytes) {
-		errors.push(`research.md is ${byteLength} bytes; limit is ${context.limits.max_report_bytes}`);
-	}
+function normalizeUrl(url: string): string {
+	try {
+		const parsed = new URL(url.replace(/[).,;]+$/, ""));
+		parsed.hash = "";
+		return parsed.toString().replace(/\/$/, "");
+	} catch { return url; }
+}
 
-	if (!/^# Research: .+$/m.test(document)) errors.push("missing '# Research: <task title>' heading");
-	if (/^Pending(?: grounded analysis)?\.?$/mi.test(document)) errors.push("document still contains placeholder content");
-	const expectedHash = researchContextHash(context);
-	if (!document.includes(`Context snapshot: \`sha256:${expectedHash}\``)) {
-		errors.push("Scope does not identify the current context snapshot hash");
-	}
-
-	for (const heading of REQUIRED_HEADINGS) {
-		const matches = document.match(new RegExp(`^${heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "gm"));
-		if (!matches) errors.push(`missing '${heading}' heading`);
-		else if (matches.length > 1) errors.push(`duplicate '${heading}' heading`);
-	}
-	const actualHeadings = document.match(/^## .+$/gm) ?? [];
-	for (const heading of actualHeadings) {
-		if (!REQUIRED_HEADINGS.includes(heading)) errors.push(`unexpected top-level section '${heading}'`);
-	}
-	const expectedOrder = REQUIRED_HEADINGS.map((heading) => document.indexOf(heading));
-	if (expectedOrder.every((index) => index >= 0)) {
-		for (let index = 1; index < expectedOrder.length; index++) {
-			if (expectedOrder[index] <= expectedOrder[index - 1]) {
-				errors.push("required sections are out of order");
-				break;
+/**
+ * Sources are written in square brackets, several separated by `;` or `,`:
+ * `[profile:training.sizes]`, `[analysis/tokens.json#top_terms]`,
+ * `[analysis/tokens.json]` or `[https://…]`. Markdown links count as URLs.
+ * Brackets that contain none of these forms are ordinary text.
+ */
+export function extractSources(text: string): Source[] {
+	const found: Source[] = [];
+	for (const match of text.matchAll(/\[([^\]\n]+)\](?:\((https?:\/\/[^)\s]+)\))?/g)) {
+		if (match[2]) { found.push({ kind: "url", text: match[2], url: normalizeUrl(match[2]) }); continue; }
+		for (const raw of match[1].split(/\s*[;,]\s*/)) {
+			const part = raw.trim().replace(/^`|`$/g, "");
+			if (/^https?:\/\//i.test(part)) found.push({ kind: "url", text: part, url: normalizeUrl(part) });
+			else if (/^profile:\S+$/.test(part)) found.push({ kind: "profile", text: part, key: part.slice("profile:".length) });
+			else if (/^[\w.-]+(?:\/[\w.-]+)*\.\w+(?:#\S+)?$/.test(part) && part.includes("/")) {
+				const [path, key] = part.split("#", 2);
+				found.push({ kind: "artifact", text: part, path, ...(key ? { key } : {}) });
 			}
 		}
 	}
+	return found;
+}
 
-	if (/\[(?:E|M)\d{3}\]/.test(document)) {
-		errors.push("legacy controller-generated [E###]/[M###] citations are not allowed");
+/** Numbers stated in prose: code spans, brackets and link targets are not claims. */
+export function statedNumbers(text: string): { value: number; decimals: number; percent: boolean; scale: number; text: string }[] {
+	const prose = text.replace(/`[^`]*`/g, " ").replace(/\[[^\]]*\](?:\([^)]*\))?/g, " ");
+	const numbers = [];
+	for (const match of prose.matchAll(/(?<![\w.\-/])(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?(?:\s?(%|percent\b|KiB|KB|kB|MiB|MB|k\b))?(?![\w.]*\w)/g)) {
+		const value = Number(`${match[1].replace(/,/g, "")}${match[2] ? `.${match[2]}` : ""}`);
+		const unit = match[3];
+		// Small integers are labels, ordinals and fold counts far more often than measurements.
+		if (!match[2] && !unit && value <= 10) continue;
+		const scale = unit === "KiB" ? 1024 : unit === "KB" || unit === "kB" || unit === "k" ? 1000 : unit === "MiB" ? 1024 ** 2 : unit === "MB" ? 1e6 : 1;
+		numbers.push({ value, decimals: match[2]?.length ?? 0, percent: unit === "%" || unit === "percent", scale, text: match[0] });
 	}
-	const datasetIds = idsIn(document, "D");
-	const sourceIds = idsIn(document, "S");
-	if (datasetIds.size === 0) errors.push("document contains no dataset-analysis citations");
-	if (sourceIds.size === 0) errors.push("document contains no web-source citations");
+	return numbers;
+}
 
-	for (const [blockNumber, block] of document.split(/\r?\n\s*\r?\n/).entries()) {
-		if (/\b(?:Measured|Sampled)\b/i.test(block) && !/\[D\d{3}\]/.test(block)) {
-			errors.push(`paragraph ${blockNumber + 1} labels a dataset claim without a [D###] citation`);
+function numbersIn(value: unknown, into: number[] = []): number[] {
+	if (typeof value === "number" && Number.isFinite(value)) into.push(value);
+	else if (typeof value === "string" && /^-?\d+(?:\.\d+)?$/.test(value.trim())) into.push(Number(value));
+	else if (Array.isArray(value)) value.forEach(item => numbersIn(item, into));
+	else if (value && typeof value === "object") Object.values(value).forEach(item => numbersIn(item, into));
+	return into;
+}
+
+function supports(stated: ReturnType<typeof statedNumbers>[number], values: number[]): boolean {
+	const tolerance = 0.5 * 10 ** -stated.decimals + 1e-9;
+	return values.some(value => {
+		const candidates = stated.scale !== 1 ? [value / stated.scale] : stated.percent ? [value * 100, value] : [value, value * 100];
+		return candidates.some(candidate => Math.abs(candidate - stated.value) <= tolerance);
+	});
+}
+
+function readJson(path: string): unknown {
+	try { return JSON.parse(readFileSync(path, "utf8")); } catch { return undefined; }
+}
+
+function lookup(document: unknown, key: string): unknown {
+	const evidence = (document as { evidence?: Record<string, unknown> } | undefined)?.evidence;
+	if (evidence && key in evidence) return evidence[key];
+	let current: unknown = document;
+	for (const part of key.split(".")) {
+		if (!current || typeof current !== "object" || !(part in current)) return undefined;
+		current = (current as Record<string, unknown>)[part];
+	}
+	return current;
+}
+
+function webSources(workspace: string): Set<string> {
+	const path = join(workspace, WEB_SOURCES_LOG);
+	const urls = new Set<string>();
+	if (!existsSync(path)) return urls;
+	for (const line of readFileSync(path, "utf8").split("\n")) {
+		try { for (const url of (JSON.parse(line) as { urls?: string[] }).urls ?? []) urls.add(normalizeUrl(url)); } catch { /* partial line */ }
+	}
+	return urls;
+}
+
+export interface ResolvedSource { source: Source; error?: string; values?: number[] }
+
+/** Resolve one source against the workspace; `values` are the numbers it can support. */
+export function resolveSource(source: Source, workspace: string, context: ResearchContext, urls = webSources(workspace)): ResolvedSource {
+	if (source.kind === "url") {
+		return urls.has(source.url) ? { source } : { source, error: `[${source.text}] was not returned by web_search in this workspace; cite a URL from your search results` };
+	}
+	const relativePath = source.kind === "profile" ? DATA_PROFILE_PATH : source.path;
+	const path = resolve(workspace, relativePath);
+	if (path !== workspace && !path.startsWith(`${workspace}${sep}`)) return { source, error: `[${source.text}] points outside the research workspace` };
+	if (!existsSync(path) || !statSync(path).isFile()) {
+		return { source, error: source.kind === "profile" ? `[${source.text}]: the data profile is unavailable in this run` : `[${source.text}]: file does not exist` };
+	}
+	if (statSync(path).size > context.limits.max_analysis_artifact_bytes) {
+		return { source, error: `[${source.text}]: artifact exceeds ${context.limits.max_analysis_artifact_bytes} bytes; store compact aggregates` };
+	}
+	if (!path.endsWith(".json")) return source.kind === "artifact" && source.key ? { source, error: `[${source.text}]: keys can only be cited in JSON artifacts` } : { source, values: [] };
+	const document = readJson(path);
+	if (document === undefined) return { source, error: `[${source.text}]: not valid JSON` };
+	if (source.kind === "profile" && (document as { dataset_snapshot_sha256?: string }).dataset_snapshot_sha256 !== context.dataset.snapshot_sha256) {
+		return { source, error: `[${source.text}]: the data profile belongs to another dataset snapshot` };
+	}
+	const key = source.kind === "profile" ? source.key : source.key;
+	if (key === undefined) return { source, values: numbersIn(document) };
+	const value = lookup(document, key);
+	if (value === undefined) return { source, error: `[${source.text}]: no key '${key}' in ${relativePath}` };
+	return { source, values: numbersIn(value) };
+}
+
+export function validateBrief(document: string, workspace: string, context: ResearchContext): ResearchValidationResult {
+	const errors: string[] = [];
+	const limits = context.limits;
+	const bytes = Buffer.byteLength(document, "utf8");
+	if (bytes > limits.max_report_bytes) errors.push(`research.md is ${bytes} bytes; the safety limit is ${limits.max_report_bytes}. Condense it`);
+	if (!/^# Brief: .+$/m.test(document)) errors.push("missing '# Brief: <task title>' heading");
+	if (/^\s*(?:[-*]\s+)?Pending\.?\s*$/mi.test(document)) errors.push("document still contains placeholder content");
+	if (!document.includes(`Context snapshot: \`sha256:${researchContextHash(context)}\``)) {
+		errors.push("the brief does not state the current context snapshot hash (Context snapshot: `sha256:<hash>`)");
+	}
+	const found = sections(document);
+	const headings = found.map(section => section.heading);
+	for (const heading of BRIEF_SECTIONS) {
+		const count = headings.filter(value => value === heading).length;
+		if (count === 0) errors.push(`missing '${heading}' section`);
+		if (count > 1) errors.push(`duplicate '${heading}' section`);
+	}
+	for (const heading of headings) if (!(BRIEF_SECTIONS as readonly string[]).includes(heading)) errors.push(`unexpected section '${heading}'`);
+	const order = BRIEF_SECTIONS.map(heading => headings.indexOf(heading)).filter(index => index >= 0);
+	if (order.some((index, position) => position > 0 && index < order[position - 1])) errors.push("sections are out of order");
+	const body = (heading: string) => found.find(section => section.heading === heading)?.body ?? "";
+
+	const counted = (heading: string, max: number, min: number, noun: string) => {
+		const items = listItems(body(heading));
+		if (items.length > max) errors.push(`${heading.slice(3)} has ${items.length} ${noun}; at most ${max}. Keep only the strongest`);
+		if (items.length < min) errors.push(`${heading.slice(3)} needs at least ${min} ${noun} as a list`);
+		return items;
+	};
+	const facts = counted("## Dataset facts", limits.max_facts, 1, "facts");
+	counted("## Alternates", limits.max_alternates, 0, "alternates");
+	counted("## Next improvements", limits.max_improvements, 1, "improvements");
+	if (!body("## Recommended pipeline").trim()) errors.push("Recommended pipeline is empty");
+
+	const urls = webSources(workspace);
+	const cache = new Map<string, ResolvedSource>();
+	const resolveOnce = (source: Source) => {
+		if (!cache.has(source.text)) cache.set(source.text, resolveSource(source, workspace, context, urls));
+		return cache.get(source.text)!;
+	};
+	for (const source of extractSources(document)) {
+		const resolved = resolveOnce(source);
+		if (resolved.error && !errors.includes(resolved.error)) errors.push(resolved.error);
+	}
+	const dataSources = (text: string) => extractSources(text).filter(source => source.kind !== "url");
+	if (!dataSources(body("## Recommended pipeline")).length) {
+		errors.push("Recommended pipeline cites no dataset source; tie it to the profile or your analysis artifacts");
+	}
+
+	// Facts carry the dataset claims; their numbers must appear in the cited data.
+	const checkNumbers = (label: string, item: string, requireSource: boolean) => {
+		const cited = dataSources(item).map(resolveOnce).filter(resolved => !resolved.error);
+		const summary = item.split("\n")[0].replace(/^(?:[-*]|\d+[.)])\s+/, "").slice(0, 80);
+		if (requireSource && !dataSources(item).length) { errors.push(`${label} "${summary}" cites no dataset source`); return; }
+		const values = cited.flatMap(resolved => resolved.values ?? []);
+		for (const number of statedNumbers(item)) {
+			if (!supports(number, values)) errors.push(`${label} "${summary}": ${number.text.trim()} is not in the cited data`);
 		}
-	}
+	};
+	facts.forEach(item => checkNumbers("Fact", item, true));
+	listItems(body("## Leakage and risks")).forEach(item => checkNumbers("Risk", item, false));
 
-	const guidance = section(document, "## Guidance for the solver", "## Risks and unknowns");
-	const recommendations: string[] = [];
-	let currentRecommendation = "";
-	for (const line of guidance.split(/\r?\n/)) {
-		if (/^\s*(?:\d+\.|[-*])\s/.test(line)) {
-			if (currentRecommendation) recommendations.push(currentRecommendation);
-			currentRecommendation = line;
-		} else if (currentRecommendation && /^\s+\S/.test(line)) {
-			currentRecommendation += `\n${line}`;
-		}
-	}
-	if (currentRecommendation) recommendations.push(currentRecommendation);
-	if (recommendations.length > context.limits.max_feature_recommendations) {
-		errors.push(`report has ${recommendations.length} feature recommendations; limit is ${context.limits.max_feature_recommendations}`);
-	}
-	for (const recommendation of recommendations) {
-		if (!/\[(?:D|S)\d{3}\]/.test(recommendation)) {
-			errors.push("a solver recommendation has no [D###] or [S###] citation");
-		}
-	}
-
-	const sources = section(document, "## Sources", "## Revision log");
-	for (const id of datasetIds) {
-		const definition = new RegExp(`\\[${id}\\][^\\n]*script:\\s*\\\`([^\\\`]+)\\\`[^\\n]*artifact:\\s*\\\`([^\\\`]+)\\\``, "i").exec(sources);
-		if (!definition) errors.push(`[${id}] is not defined with script and artifact paths in Sources`);
-	}
-	for (const id of sourceIds) {
-		const definition = new RegExp(`\\[${id}\\][^\\n]*https?://\\S+`, "i");
-		if (!definition.test(sources)) errors.push(`[${id}] is not defined with a URL in Sources`);
-	}
-
-	const revision = section(document, "## Revision log", "\u0000");
-	const revisionDates = revision.match(/\b\d{4}-\d{2}-\d{2}\b/g) ?? [];
-	if (revisionDates.length === 0) errors.push("Revision log has no dated entry");
-	if (revisionDates.at(-1) !== context.run_date) errors.push(`latest revision date must be ${context.run_date}`);
-	if (revisionDates.some((date) => date > context.run_date)) errors.push("Revision log contains a future date");
-
-	for (const pattern of [
-		/SAIA_API_KEY\s*=/i,
-		/TAVILY_API_KEY\s*=/i,
-		/LAB_PASS\s*=/i,
-		/SMARTLAB_SSH_PASSWORD\s*=/i,
-	]) {
-		if (pattern.test(document)) errors.push(`document contains forbidden credential-like text: ${pattern.source}`);
-	}
-
+	for (const pattern of CREDENTIAL_PATTERNS) if (pattern.test(document)) errors.push(`document contains credential-like text: ${pattern.source}`);
 	return { valid: errors.length === 0, errors };
 }
 
-export function validateResearchFile(
-	path: string,
-	context: ResearchContext,
-): ResearchValidationResult {
+export function validateResearchFile(path: string, context: ResearchContext): ResearchValidationResult {
 	if (!existsSync(path)) return { valid: false, errors: ["research.md was not created"] };
-	const document = readFileSync(path, "utf8");
-	const result = validateResearchDocument(document, context);
-	const sources = section(document, "## Sources", "## Revision log");
-	const evidenceRecords = new Map<string, DatasetEvidenceRecord>();
-	const parsedArtifacts = new Map<string, DatasetEvidenceArtifact>();
 	const workspace = resolve(dirname(path));
-	for (const id of idsIn(document, "D")) {
-		const match = new RegExp(`\\[${id}\\][^\\n]*script:\\s*\\\`([^\\\`]+)\\\`[^\\n]*artifact:\\s*\\\`([^\\\`]+)\\\``, "i").exec(sources);
-		if (!match) continue;
-		const script = resolve(workspace, match[1]);
-		const artifact = resolve(workspace, match[2]);
-		if (script !== workspace && !script.startsWith(`${workspace}${sep}`)) {
-			result.errors.push(`[${id}] script escapes the research workspace`);
-		} else if (!existsSync(script)) {
-			result.errors.push(`[${id}] script does not exist: ${match[1]}`);
-		}
-		if (artifact !== workspace && !artifact.startsWith(`${workspace}${sep}`)) {
-			result.errors.push(`[${id}] artifact escapes the research workspace`);
-		} else if (!existsSync(artifact)) {
-			result.errors.push(`[${id}] artifact does not exist: ${match[2]}`);
-		} else if (statSync(artifact).size > context.limits.max_analysis_artifact_bytes) {
-			result.errors.push(`[${id}] artifact exceeds ${context.limits.max_analysis_artifact_bytes} bytes: ${match[2]}`);
-		} else if (artifact.endsWith(".json")) {
-			try {
-				let parsed = parsedArtifacts.get(artifact);
-				if (!parsed) {
-					parsed = JSON.parse(readFileSync(artifact, "utf8")) as DatasetEvidenceArtifact;
-					parsedArtifacts.set(artifact, parsed);
-				}
-				if (parsed.dataset_snapshot_sha256 !== context.dataset.snapshot_sha256) {
-					result.errors.push(`[${id}] artifact does not identify the current dataset snapshot`);
-				}
-				const record = parsed.evidence?.[id];
-				if (!record) {
-					result.errors.push(`[${id}] has no matching record in artifact: ${match[2]}`);
-				} else if (
-					!(["full", "sampled"] as const).includes(record.scope)
-					|| (record.split !== undefined && !["training", "test"].includes(record.split))
-					|| !Number.isInteger(record.population)
-					|| record.population < 1
-					|| typeof record.method !== "string"
-					|| record.method.trim().length === 0
-					|| !("values" in record)
-				) {
-					result.errors.push(`[${id}] artifact record must contain scope, population, method, and values`);
-				} else {
-					evidenceRecords.set(id, record);
-				}
-			} catch {
-				result.errors.push(`[${id}] artifact is not valid JSON: ${match[2]}`);
-			}
-		}
-	}
-	for (const [blockNumber, block] of document.split(/\r?\n\s*\r?\n/).entries()) {
-		const citedRecords = [...idsIn(block, "D")]
-			.map((id) => evidenceRecords.get(id))
-			.filter((record): record is DatasetEvidenceRecord => record !== undefined);
-		if (/\bMeasured\b/i.test(block) && !citedRecords.some((record) => record.scope === "full")) {
-			result.errors.push(`paragraph ${blockNumber + 1} labels a claim Measured without citing full-scope evidence`);
-		}
-		if (/\bSampled\b/i.test(block) && !citedRecords.some((record) => record.scope === "sampled")) {
-			result.errors.push(`paragraph ${blockNumber + 1} labels a claim Sampled without citing sampled evidence`);
-		}
-	}
-	if (context.dataset.research_inputs?.test) {
-		for (const split of ["training", "test"] as const) {
-			if (![...evidenceRecords.values()].some(record => record.split === split)) {
-				result.errors.push(`Test-input comparison requires a cited ${split} evidence record with split: "${split}"`);
-			}
-		}
-	}
-	const analysisDir = resolve(workspace, "analysis");
+	const result = validateBrief(readFileSync(path, "utf8"), workspace, context);
+	const analysisDir = join(workspace, "analysis");
 	if (existsSync(analysisDir)) {
 		for (const entry of readdirSync(analysisDir, { withFileTypes: true })) {
 			if (!entry.isFile() || !/\.(?:py|js|ts|sh)$/.test(entry.name)) continue;
-			const script = readFileSync(resolve(analysisDir, entry.name), "utf8");
-			if (/\/(?:Users|home)\/[^/]+\//.test(script)) {
+			if (/\/(?:Users|home)\/[^/]+\//.test(readFileSync(join(analysisDir, entry.name), "utf8"))) {
 				result.errors.push(`analysis script contains a machine-specific absolute path: analysis/${entry.name}`);
 			}
 		}

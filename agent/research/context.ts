@@ -40,6 +40,8 @@ export interface ResearchContext {
 	generated_at: string;
 	run_date: string;
 	startup_profile?: StartupProfile;
+	/** Harness-computed data profile in the workspace; absent for legacy snapshots. */
+	data_profile?: { status: "available" | "unavailable"; path?: string; sha256?: string; layers?: string[]; reason?: string };
 	task: {
 		id: string;
 		title: string;
@@ -61,7 +63,10 @@ export interface ResearchContext {
 		web_search_calls: number;
 		max_report_bytes: number;
 		max_analysis_artifact_bytes: number;
-		max_feature_recommendations: number;
+		/** Route caps of the solution brief; bytes are only a safety limit. */
+		max_facts: number;
+		max_alternates: number;
+		max_improvements: number;
 	};
 }
 
@@ -197,7 +202,9 @@ export function buildResearchContext(taskId: string, configuration?: TaskConfigu
 				web_search_calls: HARNESS_CONFIG.research.webSearchCalls,
 				max_report_bytes: HARNESS_CONFIG.research.maxReportBytes,
 				max_analysis_artifact_bytes: HARNESS_CONFIG.research.maxAnalysisArtifactBytes,
-				max_feature_recommendations: HARNESS_CONFIG.research.maxFeatureRecommendations,
+				max_facts: HARNESS_CONFIG.research.maxFacts,
+				max_alternates: HARNESS_CONFIG.research.maxAlternates,
+				max_improvements: HARNESS_CONFIG.research.maxImprovements,
 			},
 		},
 	};

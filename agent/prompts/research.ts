@@ -9,7 +9,6 @@ export function prepareResearchPrompts(
 ) {
 	const guidance = guidanceBlock(prompts, input.guidance);
 	const system = prompts.render("research.system", {});
-	const testDistribution = prompts.render("research.test-distribution", {});
 	const profile = renderStartupContextPrompt(input.profile, prompts);
 	const start = prompts.render("research.start", {
 		taskId: input.taskId,
@@ -22,7 +21,7 @@ export function prepareResearchPrompts(
 		: undefined;
 	return {
 		system,
-		prompt: [start.text, testDistribution.text, feedback?.text].filter(Boolean).join("\n\n"),
-		promptReferences: [system, profile, start, testDistribution, guidance, feedback].flatMap(part => part ? [part.reference] : []),
+		prompt: [start.text, feedback?.text].filter(Boolean).join("\n\n"),
+		promptReferences: [system, profile, start, guidance, feedback].flatMap(part => part ? [part.reference] : []),
 	};
 }

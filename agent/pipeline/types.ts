@@ -41,6 +41,12 @@ export interface StageArtifact {
 export interface StageValidation {
 	valid: boolean;
 	errors: string[];
+	/**
+	 * The artifact did not pass every check but is usable with known gaps, for
+	 * example when a research budget ran out. The executor records success and
+	 * continues; `valid` and `errors` stay as measured.
+	 */
+	partial?: boolean;
 }
 
 export interface StageInput {

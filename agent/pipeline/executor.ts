@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { HARNESS_CONFIG } from "../harness/config.js";
 import { validateGuidance, type StageGuidance, type StageFeedback } from "./guidance.js";
 import { InvocationFeedback, type FeedbackReceipt } from "./feedback.js";
 import { SetupSession, setupChecks } from "./setup.js";
@@ -31,7 +32,7 @@ import type {
 } from "./types.js";
 
 /** Loop guard for configured scheduling; a run never chains more stages than this. */
-const MAX_STAGE_INVOCATIONS = 8;
+const MAX_STAGE_INVOCATIONS = HARNESS_CONFIG.pipeline.maxStageInvocations;
 
 export interface InvokeStageOptions {
 	mode?: "execute" | "reconcile";
@@ -197,7 +198,9 @@ async function executeStage(options: InvokeStageOptions, invocationId: string,
         if (controller.signal.aborted) return finish("cancelled", { artifacts: result.artifacts, validation: result.validation, attempts: result.attempts });
 		const attempts = result.attempts ?? 0;
 		if (result.summary) report.event("stage_summary", result.summary);
-		if (result.validation && !result.validation.valid) {
+		if (result.validation && !result.validation.valid && result.validation.partial) {
+			report.event("stage_partial", { errors: result.validation.errors });
+		} else if (result.validation && !result.validation.valid) {
 			return finish("failure", {
 				artifacts: result.artifacts,
 				validation: result.validation,

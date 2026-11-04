@@ -73,6 +73,8 @@ for (const threshold of [5_000, 120_000]) test(`${threshold} rollover finishes t
 				assert.match(JSON.stringify(context.messages), /experiment abc completed during handoff/);
 				assert.equal(context.messages.some(message => message.role === "toolResult"), false);
 				assert.ok(context.tools?.some(tool => tool.name === "read"));
+				// The resumed session's real prompt size must not trigger a second rollover at small thresholds.
+				f.sessions.at(-1)!.getContextUsage = () => undefined;
 				return fauxAssistantMessage("Research complete; artifacts ready for validation.");
 			},
 		]);
@@ -110,7 +112,7 @@ test("below threshold and unknown usage do not replace sessions; follow-ups reta
 	} finally { await f.close(); }
 });
 
-test("an empty handoff fails without returning the handoff as stage success", async () => {
+test("an empty handoff falls back to a harness note and the same task continues", async () => {
 	const f = await fixture();
 	try {
 		f.provider.setResponses([
@@ -119,25 +121,16 @@ test("an empty handoff fails without returning the handoff as stage success", as
 				return fauxAssistantMessage("Progress");
 			},
 			fauxAssistantMessage("   "),
-		]);
-		await assert.rejects(f.logical.prompt(start()), /Empty or oversized/);
-		assert.equal(f.created(), 1);
-		assert.ok(f.events.some(event => event.eventType === "context_session_failed"));
-	} finally { await f.close(); }
-});
-
-test("cancellation during handoff never launches a replacement", async () => {
-	const f = await fixture();
-	try {
-		f.provider.setResponses([
-			() => {
-				f.sessions[0].getContextUsage = () => ({ tokens: 120_000, contextWindow: 200_000, percent: 60 });
-				return fauxAssistantMessage("Progress");
+			context => {
+				assert.match(JSON.stringify(context.messages), /could not write a handoff \(empty or oversized handoff\)/);
+				f.sessions.at(-1)!.getContextUsage = () => undefined;
+				return fauxAssistantMessage("Continued from the fallback");
 			},
-			() => { void f.logical.abort(); return fauxAssistantMessage("Handoff"); },
 		]);
-		await assert.rejects(f.logical.prompt(start()), /cancelled/);
-		assert.equal(f.created(), 1);
+		assert.equal(await f.logical.prompt(start()), "Continued from the fallback");
+		assert.equal(f.created(), 2);
+		assert.ok(f.events.some(event => event.eventType === "context_handoff_fallback"));
+		assert.ok(!f.events.some(event => event.eventType === "context_session_failed"));
 	} finally { await f.close(); }
 });
 
@@ -158,7 +151,7 @@ test("multiple handoffs link each replacement and never return intermediate summ
 	} finally { await f.close(); }
 });
 
-test("handoff model failure is surfaced without starting a successor", async () => {
+test("a failed handoff request (e.g. context exhausted) does not end the stage", async () => {
 	const f = await fixture();
 	try {
 		f.provider.setResponses([
@@ -168,9 +161,16 @@ test("handoff model failure is surfaced without starting a successor", async () 
 				return fauxAssistantMessage("Progress");
 			},
 			fauxAssistantMessage("", { stopReason: "error", errorMessage: "handoff failure fixture" }),
+			context => {
+				assert.match(JSON.stringify(context.messages), /could not write a handoff/);
+				f.sessions.at(-1)!.getContextUsage = () => undefined;
+				return fauxAssistantMessage("Recovered");
+			},
 		]);
-		await assert.rejects(f.logical.prompt(start()), /handoff failure fixture/);
-		assert.equal(f.created(), 1);
+		assert.equal(await f.logical.prompt(start()), "Recovered");
+		assert.equal(f.created(), 2);
+		const fallback = f.events.find(event => event.eventType === "context_handoff_fallback")!;
+		assert.match(String((fallback.payload as any).reason), /error|handoff failure fixture/);
 	} finally { await f.close(); }
 });
 
@@ -278,4 +278,30 @@ test("cancellation while feedback waits in handoff never delivers it or creates 
   await assert.rejects(f.logical.prompt(start()), /cancelled/);
   assert.equal(admitted, 0); assert.equal(f.created(), 1);
  } finally { await f.close(); }
+});
+
+test("updates queued in the threshold turn wait for the successor instead of growing the full context", async () => {
+	const f = await fixture(5_000);
+	try {
+		f.provider.setResponses([
+			() => {
+				f.sessions[0].getContextUsage = () => ({ tokens: 9_000, contextWindow: 200_000, percent: 4.5 });
+				void f.logical.steer("[experiment e1] progress 700 s elapsed");
+				return fauxAssistantMessage(fauxToolCall("read", { path: join(f.root, "evidence.txt") }), { stopReason: "toolUse" });
+			},
+			context => {
+				assert.match(JSON.stringify(context.messages), /Produce only a concise handoff/);
+				assert.doesNotMatch(JSON.stringify(context.messages), /\[experiment e1\] progress/);
+				return fauxAssistantMessage("Resume at the next experiment.");
+			},
+			context => {
+				assert.match(JSON.stringify(context.messages), /\[experiment e1\] progress 700 s elapsed/);
+				f.sessions.at(-1)!.getContextUsage = () => undefined;
+				return fauxAssistantMessage("Done");
+			},
+		]);
+		writeFileSync(join(f.root, "evidence.txt"), "x");
+		assert.equal(await f.logical.prompt(start()), "Done");
+		assert.equal(f.created(), 2);
+	} finally { await f.close(); }
 });

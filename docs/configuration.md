@@ -1,0 +1,121 @@
+# Configuration reference
+
+All tuning values live in two version-controlled JSON files at the repository
+root. JSON has no comments, so this file explains every key. Restart the
+pipeline process after editing; values are read once per process, and every
+agent session records the effective `harness.config.json` in Langfuse
+(`harness_configuration`). `agent/harness/config.ts` validates the file at
+startup and rejects missing, unknown or out-of-range keys.
+
+Secrets never go in these files: API keys live in the ignored `.env`
+(see `.env.example`).
+
+## `pipeline.config.json`: what runs
+
+| Key | Meaning |
+| --- | --- |
+| `pipeline.entryStage` | First stage of a run (`research`). |
+| `pipeline.stages.<stage>.enabled` | Turns a stage on or off. `submit` stays disabled: CSVs are submitted manually. |
+| `pipeline.stages.<stage>.options` | Per-stage overrides. Research accepts `injectStartupContext`; solve accepts `maxIterations`, `seed`, `foldPolicy` and `experimentUpdateIntervalSeconds`, overriding the `solve` section below. |
+| `pipeline.tasks.<task>` | Typed task declaration: sample source, train/test archives, targets, metric, holdout and refit mode, submission format. |
+| `defaultModel` | `provider/model` used by every agent unless `--model` overrides it. |
+| `providers.<id>` | Endpoint, API style, the environment variable holding the key, and per-model `contextWindow`/`maxTokens`. |
+| `agent` | Pi working directory and agent directory. |
+
+## `harness.config.json`: how it runs
+
+### `pipeline`
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `maxStageInvocations` | 8 | Stage invocations per pipeline run before the executor stops. |
+
+### `session`: every agent session
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `stallMs` | 600000 (10 min) | A model request with no streamed output for this long counts as stalled. It is cancelled and resumed in the same conversation. Slow but progressing requests are never stopped. |
+| `stallRetries` | 2 | Stalled requests resumed per session before the session ends with an error. |
+| `maxWallMs` | 28800000 (8 h) | Safety limit only. Budgets and stall detection bound normal sessions. |
+
+### `context`
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `handoffTokens` | 80000 | Context size at which the agent writes a handoff and continues in a fresh session. Leave room below the model window for one large turn plus the handoff request (one turn was seen adding ~19k tokens); with a 128k window, 80k leaves 48k. If the handoff request fails anyway, the harness writes a fallback handoff and the session continues. |
+| `maxHandoffBytes` | 65536 | Largest accepted handoff text. |
+
+### `research`
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `maxToolCalls` | 40 | Action budget: tool calls for exploration and writing, shared by the initial and repair attempts. Shown to the agent after every tool result. |
+| `focusAtRemainingPercent` | 50 | Below this share of the budget left, the agent is told to stop broad exploration. |
+| `wrapUpAtRemainingPercent` | 20 | Below this share, the agent is told to write the brief now. |
+| `finalizeToolCalls` | 8 | After the budget: calls left for reading, writing or editing `research.md`, and `check_brief`. Then every tool is blocked. A repair attempt gets this allowance again. |
+| `bashTimeoutSeconds` | 600 | Upper bound for one research bash call; a call may ask for less. |
+| `maxAttempts` | 2 | Sessions per research stage: the initial one plus one repair with validation feedback. |
+| `maxFacts` | 8 | Bullets allowed in Dataset facts. |
+| `maxAlternates` | 2 | Alternative routes allowed next to the recommended pipeline. |
+| `maxImprovements` | 3 | Atomic next improvements allowed. |
+| `maxReportBytes` | 16384 | Loose safety limit on the brief's size. |
+| `maxAnalysisArtifactBytes` | 65536 | Largest analysis artifact that can be cited. |
+| `webSearchCalls` | 3 | Web searches in the initial attempt (none in repair). |
+| `webSearchResults` | 4 | Results per search. |
+| `injectStartupContext` | true | Put the training-label counts into the opening prompt. |
+| `profileTimeoutMs` | 300000 | Time limit for the harness data profile; on timeout research continues without it. |
+| `profileTextMinPercent` | 90 | Share of text samples in both splits needed for the profile's text layer. |
+
+Running out of the research budget never fails the run: the stage hands on a
+partial brief (`validation.partial: true`) and solve continues.
+
+### `solve`
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `maxIterations` | 6 | Harness training trials the solve agent may start. |
+| `seed` | 13 | Root seed; the harness derives every fit's seed from it. |
+| `foldPolicy` | `"auto"` | `"auto"` uses `foldRecommendations`; or a fixed `{ "folds": n, "repeats": m }`. |
+| `experimentUpdateIntervalSeconds` | 30 | How often the agent is told about a running trial. |
+
+### `holdout`: sealed confirmation split
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `targetSmallestClassRows` | 200 | Desired rows of the smallest class in the sealed split. |
+| `minSmallestClassRows` | 50 | Minimum; below it no sealed split is taken. |
+| `maxFraction` | 0.2 | Largest share of training rows sealed. |
+| `groupFraction` | 0.1 | Share of groups (families) sealed for group tasks. |
+
+### `foldRecommendations`
+Suggested CV design by training size, read from top to bottom: the first entry
+whose `belowRows` exceeds the row count applies (`null` is the catch-all). It
+is a suggestion to the agent, not a constraint.
+
+### `search`: hyperparameter search trials
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `confirmAboveSeconds` | 900 | Estimated runtime above which the agent must confirm a search. |
+| `overrunFactor` | 1.5 | Multiple of the estimate after which a running search pauses. |
+| `maxSeconds` | 7200 | Hard cap per search. |
+| `validationTimeoutSeconds` | 60 | Time limit for validating a pipeline before any fit. |
+
+### `supervisor`: training process observation
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `updateIntervalMs` | 5000 | At most one routine update to the agent per interval. |
+| `linesPerUpdate` | 5 | Output lines carried per update. |
+| `minStallMs` | 15000 | Training silence below this never counts as stalled. |
+| `stallGapMultiple` | 4 | Multiple of the observed output gap before silence counts. |
+| `importPreludeMs` | 12000 | Grace for library import at process start. |
+| `idleCpuPercent` | 5 | CPU below this means the training process is idle. |
+| `sampleIntervalMs` | 250 | Process sampling interval. |
+| `maxConcurrent` | 2 | Training processes at once. |
+| `stopGraceMs` | 2000 | Time between SIGTERM and SIGKILL. |
+
+### `setup`
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `timeoutMs` | 30000 | Time limit per preflight check. |
+| `modelMaxTokens` | 16 | Output tokens of the tiny live model probe. |
+
+### `subagents` and `orchestrator`
+`subagents` bounds helper agents (turn and wait timeouts, concurrency,
+message sizes). `orchestrator` bounds an autonomous controller run (sessions,
+model requests, tool calls, stages, trials, retries, wall time, summary
+sizes). Neither is used by a configured `research → solve → evaluate → refit`
+chain.

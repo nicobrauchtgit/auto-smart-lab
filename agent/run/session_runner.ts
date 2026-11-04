@@ -15,8 +15,9 @@ import {
 	createAgentSession, createBashToolDefinition, defineTool,
 	SessionManager,
 } from "@earendil-works/pi-coding-agent";
-import type { InlineExtension, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, InlineExtension, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { initializeModel } from "../model_provider.js";
+import { promptWithStallRetries, StallWatch } from "./stall.js";
 import { observeAgentSession, type AgentObservation } from "../observability.js";
 import { loadPipelineConfig } from "../pipeline_config.js";
 import { createPipelineResourceLoader } from "./session_resources.js";
@@ -29,7 +30,8 @@ import type { SuppliedInput } from "../pipeline/types.js";
 import { TaskKnowledge, createKnowledgeTools, selectedKnowledge, knowledgeInput, type KnowledgeOptions } from "../knowledge/service.js";
 
 /** How long one agent session may run. The cost signal is measured against it. */
-export const SESSION_TIMEOUT_MS = HARNESS_CONFIG.session.timeoutMs;
+/** Safety limit only; slow progressing sessions are bounded by stall detection and stage budgets. */
+export const SESSION_MAX_WALL_MS = HARNESS_CONFIG.session.maxWallMs;
 
 export interface RunSessionOptions {
 	/** Fresh controller state queued at every physical session construction. */
@@ -73,6 +75,15 @@ export interface RunSessionOptions {
 	observe?: AgentObservation;
 	/** Abort the running session. The session is stopped and the error is recorded. */
 	signal?: AbortSignal;
+	/**
+	 * Called whenever the agent ends its turn. Returning a prompt resumes the
+	 * same conversation; returning undefined ends the session.
+	 */
+	continueWhenIdle?: (signal?: AbortSignal) => Promise<RenderedPrompt | undefined>;
+	/** Test seams; production uses harness.config.json session settings. */
+	stallMs?: number;
+	stallRetries?: number;
+	maxWallMs?: number;
 }
 
 export interface RunSessionResult {
@@ -152,6 +163,13 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 			config: pipeline.config,
 			model: requestedModel,
 		});
+		let physical: AgentSession | undefined;
+		let stallObservability: ((type: string, payload: Record<string, unknown>) => void) | undefined;
+		const stallMs = options.stallMs ?? HARNESS_CONFIG.session.stallMs;
+		const stall = new StallWatch(stallMs, silentMs => {
+			stallObservability?.("model_stall", { silent_ms: silentMs, stall_ms: stallMs });
+			void physical?.abort();
+		});
 		const logical: SmartContextSession = new SmartContextSession({
 			prompts: options.prompts,
 			create: async (opening) => {
@@ -162,9 +180,12 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 					...(customTools.length ? { customTools } : {}),
 					resourceLoader, sessionManager: SessionManager.inMemory(sessionCwd),
 				});
+				physical = session;
+				session.subscribe(event => stall.observe(event as { type: string; message?: { role?: string } }));
 				const previousPayload = session.agent.onPayload;
 				session.agent.onPayload = async (payload, selectedModel) => {
 					options.observe?.executionGuard?.beforeModelRequest();
+					stall.requestStarted();
 					return await previousPayload?.(payload, selectedModel) ?? payload;
 				};
 				let observability: Awaited<ReturnType<typeof observeAgentSession>> | undefined;
@@ -173,6 +194,7 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 						session, model: modelId, identity: options.observe.identity, telemetry: options.observe.telemetry,
 					}) : undefined;
 					recordKnowledge = observability?.record;
+					stallObservability = observability?.record;
 					knowledge?.bindAgent(observability?.agentRunId);
 					if (knowledge) observability?.record("runtime_input", { type: "runtime_input", input: knowledgeInput(knowledge.options) });
 					observability?.record("skill_snapshot", { skills: skills.map(skill => skill.reference),
@@ -213,12 +235,30 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 		let onAbort: (() => void) | undefined;
 		try {
 			options.signal?.throwIfAborted();
-			const response = logical.prompt(options.prompts.render("context.task", { task: prompt }));
+			const maxWallMs = options.maxWallMs ?? SESSION_MAX_WALL_MS;
+			const stallRetries = options.stallRetries ?? HARNESS_CONFIG.session.stallRetries;
+			stall.start();
+			// A stalled request is cancelled and resumed in the same conversation, a bounded number of times.
+			const ask = (first: RenderedPrompt) => promptWithStallRetries({
+				prompt: request => logical.prompt(request),
+				first,
+				resume: () => options.prompts.render("context.stall-resume", { stallMinutes: String(Math.round(stallMs / 60000)) }),
+				watch: stall, retries: stallRetries, stallMs, signal: options.signal,
+				record: (type, payload) => stallObservability?.(type, payload),
+			});
+			const response = (async () => {
+				let output = await ask(options.prompts.render("context.task", { task: prompt }));
+				// A caller may keep an idle session open, e.g. while its experiments run.
+				for (let next = await options.continueWhenIdle?.(options.signal); next; next = await options.continueWhenIdle?.(options.signal)) {
+					output = await ask(next);
+				}
+				return output;
+			})();
             await options.feedback?.bind(logical);
 			const output = await Promise.race([
 				response,
 				new Promise<never>((_, reject) => {
-					timeout = setTimeout(() => reject(new Error(`Session timed out after ${SESSION_TIMEOUT_MS / 60000} minutes`)), SESSION_TIMEOUT_MS);
+					timeout = setTimeout(() => reject(new Error(`Session reached its safety limit of ${Math.round(maxWallMs / 60000)} minutes`)), maxWallMs);
 				}),
 				new Promise<never>((_, reject) => {
 					onAbort = () => reject(new Error("Session cancelled"));
@@ -232,6 +272,7 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 			throw error;
 		} finally {
 			if (timeout) clearTimeout(timeout);
+			stall.stop();
 			if (onAbort) options.signal?.removeEventListener("abort", onAbort);
 			options.feedback?.unbind(logical);
 			await logical.close();

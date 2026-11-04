@@ -19,7 +19,10 @@ import {
 	researchContextHash,
 	writeResearchContext,
 } from "../research/context.js";
-import { validateResearchFile } from "../research/validate.js";
+import { validateResearchFile, WEB_SOURCES_LOG } from "../research/validate.js";
+import { createBriefTools } from "../research/tools.js";
+import { ResearchBudget } from "../research/budget.js";
+import { buildDataProfile } from "../research/profile.js";
 import { loadPromptSnapshot, type PromptSnapshot } from "../prompts/loader.js";
 import { prepareResearchPrompts } from "../prompts/research.js";
 import type { StageReporter } from "../pipeline/types.js";
@@ -34,6 +37,9 @@ export interface ResearchResult {
 	contextPath: string;
 	valid: boolean;
 	errors: string[];
+	/** The brief has known gaps but is handed on: research never fails the run for running out of budget. */
+	partial: boolean;
+	budget: { used: number; limit: number; phase: string };
 	attempts: number;
 	contextSha256: string;
 	datasetSha256: string;
@@ -75,6 +81,12 @@ export async function runResearchSession(taskId: string, model?: string, options
 	const workspace = join(PROJECT_ROOT, "runs", taskId, "research");
 	mkdirSync(workspace, { recursive: true });
 	mkdirSync(join(workspace, "analysis"), { recursive: true });
+
+	// The harness profiles the declared data before the agent starts, so the
+	// agent does not rewrite the same survey. A failed profile is reported, not fatal.
+	const profile = buildDataProfile({ taskId, configuration: options.taskConfiguration, workspace,
+		datasetSnapshotSha256: context.dataset.snapshot_sha256 });
+	context.data_profile = { status: profile.status, ...(profile.path ? { path: profile.path, sha256: profile.sha256, layers: profile.layers } : { reason: profile.reason }) };
 
 	// The manifest is regenerated on every invocation. It identifies inputs but
 	// includes a small labels-file profile, with no research conclusions.
@@ -119,6 +131,18 @@ export async function runResearchSession(taskId: string, model?: string, options
 			dataset_sha256: context.dataset.snapshot_sha256, labels_available: split === "training_labels",
 		});
 	}
+	report?.input({
+		kind: "data_profile", version: 1,
+		delivery: profile.status === "available" ? "workspace_file" : "none",
+		status: profile.status,
+		...(profile.path ? { artifact: resolve(workspace, profile.path), content_sha256: profile.sha256 } : {}),
+		dataset_sha256: context.dataset.snapshot_sha256,
+	});
+	report?.event("data_profile_built", {
+		status: profile.status, records: profile.records, layers: profile.layers,
+		duration_ms: profile.duration_ms, ...(profile.reason ? { reason: profile.reason } : {}),
+	});
+	if (profile.status !== "available") console.warn(`[research] Data profile unavailable: ${profile.reason}`);
 	// The requested injection setting and the profile's actual availability are
 	// recorded separately: enabling injection does not prove context was supplied.
 	report?.input({
@@ -149,10 +173,13 @@ export async function runResearchSession(taskId: string, model?: string, options
 	let sessionOutput = "";
 	let sessionError: unknown;
 	let sessionWarning: string | undefined;
+	// One action budget spans the initial and any repair attempt.
+	const budget = new ResearchBudget(prompts, HARNESS_CONFIG.research, (type, payload) => report?.event(type, payload));
 	try {
 		while (attempts < HARNESS_CONFIG.research.maxAttempts) {
 			if (options.signal?.aborted) break;
 			attempts++;
+			if (attempts > 1) budget.startRepair();
 			const prepared = prepareResearchPrompts(prompts, {
 				taskId, contextHash: contextSha256, guidance: options.guidance,
 				profile: injectStartupContext ? context.startup_profile : undefined,
@@ -175,10 +202,14 @@ export async function runResearchSession(taskId: string, model?: string, options
 				feedback: options.feedback,
 				reportInput: report ? input => report.input(input) : undefined,
 				model,
-				env: { WEB_SEARCH_MAX_CALLS: attempts === 1 ? String(context.limits.web_search_calls) : "0", WEB_SEARCH_MAX_RESULTS: String(HARNESS_CONFIG.research.webSearchResults) },
+				env: { WEB_SEARCH_MAX_CALLS: attempts === 1 ? String(context.limits.web_search_calls) : "0", WEB_SEARCH_MAX_RESULTS: String(HARNESS_CONFIG.research.webSearchResults),
+					WEB_SEARCH_LOG: join(workspace, WEB_SOURCES_LOG) },
 				cwd: workspace,
 				tools: ["read", "grep", "find", "ls", "edit", "write", "bash", "web_search"],
+				customTools: createBriefTools({ documentPath, context, prompts,
+					onCheck: result => report?.event("brief_self_check", { attempt: attempts, valid: result.valid, errors: result.errors.length }) }),
 				extensionPaths: [WEB_SEARCH_EXTENSION],
+				extensionFactories: [budget.extension()],
 				...(options.signal ? { signal: options.signal } : {}),
 				...(report ? { observe: report.observation(attempts) } : {}),
 			});
@@ -240,25 +271,40 @@ export async function runResearchSession(taskId: string, model?: string, options
 		model_output_received: sessionOutput.trim().length > 0,
 		valid: validation.valid,
 		validation_errors: validation.errors,
+		budget_used: budget.used,
 		...(sessionWarning ? { session_warning: sessionWarning } : {}),
 	});
 
+	const documentChanged = sha256(before) !== sha256(after);
+	// Research fails the run only when the session broke before doing anything:
+	// then there is nothing to hand on. A budget that ran out, a stalled model or
+	// remaining validation errors give a partial brief, and solve continues.
+	const progressed = documentChanged || budget.used > 0;
+	const partial = !validation.valid && !options.signal?.aborted && (!sessionError || progressed);
 	report?.event("research_finished", {
 		attempts,
 		valid: validation.valid,
+		partial,
 		errors: validation.errors,
-		document_changed: sha256(before) !== sha256(after),
+		document_changed: documentChanged,
+		budget_used: budget.used, budget_limit: budget.limits.maxToolCalls, budget_phase: budget.phase,
 		...(sessionWarning ? { session_warning: sessionWarning } : {}),
 	});
 
-	// Only a failed session is raised. A document that fails validation is a
-	// result: the caller records it and decides what the stage outcome is.
-	if (sessionError) throw sessionError;
+	// Solve reads this to know whether it received a complete or a partial brief.
+	mkdirSync(join(workspace, ".harness"), { recursive: true });
+	writeFileSync(join(workspace, ".harness", "status.json"), `${JSON.stringify({
+		valid: validation.valid, partial, errors: validation.errors.slice(0, 20),
+		budget: { used: budget.used, limit: budget.limits.maxToolCalls }, dataset_snapshot_sha256: context.dataset.snapshot_sha256,
+	}, null, 2)}\n`);
+	if (sessionError && !progressed) throw sessionError;
 	return {
 		documentPath,
 		contextPath,
 		valid: validation.valid,
 		errors: validation.errors,
+		partial,
+		budget: { used: budget.used, limit: budget.limits.maxToolCalls, phase: budget.phase },
 		attempts,
 		contextSha256,
 		datasetSha256: context.dataset.snapshot_sha256,

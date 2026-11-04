@@ -33,9 +33,9 @@ function artifact(kind: string, path: string): StageArtifact | undefined {
 
 export const researchStage: StageDefinition<ResearchOptions> = {
 	name: "research",
-	setupRequirements: ["observability", "knowledge", "model", "python", "task", "web-search"],
-	version: 2,
-	description: "Grounded research for a task, ending in a validated research.md",
+	setupRequirements: ["observability", "knowledge", "model", "python", "task", "web-search", "data-profile"],
+	version: 3,
+	description: "Data profile and a validated solution brief (research.md) for a task",
 	next: "solve",
 
 	parseOptions(raw) {
@@ -75,10 +75,12 @@ export const researchStage: StageDefinition<ResearchOptions> = {
 		].filter((entry): entry is StageArtifact => entry !== undefined);
 		return {
 			artifacts,
-			validation: { valid: result.valid, errors: result.errors },
+			validation: { valid: result.valid, errors: result.errors, ...(result.partial ? { partial: true } : {}) },
 			attempts: result.attempts,
 			summary: {
 				attempts: result.attempts,
+				partial: result.partial,
+				budget: result.budget,
 				context_sha256: result.contextSha256,
 				dataset_sha256: result.datasetSha256,
 			},

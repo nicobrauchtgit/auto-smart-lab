@@ -66,11 +66,10 @@ composed opening request without moving module instructions into application
 code. Handoff and resume references and message contents are recorded with the
 physical session's trace.
 
-Research also receives `research.test-distribution` on every attempt. It defines
-an explicit second pass over unlabeled test inputs to check training-pattern
-applicability and possible replacement features. The context provides separate
-hashed train/test references; the agent uses its existing inspection tools and
-saves split-specific cited evidence. See [research workflow](../research/README.md).
+Research produces a short solution brief (`research.system`). Its self-check
+tool `check_brief` takes its description from `research.check-brief-tool`. The
+former `research.test-distribution` pass is gone: the harness data profile now
+covers training-vs-test comparisons. See [research workflow](../research/README.md).
 
 Research, solve and advisory review opening templates declare one optional
 `guidance` variable. The loader treats an omitted value as empty; callers render

@@ -127,6 +127,18 @@ describe("invokeStage", () => {
 		expect(events.map((event) => event.event_type)).toContain("stage_summary");
 	});
 
+	test("a partial artifact is handed on: success with its validation errors kept", async () => {
+		const { invocation, events } = await runFakeStage(fakeStage(async () => ({
+			artifacts: [{ kind: "research_document", path: "/tmp/research.md" }],
+			validation: { valid: false, partial: true, errors: ["Fact \"x\": 12.5 is not in the cited data"] },
+			attempts: 1,
+		})));
+		expect(invocation.outcome).toBe("success");
+		expect(invocation.validation).toEqual({ valid: false, partial: true, errors: ["Fact \"x\": 12.5 is not in the cited data"] });
+		expect(events.map(event => event.event_type)).toContain("stage_partial");
+		expect(events.at(-1)!.payload.validation.partial).toBe(true);
+	});
+
 	test("input rejection is recorded before any agent session exists", async () => {
 		let ran = false;
 		const { invocation, events } = await runFakeStage(

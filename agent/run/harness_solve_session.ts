@@ -26,6 +26,7 @@ import { readPythonEnvironment, type PythonEnvironment } from "./python_environm
 import type { TaskConfiguration } from "../pipeline/task_configuration.js";
 import { prepareSolveSandbox, isolatedSolveTools, solvePythonEnvironmentTool, trainingSandboxCommand } from "./solve_sandbox.js";
 import { runSession } from "./session_runner.js";
+import { createIdleWaiter } from "./idle_wait.js";
 import { runConfirmation, type ConfirmationOutput } from "../confirmation/service.js";
 
 export type HarnessSolveStopReason = "agent_finished" | "agent_failed" | "cancelled" | "no_promotion";
@@ -334,6 +335,8 @@ export async function runHarnessSolveSession(
 			tools: [],
 			customTools: [...training.tools, ...isolatedTools, environmentTool],
 			onSessionReady: training.bindSession,
+			continueWhenIdle: createIdleWaiter({ list: () => training.supervisor?.list?.() ?? [], prompts, wakeMs: HARNESS_CONFIG.solve.idleWakeMs,
+				record: (type, payload) => report?.event(type, payload) }),
 			extensionPaths: [join(PROJECT_ROOT, "agent", "tools", "web_search.ts")],
 			extensionFactories: [createGitHistoryGuard(prompts, (eventType, payload) => report?.event(eventType, payload))],
 			...(options.signal ? { signal: options.signal } : {}),

@@ -360,16 +360,14 @@ submit or promote a model. `submit` requires explicit controller authorization. 
 [model evaluation](../agent/evaluation/README.md) for tools, artifacts, the
 scoring rubric, setup checks and standalone usage.
 
-### Research test-input comparison
+### Research data profile and solution brief
 
-Research stage v2 explicitly identifies training features, training labels and
-unlabeled test features in its context and supplied-input events. A dedicated
-`research.test-distribution` prompt directs a sequential second pass over the
-test inputs, comparing candidate availability and investigating more transferable
-features when literal patterns shift. The report needs cited split-specific
-training and test evidence when test inputs are available. This uses the existing
-filesystem/bash tools and shared archive preflight, and adds no model sessions
-or dependencies. See [research workflow](../agent/research/README.md).
+Before the research agent starts, the harness profiles the declared data
+(`profile/profile.json`, with a `data-profile` preflight check and a
+`data_profile` supplied input). The agent then writes a short solution brief:
+one recommended pipeline, a few alternates and atomic next improvements, with
+sources the validator resolves. See [research workflow](../agent/research/README.md)
+and [the redesign decisions](research-redesign.md).
 
 ### Training restart recovery
 

@@ -1,0 +1,3 @@
+- The preceding session could not write a handoff ({{reason}}); this note was written by the harness.
+- Read next: the workspace files you were working on, and the status and history of your experiments (running experiments continue and keep their IDs).
+- Resume at: re-establish where the work stands from those artifacts before starting anything new, so nothing is repeated.

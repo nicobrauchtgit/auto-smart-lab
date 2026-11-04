@@ -6,7 +6,7 @@ import { resolvePipelineSettings } from "../pipeline/config.js";
 import type { PipelineConfig } from "../pipeline_config.js";
 import { DEFAULT_LIMITS as supervisor } from "../experiments/types.js";
 import { DEFAULT_LIMITS as children } from "../subagents/types.js";
-import { SESSION_TIMEOUT_MS } from "../run/session_runner.js";
+import { SESSION_MAX_WALL_MS } from "../run/session_runner.js";
 import { CONTEXT_HANDOFF_TOKENS } from "../context/session.js";
 
 function resolve(interval: number) {
@@ -26,7 +26,7 @@ function resolve(interval: number) {
 test("consumers use the immutable central defaults", () => {
 	expect(supervisor).toBe(HARNESS_CONFIG.supervisor);
 	expect(children).toBe(HARNESS_CONFIG.subagents.limits);
-	expect(SESSION_TIMEOUT_MS).toBe(HARNESS_CONFIG.session.timeoutMs);
+	expect(SESSION_MAX_WALL_MS).toBe(HARNESS_CONFIG.session.maxWallMs);
 	expect(CONTEXT_HANDOFF_TOKENS).toBe(HARNESS_CONFIG.context.handoffTokens);
 	expect(Object.isFrozen(HARNESS_CONFIG.foldRecommendations[0])).toBe(true);
 });
@@ -44,7 +44,7 @@ test("invalid tuning values fail before starting sessions", () => {
 	for (const mutate of [
 		(value: any) => { value.context.handoffTokens = 0; },
 		(value: any) => { value.supervisor.sampleIntervalMs = -1; },
-		(value: any) => { value.session.timeoutMs = 3_000_000_000; },
+		(value: any) => { value.session.maxWallMs = 3_000_000_000; },
 		(value: any) => { value.holdout.maxFraction = 0.7; },
 		(value: any) => { value.subagents.waitTimeoutMs = value.subagents.maxWaitTimeoutMs + 1; },
 		(value: any) => { value.foldRecommendations[1].belowRows = 1; },
