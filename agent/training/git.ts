@@ -12,7 +12,20 @@ import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node
 import { dirname, join } from "node:path";
 
 /** Committer identity for harness-created commits and annotated tags only. */
-const HARNESS_IDENTITY = ["-c", "user.name=SmartLab harness", "-c", "user.email=harness@smartlab.invalid"] as const;
+// Harness commits and tags never depend on the user's personal signing setup.
+const HARNESS_IDENTITY = ["-c", "user.name=SmartLab harness", "-c", "user.email=harness@smartlab.invalid",
+	"-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"] as const;
+
+/**
+ * The solutions repository is harness-owned. Commits made in it (including the
+ * agent's own, via bash) are not signed with the user's key, which may need an
+ * agent unavailable on this machine. An explicit local setting is respected.
+ */
+function disableLocalSigning(root: string): void {
+	for (const key of ["commit.gpgsign", "tag.gpgsign"]) {
+		if (git(root, ["config", "--local", "--get", key]).status !== 0) gitOrThrow(root, ["config", "--local", key, "false"]);
+	}
+}
 
 /** Never let a parent repository, hook, or pager leak into harness git calls. */
 function gitEnvironment(): Record<string, string> {
@@ -77,6 +90,7 @@ const DEFAULT_IGNORES = ["__pycache__/", "*.py[cod]", ".ipynb_checkpoints/", ".p
 export function ensureSolutionsRepository(root: string): RepositoryPreparation {
 	mkdirSync(root, { recursive: true });
 	if (isRepositoryRoot(root)) {
+		disableLocalSigning(root);
 		const head = git(root, ["rev-parse", "--verify", "--quiet", "HEAD"]);
 		const branch = git(root, ["symbolic-ref", "--short", "-q", "HEAD"]);
 		return {
@@ -86,6 +100,7 @@ export function ensureSolutionsRepository(root: string): RepositoryPreparation {
 		};
 	}
 	gitOrThrow(root, ["init", "--quiet", "--initial-branch=main"]);
+	disableLocalSigning(root);
 	// The agent commits under its own identity. Give the repository a local one
 	// only when none resolves, so `git commit` never fails on configuration.
 	if (git(root, ["config", "user.email"]).status !== 0) {

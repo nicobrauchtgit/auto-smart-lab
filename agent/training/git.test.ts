@@ -156,3 +156,28 @@ describe("experiment start against the solutions repository", () => {
 		expect(invocation.request.schemaVersion).toBe(1);
 	});
 });
+
+test("a personal signing setup that cannot sign does not break harness or agent commits", () => {
+	const home = mkdtempSync(join(tmpdir(), "signing-home-"));
+	// Signing is required globally, but the signing program always fails.
+	writeFileSync(join(home, ".gitconfig"), "[commit]\n\tgpgsign = true\n[tag]\n\tgpgsign = true\n[gpg]\n\tformat = ssh\n[gpg \"ssh\"]\n\tprogram = /bin/false\n[user]\n\tsigningkey = ssh-ed25519 AAAAunavailable\n");
+	const previous = process.env.HOME;
+	process.env.HOME = home;
+	try {
+		const root = join(home, "solutions");
+		expect(ensureSolutionsRepository(root).initialized).toBe(true);
+		writeFileSync(join(root, "pipeline.py"), "print('x')\n");
+		expect(git(root, ["add", "pipeline.py"]).status).toBe(0);
+		// The agent commits with plain git, without harness flags.
+		const commit = git(root, ["commit", "--quiet", "-m", "agent change"]);
+		expect(commit.stderr).toBe("");
+		expect(commit.status).toBe(0);
+		tagCommit(root, "harness-tag", "HEAD", "annotated");
+		// An existing repository without the local setting is also covered.
+		git(root, ["config", "--local", "--unset", "commit.gpgsign"]);
+		ensureSolutionsRepository(root);
+		expect(git(root, ["config", "--local", "--get", "commit.gpgsign"]).stdout.trim()).toBe("false");
+	} finally {
+		if (previous === undefined) delete process.env.HOME; else process.env.HOME = previous;
+	}
+});

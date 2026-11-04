@@ -31,7 +31,7 @@ source.mkdir(parents=True)
 (source / 'data' / 'hidden.py').write_text('PRIVATE = 1\n')
 (source / 'credentials.py').write_text('password = "never-upload"\n')
 (source / 'notes.md').write_text('transcript fixture')
-for args in [['init', '-q'], ['add', '.'], ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'Mock source']]:
+for args in [['init', '-q'], ['add', '.'], ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'Mock source']]:
     subprocess.check_call(['git', '-C', str(source), *args], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 commit = subprocess.check_output(['git', '-C', str(source), 'rev-parse', 'HEAD']).decode().strip()
 tree = subprocess.check_output(['git', '-C', str(source), 'rev-parse', 'HEAD^{tree}']).decode().strip()

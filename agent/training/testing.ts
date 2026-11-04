@@ -132,7 +132,8 @@ export function temporaryProject(prefix = "training-project-") {
 }
 
 export function commitAll(solutionsRoot: string, message: string): string {
-	for (const args of [["add", "-A"], ["commit", "--quiet", "-m", message]]) {
+	// Fixture commits never depend on the developer's personal signing setup.
+	for (const args of [["add", "-A"], ["-c", "commit.gpgsign=false", "commit", "--quiet", "-m", message]]) {
 		const result = git(solutionsRoot, args);
 		if (result.status !== 0) throw new Error(result.stderr);
 	}
