@@ -16,7 +16,7 @@
         "enabled": true
       },
       "submit": {
-        "enabled": true
+        "enabled": false
       },
       "refit": {
         "enabled": true,
@@ -94,8 +94,24 @@
     "agentDir": ".pi/agent",
     "initialPrompt": "hi"
   },
-  "defaultModel": "saia/mistral-medium-3.5-128b",
+  "defaultModel": "mythllm/qwen3.8-flash-next-a5b",
   "providers": {
+    "mythllm": {
+      "name": "TU Berlin MythLLM",
+      "baseUrl": "https://mythllm.mlsec.tu-berlin.de/v1",
+      "api": "openai-completions",
+      "apiKeyEnv": "MYTHLLM_API_KEY",
+      "models": [
+        {
+          "id": "qwen3.8-flash-next-a5b",
+          "name": "Qwen 3.8 Flash Next A5B",
+          "reasoning": false,
+          "input": ["text"],
+          "contextWindow": 128000,
+          "maxTokens": 8192
+        }
+      ]
+    },
     "google-vertex": {
       "builtin": true
     },
