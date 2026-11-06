@@ -108,7 +108,7 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
    await options.telemetry.checkAccess(signal);
   });
  }
- if (needs.has("solve-isolation")) add("solve-filesystem-isolation", "local", "Solve requires Linux bubblewrap with working user, mount and PID namespaces, plus bash/git/rg/fd/uv. Install bubblewrap through the host administrator or set SOLVE_BWRAP to an existing executable; no agent starts without this boundary.", () => {
+ if (needs.has("solve-isolation")) add("solve-filesystem-isolation", "local", "Research and solve require Linux bubblewrap with working user, mount and PID namespaces, plus bash/git/rg/fd/uv. Install bubblewrap through the host administrator or set SOLVE_BWRAP to an existing executable; no agent starts without this boundary.", () => {
   checkSolveSandbox(options.executables?.bwrap);
   options.prompts.render("solve.isolation", { workspace: "preflight" });
   options.prompts.render("solve.python-environment-tool", {});

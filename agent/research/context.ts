@@ -105,7 +105,7 @@ function walkFiles(root: string): string[] {
 	return files;
 }
 
-function findTask(taskId: string): TaskLocation {
+export function findTask(taskId: string): TaskLocation {
 	for (const unit of readdirSync(UNITS_DIR).sort()) {
 		const unitDir = join(UNITS_DIR, unit);
 		if (!statSync(unitDir).isDirectory()) continue;

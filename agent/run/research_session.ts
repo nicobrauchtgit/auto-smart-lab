@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 
 import {
 	buildResearchContext,
+	findTask,
 	PROJECT_ROOT,
 	researchContextHash,
 	writeResearchContext,
@@ -26,7 +27,9 @@ import { buildDataProfile } from "../research/profile.js";
 import { loadPromptSnapshot, type PromptSnapshot } from "../prompts/loader.js";
 import { prepareResearchPrompts } from "../prompts/research.js";
 import type { StageReporter } from "../pipeline/types.js";
+import { readPythonEnvironment } from "./python_environment.js";
 import { runSession } from "./session_runner.js";
+import { isolatedSolveTools, prepareResearchSandbox, solvePythonEnvironmentTool } from "./solve_sandbox.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const AGENT_DIR = resolve(HERE, "..");
@@ -194,6 +197,8 @@ export async function runResearchSession(taskId: string, model?: string, options
 				prompt_snapshot_sha256: prompts.fingerprint,
 				prompts: prepared.promptReferences,
 			});
+			const python = readPythonEnvironment();
+			const identity = report?.agentIdentity(attempts);
 			const { output, agentRunId } = await runSession({
 				knowledge: { root: join(PROJECT_ROOT, "knowledge"), origin: { taskId, datasetSha256: context.dataset.snapshot_sha256,
 					pipelineRunId: report?.agentIdentity(attempts).pipelineRunId ?? undefined, stageInvocationId: report?.agentIdentity(attempts).stageInvocationId ?? undefined } },
@@ -205,9 +210,14 @@ export async function runResearchSession(taskId: string, model?: string, options
 				env: { WEB_SEARCH_MAX_CALLS: attempts === 1 ? String(context.limits.web_search_calls) : "0", WEB_SEARCH_MAX_RESULTS: String(HARNESS_CONFIG.research.webSearchResults),
 					WEB_SEARCH_LOG: join(workspace, WEB_SOURCES_LOG) },
 				cwd: workspace,
-				tools: ["read", "grep", "find", "ls", "edit", "write", "bash", "web_search"],
-				customTools: createBriefTools({ documentPath, context, prompts,
-					onCheck: result => report?.event("brief_self_check", { attempt: attempts, valid: result.valid, errors: result.errors.length }) }),
+				tools: ["web_search"],
+				customTools: [
+					...isolatedSolveTools(prepareResearchSandbox(workspace, findTask(taskId).dir, python)),
+					solvePythonEnvironmentTool(python, prompts.render("solve.python-environment-tool", {}).text, PROJECT_ROOT, {
+						pipelineRunId: identity?.pipelineRunId ?? "research", stageInvocationId: identity?.stageInvocationId ?? "research", attempt: attempts }),
+					...createBriefTools({ documentPath, context, prompts,
+						onCheck: result => report?.event("brief_self_check", { attempt: attempts, valid: result.valid, errors: result.errors.length }) }),
+				],
 				extensionPaths: [WEB_SEARCH_EXTENSION],
 				extensionFactories: [budget.extension()],
 				...(options.signal ? { signal: options.signal } : {}),

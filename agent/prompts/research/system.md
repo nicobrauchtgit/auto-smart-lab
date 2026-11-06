@@ -27,9 +27,11 @@ modify solver code, or expose credentials.
 - `analysis/`: your own small scripts and compact JSON outputs.
 
 Available tools include filesystem operations, `bash`, `web_search` and
-`check_brief`. Write scripts and outputs under `analysis/` only; do not write
-into `units/` or elsewhere in the repository, except for the package-manager
-updates and shared NOTES.md described in your runtime environment instructions.
+`check_brief`. File and shell tools run inside a Linux mount and PID namespace:
+they can read this task's material and write only this workspace and the shared
+NOTES.md. Other tasks, earlier solve work and the rest of the repository are
+outside the boundary. Write scripts and outputs under `analysis/`. Use
+`python_environment` to inspect, add or update dependencies.
 Analysis scripts must load `../context.json`, resolve its relative
 `dataset.data_dir` from the workspace, and never hard-code machine-specific
 paths such as `/home/...`.

@@ -23,6 +23,9 @@ type ToolResult = Awaited<ReturnType<ToolDefinition["execute"]>>;
 export interface SandboxMount { source: string; writable?: boolean }
 export interface SolveSandbox { executable: string; cwd: string; mounts: SandboxMount[]; env: Record<string, string>; args(command: string[]): string[] }
 
+/** Basic utilities (mkdir, cat, ...). NixOS has them only in the system profile. */
+const SYSTEM_PATH = ["/run/current-system/sw/bin", "/usr/bin", "/bin"];
+
 export function executable(name: string): string {
  for (const directory of (process.env.PATH ?? "").split(delimiter)) {
   const path = join(directory, name);
@@ -92,12 +95,34 @@ export function prepareSolveSandbox(workspace: SolveWorkspace, python: PythonEnv
  ];
  const notes = join(ROOT, "agent/runtime/python/NOTES.md");
  if (existsSync(notes)) mounts.push({ source: notes, writable: true });
- const env: Record<string, string> = { PATH: [join(python.prefix, "bin"), ...binaries.map(dirname), "/usr/bin", "/bin"].join(delimiter),
+ const env: Record<string, string> = { PATH: [join(python.prefix, "bin"), ...binaries.map(dirname), ...SYSTEM_PATH].join(delimiter),
   VENV_DIR: python.prefix, VIRTUAL_ENV: python.prefix, UV_PROJECT_ENVIRONMENT: python.prefix,
   UV_PYTHON: python.executable, UV_PYTHON_DOWNLOADS: "never", PYTHONNOUSERSITE: "1", SOLVE_WORKSPACE: agentRoot };
  for (const name of ["NIX_LD", "NIX_LD_LIBRARY_PATH", "LD_LIBRARY_PATH"]) if (process.env[name]) env[name] = process.env[name]!;
  const policy = sandboxPolicy({ mounts, cwd: dirname(workspace.solutionsRoot), env });
  return { ...policy, agentRoot };
+}
+
+/** Research reads this task's material and writes only its own workspace. */
+export function prepareResearchSandbox(workspace: string, taskDir: string, python: PythonEnvironment): SolveSandbox {
+ const binaries = ["bash", "git", "rg", "fd", "uv"].map(executable);
+ const runtimePython = dirname(dirname(realpathSync(python.executable)));
+ const notes = join(ROOT, "agent/runtime/python/NOTES.md");
+ const mounts: SandboxMount[] = [
+  { source: workspace, writable: true }, { source: taskDir },
+  { source: python.prefix }, { source: dirname(runtimePython) }, { source: WORKER },
+  { source: join(ROOT, "node_modules") }, { source: realpathSync(join(ROOT, "node_modules")) },
+  { source: dirname(realpathSync(process.execPath)) },
+  ...binaries.map(path => ({ source: dirname(path) })),
+  ...["pyproject.toml", "uv.lock", "agent/setup/python_environment.py", "libs/smartlab-eval"]
+   .map(path => ({ source: join(ROOT, path) })).filter(mount => existsSync(mount.source)),
+ ];
+ if (existsSync(notes)) mounts.push({ source: notes, writable: true });
+ const env: Record<string, string> = { PATH: [join(python.prefix, "bin"), ...binaries.map(dirname), ...SYSTEM_PATH].join(delimiter),
+  VENV_DIR: python.prefix, VIRTUAL_ENV: python.prefix, UV_PROJECT_ENVIRONMENT: python.prefix,
+  UV_PYTHON: python.executable, UV_PYTHON_DOWNLOADS: "never", PYTHONNOUSERSITE: "1" };
+ for (const name of ["NIX_LD", "NIX_LD_LIBRARY_PATH", "LD_LIBRARY_PATH"]) if (process.env[name]) env[name] = process.env[name]!;
+ return sandboxPolicy({ mounts, cwd: workspace, env });
 }
 
 function persistentWrite(policy: SolveSandbox, value: unknown): boolean {
