@@ -10,6 +10,10 @@ resolve task -> research -> solve and measure -> evaluate -> submit
 
 Research, solve, evaluation and refit run through the shared pipeline executor. Configured runs stop before submission; uploads require an explicit controller policy. See [Remaining work](docs/cleanup-plan.md) for current run blockers and the single active work queue. Every tuning value (budgets, limits, timeouts, seeds, folds) lives in `harness.config.json` and `pipeline.config.json`; [the configuration reference](docs/configuration.md) explains each key.
 
+## The experiment
+
+This repository holds two experiment arms: this harness and a minimal agent in `arms/minimal/`. Pick one with `./dev bun run experiment -- --arm harness|minimal`. See [the experiment](docs/experiment.md). The rest of this README describes the harness.
+
 ## What the project is trying to do
 
 A solver should be able to test ideas, observe meaningful progress, stop unproductive work, retain useful artifacts, and continue from measured evidence. The model chooses features, estimators, and experiments. The surrounding code enforces the parts that should not depend on model judgment:

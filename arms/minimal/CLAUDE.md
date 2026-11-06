@@ -1,4 +1,9 @@
-# Working in this repo
+# Working on the minimal arm
+
+This arm runs through `./dev bun run experiment -- --arm minimal` from the repository
+root, which copies it to a fresh `runs/minimal/<stamp>/` and confines it there. See
+`docs/experiment.md` at the root. Commands below that use `npm`, `scripts/vm` or the lab VM
+are from before the merge; the lab VM no longer exists.
 
 Read `docs/AGENT.md` first (what/why/how) and `docs/EXPERIMENT_LOG.md` (what has been run).
 `README.md` is the usage guide.

@@ -5,7 +5,13 @@ finished; implementation contracts and feature references stay in their own
 module documentation. Older handovers and design plans are historical inputs,
 not additional active queues.
 
-## Current focus: useful signals for the agent
+## Current focus: the two-arm experiment
+
+The minimal agent and the harness now share this branch; see
+[experiment.md](experiment.md). Next: inventory the shared-drive tasks and configure
+both arms for them. Results are comparable only on tasks both arms can run.
+
+## Earlier focus: useful signals for the agent
 
 The agent owns experiment ideas, parsing, features and model design. Prioritize
 observed execution, progress/cost signals, measured results, comparisons and
@@ -44,11 +50,6 @@ tuning value is in `harness.config.json`/`pipeline.config.json`, explained in
 - [x] **Stall check.** Replace the 30-minute session race with a
   "no streamed tokens for N minutes" check; `session.timeoutMs` stays only as
   a safety limit.
-- [ ] **Write the official submission CSV without the submit stage.** Refit
-  writes `predictions.csv` (comma, header); the official `id;prediction` file is
-  only built by the disabled submit stage. Manual handover needs refit (or a
-  handover step) to write it, validated like `agent/submission/bundle.py`. The
-  exercise 1 queue uses `runs/exercise1-2026-11-03/export_submission.py` meanwhile.
 - [ ] **Orchestrator re-research.** On a solve plateau the orchestrator
   decides, guided by few-shot examples rather than a fixed rule, whether to
   start another research round with a focus and a typed diagnosis. It

@@ -1,3 +1,12 @@
+# The experiment
+
+This repository compares two arms: a minimal agent (`arms/minimal/`) and the
+task-adapted harness (`agent/`). [docs/experiment.md](docs/experiment.md) has how
+to run each, what differs and what must stay the same. Agents must not leave
+their run location, and neither arm may read the other: keep the boundary tests
+passing. The sections below describe the harness; `arms/minimal/CLAUDE.md` has
+the minimal arm's rules. Do not add coaching to the minimal arm.
+
 # Current state and next tasks
 
 Start with [docs/cleanup-plan.md](docs/cleanup-plan.md): it records the current
