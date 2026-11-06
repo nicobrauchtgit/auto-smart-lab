@@ -1,4 +1,4 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env bun
 /**
  * Check that a model works through the real harness: one tiny session, one bash tool call.
  *

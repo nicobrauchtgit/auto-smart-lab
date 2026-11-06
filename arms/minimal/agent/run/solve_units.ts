@@ -1,4 +1,4 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env bun
 /**
  * Solve every task of every unit on the lab, unattended.
  *
@@ -37,7 +37,7 @@ const INDEX_PATH = join(UNITS_DIR, "index.json");
 const FETCH_SCRIPT = join(PROJECT_ROOT, "agent", "setup", "fetch_units.py");
 const RESET_SCRIPT = join(PROJECT_ROOT, "agent", "setup", "reset_state.py");
 const ORCHESTRATE = join(HERE, "orchestrate.ts");
-const TSX = join(PROJECT_ROOT, "node_modules", ".bin", "tsx");
+
 const DEFAULT_TARGET = 0.97;
 
 type Outcome = "delivered" | "needs-vm-service" | "no-new-predictions" | "budget-exhausted" | "quota-exhausted" | "solved" | "attempts-exhausted" | "attempt-cap" | "below-target" | "dry-run" | "solver-failed" | "submit-failed" | "fatal" | "skipped";
@@ -95,7 +95,7 @@ function runPython(script: string, args: string[], label: string): boolean {
 function runOrchestrator(taskId: string, args: string[], logPath: string): Promise<number | null> {
 	return new Promise((res) => {
 		const log = createWriteStream(logPath);
-		const child = spawn(TSX, [ORCHESTRATE, taskId, ...args], { cwd: PROJECT_ROOT, env: process.env, stdio: ["ignore", "pipe", "pipe"] });
+		const child = spawn(process.execPath, [ORCHESTRATE, taskId, ...args], { cwd: PROJECT_ROOT, env: process.env, stdio: ["ignore", "pipe", "pipe"] });
 		const tee = (chunk: Buffer) => { process.stdout.write(chunk); log.write(chunk); };
 		child.stdout.on("data", tee);
 		child.stderr.on("data", tee);

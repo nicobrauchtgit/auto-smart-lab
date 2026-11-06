@@ -13,6 +13,8 @@ import { fileURLToPath } from "node:url";
 
 import {
 	createAgentSession,
+	createBashToolDefinition,
+	defineTool,
 	DefaultResourceLoader,
 	ModelRuntime,
 	SessionManager,
@@ -20,6 +22,12 @@ import {
 	resolveCliModel,
 } from "@earendil-works/pi-coding-agent";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
+
+/** Credentials are for the model client and the lab client, not the agent's shell commands. */
+const SECRET_ENV = /KEY|TOKEN|SECRET|PASS|CREDENTIALS|^LANGFUSE_|^LAB_/i;
+export function shellEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+	return Object.fromEntries(Object.entries(source).filter(([name]) => !SECRET_ENV.test(name)));
+}
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const AGENT_DIR = resolve(HERE, ".."); // agent/run/ → agent/
@@ -228,7 +236,7 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 		console.log(`${tag} extensions loaded (${elapsed(sessionStart)})`);
 
 		console.log(`${tag} creating model runtime...`);
-		const modelRuntime = await ModelRuntime.create({ agentDir });
+		const modelRuntime = await ModelRuntime.create({ modelsPath: join(agentDir, "models.json"), authPath: join(agentDir, "auth.json") });
 		console.log(`${tag} model runtime ready (${elapsed(sessionStart)})`);
 
 		// Resolve model from PI_MODEL env var (format: "provider/model-id" or bare "model-id")
@@ -256,6 +264,9 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 			modelRuntime,
 			resourceLoader,
 			sessionManager: SessionManager.inMemory(),
+			customTools: [defineTool(createBashToolDefinition(PROJECT_ROOT, {
+				spawnHook: (context) => ({ ...context, env: shellEnvironment(context.env) }),
+			}))],
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
 			...(selectedModel ? { model: selectedModel as any } : {}),
 		});

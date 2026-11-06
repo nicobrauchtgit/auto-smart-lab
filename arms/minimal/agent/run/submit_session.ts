@@ -218,7 +218,7 @@ export function parseTaskPage(taskUrl: string, page: string, baseUrl: string): T
 // ---------------------------------------------------------------------------
 
 // logs/ holds run logs and, since 2026-11, the offline deliveries of other tasks: never part of a source upload.
-const EXCLUDED_DIRS = new Set([".git","__pycache__",".pytest_cache","env","venv",".venv","data","downloaded_task_page","submissions","reports","node_modules","logs"]);
+const EXCLUDED_DIRS = new Set([".git",".home","__pycache__",".pytest_cache","env","venv",".venv","data","downloaded_task_page","submissions","reports","node_modules","logs"]);
 const EXCLUDED_NAMES = new Set(["lab-cookies.txt","source.zip","output.csv"]);
 const ALLOWED_SUFFIXES = new Set([".py",".sh",".ts",".md",".txt",".toml",".yaml",".yml",".json"]);
 const CRC_TABLE = (() => { const t=new Uint32Array(256); for (let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xedb88320^(c>>>1):c>>>1;t[n]=c>>>0;} return t; })();

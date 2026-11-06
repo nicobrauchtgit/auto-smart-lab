@@ -30,12 +30,14 @@ dependencies = [
     # than injected on PYTHONPATH so the stage stops handing the agent a path
     # into the harness tree.
     "smartlab-eval",
+    "torch>=2.15.0",
 ]
 
 [tool.uv.sources]
 # Editable: an edit to the library takes effect immediately. A copied install
 # would let the harness and the agent diverge whenever a reinstall was missed.
 smartlab-eval = { path = "libs/smartlab-eval", editable = true }
+torch = { index = "pytorch-cpu" }
 
 [tool.uv]
 # Only uv-managed Python (a standalone build, kept under .tools/ by ./dev), never
@@ -44,3 +46,10 @@ python-preference = "only-managed"
 # This file declares an environment; it does not ship a distribution. Without
 # this uv would try to build and install the project itself.
 package = false
+
+# CPU build of torch: no GPU is available to the experiments, and the default
+# Linux wheel pulls several GB of CUDA libraries.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

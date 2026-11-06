@@ -23,7 +23,7 @@ type ToolResult = Awaited<ReturnType<ToolDefinition["execute"]>>;
 export interface SandboxMount { source: string; writable?: boolean }
 export interface SolveSandbox { executable: string; cwd: string; mounts: SandboxMount[]; env: Record<string, string>; args(command: string[]): string[] }
 
-function executable(name: string): string {
+export function executable(name: string): string {
  for (const directory of (process.env.PATH ?? "").split(delimiter)) {
   const path = join(directory, name);
   try { accessSync(path, constants.X_OK); return realpathSync(path); } catch {}

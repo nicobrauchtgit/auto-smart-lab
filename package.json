@@ -15,13 +15,15 @@
     "evaluate-stage": "bun agent/evaluate_cli.ts",
     "solve-stage": "bun agent/solve_cli.ts",
     "refit-stage": "bun agent/refit_cli.ts",
-    "orchestrate": "bun agent/orchestrate_cli.ts"
+    "orchestrate": "bun agent/orchestrate_cli.ts",
+    "experiment": "bun agent/experiment_cli.ts"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "0.84.1",
     "@earendil-works/pi-coding-agent": "0.84.1",
     "@langfuse/client": "5.13.1",
     "@langfuse/otel": "5.13.1",
+    "@langfuse/pi-observability-plugin": "0.1.2",
     "@langfuse/tracing": "5.13.1",
     "@opentelemetry/api": "1.9.1",
     "@opentelemetry/otlp-transformer": "0.223.0",

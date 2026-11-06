@@ -1,4 +1,4 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env bun
 /**
  * SmartLab ML Challenge Orchestrator
  *
@@ -11,7 +11,7 @@
  * (deliver.ts) instead of being submitted.
  *
  * Usage:
- *   npx tsx agent/run/orchestrate.ts <task_id>
+ *   bun agent/run/orchestrate.ts <task_id>
  *
  * Required environment (not with --offline):
  *   LAB_USER, LAB_PASS, LAB_INSECURE_TLS, SMARTLAB_TASK_URL
@@ -227,7 +227,7 @@ function resolveReported(p: string): string {
 }
 
 function usage(): never {
-	console.error("Usage: npx tsx agent/run/orchestrate.ts <task_id|list> [--model <id>] [--task-url <url>] [--secure] [--offline] [--no-submit] [--target <score>] [--solver-timeout <minutes>] [--max-attempts <n>] [--max-cost <usd>] [--max-unchanged <n>]");
+	console.error("Usage: bun agent/run/orchestrate.ts <task_id|list> [--model <id>] [--task-url <url>] [--secure] [--offline] [--no-submit] [--target <score>] [--solver-timeout <minutes>] [--max-attempts <n>] [--max-cost <usd>] [--max-unchanged <n>]");
 	console.error(`Exit codes: 0 done (target reached, no attempts left, dry run or attempt cap), 1 no attempts before start, 2 solver failed (${MAX_SOLVER_FAILURES} sessions in a row without a submittable result), 3 submission failed (or the platform refused ${MAX_SOLVER_FAILURES} uploads in a row), 4 model API daily/monthly quota exhausted, 5 cost budget (--max-cost USD) exhausted, 7 solver kept reproducing the last submission (--max-unchanged, default 3), 9 token task without the VM's local service, 99 fatal (6 and 8 belonged to the removed eval agent)`);
 	console.error("Required env: LAB_USER, LAB_PASS (not with --offline)");
 	console.error("--offline: no lab access; the first result that passes the output check is final and is stored under logs/deliveries/ (exit 0)");

@@ -49,8 +49,11 @@ export function collectConditions(caps: RunConditions["caps"]): RunConditions {
 	}
 	// Tracked files with uncommitted changes: a dirty harness is a different harness.
 	// Porcelain lines are "XY path": keep the leading status column (no trim before slicing).
-	const dirty = (git(["status", "--porcelain", "--untracked-files=no"], false) ?? "")
-		.split("\n").filter(l => l.length > 3).map(l => l.slice(3));
+	// The run location has no .git, so the experiment controller passes these in.
+	const dirty = process.env.SMARTLAB_ARM_COMMIT !== undefined
+		? (process.env.SMARTLAB_ARM_DIRTY ?? "").split("\n").filter(Boolean)
+		: (git(["status", "--porcelain", "--untracked-files=no"], false) ?? "")
+			.split("\n").filter(l => l.length > 3).map(l => l.slice(3));
 	let pi: string | null = null;
 	try {
 		pi = JSON.parse(readFileSync(join(PROJECT_ROOT, "node_modules", "@earendil-works", "pi-coding-agent", "package.json"), "utf8")).version ?? null;
@@ -58,7 +61,7 @@ export function collectConditions(caps: RunConditions["caps"]): RunConditions {
 	const py = detectPythonRuntime();
 	return {
 		recordedAt: new Date().toISOString(),
-		git: { commit: git(["rev-parse", "--short=10", "HEAD"]), branch: git(["rev-parse", "--abbrev-ref", "HEAD"]), dirty },
+		git: { commit: process.env.SMARTLAB_ARM_COMMIT ?? git(["rev-parse", "--short=10", "HEAD"]), branch: process.env.SMARTLAB_ARM_BRANCH ?? git(["rev-parse", "--abbrev-ref", "HEAD"]), dirty },
 		prompts,
 		model: process.env.PI_MODEL ?? null,
 		host: hostname(),
