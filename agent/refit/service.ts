@@ -2,6 +2,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
+import { hostname } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { atomicJson, claimWorkspace, liveGroup, ownedProcessAlive } from "../experiments/ownership.js";
 import { ExperimentSupervisor } from "../experiments/supervisor.js";
@@ -28,6 +29,8 @@ export interface RefitOptions {
  /** The original targets file (binary labels or families); absent for label-free tasks. */
  labelsPath?: string; trainZip: string; testZip: string;
  trainingRoot?: string; environmentFingerprint: string; env: Record<string, string>;
+ /** Recorded in the hand-over manifest. */
+ model?: string;
 	/** Controller assertion binding reviewed upstream evidence to terminal selection. */
 	expectedExperimentId?: string;
  signal?: AbortSignal; report?: StageReporter;
@@ -51,6 +54,16 @@ function python(options: RefitOptions, args: string[], timeout = 30_000): string
  const result = spawnSync(options.pythonExecutable, args, { encoding: "utf8", env: sanitizeTrainingEnvironment(options.env), timeout, maxBuffer: 16 * 1024 * 1024 });
  if (result.error || result.status !== 0) throw new Error(`Refit validation failed: ${result.error?.message ?? result.stderr.trim()}`);
  return result.stdout.trim();
+}
+/** Hand-over files in the same shape as the minimal arm's delivery. A harness reset keeps them. */
+export function deliverRefit(options: RefitOptions, freeze: { directory: string; identity: string }): { kind: string; path: string; sha256: string } {
+ const output = join(options.projectRoot, "runs", "deliveries", options.taskId, freeze.identity.slice(0, 12));
+ const git = (...args: string[]) => spawnSync("git", ["-C", options.projectRoot, ...args], { encoding: "utf8", timeout: 10_000 }).stdout?.trim() ?? "";
+ const metadata = { deliveredAt: new Date().toISOString(), model: options.model ?? null, commit: git("rev-parse", "--short=10", "HEAD") || null,
+  dirty: git("status", "--porcelain", "--untracked-files=no").split("\n").filter(line => line.length > 3).map(line => line.slice(3)), host: hostname() };
+ python(options, [join(import.meta.dir, "delivery.py"), freeze.directory, output, JSON.stringify(metadata)]);
+ const path = join(output, "output.csv");
+ return { kind: "final_delivery", path, sha256: hashFile(path) };
 }
 export function runtimeDependencyHash(options: RefitOptions): string {
  return createHash("sha256").update(python(options, ["-I", "-c", "import importlib.metadata,json,platform; print(json.dumps({'python':platform.python_version(),'packages':sorted((d.metadata['Name'],d.version) for d in importlib.metadata.distributions())},sort_keys=True))"], 5000)).digest("hex");
@@ -269,6 +282,8 @@ export async function runRefit(options: RefitOptions): Promise<{ artifacts: Stag
   validateFrozen(options, freeze);
   const result: TerminalRefitResult = json(join(freeze.directory, "result.json"));
   const artifacts = [["terminal_refit_freeze", "freeze.json"], ["terminal_refit_result", "result.json"], ["final_test_predictions", "predictions.csv"], ...(result.modelSerialization.status === "available" ? [["terminal_fitted_model", "model.pkl"]] : [])].map(([kind, name]) => ({ kind, path: join(freeze.directory, name), sha256: hashFile(join(freeze.directory, name)) }));
+  const delivery = deliverRefit(options, freeze);
+  artifacts.push(delivery);
   options.report?.event("refit_artifacts_validated", { candidate_identity: freeze.identity, train_rows: freeze.data.trainRows, sealed_rows: freeze.data.sealedRows, test_rows: freeze.data.testRows });
   return { artifacts, validation: { valid: true, errors: [] } };
  } finally { await supervisor?.close(); release(); }

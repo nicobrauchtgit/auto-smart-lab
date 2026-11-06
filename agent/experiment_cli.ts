@@ -31,11 +31,11 @@ export function parseExperimentArgs(argv: readonly string[]): { arm: Arm; reset:
 	return { arm: arm as Arm, reset: take("--reset"), yes: take("--yes"), checkSetup: take("--check-setup"), ...(model ? { model } : {}), rest };
 }
 
-/** What a harness reset removes. Minimal runs and tracked files stay. */
+/** What a harness reset removes. Hand-over files, minimal runs and tracked files stay. */
 export function harnessStatePaths(projectRoot: string): string[] {
 	const paths: string[] = [];
 	const runs = join(projectRoot, "runs");
-	if (existsSync(runs)) for (const name of readdirSync(runs)) if (name !== "minimal") paths.push(join(runs, name));
+	if (existsSync(runs)) for (const name of readdirSync(runs)) if (name !== "minimal" && name !== "deliveries") paths.push(join(runs, name));
 	if (existsSync(join(projectRoot, "knowledge"))) paths.push(join(projectRoot, "knowledge"));
 	const solutions = join(projectRoot, "solutions");
 	if (existsSync(solutions)) for (const name of readdirSync(solutions)) if (name !== "README.md") paths.push(join(solutions, name));
