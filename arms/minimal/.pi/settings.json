@@ -1,0 +1,7 @@
+{
+  "extensions": [
+    "../agent/tools/memory.ts",
+    "../agent/tools/web_search.ts",
+    "../agent/tools/challenge_context.ts"
+  ]
+}

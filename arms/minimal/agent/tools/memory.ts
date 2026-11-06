@@ -1,0 +1,267 @@
+/**
+ * Persistent memory tools for the SmartLab ML agent.
+ *
+ * Exposes three pi tools:
+ *   memory_read            – read the full memory store
+ *   memory_write           – set typed fields of one task (or global_notes) (atomic write)
+ *   memory_append_session  – append a session log entry
+ *
+ * State file: <project-root>/agent/memory/memory.json
+ * The file is gitignored; the directory is tracked via .gitkeep.
+ */
+
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { Type } from "@earendil-works/pi-ai";
+import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT = resolve(HERE, ".."); // <root>/agent/tools/memory.ts → <root>/agent
+const MEMORY_DIR = join(PROJECT_ROOT, "memory");
+const MEMORY_FILE = join(MEMORY_DIR, "memory.json");
+
+// --------------------------------------------------------------------------
+// Default memory schema
+// --------------------------------------------------------------------------
+
+interface TaskMemory {
+	best_score: number | null;
+	best_approach: string;
+	last_val_score: number | null;
+	last_submission_csv: string;
+	tries_used: number;
+	tries_left: number;
+	failed_approaches: string[];
+	checkpoint?: string | Record<string, unknown>;
+}
+
+interface SessionEntry {
+	timestamp: string;
+	task_id: string;
+	phase: "solve";
+	approach: string;
+	val_score: number | null;
+	notes: string;
+}
+
+interface MemoryStore {
+	tasks: Record<string, TaskMemory>;
+	sessions: SessionEntry[];
+	global_notes: string;
+}
+
+function defaultStore(): MemoryStore {
+	return { tasks: {}, sessions: [], global_notes: "" };
+}
+
+// --------------------------------------------------------------------------
+// Read / write helpers
+// --------------------------------------------------------------------------
+
+function readStore(): MemoryStore {
+	if (!existsSync(MEMORY_FILE)) return defaultStore();
+	try {
+		return JSON.parse(readFileSync(MEMORY_FILE, "utf8")) as MemoryStore;
+	} catch {
+		return defaultStore();
+	}
+}
+
+function writeStore(store: MemoryStore): void {
+	if (!existsSync(MEMORY_DIR)) mkdirSync(MEMORY_DIR, { recursive: true });
+	const tmp = `${MEMORY_FILE}.tmp`;
+	writeFileSync(tmp, JSON.stringify(store, null, 2), "utf8");
+	renameSync(tmp, MEMORY_FILE);
+}
+
+function deepMerge(target: Record<string, unknown>, patch: Record<string, unknown>): Record<string, unknown> {
+	const out: Record<string, unknown> = { ...target };
+	for (const [key, value] of Object.entries(patch)) {
+		if (
+			value !== null &&
+			typeof value === "object" &&
+			!Array.isArray(value) &&
+			typeof target[key] === "object" &&
+			target[key] !== null &&
+			!Array.isArray(target[key])
+		) {
+			out[key] = deepMerge(target[key] as Record<string, unknown>, value as Record<string, unknown>);
+		} else {
+			out[key] = value;
+		}
+	}
+	return out;
+}
+
+// --------------------------------------------------------------------------
+// Validation (tool correctness: reject malformed writes with a precise error instead of
+// silently storing them; seen 2026-10-02: a task entry written as a JSON *string*, then
+// as null, each acknowledged with "Memory updated." while the model kept retrying)
+// --------------------------------------------------------------------------
+
+/** Fields maintained by the orchestrator from the platform; agents must not overwrite them. */
+const ORCHESTRATOR_FIELDS = new Set(["tries_used", "tries_left", "best_score"]);
+const NUMBER_OR_NULL = new Set(["last_val_score"]);
+const STRING_FIELDS = new Set(["last_submission_csv", "best_approach", "approach"]);
+const STRING_ARRAY_FIELDS = new Set(["failed_approaches"]);
+const TOP_LEVEL = new Set(["tasks", "global_notes"]);
+
+const isPlainObject = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
+const kind = (v: unknown) => (v === null ? "null" : Array.isArray(v) ? "array" : typeof v);
+
+/** Return a list of problems with the patch; empty when it is acceptable. */
+function validatePatch(patch: Record<string, unknown>): string[] {
+	const errors: string[] = [];
+	for (const [key, value] of Object.entries(patch)) {
+		if (key === "sessions") { errors.push(`"sessions" cannot be written with memory_write; use memory_append_session.`); continue; }
+		if (!TOP_LEVEL.has(key)) { errors.push(`unknown top-level key "${key}" (allowed: tasks, global_notes).`); continue; }
+		if (key === "global_notes" && typeof value !== "string") errors.push(`"global_notes" must be a string, got ${kind(value)}.`);
+		if (key !== "tasks") continue;
+		if (!isPlainObject(value)) { errors.push(`"tasks" must be an object keyed by task id, got ${kind(value)}.`); continue; }
+		for (const [taskId, entry] of Object.entries(value)) {
+			const where = `tasks.${taskId}`;
+			if (!isPlainObject(entry)) {
+				const hint = typeof entry === "string" && entry.trim().startsWith("{") ? " (it looks like JSON text; pass the object itself, not a string)" : "";
+				errors.push(`"${where}" must be an object of fields, got ${kind(entry)}${hint}.`);
+				continue;
+			}
+			for (const [field, v] of Object.entries(entry)) {
+				const f = `${where}.${field}`;
+				if (ORCHESTRATOR_FIELDS.has(field)) errors.push(`"${f}" is maintained by the orchestrator and cannot be written.`);
+				else if (NUMBER_OR_NULL.has(field) && v !== null && typeof v !== "number") errors.push(`"${f}" must be a number or null, got ${kind(v)}.`);
+				else if (STRING_FIELDS.has(field) && v !== null && typeof v !== "string") errors.push(`"${f}" must be a string, got ${kind(v)}.`);
+				else if (STRING_ARRAY_FIELDS.has(field) && !(Array.isArray(v) && v.every((x) => typeof x === "string"))) errors.push(`"${f}" must be an array of strings, got ${kind(v)}.`);
+				else if (field === "checkpoint" && v !== null && typeof v !== "string" && !isPlainObject(v)) errors.push(`"${f}" must be text, got ${kind(v)}.`);
+			}
+		}
+	}
+	return errors;
+}
+
+/** Dotted paths of leaf values that differ between two stores. */
+function changedPaths(before: unknown, after: unknown, prefix = ""): string[] {
+	if (isPlainObject(before) && isPlainObject(after)) {
+		const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+		return [...keys].flatMap((k) => changedPaths(before[k], after[k], prefix ? `${prefix}.${k}` : k));
+	}
+	return JSON.stringify(before) === JSON.stringify(after) ? [] : [prefix];
+}
+
+// --------------------------------------------------------------------------
+// Extension
+// --------------------------------------------------------------------------
+
+export default function memoryExtension(pi: ExtensionAPI) {
+	pi.registerTool(
+		defineTool({
+			name: "memory_read",
+			label: "Memory: read",
+			description: "Read the full persistent memory store for this project. Returns task histories, session logs, and global notes.",
+			promptSnippet: "Read the agent memory store",
+			promptGuidelines: [
+				"Call memory_read at the start of every session to review past scores, failed approaches, and global notes before starting work.",
+			],
+			parameters: Type.Object({}),
+			async execute(_toolCallId, _params, _signal) {
+				const store = readStore();
+				return {
+					content: [{ type: "text", text: JSON.stringify(store, null, 2) }],
+					details: store as unknown as Record<string, unknown>,
+				};
+			},
+		}),
+	);
+
+	pi.registerTool(
+		defineTool({
+			name: "memory_write",
+			label: "Memory: write",
+			description:
+				"Record results for one task in the persistent memory store (tasks.<task_id>.<field>). Only the fields you pass are changed. Set global_notes to replace the store-wide notes.",
+			promptSnippet: "Write to the agent memory store",
+			promptGuidelines: [
+				"memory_write takes flat fields for one task, e.g. { task_id: \"spam1\", last_val_score: 0.99, best_approach: \"...\" }.",
+				"tries_used, tries_left and best_score are maintained by the orchestrator; session entries go through memory_append_session.",
+			],
+			// Flat, fully typed parameters on purpose: providers with constrained tool calling (Gemini)
+			// cannot emit nested objects for untyped values and fall back to JSON text (2026-10-02).
+			parameters: Type.Object({
+				task_id: Type.Optional(Type.String({ description: "Task the fields belong to, e.g. spam1. Required unless only global_notes is written." })),
+				last_val_score: Type.Optional(Type.Number({ description: "Latest local validation score (the task's metric)" })),
+				last_submission_csv: Type.Optional(Type.String({ description: "Path of the prediction CSV" })),
+				best_approach: Type.Optional(Type.String({ description: "One-line description of the best approach so far" })),
+				failed_approaches: Type.Optional(Type.Array(Type.String(), { description: "Approaches that did not work, one line each (replaces the stored list)" })),
+				checkpoint: Type.Optional(Type.String({ description: "Free-text state for resuming after a restart or context compaction" })),
+				global_notes: Type.Optional(Type.String({ description: "Store-wide notes (replaces the stored text)" })),
+			}),
+			async execute(_toolCallId, params, _signal) {
+				const { task_id, global_notes, ...fields } = params as Record<string, unknown> & { task_id?: string; global_notes?: string };
+				const taskFields = Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined));
+				if (Object.keys(taskFields).length && !task_id) throw new Error("memory not changed:\n- task_id is required when writing task fields.");
+				if (!Object.keys(taskFields).length && global_notes === undefined) throw new Error("memory not changed:\n- nothing to write: pass task_id with at least one field, or global_notes.");
+				const patch: Record<string, unknown> = {};
+				if (Object.keys(taskFields).length) patch.tasks = { [task_id as string]: taskFields };
+				if (global_notes !== undefined) patch.global_notes = global_notes;
+				// Thrown errors become failed tool calls in pi, so the model sees the call did not succeed.
+				const errors = validatePatch(patch);
+				if (errors.length) throw new Error(`memory not changed:\n- ${errors.join("\n- ")}`);
+				const store = readStore();
+				const merged = deepMerge(store as unknown as Record<string, unknown>, patch);
+				const changed = changedPaths(store, merged);
+				if (!changed.length) {
+					return { content: [{ type: "text", text: "No change: memory already contains these values." }], details: {} };
+				}
+				writeStore(merged as unknown as MemoryStore);
+				return {
+					content: [{ type: "text", text: `Memory updated: ${changed.join(", ")}.` }],
+					details: { changed },
+				};
+			},
+		}),
+	);
+
+	pi.registerTool(
+		defineTool({
+			name: "memory_append_session",
+			label: "Memory: append session",
+			description: "Append a session log entry to the sessions history array.",
+			promptSnippet: "Append a session entry to memory",
+			promptGuidelines: [
+				"Call memory_append_session at the end of a solve session to log what was done.",
+			],
+			parameters: Type.Object({
+				task_id: Type.String({ description: "Task identifier, e.g. spam1" }),
+				phase: Type.Literal("solve", { description: "Session phase" }),
+				approach: Type.Optional(Type.String({ description: "Brief description of the approach used" })),
+				val_score: Type.Optional(Type.Number({ description: "Local validation score (the task's metric)" })),
+				notes: Type.Optional(Type.String({ description: "Any additional notes or observations" })),
+			}),
+			async execute(_toolCallId, params, _signal) {
+				const store = readStore();
+				const entry: SessionEntry = {
+					timestamp: new Date().toISOString(),
+					task_id: params.task_id,
+					phase: params.phase,
+					approach: params.approach ?? "",
+					val_score: params.val_score ?? null,
+					notes: params.notes ?? "",
+				};
+				// Ignore an entry identical (apart from timestamp) to the previous one — looping models
+				// otherwise flood the history with duplicates.
+				const strip = (e: Record<string, unknown>) => JSON.stringify({ ...e, timestamp: undefined });
+				const last = store.sessions[store.sessions.length - 1] as Record<string, unknown> | undefined;
+				if (last && strip(last) === strip(entry as unknown as Record<string, unknown>)) {
+					return { content: [{ type: "text", text: `Session entry for task ${params.task_id} (${params.phase}) already recorded — nothing to add.` }], details: {} };
+				}
+				store.sessions.push(entry);
+				writeStore(store);
+				return {
+					content: [{ type: "text", text: `Session entry appended for task ${params.task_id} (${params.phase}).` }],
+					details: entry as unknown as Record<string, unknown>,
+				};
+			},
+		}),
+	);
+}
