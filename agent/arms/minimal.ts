@@ -139,10 +139,16 @@ export function checkMinimalSetup(options: { projectRoot?: string; env?: NodeJS.
 	return problems;
 }
 
+/** Always name the model: without one, pi picks its own default, which may not be the configured one. */
+export function withModel(args: readonly string[], defaultModel: string): string[] {
+	return args.includes("--model") ? [...args] : ["--model", defaultModel, ...args];
+}
+
 /** Run the arm's batch driver inside the boundary. Resolves with its exit code. */
-export function runMinimal(run: MinimalRun, args: readonly string[], options: { model?: string } = {}): Promise<number> {
+export function runMinimal(run: MinimalRun, args: readonly string[], options: { projectRoot?: string } = {}): Promise<number> {
 	const policy = minimalPolicy(run, { commit: repositoryState() });
-	const command = [realpathSync(process.execPath), "agent/run/solve_units.ts", ...(options.model ? ["--model", options.model] : []), ...args];
+	const config = JSON.parse(readFileSync(join(options.projectRoot ?? PROJECT_ROOT, "pipeline.config.json"), "utf8"));
+	const command = [realpathSync(process.execPath), "agent/run/solve_units.ts", ...withModel(args, config.defaultModel)];
 	return new Promise((accept, reject) => {
 		const child = spawn(policy.executable, policy.args(command), { stdio: "inherit" });
 		child.on("error", reject);

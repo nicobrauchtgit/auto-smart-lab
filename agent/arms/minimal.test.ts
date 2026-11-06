@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { armModelsJson, checkMinimalSetup, minimalPolicy, prepareMinimalRun } from "./minimal.js";
+import { armModelsJson, checkMinimalSetup, minimalPolicy, prepareMinimalRun, withModel } from "./minimal.js";
 import { harnessStatePaths, parseExperimentArgs } from "../experiment_cli.js";
 import { shellEnvironment } from "../../arms/minimal/agent/run/session_runner.js";
 
@@ -94,6 +94,11 @@ describe("minimal arm boundary", () => {
 });
 
 describe("experiment switch", () => {
+	test("the arm always gets a named model", () => {
+		expect(withModel(["--offline"], "mythllm/m")).toEqual(["--model", "mythllm/m", "--offline"]);
+		expect(withModel(["--model", "other/x", "--offline"], "mythllm/m")).toEqual(["--model", "other/x", "--offline"]);
+	});
+
 	test("requires an arm and leaves other arguments for it", () => {
 		expect(() => parseExperimentArgs(["spam1"])).toThrow("--arm");
 		expect(() => parseExperimentArgs(["--arm", "other"])).toThrow("--arm");
