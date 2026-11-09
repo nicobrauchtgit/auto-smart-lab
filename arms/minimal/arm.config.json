@@ -26,7 +26,11 @@
       ],
       "compat": {
         "supportsDeveloperRole": false,
-        "supportsReasoningEffort": false
+        "supportsReasoningEffort": false,
+        "thinkingFormat": "chat-template",
+        "chatTemplateKwargs": {
+          "reasoning_effort": "xhigh"
+        }
       }
     },
     "google-vertex": {

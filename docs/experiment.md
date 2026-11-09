@@ -140,4 +140,6 @@ The server accepts the effort levels without error, but with three requests no l
 changed the thinking length in the documented order, and `none` still thought. Either the
 deployed chat template ignores `reasoning_effort` or the effect is too small to see here.
 Only `enable_thinking: false` reliably turns thinking off. The `developer` role roughly
-doubled the thinking, so both arms use `compat` (`system` role, no effort parameter).
+doubled the thinking, so both arms use `compat` (`system` role, no effort parameter) and
+send `chat_template_kwargs: {"reasoning_effort": "xhigh"}`, the documented default and
+highest level, whatever the deployment makes of it. Checked on the captured requests.

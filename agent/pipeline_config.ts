@@ -18,7 +18,7 @@ export type PipelineProviderConfig =
 			contextWindow: number;
 			maxTokens: number;
 			/** pi's request settings for OpenAI-compatible servers, e.g. no developer role. */
-			compat?: { supportsDeveloperRole?: boolean; supportsReasoningEffort?: boolean };
+			compat?: { supportsDeveloperRole?: boolean; supportsReasoningEffort?: boolean; thinkingFormat?: "chat-template"; chatTemplateKwargs?: Record<string, string | boolean> };
 		}>;
 	};
 

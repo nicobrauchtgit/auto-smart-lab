@@ -111,7 +111,11 @@
           "maxTokens": 32768,
           "compat": {
             "supportsDeveloperRole": false,
-            "supportsReasoningEffort": false
+            "supportsReasoningEffort": false,
+            "thinkingFormat": "chat-template",
+            "chatTemplateKwargs": {
+              "reasoning_effort": "xhigh"
+            }
           }
         }
       ]
