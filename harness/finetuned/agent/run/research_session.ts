@@ -31,6 +31,7 @@ import { readPythonEnvironment } from "./python_environment.js";
 import { runSession } from "./session_runner.js";
 import { isolatedSolveTools, prepareResearchSandbox, solvePythonEnvironmentTool } from "./solve_sandbox.js";
 import { statePath } from "../paths.js";
+import { stageReportPath } from "../knowledge/lessons.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const AGENT_DIR = resolve(HERE, "..");
@@ -47,6 +48,8 @@ export interface ResearchResult {
 	attempts: number;
 	contextSha256: string;
 	datasetSha256: string;
+	/** The stage report the lesson step wrote; absent when the session never got there. */
+	reportPath?: string;
 }
 
 export interface RunResearchOptions {
@@ -179,6 +182,7 @@ export async function runResearchSession(taskId: string, model?: string, options
 	let sessionWarning: string | undefined;
 	// One action budget spans the initial and any repair attempt.
 	const budget = new ResearchBudget(prompts, HARNESS_CONFIG.research, (type, payload) => report?.event(type, payload));
+	const reportPath = stageReportPath(taskId, "research", report?.agentIdentity(1).stageInvocationId);
 	try {
 		while (attempts < HARNESS_CONFIG.research.maxAttempts) {
 			if (options.signal?.aborted) break;
@@ -221,6 +225,14 @@ export async function runResearchSession(taskId: string, model?: string, options
 				],
 				extensionPaths: [WEB_SEARCH_EXTENSION],
 				extensionFactories: [budget.extension()],
+				// One report per stage: after a valid brief, or after the last attempt.
+				lessons: { stage: "research", reportPath, onStart: () => budget.pause(),
+					when: () => validateResearchFile(documentPath, context).valid || attempts >= HARNESS_CONFIG.research.maxAttempts,
+					outcome: () => {
+						const check = validateResearchFile(documentPath, context);
+						return [check.valid ? "research.md passes validation." : `research.md fails validation: ${check.errors.join("; ")}`,
+							`Action budget used: ${budget.used} of ${budget.limits.maxToolCalls} tool calls.`].join("\n");
+					} },
 				...(options.signal ? { signal: options.signal } : {}),
 				...(report ? { observe: report.observation(attempts) } : {}),
 			});
@@ -319,5 +331,6 @@ export async function runResearchSession(taskId: string, model?: string, options
 		attempts,
 		contextSha256,
 		datasetSha256: context.dataset.snapshot_sha256,
+		reportPath,
 	};
 }

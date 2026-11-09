@@ -29,11 +29,14 @@ import { runSession } from "./session_runner.js";
 import { createIdleWaiter } from "./idle_wait.js";
 import { runConfirmation, type ConfirmationOutput } from "../confirmation/service.js";
 import { ARM_ROOT, statePath } from "../paths.js";
+import { stageReportPath } from "../knowledge/lessons.js";
 
 export type HarnessSolveStopReason = "agent_finished" | "agent_failed" | "cancelled" | "no_promotion";
 
 export interface HarnessSolveResult {
 	workspace: string;
+	/** The stage report the lesson step wrote, if the session got that far. */
+	reportPath?: string;
 	configuration: TaskConfiguration;
 	trainingRoot: string;
 	valid: boolean;
@@ -315,6 +318,7 @@ export async function runHarnessSolveSession(
 
 	let sessionError: string | undefined;
 	let stopReason: HarnessSolveStopReason = "agent_finished";
+	const reportPath = stageReportPath(taskId, "solve", identity?.stageInvocationId ?? runId);
 	const guardPrompts = GIT_BLOCK_PROMPT_IDS.map((id) => prompts.render(id, {}).reference);
 	report?.event("agent_attempt_start", {
 		attempt: 1, reason: "agent_driven_training", model: model ?? "pipeline-default",
@@ -341,6 +345,8 @@ export async function runHarnessSolveSession(
 				record: (type, payload) => report?.event(type, payload) }),
 			extensionPaths: [join(ARM_ROOT, "agent", "tools", "web_search.ts")],
 			extensionFactories: [createGitHistoryGuard(prompts, (eventType, payload) => report?.event(eventType, payload))],
+			lessons: { stage: "solve", reportPath,
+				outcome: () => "The harness validates your trials and selects the champion after this step. experiment_history lists the trials it recorded." },
 			...(options.signal ? { signal: options.signal } : {}),
 			...(report ? { observe: report.observation(1) } : {}),
 		});
@@ -392,6 +398,7 @@ export async function runHarnessSolveSession(
 
 	return {
 		workspace: workspace.root,
+		reportPath,
 		configuration: workspace.configuration,
 		trainingRoot,
 		valid: collection.valid,

@@ -319,3 +319,15 @@ test("a new run reads task-global unresolved reservations before any model or st
  expect(ready).toBe(false); expect(c.state.works).toHaveLength(0); expect(c.state.status).toBe("blocked"); expect(c.status().budgets).toMatchObject({ triesUsed: 0, reservedUnknown: 1, effectiveTriesUsed: 1, submissionsRemaining: 2 }); expect(modelChecks).toBe(0); expect(effects).toBe(0);
  unresolved = false; await c.recover(); expect(c.state.status).toBe("running"); expect(c.state.reservedUnknown).toBe(0); c.close();
 });
+
+test("stage reports stay visible in status and are paged like the research document", async () => {
+ const f = fixture(); let owned!: ReturnType<typeof controllable>;
+ const c = new Coordinator(f.store, { start: work => { owned = controllable(work); return owned.handle; } });
+ c.start(request(c, "research", "report")); const work = c.state.works[0], path = join(f.directory, "report.md");
+ const text = "- **Status**: done\n" + "x".repeat(f.state.limits.maxDetailBytes + 10); writeFileSync(path, text);
+ const artifacts = ["stage_report", ...Array.from({ length: 30 }, (_, i) => `training_detail_${i}`)].map(kind => ({ kind, path, sha256: hash(text), provenance: { artifactId: `${work.id}:${kind}`, taskId: "fixture", pipelineRunId: f.state.runId, invocationId: work.id, sha256: hash(text) } }));
+ owned.resolve(fakeResult(work, { artifacts })); await c.settle();
+ const report = c.status().artifacts.find(a => a.kind === "stage_report")!; expect(report).toBeDefined();
+ const page = c.inspect(report.id) as any; expect(page.content.startsWith("- **Status**: done")).toBe(true); expect(page.nextOffset).toBe(f.state.limits.maxDetailBytes);
+ expect((c.inspect(report.id, page.nextOffset) as any).nextOffset).toBeNull(); c.close();
+});

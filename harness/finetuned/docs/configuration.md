@@ -37,6 +37,7 @@ Secrets never go in these files: API keys live in the ignored `.env`
 | `stallMs` | 600000 (10 min) | A model request with no streamed output for this long counts as stalled. It is cancelled and resumed in the same conversation. Slow but progressing requests are never stopped. |
 | `stallRetries` | 2 | Stalled requests resumed per session before the session ends with an error. |
 | `maxWallMs` | 28800000 (8 h) | Safety limit only. Budgets and stall detection bound normal sessions. |
+| `lessonMaxMs` | 1800000 (30 min) | Time limit for the lesson step after a stage's work (stage report and knowledge capture). It runs after `maxWallMs` stops counting; running out ends only the lesson step, never the stage. |
 
 ### `context`
 | Key | Default | Meaning |

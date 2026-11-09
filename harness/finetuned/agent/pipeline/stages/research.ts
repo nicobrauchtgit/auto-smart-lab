@@ -10,6 +10,7 @@ import { HARNESS_CONFIG } from "../../harness/config.js";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 
+import { stageReport } from "../../knowledge/lessons.js";
 import { runResearchSession } from "../../run/research_session.js";
 import { resolveTask } from "../resolve_task.js";
 import { stageConfiguration } from "../task_configuration.js";
@@ -73,6 +74,8 @@ export const researchStage: StageDefinition<ResearchOptions> = {
 			artifact("research_document", result.documentPath),
 			artifact("research_context", result.contextPath),
 		].filter((entry): entry is StageArtifact => entry !== undefined);
+		const report = stageReport(result.reportPath);
+		if (report) artifacts.push(report.artifact);
 		return {
 			artifacts,
 			validation: { valid: result.valid, errors: result.errors, ...(result.partial ? { partial: true } : {}) },
@@ -83,6 +86,7 @@ export const researchStage: StageDefinition<ResearchOptions> = {
 				budget: result.budget,
 				context_sha256: result.contextSha256,
 				dataset_sha256: result.datasetSha256,
+				...(report ? { stage_report: report.excerpt } : {}),
 			},
 		};
 	},

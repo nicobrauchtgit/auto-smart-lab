@@ -79,7 +79,6 @@ export function preparePythonEnvironment(prompts: PromptSnapshot, environment: P
 		environmentHash: environment.fingerprint,
 		projectPath,
 		lockPath,
-		notesPath: join(STATE, "NOTES.md"),
 		pythonCommand: shellQuote(environment.executable),
 		managerCommand: shellQuote(MANAGER),
 	});

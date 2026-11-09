@@ -91,11 +91,9 @@ export function prepareSolveSandbox(workspace: SolveWorkspace, python: PythonEnv
   { source: join(REPO_ROOT, "node_modules") }, { source: realpathSync(join(REPO_ROOT, "node_modules")) },
   { source: dirname(realpathSync(process.execPath)) },
   ...binaries.map(path => ({ source: dirname(path) })),
-  ...["pyproject.toml", "uv.lock", "agent/runtime/python/NOTES.md", "agent/setup/python_environment.py",
+  ...["pyproject.toml", "uv.lock", "agent/setup/python_environment.py",
    "agent/libs/smartlab-eval"].map(path => ({ source: join(ROOT, path) })).filter(mount => existsSync(mount.source)),
  ];
- const notes = join(ROOT, "agent/runtime/python/NOTES.md");
- if (existsSync(notes)) mounts.push({ source: notes, writable: true });
  const env: Record<string, string> = { PATH: [join(python.prefix, "bin"), ...binaries.map(dirname), ...SYSTEM_PATH].join(delimiter),
   VENV_DIR: python.prefix, VIRTUAL_ENV: python.prefix, UV_PROJECT_ENVIRONMENT: python.prefix,
   UV_PYTHON: python.executable, UV_PYTHON_DOWNLOADS: "never", PYTHONNOUSERSITE: "1", SOLVE_WORKSPACE: agentRoot };
@@ -108,7 +106,6 @@ export function prepareSolveSandbox(workspace: SolveWorkspace, python: PythonEnv
 export function prepareResearchSandbox(workspace: string, taskDir: string, python: PythonEnvironment): SolveSandbox {
  const binaries = ["bash", "git", "rg", "fd", "uv"].map(executable);
  const runtimePython = dirname(dirname(realpathSync(python.executable)));
- const notes = join(ROOT, "agent/runtime/python/NOTES.md");
  const mounts: SandboxMount[] = [
   { source: workspace, writable: true }, { source: taskDir },
   { source: python.prefix }, { source: dirname(runtimePython) }, { source: WORKER },
@@ -118,7 +115,6 @@ export function prepareResearchSandbox(workspace: string, taskDir: string, pytho
   ...["pyproject.toml", "uv.lock", "agent/setup/python_environment.py", "agent/libs/smartlab-eval"]
    .map(path => ({ source: join(ROOT, path) })).filter(mount => existsSync(mount.source)),
  ];
- if (existsSync(notes)) mounts.push({ source: notes, writable: true });
  const env: Record<string, string> = { PATH: [join(python.prefix, "bin"), ...binaries.map(dirname), ...SYSTEM_PATH].join(delimiter),
   VENV_DIR: python.prefix, VIRTUAL_ENV: python.prefix, UV_PROJECT_ENVIRONMENT: python.prefix,
   UV_PYTHON: python.executable, UV_PYTHON_DOWNLOADS: "never", PYTHONNOUSERSITE: "1" };

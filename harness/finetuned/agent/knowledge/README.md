@@ -17,6 +17,32 @@ identity. Callers that opt into children must pass the parent knowledge options;
 registered stages currently do not automatically spawn diagnostic agents. Omit
 knowledge for older/non-knowledge session callers; no skill or tool is added.
 
+## Lesson step
+
+After its work, every research, solve and reviewer session runs a lesson step in
+the same conversation (`agent/knowledge/lessons.ts`, prompts in
+`agent/prompts/lessons/`). Failed stages run it too; cancelled ones do not.
+
+1. The agent writes a short stage report: status, what it tried, the records
+   behind it, blockers and what should happen next. The harness saves it under
+   `runs/finetuned/<task>/reports/` and returns it as a `stage_report` artifact,
+   with an excerpt in the stage summary, so the orchestrator sees it. The
+   reviewer's report is its hand-off to the orchestrator.
+2. The agent then captures lessons with the knowledge tools. Its opening message
+   carries the report and the first page of `experiment_history`. Only
+   knowledge and experiment tools run in this step. The status follows the
+   evidence: `empirical` needs a harness experiment reference, `observation`
+   covers what the agent saw itself (including an error and the fix that removed
+   it), `hypothesis` an untested explanation. There is no limit on notes.
+
+Research runs the step once per stage: after a valid brief or after its last
+attempt. After a stalled model, or if the report request fails, the harness
+writes a short report itself. The reviewer is told to keep holdout confirmation
+results out of notes, since research and solve read the store; this is an
+instruction, not a filter. The orchestrator has no lesson step: it passes context
+to the stages itself. The store replaces the old shared Python `NOTES.md`;
+package advice is captured as a lesson.
+
 ## Agent-facing API
 
 - `experiment_history({offset?, limit?})`: bounded, paginated summaries of earlier
@@ -96,8 +122,8 @@ in force. Knowledge cannot supply pseudo-targets, scores or labels to training.
 
 ## Storage, setup and observability
 
-Runtime state lives in project `knowledge/` (gitignored), separate from
-`solutions/` and `runs/` final artifacts. `index.json` is machine-validated and
+Runtime state lives in `runs/finetuned/knowledge/` (cleared by `--reset`), separate from
+`solutions/` and the task runs. `index.json` is machine-validated and
 checksummed; each revision has an immutable readable `<id>-v<n>.md` mirror checked
 against the index. Direct manual edits fail validation; use the service. No legacy
 memory store is read or migrated. Store limits: 500 notes, 20 retained revisions
@@ -127,7 +153,7 @@ predictions, sensitive data and provider payloads. Typed fields and basic secret
 checks block common accidental dumps, but cannot prove that arbitrary prose is
 anonymized. Underlying accessible files and an agent that can rewrite all local
 harness artifacts are outside this boundary. There is no autonomous refresh
-scheduler, mandatory note write or extra model call. The existing low configured
+scheduler or mandatory note write; the lesson step adds two model turns per stage. The existing low configured
 context threshold can be exceeded by a session's prompt/tool definitions; a
 large diagnostic tool set may hand off after each tool batch. This adaptation
 does not change the harness context policy.

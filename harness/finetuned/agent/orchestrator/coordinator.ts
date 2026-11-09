@@ -276,9 +276,9 @@ export class Coordinator {
   if (!Number.isSafeInteger(offset) || offset < 0 || offset > (artifact.bytes ?? 0)) throw new Error("Invalid detail cursor");
   const bytes = readFileSync(artifact.snapshotPath); if (hash(bytes) !== artifact.sha256) throw new Error("Artifact snapshot corrupted");
   // Predictions, labels, models and raw dataset rows never enter controller context.
-  if (!/^(research_document|research_context|training_trial_result|training_selected_result|holdout_confirmation|evaluation_report|terminal_refit_result|submission_receipt)$/.test(artifact.kind)) throw new Error("Artifact kind is not available through bounded controller detail");
+  if (!/^(research_document|stage_report|research_context|training_trial_result|training_selected_result|holdout_confirmation|evaluation_report|terminal_refit_result|submission_receipt)$/.test(artifact.kind)) throw new Error("Artifact kind is not available through bounded controller detail");
   const content = bytes.toString("utf8");
-  if (artifact.kind !== "research_document") {
+  if (artifact.kind !== "research_document" && artifact.kind !== "stage_report") {
    const parsed = JSON.parse(content);
    const safe = artifact.kind === "research_context" ? { task: parsed.task, limits: parsed.limits, dataset: { snapshot_sha256: parsed.dataset?.snapshot_sha256, total_files: parsed.dataset?.total_files } } : parsed;
    return { id, provenance: artifact.provenance, section: "summary", ...boundedSummary(safe, s.limits.maxDetailBytes) };
@@ -339,7 +339,7 @@ function unresolvedSubmission(work: Work): boolean {
  const content = (work.summary?.measurements as any)?.content;
  return work.stage === "submit" && (work.status === "uncertain" || ["pending", "unknown"].includes(content?.state) || content?.reservedUnknown > 0);
 }
-function requiredArtifact(kind: string) { return ["research_document", "training_selected_result", "holdout_confirmation", "evaluation_report", "terminal_refit_result", "submission_receipt"].includes(kind); }
+function requiredArtifact(kind: string) { return ["research_document", "stage_report", "training_selected_result", "holdout_confirmation", "evaluation_report", "terminal_refit_result", "submission_receipt"].includes(kind); }
 function statExists(path: string) { try { statSync(path); return true; } catch { return false; } }
 export function boundedSummary(value: unknown, maxBytes: number): Record<string, unknown> {
  function bound(v: any, depth = 0): any { if (depth > 4) return { omitted: true }; if (typeof v === "string") return v.length > 512 ? `${v.slice(0, 512)}…` : v; if (Array.isArray(v)) return v.slice(0, 12).map(x => bound(x, depth + 1)); if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).slice(0, 24).filter(([k]) => !/prediction|label|target|row|curve|sealed.*score|model.pkl/i.test(k)).map(([k, x]) => [k, bound(x, depth + 1)])); return v; }

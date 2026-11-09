@@ -88,8 +88,6 @@ package that provides it (or add it to nix-ld's libraries on NixOS).
 
 - `changes.jsonl`: change requests, reasons, success or failure, and the
   invoking pipeline/stage/attempt identity when available.
-- `NOTES.md`: agent-editable usage advice for later agents. Usage notes only;
-  version claims belong in the lock.
 
 The shared session runner inspects the real environment at startup, supplies the
 declared requirements, and records typed environment input including file hashes

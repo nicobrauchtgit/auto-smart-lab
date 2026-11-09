@@ -50,6 +50,11 @@ export class ResearchBudget {
 
 	get exhausted(): boolean { return this.used >= this.limits.maxToolCalls; }
 
+	private paused = false;
+
+	/** The lesson step after the work is not research; its own guard limits it to knowledge tools. */
+	pause(): void { this.paused = true; }
+
 	/** A repair attempt after failed validation gets a fresh allowance to finish the brief. */
 	startRepair(): void {
 		if (this.exhausted) this.finalizeUsed = 0;
@@ -67,6 +72,7 @@ export class ResearchBudget {
 			const requested = typeof input.timeout === "number" && input.timeout > 0 ? input.timeout : Infinity;
 			input.timeout = Math.min(requested, this.limits.bashTimeoutSeconds);
 		}
+		if (this.paused) return undefined;
 		const phase = this.phase;
 		if (phase === "exhausted") {
 			this.record?.("research_budget_blocked", { tool: toolName, phase });
@@ -112,7 +118,7 @@ export class ResearchBudget {
 			name: "research-budget",
 			factory: (pi: any) => {
 				pi.on("tool_call", (event: { toolName: string; input: Record<string, unknown> }) => this.beforeToolCall(event.toolName, event.input ?? {}));
-				pi.on("tool_result", (event: { content: { type: string; text?: string }[] }) => ({
+				pi.on("tool_result", (event: { content: { type: string; text?: string }[] }) => this.paused ? undefined : ({
 					content: [...(event.content ?? []), { type: "text", text: this.statusLine() }],
 				}));
 			},

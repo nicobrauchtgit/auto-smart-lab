@@ -28,6 +28,7 @@ import { SmartContextSession } from "../context/session.js";
 import type { Wakeable } from "../experiments/index.js";
 import type { SuppliedInput } from "../pipeline/types.js";
 import { TaskKnowledge, createKnowledgeTools, selectedKnowledge, knowledgeInput, type KnowledgeOptions } from "../knowledge/service.js";
+import { LESSON_TOOLS, runLessonStep, type LessonStep } from "../knowledge/lessons.js";
 
 /** How long one agent session may run. The cost signal is measured against it. */
 /** Safety limit only; slow progressing sessions are bounded by stall detection and stage budgets. */
@@ -38,6 +39,8 @@ export interface RunSessionOptions {
 	sessionContext?: () => string;
 	/** Explicit task/dataset scope. No ambient/global skill loading. */
 	knowledge?: KnowledgeOptions;
+	/** Stage report and lesson capture after the work, in the same session. Needs `knowledge`. */
+	lessons?: LessonStep;
 	prompts: PromptSnapshot;
  feedback?: InvocationFeedback;
 	reportInput?: (input: SuppliedInput) => void;
@@ -116,6 +119,10 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 	knowledge?.store.preflight();
 	const customTools = [...(options.customTools ?? []), ...(knowledge ? createKnowledgeTools(knowledge, options.prompts) : [])];
 	if (knowledge) options.reportInput?.(knowledgeInput(knowledge.options));
+	// During the lesson step only knowledge and experiment tools run.
+	let lessonActive = false;
+	const lessonGuard = { name: "lesson-step", factory(pi: any) { pi.on("tool_call", (event: { toolName: string }) => lessonActive && !LESSON_TOOLS.has(event.toolName)
+		? { block: true, reason: options.prompts.render("lessons.tool-blocked", {}).text } : undefined); } };
 	const changeCursor = pythonChangeCursor();
 	const pythonSessionId = randomUUID();
 	const initialEnvironment = readPythonEnvironment();
@@ -153,7 +160,7 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 			cwd: sessionCwd,
 			agentDir,
 			additionalExtensionPaths: options.extensions === false ? [] : extensionPaths,
-			extensionFactories: [...(options.extensionFactories ?? []), ...(options.observe?.executionGuard ? [{ name: "controller-budget", factory(pi: any) { pi.on("tool_call", () => { try { options.observe!.executionGuard!.beforeToolCall(); } catch { return { block: true, reason: "Controller tool budget exhausted" }; } }); } }] : [])],
+			extensionFactories: [lessonGuard, ...(options.extensionFactories ?? []), ...(options.observe?.executionGuard ? [{ name: "controller-budget", factory(pi: any) { pi.on("tool_call", () => { try { options.observe!.executionGuard!.beforeToolCall(); } catch { return { block: true, reason: "Controller tool budget exhausted" }; } }); } }] : [])],
 			systemPrompt,
 		});
 
@@ -246,7 +253,8 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 				watch: stall, retries: stallRetries, stallMs, signal: options.signal,
 				record: (type, payload) => stallObservability?.(type, payload),
 			});
-			const response = (async () => {
+			// The work runs under the session's safety limit; the lesson step after it has its own.
+			const work = (async () => {
 				let output = await ask(options.prompts.render("context.task", { task: prompt }));
 				// A caller may keep an idle session open, e.g. while its experiments run.
 				for (let next = await options.continueWhenIdle?.(options.signal); next; next = await options.continueWhenIdle?.(options.signal)) {
@@ -255,17 +263,38 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 				return output;
 			})();
             await options.feedback?.bind(logical);
-			const output = await Promise.race([
-				response,
-				new Promise<never>((_, reject) => {
-					timeout = setTimeout(() => reject(new Error(`Session reached its safety limit of ${Math.round(maxWallMs / 60000)} minutes`)), maxWallMs);
-				}),
-				new Promise<never>((_, reject) => {
-					onAbort = () => reject(new Error("Session cancelled"));
-					options.signal?.addEventListener("abort", onAbort, { once: true });
-					if (options.signal?.aborted) onAbort();
-				}),
-			]);
+			const cancelled = new Promise<never>((_, reject) => {
+				onAbort = () => reject(new Error("Session cancelled"));
+				options.signal?.addEventListener("abort", onAbort, { once: true });
+				if (options.signal?.aborted) onAbort();
+			});
+			cancelled.catch(() => {});
+			const wallLimit = new Error(`Session reached its safety limit of ${Math.round(maxWallMs / 60000)} minutes`);
+			let output = "";
+			let failure: unknown;
+			try {
+				output = await Promise.race([work, cancelled,
+					new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(wallLimit), maxWallMs); })]);
+			} catch (error) {
+				// Cancelled or still running at the safety limit: no report.
+				if (options.signal?.aborted || error === wallLimit || !options.lessons) throw error;
+				failure = error;
+			} finally { if (timeout) clearTimeout(timeout); }
+			if (options.lessons) {
+				// A failed stage reports too; the original error still ends the session afterwards.
+				const lessonLimit = new AbortController();
+				const lessonMs = HARNESS_CONFIG.session.lessonMaxMs;
+				const lessonTimer = setTimeout(() => {
+					stallObservability?.("lesson_step_timeout", { limit_ms: lessonMs });
+					lessonLimit.abort(); void physical?.abort();
+				}, lessonMs);
+				try {
+					await Promise.race([cancelled, runLessonStep({ lessons: options.lessons, knowledge, failure, prompts: options.prompts, ask,
+						signal: options.signal ? AbortSignal.any([options.signal, lessonLimit.signal]) : lessonLimit.signal,
+						setActive: active => { lessonActive = active; }, record: (type, payload) => stallObservability?.(type, payload) })]);
+				} finally { clearTimeout(lessonTimer); }
+			}
+			if (failure) throw failure;
 			return { output, ...(logical.agentRunId ? { agentRunId: logical.agentRunId } : {}) };
 		} catch (error) {
 			logical.recordError(error);

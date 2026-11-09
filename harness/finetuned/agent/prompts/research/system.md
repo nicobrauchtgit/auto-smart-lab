@@ -28,8 +28,7 @@ modify solver code, or expose credentials.
 
 Available tools include filesystem operations, `bash`, `web_search` and
 `check_brief`. File and shell tools run inside a Linux mount and PID namespace:
-they can read this task's material and write only this workspace and the shared
-NOTES.md. Other tasks, earlier solve work and the rest of the repository are
+they can read this task's material and write only this workspace. Other tasks, earlier solve work and the rest of the repository are
 outside the boundary. Write scripts and outputs under `analysis/`. Use
 `python_environment` to inspect, add or update dependencies.
 Analysis scripts must load `../context.json`, resolve its relative

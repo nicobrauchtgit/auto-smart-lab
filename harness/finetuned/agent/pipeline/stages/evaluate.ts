@@ -11,6 +11,7 @@ import { runSession } from "../../run/session_runner.js";
 import type { StageDefinition } from "../types.js";
 import { stageConfiguration } from "../task_configuration.js";
 import { statePath } from "../../paths.js";
+import { stageReport, stageReportPath } from "../../knowledge/lessons.js";
 
 export type EvaluateOptions = Record<string, never>;
 // Dependencies are injectable for offline contract tests; production has one path.
@@ -70,6 +71,7 @@ export function createEvaluateStage(deps = { prepareEvidence, runSession }): Sta
    const reviewer = reviewerTools(evidence, prompts, code.read, sourceAvailable);
    context.report.event("agent_attempt_start", { attempt: 1 });
    let sessionError: string | undefined;
+   const reportFile = stageReportPath(context.input.taskId, "evaluate", context.report.agentIdentity(1).stageInvocationId);
    try {
     const seedPath = join(evidence.directory, "seed-plan.json");
     const seed = existsSync(seedPath) ? JSON.parse(readFileSync(seedPath, "utf8")) : undefined;
@@ -80,6 +82,10 @@ export function createEvaluateStage(deps = { prepareEvidence, runSession }): Sta
      promptReferences: [system.reference, guide.reference, start.reference, ...(guidance ? [guidance.reference] : []),
       prompts.render("review.detail-tool", {}).reference, prompts.render("review.report-tool", {}).reference, prompts.render("review.code-tool", {}).reference],
      model: context.input.model, tools: [], extensions: false, customTools: reviewer.tools,
+     // The report is the hand-off to the orchestrator. Notes are read by solve and research, so no sealed numbers there.
+     lessons: { stage: "evaluate", reportPath: reportFile,
+      outcome: () => reviewer.result() ? "Your structured review is recorded." : "No structured review was recorded.",
+      restrictions: prompts.render("lessons.sealed", {}).text },
      observe: context.report.observation(1), reportInput: input => context.report.input(input),
      signal: context.signal });
    } catch {
@@ -96,13 +102,15 @@ export function createEvaluateStage(deps = { prepareEvidence, runSession }): Sta
     review: review ? validateReview(review) : null };
    writeFileSync(reportPath, JSON.stringify(report, null, 2) + "\n");
    context.report.event("artifact_validation", report.validation);
-   return { artifacts: [evidenceArtifact, artifact("evaluation_report", reportPath), ...curveArtifacts, ...code.artifacts()], attempts: 1,
+   const handoff = stageReport(reportFile);
+   return { artifacts: [evidenceArtifact, artifact("evaluation_report", reportPath), ...curveArtifacts, ...code.artifacts(), ...(handoff ? [handoff.artifact] : [])], attempts: 1,
     validation: report.validation, summary: { experiment_id: evidence.experimentId,
      review_status: review?.status, readiness_score: review?.readinessScore, holdout_confirmation: evidence.diagnostics.holdoutConfirmation, task_kind: stageConfiguration(context.input).kind,
      official_metric: { name: stageConfiguration(context.input).metric },
      selection_metric: selectionSummary({ metrics: { selectionScore: evidence.diagnostics.summary.selectionScore }, selection: { ...evidence.diagnostics.summary.selection,
       source: evidence.diagnostics.summary.source, evidenceSha256: evidence.diagnostics.summary.evidenceSha256, folds: evidence.diagnostics.folds.map((fold: any) => fold.selection) } }),
-     development_metric: evidence.diagnostics.summary.selectionScore ?? evidence.diagnostics.summary.balancedAccuracy ?? evidence.diagnostics.summary.adjustedRandIndex, advisory_only: true } };
+     development_metric: evidence.diagnostics.summary.selectionScore ?? evidence.diagnostics.summary.balancedAccuracy ?? evidence.diagnostics.summary.adjustedRandIndex, advisory_only: true,
+     ...(handoff ? { stage_report: handoff.excerpt } : {}) } };
   },
  };
 }

@@ -10,7 +10,8 @@
   "session": {
     "maxWallMs": 28800000,
     "stallMs": 600000,
-    "stallRetries": 2
+    "stallRetries": 2,
+    "lessonMaxMs": 1800000
   },
   "context": {
     "handoffTokens": 100000,

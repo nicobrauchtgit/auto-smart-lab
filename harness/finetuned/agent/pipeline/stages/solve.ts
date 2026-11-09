@@ -20,6 +20,7 @@ import type { StageArtifact, StageDefinition } from "../types.js";
 import { recordedRepository } from "../../training/development_selection.js";
 import { git } from "../../training/git.js";
 import type { TrainingTrialResult } from "../../training/results.js";
+import { stageReport } from "../../knowledge/lessons.js";
 
 /**
  * The selected trial's entrypoint, hashed for provenance. The path is the
@@ -148,6 +149,8 @@ export const solveStage: StageDefinition<SolveOptions> = {
 		const entrypoint = entrypointArtifact(result.collection.selected);
 		if (result.confirmation) artifacts.push(result.confirmation.artifact);
 		if (entrypoint && "kind" in entrypoint) artifacts.push(entrypoint);
+		const report = stageReport(result.reportPath);
+		if (report) artifacts.push(report.artifact);
 
 		return {
 			artifacts,
@@ -167,6 +170,7 @@ export const solveStage: StageDefinition<SolveOptions> = {
 				session_error: result.sessionError,
 				...(entrypoint && "mismatch" in entrypoint ? { entrypoint_mismatch: entrypoint.mismatch } : {}),
 				trial_validation_errors: result.collection.errors,
+				...(report ? { stage_report: report.excerpt } : {}),
 			},
 		};
 	},

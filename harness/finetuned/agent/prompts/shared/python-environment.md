@@ -11,7 +11,6 @@ Declared dependencies from pyproject.toml:
 Environment fingerprint: {{environmentHash}}
 Declared in: {{projectPath}}
 Locked in: {{lockPath}} ({{totalDistributions}} distributions installed)
-Shared usage notes: {{notesPath}}
 
 `pyproject.toml` lists what this pipeline depends on directly. `uv.lock` records
 the full resolved set with versions and hashes. The manager checks both files
@@ -25,8 +24,8 @@ Rely on the declared dependencies. Everything else in the lock arrived as a
 transitive dependency of one of them; check before assuming an incidental
 dependency is available, and do not build on one deliberately.
 
-The lockfile and usage notes are runtime resources, separate from repository
-development AGENTS.md. Read them when you need package details.
+The lockfile is a runtime resource, separate from repository development
+AGENTS.md. Read it when you need package details.
 
 You may add a needed Python library to this same environment:
 
@@ -58,9 +57,9 @@ from the lock, causes the next readiness check to fail, and is removed when the
 environment is synced. Do not modify the manager's implementation or install
 into system Python.
 
-Add useful package-specific guidance to NOTES.md. Do not copy package inventories
-or installed versions into Markdown; the declaration and lock files own those
-facts. Change reasons belong in the manager's audit records. Keep reusable code
+Record package-specific advice, such as an API quirk or a parameter that
+matters, as a lesson with `knowledge_capture`. Do not record package inventories
+or installed versions; the declaration and lock files own those facts. Change reasons belong in the manager's audit records. Keep reusable code
 with the task artifacts and declare any libraries it directly depends on.
 Installed locally does not mean installed on a submission server: check the task
 requirements before producing code intended to execute elsewhere. Local research
