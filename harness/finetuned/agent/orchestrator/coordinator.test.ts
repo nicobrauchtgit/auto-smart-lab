@@ -344,23 +344,56 @@ test("offline runs hand over one result: a second successful refit is refused", 
  c.close();
 });
 
-test("status shows remaining time with a note at half and a fifth, and the follow-up branches", () => {
+test("status shows the time used and left, without notes, and the follow-up branches", () => {
  const f = fixture(true);
- const notes: number[] = [];
- const c = new Coordinator(f.store, { start: () => { throw new Error("unused"); }, budgetNote: percent => { notes.push(percent); return percent <= 50 ? "half" : undefined; }, branches: () => ({ champion: null, branches: [] }) });
+ const c = new Coordinator(f.store, { start: () => { throw new Error("unused"); }, branches: () => ({ champion: null, branches: [] }) });
  const status = c.status() as any;
- expect(status.time.remainingPercent).toBeGreaterThan(95); expect(status.time.note).toBeUndefined();
+ expect(status.time.remainingPercent).toBeGreaterThan(95); expect(status.time).not.toHaveProperty("note");
  expect(status.handOver.submissionsAuthorized).toBe(true); expect(status.branches).toEqual({ champion: null, branches: [] });
  expect(status.trials.limit).toBe(f.state.limits.maxTrials);
  f.store.transaction("simulate-elapsed", {}, s => { s.startedAt -= Math.round(s.limits.maxWallMs * 0.6); s.deadline -= Math.round(s.limits.maxWallMs * 0.6); });
- expect((c.status() as any).time.note).toBe("half");
+ expect((c.status() as any).time).toMatchObject({ remainingPercent: 40 }); expect((c.status() as any).time).not.toHaveProperty("note");
  c.close();
 });
 
-test("the controller's prompts carry the budget notes", () => {
+test("the controller's prompts describe the hand-over and no time notices", () => {
  const prompts = loadPromptSnapshot();
- expect(prompts.render("orchestrator.budget-low", {}).text).toContain("refit the best validated champion");
+ expect(() => prompts.render("orchestrator.budget-low" as any, {})).toThrow();
  expect(prompts.render("orchestrator.system", {}).text).toContain("exactly one result");
+ for (const id of ["orchestrator.system", "orchestrator.tool"] as const) expect(prompts.render(id, {}).text).not.toMatch(/50%|20%|at half|a fifth/);
+});
+
+/** A decision agent that charges one model request per tool call, as the real session does. */
+async function waitingAgent(stageMs: number, stages = 2) {
+ const f = fixture(false); let waits = 0;
+ const c = new Coordinator(f.store, { start: work => {
+  const owned = controllable(work); setTimeout(() => owned.resolve(fakeResult(work)), stageMs); return owned.handle; } });
+ const call = async (fn: () => unknown) => { c.executionGuard.beforeModelRequest(); c.executionGuard.beforeToolCall(); return fn(); };
+ for (let i = 0; i < stages; i++) {
+  const cursor = ((await call(() => c.status())) as any).cursor;
+  await call(() => c.start(request(c, "research", `research-${i}`)));
+  // One pipeline_wait per stage: it returns only with the stage's result.
+  const after = await call(() => c.wait(cursor)) as any; waits++;
+  expect(after.notifications.map((n: any) => n.kind)).toContain("stage_terminal");
+ }
+ await c.settle(); const result = { modelRequests: c.state.counters.modelRequests, waits, timeNotices: c.state.journal.filter(e => /time/.test(e.kind)).length }; c.close(); return result;
+}
+
+test("pipeline_wait makes no model requests while a stage runs: the count is the same for short and long stages", async () => {
+ // Stand-ins for N = 1 s and N = 30 s keep the 1:30 ratio (20 ms and 600 ms).
+ const short = await waitingAgent(20), long = await waitingAgent(600);
+ expect(long).toEqual(short); expect(short).toEqual({ modelRequests: 6, waits: 2, timeNotices: 0 });
+ console.log(`[measure] model requests for 2 stages: short=${short.modelRequests} long=${long.modelRequests}; wait returns short=${short.waits} long=${long.waits}`);
+});
+
+test("pipeline_wait returns at the deadline when no stage reports", async () => {
+ const f = fixture(false); const c = new Coordinator(f.store, { start: work => controllable(work).handle });
+ c.start(request(c, "research", "hangs"));
+ f.store.transaction("simulate-elapsed", {}, s => { s.startedAt = Date.now() + 150 - s.limits.maxWallMs; s.deadline = s.startedAt + s.limits.maxWallMs; });
+ const started = Date.now(); const status = await c.wait(c.state.cursor) as any;
+ expect(Date.now() - started).toBeGreaterThanOrEqual(100); expect(Date.now() - started).toBeLessThan(2000);
+ expect(status.works.at(-1).status).toBe("active"); expect(status.time.remainingMinutes).toBe(0);
+ await c.stop("fixture"); c.close();
 });
 
 test("research and solve never receive the confirmation or anything the reviewer produced", async () => {

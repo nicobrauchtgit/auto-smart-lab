@@ -34,7 +34,7 @@ Follow-ups are optional. Each solve reserves its full trial allocation (perSolve
 
 ## Budget
 
-pipeline_status shows the time used and left; at half and at a fifth remaining, pipeline_wait also wakes you with a note. The time is information for planning, not a reserve to spend. At the deadline all running work is cancelled and lost, so start the hand-over refit while there is time for it to finish.
+pipeline_status shows the time used and left. The time is information for planning, not a reserve to spend. At the deadline all running work is cancelled; if a champion exists that was not refit, the harness then refits it as the hand-over. Hand over yourself when you are done improving rather than waiting for the deadline.
 
 ## Sealed confirmation
 

@@ -20,8 +20,6 @@ export interface CoordinatorDependencies {
  inspectTaskData?(configuration: TaskConfiguration): unknown;
  /** The task's pipeline.config.json entry, offered while nothing is declared; never applied implicitly. */
  suggestedConfiguration?: TaskConfiguration;
- /** A note on the remaining time at 50% and 20%; information, not a reserve. */
- budgetNote?(remainingPercent: number): string | undefined;
  /** Follow-up branches in solutions/ for this task, bounded. */
  branches?(): unknown;
 }
@@ -74,7 +72,7 @@ export class Coordinator {
    goal: s.goal, availableModules: s.config.enabledStages.filter(name => name !== "submit" || s.policy.authorized), policy: s.policy,
    taskConfiguration: s.taskConfiguration ? { declared: true, sha256: s.taskConfiguration.sha256, configuration: s.taskConfiguration.configuration }
     : { declared: false, required: "Declare it with task_configure before starting a stage", ...(this.deps.suggestedConfiguration ? { suggested: this.deps.suggestedConfiguration } : {}) },
-   time: timeBudget(s, this.deps.budgetNote),
+   time: timeBudget(s),
    handOver: { mode: s.config.online ? "online" : "offline", submissionsAuthorized: s.policy.authorized,
     ...(s.policy.authorized ? { submissions: "up to the cap below, each with official score feedback" } : { refits: s.works.filter(w => w.stage === "refit" && w.result?.outcome === "success").length, allowed: 1 }) },
    trials: { used: s.counters.trials, limit: s.limits.maxTrials, perSolve: (s.config.effectiveOptions.solve as { maxIterations?: number } | undefined)?.maxIterations },
@@ -307,46 +305,25 @@ export class Coordinator {
   return { id, provenance: artifact.provenance, content: page.toString("utf8"), nextOffset: offset + page.length < bytes.length ? offset + page.length : null, truncated: page.length < bytes.length };
  }
  /**
-  * Block until there is input for the controller: a stage result, the time budget
-  * crossing 50% or 20% remaining, or the deadline. No periodic wake-ups: a waiting
-  * controller makes no model requests. `timeoutMs` is a test seam, not a tool argument.
+  * Block until there is input for the controller: a stage result (any terminal
+  * notification) or the run's deadline. No periodic or percentage wake-ups: a
+  * waiting controller makes no model requests. `timeoutMs` is a test seam, not a tool argument.
   */
  async wait(cursor: number, signal?: AbortSignal, timeoutMs?: number) {
   this.status(cursor); const s = this.state;
   if (timeoutMs !== undefined && (!Number.isInteger(timeoutMs) || timeoutMs < 0)) throw new Error("Invalid wait timeout");
   if (cursor > s.acknowledgedCursor) this.commit("notifications_acknowledged", { cursor }, next => { next.acknowledgedCursor = cursor; next.inbox = next.inbox.filter(n => n.cursor > cursor); });
   const limit = timeoutMs === undefined ? s.deadline : Math.min(Date.now() + timeoutMs, s.deadline);
-  for (;;) {
-   this.timeNotices();
-   const end = Math.min(limit, this.nextTimeNotice() ?? limit);
-   if (!(this.state.cursor <= cursor && this.state.works.some(w => !terminal(w)) && Date.now() < limit)) break;
+  while (this.state.cursor <= cursor && this.state.works.some(w => !terminal(w)) && Date.now() < limit) {
    signal?.throwIfAborted();
    await new Promise<void>((resolve, reject) => {
     const done = () => { clearTimeout(timer); this.waiters.delete(done); signal?.removeEventListener("abort", abort); resolve(); };
     const abort = () => { done(); reject(new Error("Wait cancelled")); };
-    const timer = setTimeout(done, Math.max(0, end - Date.now())); this.waiters.add(done); signal?.addEventListener("abort", abort, { once: true });
+    const timer = setTimeout(done, Math.max(0, limit - Date.now())); this.waiters.add(done); signal?.addEventListener("abort", abort, { once: true });
    });
   }
-  this.timeNotices();
   if (this.failure) throw new Error("Coordinator durability failed during stage work");
   return this.status(cursor);
- }
- /** Remaining-time thresholds that wake a waiting controller, once each. */
- private static readonly TIME_NOTICES = [50, 20];
- private timeNoticeAt(percent: number) { const s = this.state; return s.startedAt + Math.round(s.limits.maxWallMs * (100 - percent) / 100); }
- private sentTimeNotices() { return new Set(this.state.journal.filter(e => e.kind === "time_budget_notice").map(e => e.payload.remainingPercent as number)); }
- private nextTimeNotice(): number | undefined {
-  const sent = this.sentTimeNotices();
-  return Coordinator.TIME_NOTICES.filter(p => !sent.has(p)).map(p => this.timeNoticeAt(p)).sort((a, b) => a - b)[0];
- }
- private timeNotices() {
-  if (this.state.status !== "running") return;
-  const sent = this.sentTimeNotices();
-  for (const percent of Coordinator.TIME_NOTICES) {
-   if (sent.has(percent) || Date.now() < this.timeNoticeAt(percent)) continue;
-   const note = this.deps.budgetNote?.(percent);
-   this.commit("time_budget_notice", { remainingPercent: percent }, s => { this.notice(s, "time_budget", { remainingPercent: percent, ...(note ? { note } : {}) }); });
-  }
  }
  finish(request: Mutation & { outcome: "finished" | "blocked" }) {
   const prior = this.inspectMutation(request, "pipeline_finish"); if (prior) return prior.receipt;
@@ -385,11 +362,9 @@ function unresolvedSubmission(work: Work): boolean {
  const content = (work.summary?.measurements as any)?.content;
  return work.stage === "submit" && (work.status === "uncertain" || ["pending", "unknown"].includes(content?.state) || content?.reservedUnknown > 0);
 }
-function timeBudget(s: RunState, note?: (remainingPercent: number) => string | undefined) {
+function timeBudget(s: RunState) {
  const now = Date.now(), remainingMs = Math.max(0, s.deadline - now);
- const remainingPercent = Math.round(100 * remainingMs / s.limits.maxWallMs);
- const text = note?.(remainingPercent);
- return { elapsedMinutes: Math.round((now - s.startedAt) / 60000), remainingMinutes: Math.round(remainingMs / 60000), remainingPercent, ...(text ? { note: text } : {}) };
+ return { elapsedMinutes: Math.round((now - s.startedAt) / 60000), remainingMinutes: Math.round(remainingMs / 60000), remainingPercent: Math.round(100 * remainingMs / s.limits.maxWallMs) };
 }
 function requiredArtifact(kind: string) { return ["research_document", "stage_report", "training_selected_result", "holdout_confirmation", "evaluation_report", "terminal_refit_result", "submission_receipt"].includes(kind); }
 function statExists(path: string) { try { statSync(path); return true; } catch { return false; } }

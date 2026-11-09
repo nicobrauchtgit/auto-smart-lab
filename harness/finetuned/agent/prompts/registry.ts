@@ -3,8 +3,6 @@ export const PROMPTS = {
  "orchestrator.system": { file: "orchestrator/system.md", variables: [] },
  "orchestrator.start": { file: "orchestrator/start.md", variables: ["task", "context"] },
  "orchestrator.tool": { file: "orchestrator/tool.md", variables: [] },
- "orchestrator.budget-half": { file: "orchestrator/budget-half.md", variables: [] },
- "orchestrator.budget-low": { file: "orchestrator/budget-low.md", variables: [] },
  "solve.follow-up": { file: "solve/follow-up.md", variables: ["branch", "champion", "previous"] },
 	"knowledge.task": { file: "knowledge/task-knowledge/SKILL.md", variables: [] },
 	"knowledge.refresh": { file: "knowledge/refresh-task-knowledge/SKILL.md", variables: [] },

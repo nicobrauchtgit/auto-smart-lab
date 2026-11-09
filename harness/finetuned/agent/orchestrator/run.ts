@@ -80,7 +80,6 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Pip
    inspectTaskData: configuration => inspectTaskData(task.taskId, configuration, projectPython()),
    // The file's entry is advice; stages run under what the agent declares.
    suggestedConfiguration: saved.config.taskConfigurations?.[task.taskId],
-   budgetNote: percent => percent <= 20 ? prompts.render("orchestrator.budget-low", {}).text.trim() : percent <= 50 ? prompts.render("orchestrator.budget-half", {}).text.trim() : undefined,
    branches: () => followUpBranches(statePath(PROJECT_ROOT, "solutions"), task.taskId),
    start: (work, input) => startStageInvocation({ invocationId: work.id, stage: work.stage, input: { ...input, model: options.model }, config: saved.config, configPath: options.configPath, trace: trace!, prompts, setupSession: setup, optionOverrides: work.options, reason: "orchestrator_decision", signal: controller.signal, executionGuard: coordinator!.executionGuard }),
    officialStatus: async () => { const accounting = await readSubmissionAccounting({ taskId: task.taskId, transport: submissionTransport(task.taskId), accountingRoot: statePath(PROJECT_ROOT, "submissions"), report, signal: controller.signal }); const s = accounting.officialStatus; return { triesUsed: s.triesUsed, reservedUnknown: accounting.reservedUnknown, effectiveTriesUsed: accounting.effectiveTriesUsed, unresolved: accounting.unresolved, results: s.attempts.map(a => ({ attemptId: a.id, status: a.state, ...(a.score === null ? {} : { score: a.score }) })) }; },
