@@ -28,8 +28,9 @@ export const refitStage: StageDefinition<RefitStageOptions> = {
  checkInput(input) { resolveTask({ taskId: input.taskId }); },
  async run(context) {
   const selected = context.input.upstream.filter(a => a.kind === "training_selected_result");
+  const review = context.input.upstream.filter(a => a.kind === "evaluation_report").at(-1);
   if (selected.length > 1) throw new Error("Ambiguous controller-selected refit evidence");
-  const options = { ...refitInputs(context.input.taskId, stageConfiguration(context.input), context.options.trainingRoot), model: context.input.model, signal: context.signal, report: context.report,
+  const options = { ...refitInputs(context.input.taskId, stageConfiguration(context.input), context.options.trainingRoot), model: context.input.model, ...(review ? { reviewPath: review.path } : {}), signal: context.signal, report: context.report,
    ...(selected.length ? { expectedExperimentId: basename(dirname(selected[0].path)) } : {}) };
   // Upstream evidence is resolved from the champion tag, not score-sorted artifacts.
   try { return await runRefit(options); }

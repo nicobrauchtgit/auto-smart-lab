@@ -35,6 +35,27 @@ test("writes the official format, a code archive and a manifest", () => {
 	expect(list).not.toContain(".git");
 });
 
+test("records the advisory review, and whether it reviewed the delivered candidate", () => {
+	const { options, freeze } = fixture("id,prediction\na.txt,0\nb.txt,1\n", "reviewed");
+	const reviewPath = join(base, "reviewed/review.json");
+	writeFileSync(reviewPath, JSON.stringify({ experimentId: "exp", validation: { valid: true }, review: { readinessScore: 3, status: "concerns",
+		readinessRationale: "two medium concerns", concerns: [{ severity: "medium", finding: "gap unexplained", evidence: "e" }], recommendations: ["check duplicates"] } }));
+	const artifact = deliverRefit({ ...options, reviewPath }, freeze);
+	const manifest = JSON.parse(readFileSync(join(artifact.path, "../manifest.json"), "utf8"));
+	expect(manifest.review).toMatchObject({ readinessScore: 3, status: "concerns", sameExperimentAsDelivered: true, advisoryOnly: true });
+	expect(manifest.review.concerns[0].severity).toBe("medium");
+
+	writeFileSync(reviewPath, JSON.stringify({ experimentId: "older", validation: { valid: true }, review: { readinessScore: 5, status: "reviewed", concerns: [], recommendations: [] } }));
+	const other = deliverRefit({ ...options, projectRoot: join(base, "reviewed-other"), reviewPath }, freeze);
+	expect(JSON.parse(readFileSync(join(other.path, "../manifest.json"), "utf8")).review.sameExperimentAsDelivered).toBe(false);
+});
+
+test("a run without evaluation records no review", () => {
+	const { options, freeze } = fixture("id,prediction\na.txt,0\nb.txt,1\n", "unreviewed");
+	const artifact = deliverRefit(options, freeze);
+	expect(JSON.parse(readFileSync(join(artifact.path, "../manifest.json"), "utf8")).review).toBeNull();
+});
+
 test.each([
 	["missing id", "id,prediction\na.txt,0\n"],
 	["extra id", "id,prediction\na.txt,0\nb.txt,1\nc.txt,1\n"],

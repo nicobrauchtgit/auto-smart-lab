@@ -43,8 +43,13 @@ def deliver(directory, output, metadata):
             parts = path.relative_to(source_root).parts
             if path.is_file() and '.git' not in parts and '__pycache__' not in parts:
                 archive.write(path, Path(*parts))
+    review = metadata.get('review')
+    if review is not None:
+        # A review of another candidate says nothing about this delivery.
+        review = {**review, 'sameExperimentAsDelivered': review.get('experimentId') == freeze['chosenExperimentId']}
     manifest = {
         **metadata,
+        'review': review,
         'arm': 'harness',
         'task': freeze['taskId'],
         'python': platform.python_version(),

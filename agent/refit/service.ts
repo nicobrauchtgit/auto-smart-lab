@@ -31,6 +31,8 @@ export interface RefitOptions {
  trainingRoot?: string; environmentFingerprint: string; env: Record<string, string>;
  /** Recorded in the hand-over manifest. */
  model?: string;
+ /** The latest evaluate report (review.json) of this run, recorded in the hand-over manifest. */
+ reviewPath?: string;
 	/** Controller assertion binding reviewed upstream evidence to terminal selection. */
 	expectedExperimentId?: string;
  signal?: AbortSignal; report?: StageReporter;
@@ -55,12 +57,23 @@ function python(options: RefitOptions, args: string[], timeout = 30_000): string
  if (result.error || result.status !== 0) throw new Error(`Refit validation failed: ${result.error?.message ?? result.stderr.trim()}`);
  return result.stdout.trim();
 }
+/** The advisory review as the person handing over the result needs to see it; null when this run had no evaluation. */
+export function deliveryReview(path?: string): Record<string, unknown> | null {
+ if (!path || !existsSync(path)) return null;
+ const report = JSON.parse(readFileSync(path, "utf8"));
+ const review = report.review;
+ return { experimentId: report.experimentId ?? null, valid: report.validation?.valid ?? false, advisoryOnly: true,
+  readinessScore: review?.readinessScore ?? null, status: review?.status ?? null, rationale: review?.readinessRationale ?? null,
+  concerns: review?.concerns ?? [], recommendations: review?.recommendations ?? [] };
+}
+
 /** Hand-over files in the same shape as the minimal arm's delivery. A harness reset keeps them. */
 export function deliverRefit(options: RefitOptions, freeze: { directory: string; identity: string }): { kind: string; path: string; sha256: string } {
  const output = join(options.projectRoot, "runs", "deliveries", options.taskId, freeze.identity.slice(0, 12));
  const git = (...args: string[]) => spawnSync("git", ["-C", options.projectRoot, ...args], { encoding: "utf8", timeout: 10_000 }).stdout?.trim() ?? "";
  const metadata = { deliveredAt: new Date().toISOString(), model: options.model ?? null, commit: git("rev-parse", "--short=10", "HEAD") || null,
-  dirty: git("status", "--porcelain", "--untracked-files=no").split("\n").filter(line => line.length > 3).map(line => line.slice(3)), host: hostname() };
+  dirty: git("status", "--porcelain", "--untracked-files=no").split("\n").filter(line => line.length > 3).map(line => line.slice(3)), host: hostname(),
+  review: deliveryReview(options.reviewPath) };
  python(options, [join(import.meta.dir, "delivery.py"), freeze.directory, output, JSON.stringify(metadata)]);
  const path = join(output, "output.csv");
  return { kind: "final_delivery", path, sha256: hashFile(path) };
