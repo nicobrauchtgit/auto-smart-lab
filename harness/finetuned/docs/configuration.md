@@ -43,7 +43,7 @@ Secrets never go in these files: API keys live in the ignored `.env`
 ### `context`
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `handoffTokens` | 80000 | Context size at which the agent writes a handoff and continues in a fresh session. Leave room below the model window for one large turn plus the handoff request (one turn was seen adding ~19k tokens); with a 128k window, 80k leaves 48k. If the handoff request fails anyway, the harness writes a fallback handoff and the session continues. |
+| `handoffTokens` | 100000 | Context size at which the agent writes a handoff and continues in a fresh session. Leave room below the model window for one large turn plus the handoff request (one turn was seen adding ~19k tokens); with the 262,144-token window, 100k leaves over 160k. If the handoff request fails anyway, the harness writes a fallback handoff and the session continues. |
 | `maxHandoffBytes` | 65536 | Largest accepted handoff text. |
 
 ### `research`

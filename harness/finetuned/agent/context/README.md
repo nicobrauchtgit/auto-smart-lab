@@ -4,10 +4,10 @@
 The shared pipeline runner, optional Pi child backend, and `pi_sdk.ts` experiment
 use it. Test fixtures that construct raw SDK sessions remain independent.
 
-`harness.config.json` sets `context.handoffTokens` to **80,000 tokens** for the
-current MythLLM model, lowered from 100,000 after a handoff overflowed during
-exercise 1. Its configured context is 262,144 tokens (tested up to a 195k prompt), leaving headroom
-for one large turn, output and the handoff. The previous 5,000-token
+`harness.config.json` sets `context.handoffTokens` to **100,000 tokens** for the
+current MythLLM model. During exercise 1 it was lowered from 100,000 to 80,000 after a
+handoff overflowed a 128k window; the configured context is now 262,144 tokens (tested
+up to a 195k prompt), leaving ample headroom for one large turn, output and the handoff. The previous 5,000-token
 value was a handoff-test setting and caused repeated replacements with a base
 working context around 12,000 tokens. Restart the runner after changing it.
 For another model, keep the threshold below its usable deployment context and

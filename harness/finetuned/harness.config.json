@@ -13,7 +13,7 @@
     "stallRetries": 2
   },
   "context": {
-    "handoffTokens": 80000,
+    "handoffTokens": 100000,
     "maxHandoffBytes": 65536
   },
   "research": {
