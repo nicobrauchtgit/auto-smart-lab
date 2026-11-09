@@ -100,9 +100,9 @@
     }
   },
   "orchestrator": {
-    "maxSessions": 32,
-    "maxModelRequests": 256,
-    "maxToolCalls": 1024,
+    "maxSessions": 128,
+    "maxModelRequests": 4000,
+    "maxToolCalls": 8000,
     "maxStages": 24,
     "maxTrials": 24,
     "maxRetries": 3,

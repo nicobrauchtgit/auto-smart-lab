@@ -121,9 +121,12 @@ is a suggestion to the agent, not a constraint.
 Bounds one task's controller run. `maxWallMs` (12 h) is the run's deadline; the
 orchestrator sees the time left, with notes at 50% and 20%, as information rather
 than a reserve. `maxTrials` (24) with 6 trials per solve allows the first solve
-round plus three follow-ups; each solve reserves its whole allocation. The other
-keys bound sessions, model requests, tool calls, stages, retries, summary sizes
-and notifications.
+round plus three follow-ups; each solve reserves its whole allocation. `maxSessions` (128),
+`maxModelRequests` (4000) and `maxToolCalls` (8000) count every agent session,
+model request and tool call of the run, stage agents included; they are safety
+caps set well above what 12 hours use (research alone took about 100 requests and
+one solve hour about 150 on spam1), so the time budget ends a run, not these.
+The other keys bound stages, retries, summary sizes and notifications.
 
 ### `subagents`
 Bounds helper agents (turn and wait timeouts, concurrency, message sizes).
