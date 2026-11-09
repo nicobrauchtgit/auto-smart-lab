@@ -2,7 +2,7 @@
 # student VM (~/env). The VM is gone and its full 198-package list was not kept,
 # so this matches the named stack, not the exact environment. TensorFlow is left
 # out because it needs AVX, which the experiment VM's CPU does not provide. The agent may add
-# more with plain pip inside its own venv. Compile with: ./dev bun run arm-lock
+# more with plain pip inside its own venv. requirements.txt holds the pinned versions.
 numpy
 scipy
 scikit-learn

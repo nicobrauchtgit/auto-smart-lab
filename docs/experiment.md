@@ -73,13 +73,25 @@ These are part of what is compared. Do not equalize them; report them with resul
 | Budgets | 30-minute sessions, 3 failed sessions per task | 8-hour session limit, stall detection, 6 solve iterations |
 | Installing packages | Plain `pip` in its own venv | `python_environment` tool, recorded in `changes.jsonl` |
 | Extra packages | None beyond the shared base | `optuna`, `dpkt`, `joblib`, `matplotlib`, `beautifulsoup4`, `cloudpickle`, `smartlab-eval` |
+| Model limits | Leo's entry: 262,144 context, 32,768 output, reasoning on, `compat` set | 200,000 context, 32,768 output, reasoning on, no `compat` |
 | Memory within a batch | Later tasks may reuse earlier solvers (`--reset once`) | `solutions/` and `knowledge/` carry over between tasks |
 
 ## Kept the same
 
-- **Model and provider:** both read `pipeline.config.json`; default `mythllm/qwen3.8-flash-next-a5b`.
+Each arm has its own configuration. The values below match only because both files say so;
+change them deliberately and report any difference with the results.
+
+| | Minimal | Harness |
+| --- | --- | --- |
+| Model and provider | `arms/minimal/arm.config.json` | `pipeline.config.json` |
+| Run settings | Flags to `solve_units.ts` and constants in the arm's code | `harness.config.json`, `pipeline.config.json` |
+| Python packages | `arms/minimal/requirements.in`, `requirements.txt` | `pyproject.toml`, `uv.lock` |
+
+- **Model and provider:** default `mythllm/qwen3.8-flash-next-a5b`. The limits differ for now
+  (see the table above): the minimal arm keeps Leo's entry, the harness may adopt it once
+  `compat` is clarified. A 194,879-token prompt got a correct answer on 2026-11-09.
 - **Base packages, same versions:** numpy, scipy, scikit-learn, pandas, torch (CPU build).
-  `arms/minimal/requirements.txt` is pinned to the harness's `uv.lock`.
+  `arms/minimal/requirements.txt` was pinned to match the harness's `uv.lock`; nothing keeps them in step.
 - **Python, pi SDK and task data:** the interpreter from `.python-version`, pi 0.84.1, one `units/`.
 - **Tools at run time:** `./dev`, bun, uv.
 
@@ -87,12 +99,12 @@ These are part of what is compared. Do not equalize them; report them with resul
 
 Earlier results in `arms/minimal/docs/EXPERIMENT_LOG.md` are not directly comparable:
 
-- **Packages:** the lab VM's `~/env` had 198 packages including TensorFlow. Its full list
-  was not kept. TensorFlow is left out because it needs AVX and this VM's CPU
+- **Packages:** the lab VM's `~/env` had 198 packages including TensorFlow, a count recorded
+  in one log entry (2026-10-03). Its full list was not kept. TensorFlow is left out because it needs AVX and this VM's CPU
   (`QEMU Virtual CPU version 2.5+`) lacks it. Changing the VM's CPU type to one with AVX
   would allow re-adding it to both arms.
-- **Model limits:** 128,000 context and 8,192 output tokens with reasoning off, shared with
-  the harness, instead of 262,144 / 32,768 with reasoning on.
+- **Model limits:** the arm keeps Leo's documented entry (`arms/minimal/arm.config.json`).
+  Whether his VM's `~/.pi/agent/models.json` matched it is not recorded.
 - **Runtime:** bun and pi 0.84.1 instead of tsx/node and the latest pi.
 - **Visibility:** the agent no longer sees the arm's docs and logs of earlier runs, the
   other tasks' leftovers from other runs, or credentials in its shell environment.

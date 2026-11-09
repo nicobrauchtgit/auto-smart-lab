@@ -1,6 +1,10 @@
 # Configuration reference
 
-All tuning values live in two version-controlled JSON files at the repository
+This file covers the harness. The minimal arm has its own model configuration in
+`arms/minimal/arm.config.json` (`defaultModel` and `providers`, with the same
+keys as below) and reads nothing from the two files described here.
+
+All harness tuning values live in two version-controlled JSON files at the repository
 root. JSON has no comments, so this file explains every key. Restart the
 pipeline process after editing; values are read once per process, and every
 agent session records the effective `harness.config.json` in Langfuse

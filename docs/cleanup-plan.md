@@ -101,15 +101,15 @@ model listing on 2026-11-02). Use a separate `MYTHLLM_API_KEY` in the ignored
 `.env`; do not send the SAIA credential to this host. Existing shared
 `model-configuration` and `model-access` setup checks both passed, including a
 minimal live completion through the project adapter. This does not establish
-whole-chain readiness. The server metadata does not report token limits;
-128,000 context / 8,192 maximum output tokens are conservative operating values,
-not verified server limits. The handoff threshold is 80,000 tokens (lowered from
-100,000 after a handoff overflowed during exercise 1); the earlier 5,000 value was left over from testing and caused repeated handoffs below the
-base working-context size. Upstream Qwen3.8-Flash-Next documentation advertises
-262,144 native context tokens; a bounded 130k-repetition synthetic deployment
-probe did not return a usable completion, so deployment capacity remains
-unverified. Text input is configured; image and reasoning
-capabilities have not been verified. SAIA remains an explicit optional provider.
+whole-chain readiness. Limits (2026-11-09): the server's `/model/info` now
+reports 262,144 input and output tokens. A 130k synthetic probe failed on 2026-11-02,
+but a 194,879-token prompt returned a correct answer on 2026-11-09, so the harness
+uses 200,000 context, 32,768 output tokens and reasoning on; the minimal arm keeps
+Leo's entry (`arms/minimal/arm.config.json`). Prompts above 195k are untested. The
+handoff threshold is 80,000 tokens (lowered from 100,000 after a handoff overflowed
+during exercise 1). With reasoning on, the harness sends the `developer` role and
+`reasoning_effort`; one session worked that way, and whether to adopt Leo's `compat`
+is an open question (`docs/questions-for-leo.md`). SAIA remains an explicit optional provider.
 
 The lab server is unavailable. The user supplied an mlsecCloud share as the
 dataset source: `https://cloud.mlsec.tu-berlin.de/s/wD5GSTRbeS8reZH`.

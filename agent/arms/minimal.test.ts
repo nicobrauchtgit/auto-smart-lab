@@ -18,9 +18,11 @@ function fixture() {
 	write("arms/minimal/agent/instructions/solver.md", "solver prompt\n");
 	write("arms/minimal/.pi/settings.json", "{}\n");
 	write("arms/minimal/docs/EXPERIMENT_LOG.md", "earlier results\n");
-	write("pipeline.config.json", JSON.stringify({ defaultModel: "mythllm/m", providers: {
+	write("arms/minimal/arm.config.json", JSON.stringify({ defaultModel: "mythllm/m", providers: {
 		mythllm: { name: "M", baseUrl: "https://example.invalid/v1", api: "openai-completions", apiKeyEnv: "MYTHLLM_API_KEY", models: [{ id: "m" }] },
 		"google-vertex": { builtin: true } } }));
+	write("pipeline.config.json", JSON.stringify({ defaultModel: "harness/h", providers: {
+		harness: { name: "H", baseUrl: "https://harness.invalid/v1", api: "openai-completions", apiKeyEnv: "HARNESS_ONLY_KEY", models: [{ id: "h" }] } } }));
 	write("units/index.json", "{}\n");
 	write("units/01-spam/task/prompt.md", "the task\n");
 	write("units/_vm-archive/old/prompt.md", "archived\n");
@@ -55,6 +57,16 @@ describe("minimal arm run location", () => {
 		const text = armModelsJson({ providers: { mythllm: { name: "M", baseUrl: "u", api: "a", apiKeyEnv: "MYTHLLM_API_KEY", models: [] }, "google-vertex": { builtin: true } } });
 		expect(JSON.parse(text).providers.mythllm.apiKey).toBe("$MYTHLLM_API_KEY");
 		expect(JSON.parse(text).providers["google-vertex"]).toBeUndefined();
+	});
+
+	test("model configuration comes from the arm's own file, not the harness's", () => {
+		const root = fixture();
+		const run = prepareMinimalRun({ projectRoot: root, stamp: "a" });
+		const providers = JSON.parse(readFileSync(join(run.home, ".pi/agent/models.json"), "utf8")).providers;
+		expect(Object.keys(providers)).toEqual(["mythllm"]);
+		expect(checkMinimalSetup({ projectRoot: root, bwrap: "/nonexistent", env: {} }).join("\n")).toContain("MYTHLLM_API_KEY is not set");
+		rmSync(join(root, "arms/minimal/arm.config.json"));
+		expect(checkMinimalSetup({ projectRoot: root, bwrap: "/nonexistent", env: {} }).join("\n")).toContain("arm.config.json is missing");
 	});
 });
 
