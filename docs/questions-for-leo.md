@@ -1,6 +1,6 @@
 # Open questions about the minimal arm
 
-Leo built the minimal arm (`arms/minimal/`, history kept from `origin/main`). While merging
+Leo built the minimal arm (`harness/minimal/`, history kept from `origin/main`). While merging
 it next to the harness we had to guess at a few things. Each item says what we assumed, so
 an answer can be checked against the current setup. Started 2026-11-09.
 
@@ -8,7 +8,7 @@ an answer can be checked against the current setup. Started 2026-11-09.
 
 1. **The lab VM's `~/env`.** `EXPERIMENT_LOG.md` (2026-10-03) records "Python 3.13.5, 198
    packages", and 2026-09-28 names numpy, scipy, scikit-learn, pandas, torch, tensorflow.
-   We kept only the named stack, without TensorFlow (`arms/minimal/requirements.in`), pinned
+   We kept only the named stack, without TensorFlow (`harness/minimal/requirements.in`), pinned
    to the harness's versions. Do you have the full list or any versions? Did a solver ever
    import TensorFlow or Keras? The CIFAR-10 run (log, attacks unit) downloaded data via Keras.
 2. **Plain `pip`.** We assumed the solver may install packages into its own venv, as on the

@@ -1,11 +1,16 @@
 # The experiment
 
-This repository compares two arms: a minimal agent (`arms/minimal/`) and the
-task-adapted harness (`agent/`). [docs/experiment.md](docs/experiment.md) has how
-to run each, what differs and what must stay the same. Agents must not leave
-their run location, and neither arm may read the other: keep the boundary tests
-passing. The sections below describe the harness; `arms/minimal/CLAUDE.md` has
-the minimal arm's rules. Do not add coaching to the minimal arm.
+This repository compares two arms under `harness/`: a minimal agent
+(`harness/minimal/`) and the task-adapted harness (`harness/finetuned/`). Each arm
+keeps its code, its configuration (`pipeline.config.json` at the top of its folder)
+and its docs in its own folder; `experiment/` holds the switch, the run locations
+and the boundary tests; run state goes to `runs/minimal/` and `runs/finetuned/`.
+[docs/experiment.md](docs/experiment.md) has how to run each, what differs and what
+must stay the same. Agents must not leave their run location, and neither arm may
+read the other: keep the boundary tests passing. The sections below describe the
+finetuned harness; paths in them are relative to `harness/finetuned/` unless they
+start with `runs/`. `harness/minimal/CLAUDE.md` has the minimal arm's rules. Do not
+add coaching to the minimal arm.
 
 # Current state and next tasks
 
@@ -16,10 +21,10 @@ work queue. Run project commands through `./dev` (see that file).
 # Pipeline development
 
 When creating or changing a pipeline module, follow
-[the pipeline integration contract](docs/pipeline-integration.md).
+[the pipeline integration contract](harness/finetuned/docs/pipeline-integration.md).
 Langfuse Cloud is the shared observability backend; JSONL is emergency-only.
 Use `agent/telemetry/` and pipeline reporters, declare `observability` setup, and
-preserve authoritative harness/recovery records. See [telemetry](docs/telemetry.md).
+preserve authoritative harness/recovery records. See [telemetry](harness/finetuned/docs/telemetry.md).
 Observability is part of module completion: record stage lifecycle, typed
 configuration and input metadata, artifact results, and any agent sessions
 under shared pipeline and invocation IDs. Standalone module commands must use
@@ -34,12 +39,12 @@ Evaluation is an advisory
 model/code review with a readiness score; it does not authorize submission.
 
 The solve stage is a training framework, not a prescribed model. The agent
-writes its own scikit-learn pipeline under `solutions/`, chooses its own
+writes its own scikit-learn pipeline under `solutions/` (`runs/finetuned/solutions/`), chooses its own
 features, estimator, hyperparameters, and cross-validation scheme, and reuses
 code across tasks. The harness owns the training processes, supplies seeds,
 materializes the agent's fold design, writes authoritative predictions and
 measurements, and controls observation, interruption, promotion, and final
-refitting. Follow [the harness-owned training contract](docs/harness-owned-training.md).
+refitting. Follow [the harness-owned training contract](harness/finetuned/docs/harness-owned-training.md).
 Add primitives and measurements, not constraints on model design.
 
 The `solutions/tasks/<id>.py` entrypoint convention exists so the harness can
@@ -76,8 +81,8 @@ to discover missing setup. `--check-setup` runs the checks without starting agen
 
 ## Pipeline Python dependencies
 
-Use this project's Python environment, exposed as `VENV_DIR` and stored in
-`.venv`. Run commands through `./dev`, which keeps the pinned toolchain from
+Use the finetuned harness's Python environment, exposed as `VENV_DIR` and stored in
+`harness/finetuned/.venv`. Run commands through `./dev`, which keeps the pinned toolchain from
 `mise.toml` (bun, uv, ripgrep, fd), uv's managed Python and all caches under
 `.tools/`; never install tools into the user's home, shell configuration or Nix
 profile. `./dev setup` creates the environment. Do not create a separate

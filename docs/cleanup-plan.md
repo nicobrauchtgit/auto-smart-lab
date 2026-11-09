@@ -21,13 +21,13 @@ deferred until needed and access returns; it is not the current development goal
 
 Experiment history/comparison and shared-note comparison now support learning
 from successful and worse attempts, with or without champions. Raw-input cleanup
-and strict TypeScript checking are implemented. See the [knowledge module README](../agent/knowledge/README.md)
+and strict TypeScript checking are implemented. See the [knowledge module README](../harness/finetuned/agent/knowledge/README.md)
 for tool scope, evidence status and reusable lessons.
 
 ## Next: research stage redesign
 
 Decided with the user on 2026-11-03; decisions, rationale and sources are in
-[research-redesign.md](research-redesign.md). Work in this order and test each
+[research-redesign.md](../harness/finetuned/docs/research-redesign.md). Work in this order and test each
 step on spam1–3 before the next overnight run:
 
 - [x] **Harness data profile.** Deterministic, full-corpus, citeable
@@ -43,7 +43,7 @@ step on spam1–3 before the next overnight run:
   baseline and compare the alternates on the harness hold-out.
 Steps 1–5 were implemented on 2026-11-03 and pass the offline tests. Every
 tuning value is in `harness.config.json`/`pipeline.config.json`, explained in
-[configuration.md](configuration.md).
+[configuration.md](../harness/finetuned/docs/configuration.md).
 
 - [x] **Action budget.** A visible budget line after each tool call, a final
   turn to write the brief, and a `partial` outcome instead of a stage failure.
@@ -105,7 +105,7 @@ whole-chain readiness. Limits (2026-11-09): the server's `/model/info` now
 reports 262,144 input and output tokens. A 130k synthetic probe failed on 2026-11-02,
 but a 194,879-token prompt returned a correct answer on 2026-11-09, so the harness
 uses 262,144 context (tested to 195k), 32,768 output tokens and reasoning on; the minimal arm keeps
-Leo's entry (`arms/minimal/arm.config.json`). Prompts above 195k are untested. The
+Leo's entry (`harness/minimal/pipeline.config.json`). Prompts above 195k are untested. The
 handoff threshold is 80,000 tokens (lowered from 100,000 after a handoff overflowed
 during exercise 1). Both arms use Leo's `compat` (`system` role, no
 effort parameter); thinking measurements are in `docs/experiment.md`. SAIA remains an explicit optional provider.
@@ -160,7 +160,7 @@ not completed within those budgets. Existing scripts and partial research
 measurements are preserved. No workers remain, and the T3 monitor is disabled.
 The latency was investigated on 2026-11-03: generation was slow on the server
 side, not in tools or our code. The resulting budget and research decisions are
-in [research-redesign.md](research-redesign.md). Do not treat these failed
+in [research-redesign.md](../harness/finetuned/docs/research-redesign.md). Do not treat these failed
 attempts as trained-model evidence.
 Operational status, configuration snapshot, input hashes, task results and dated
 observations live in `runs/overnight-spam-2026-11-02/`. A T3 task checks it every
@@ -206,7 +206,7 @@ TypeScript tests passing, 5 skipped, plus 150 Python tests passing. This is a
 baseline, not proof of real-run readiness.
 Langfuse Cloud now owns observability; synthetic Cloud write/readback verifies
 hierarchy, usage and scores under Bun. JSONL is emergency-only. The custom
-dashboard and Postgres writer are removed. See [telemetry.md](telemetry.md).
+dashboard and Postgres writer are removed. See [telemetry.md](../harness/finetuned/docs/telemetry.md).
 
 ## Units 2–4: live task validation
 
@@ -344,12 +344,12 @@ Do not feed sealed confirmation scores back into solve guidance. Pushes,
 submissions and VM writes need explicit authorization unless already granted
 for the concrete action.
 
-- [Pipeline integration contract](pipeline-integration.md)
-- [Harness-owned training](harness-owned-training.md)
-- [Training measurements](harness-measurements.md)
-- [ID leakage canary](id-leakage-canary.md)
-- [Solve filesystem isolation](solve-filesystem-isolation.md)
-- [Held-back confirmation](held-back-confirmation.md)
+- [Pipeline integration contract](../harness/finetuned/docs/pipeline-integration.md)
+- [Harness-owned training](../harness/finetuned/docs/harness-owned-training.md)
+- [Training measurements](../harness/finetuned/docs/harness-measurements.md)
+- [ID leakage canary](../harness/finetuned/docs/id-leakage-canary.md)
+- [Solve filesystem isolation](../harness/finetuned/docs/solve-filesystem-isolation.md)
+- [Held-back confirmation](../harness/finetuned/docs/held-back-confirmation.md)
 
 The lab website is `https://lab-test.smartlab.mlsec.tu-berlin.de/` and requires
 OpenVPN access and its self-signed TLS handling. The VM is

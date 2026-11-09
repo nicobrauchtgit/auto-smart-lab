@@ -1,0 +1,56 @@
+import { readFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
+
+import type { Api } from "@earendil-works/pi-ai";
+import { ARM_ROOT } from "./paths.js";
+
+export type PipelineProviderConfig =
+	| { builtin: true }
+	| {
+		name?: string;
+		baseUrl: string;
+		api: Api;
+		apiKeyEnv: string;
+		models: Array<{
+			id: string;
+			name?: string;
+			reasoning?: boolean;
+			input?: ("text" | "image")[];
+			contextWindow: number;
+			maxTokens: number;
+			/** pi's request settings for OpenAI-compatible servers, e.g. no developer role. */
+			compat?: { supportsDeveloperRole?: boolean; supportsReasoningEffort?: boolean; thinkingFormat?: "chat-template"; chatTemplateKwargs?: Record<string, string | boolean> };
+		}>;
+	};
+
+export interface PipelineConfig {
+	/** Stage availability and options. Validated by agent/pipeline/config.ts. */
+	pipeline?: {
+		version?: number;
+		entryStage?: string;
+		scheduling?: string;
+		stages?: Record<string, { enabled?: boolean; options?: unknown }>;
+		/** Task configuration per task ID. Validated by agent/pipeline/task_configuration.ts. */
+		tasks?: Record<string, unknown>;
+	};
+	agent: {
+		cwd: string;
+		agentDir: string;
+		initialPrompt: string;
+	};
+	defaultModel: string;
+	providers: Record<string, PipelineProviderConfig>;
+}
+
+export async function loadPipelineConfig(configPath = join(ARM_ROOT, "pipeline.config.json")) {
+	const path = resolve(configPath);
+	const config = JSON.parse(await readFile(path, "utf8")) as PipelineConfig;
+	const configDir = dirname(path);
+
+	return {
+		config,
+		cwd: resolve(configDir, config.agent.cwd),
+		agentDir: resolve(configDir, config.agent.agentDir),
+		initialPrompt: config.agent.initialPrompt,
+	};
+}

@@ -17,7 +17,7 @@ __pycache__/
 # Local environments
 .tools/
 .venv/
-agent/runtime/python/.install.lock
+harness/finetuned/agent/runtime/python/.install.lock
 env/
 
 # Downloaded/generated SmartLab artifacts
@@ -31,9 +31,6 @@ reports/
 !/units/README.md
 /challenges/
 
-# Model implementations generated during pipeline runs stay local.
-/solutions/*
-!/solutions/README.md
 
 
 # Temporary archives/output files
@@ -52,26 +49,24 @@ logs/
 
 # Project-local PI runtime state. The provider/model definition in
 # .pi/agent/models.json is deliberately tracked; credentials stay in the shell.
-.pi/agent/auth.json
-.pi/agent/bin/
-.pi/agent/models-store.json
-.pi/agent/sessions/
-.pi/agent/tmp/
-.pi/agent/*.lock
-.pi/agent/*.sqlite*
+**/.pi/agent/auth.json
+**/.pi/agent/bin/
+**/.pi/agent/models-store.json
+**/.pi/agent/sessions/
+**/.pi/agent/tmp/
+**/.pi/agent/*.lock
+**/.pi/agent/*.sqlite*
 
-# Run artifacts stay local. Traces record full message content on every update,
+# Run artifacts stay local: runs/finetuned/ (task runs, solutions/, knowledge/,
+# deliveries/) and runs/minimal/. Traces record full message content on every update,
 # so a single 30-minute run writes hundreds of megabytes; the tree was 1.3 GB
 # before this line existed.
 /runs/
 
 # Raw development experiment recordings stay local too.
-/docs/research/sklearn-observability/obs-*.jsonl
+/harness/finetuned/docs/research/sklearn-observability/obs-*.jsonl
 
 # Scratch scripts the solve agent writes while working.
 /train_*.py
 /verify_*.py
 /run_iteration*.py
-
-# Durable runtime knowledge, separate from model code and final artifacts.
-/knowledge/
