@@ -7,7 +7,7 @@ Both arms live on this branch. Choose one with a flag; no branch switch.
 
 ```bash
 ./dev bun run experiment -- --arm minimal --check-setup
-./dev bun run experiment -- --arm minimal --offline --only spam1,spam2,spam3
+./dev bun run experiment -- --arm minimal --only spam1,spam2,spam3
 ./dev bun run experiment -- --arm finetuned --check-setup spam1
 ./dev bun run experiment -- --arm finetuned spam1
 ./dev bun run experiment -- --arm finetuned --reset        # shows what it would delete; add --yes
@@ -25,6 +25,7 @@ experiment/          the switch (cli.ts), run locations and jails, boundary test
 runs/minimal/        one folder per minimal run
 runs/finetuned/      finetuned run state: <task>/, solutions/, knowledge/, deliveries/
 units/               task data, shared and read-only for both
+experiment.config.json  shared: online or offline, the chosen provider and model, all providers
 ```
 
 | Arm | Code | Described in |
@@ -89,16 +90,21 @@ These are part of what is compared. Do not equalize them; report them with resul
 
 ## Kept the same
 
-Each arm has its own configuration. The values below match only because both files say so;
-change them deliberately and report any difference with the results.
+`experiment.config.json` at the repository root holds what both arms must share, so it is set once:
+`online` (off: shared-drive tasks and hand-over files; on: lab tasks, submissions and score
+feedback), `model` (`provider` and `id` as separate fields) and `providers` (every provider's
+endpoint, models, limits, `compat` and the name of its key variable in `.env`). Neither arm's own
+files repeat these; the finetuned arm rejects a `pipeline.config.json` that tries, and the minimal
+arm gets `--offline` and `--model` from it (passing `--offline` yourself is rejected).
+The remaining values below are per arm and match only because both say so.
 
 | | `harness/minimal/` | `harness/finetuned/` |
 | --- | --- | --- |
-| Model and provider | `pipeline.config.json` | `pipeline.config.json` |
+| Model, provider, online | `experiment.config.json` (shared) | `experiment.config.json` (shared) |
 | Run settings | Flags to `solve_units.ts` and constants in the arm's code | `harness.config.json`, `pipeline.config.json` |
 | Python packages | `requirements.in`, `requirements.txt` | `pyproject.toml`, `uv.lock` |
 
-- **Model and provider:** default `mythllm/qwen3.8-flash-next-a5b` with Leo's entry in both:
+- **Model and provider:** `mythllm` / `qwen3.8-flash-next-a5b` with Leo's entry:
   262,144 context, 32,768 output, reasoning on, `compat` and `reasoning_effort: xhigh`.
   A 194,879-token prompt got a correct answer on 2026-11-09.
 - **Base packages, same versions:** numpy, scipy, scikit-learn, pandas, torch (CPU build).
@@ -114,7 +120,7 @@ Earlier results in `harness/minimal/docs/EXPERIMENT_LOG.md` are not directly com
   in one log entry (2026-10-03). Its full list was not kept. TensorFlow is left out because it needs AVX and this VM's CPU
   (`QEMU Virtual CPU version 2.5+`) lacks it. Changing the VM's CPU type to one with AVX
   would allow re-adding it to both arms.
-- **Model limits:** the arm keeps Leo's documented entry (`harness/minimal/pipeline.config.json`).
+- **Model limits:** the arm keeps Leo's documented entry, now in `experiment.config.json`.
   Whether his VM's `~/.pi/agent/models.json` matched it is not recorded.
 - **Runtime:** bun and pi 0.84.1 instead of tsx/node and the latest pi.
 - **Visibility:** the agent no longer sees the arm's docs and logs of earlier runs, the

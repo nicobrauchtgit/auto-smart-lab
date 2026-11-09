@@ -400,7 +400,7 @@ agent/libs/smartlab-eval/  Corpus loading library (solve agent, evaluation diagn
 solutions/              Agent-owned reusable model code
 units/                  Downloaded task prompts, metadata, and datasets
 runs/                   Harness artifacts, durable records and emergency traces
-pipeline.config.json    Enabled stages, options, providers, and default model
+pipeline.config.json    Enabled stages, options and tasks (model and providers: ../../experiment.config.json)
 pyproject.toml          Declared Python dependencies
 uv.lock                 Locked Python environment
 ```

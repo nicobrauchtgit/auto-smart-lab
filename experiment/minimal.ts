@@ -12,6 +12,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadExperimentConfig, modelReference, type ExperimentConfig } from "./config.js";
 import { checkSolveSandbox, executable, sandboxPolicy, type SandboxMount, type SolveSandbox } from "../harness/finetuned/agent/run/solve_sandbox.js";
 
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -22,23 +23,21 @@ const CPU_TORCH_INDEX = "https://download.pytorch.org/whl/cpu";
 const ARM_PATHS = ["agent", ".pi"];
 const PASSED_ENV = /^(MYTHLLM_API_KEY|SAIA_API_KEY|GWDG_API_KEY|LITELLM_TOKEN|TAVILY_API_KEY|GOOGLE_CLOUD_API_KEY|GOOGLE_CLOUD_PROJECT|GOOGLE_CLOUD_LOCATION|GOOGLE_APPLICATION_CREDENTIALS|LANGFUSE_.+|LAB_.+|SMARTLAB_ACTIVATION_TOKEN.*|PI_DEBUG_HTTP|NIX_LD|NIX_LD_LIBRARY_PATH|LD_LIBRARY_PATH)$/;
 
-/** The arm's own model configuration. It shares nothing with the finetuned arm's file of the same name. */
-const ARM_CONFIG = join("harness", "minimal", "pipeline.config.json");
+/** The shared model settings live in experiment.config.json at the repository root. */
+const EXPERIMENT_CONFIG = "experiment.config.json";
 
 export interface MinimalRun { root: string; venv: string; home: string; units: string }
-interface ArmConfig { defaultModel: string; providers?: Record<string, any> }
 
-function loadArmConfig(projectRoot: string): ArmConfig {
-	return JSON.parse(readFileSync(join(projectRoot, ARM_CONFIG), "utf8"));
+function loadShared(projectRoot: string): ExperimentConfig {
+	return loadExperimentConfig(join(projectRoot, EXPERIMENT_CONFIG));
 }
 
-/** Provider definitions for pi, from the arm's configuration. */
-export function armModelsJson(armConfig: Pick<ArmConfig, "providers">): string {
+/** Provider definitions for pi's models.json, from the shared configuration. The key is referenced by variable name. */
+export function armModelsJson(config: Pick<ExperimentConfig, "providers">): string {
 	const providers: Record<string, unknown> = {};
-	for (const [id, provider] of Object.entries(armConfig.providers ?? {})) {
-		if (provider.builtin) continue;
-		providers[id] = { name: provider.name, baseUrl: provider.baseUrl, api: provider.api, apiKey: `$${provider.apiKeyEnv}`,
-			...(provider.compat ? { compat: provider.compat } : {}), models: provider.models };
+	for (const [id, provider] of Object.entries(config.providers)) {
+		if ("builtin" in provider) continue;
+		providers[id] = { name: provider.name, baseUrl: provider.baseUrl, api: provider.api, apiKey: `$${provider.apiKeyEnv}`, models: provider.models };
 	}
 	return `${JSON.stringify({ providers }, null, 2)}\n`;
 }
@@ -57,7 +56,7 @@ export function prepareMinimalRun(options: { projectRoot?: string; stamp: string
 	const home = join(root, ".home");
 	const agentDir = join(home, ".pi", "agent");
 	mkdirSync(agentDir, { recursive: true });
-	writeFileSync(join(agentDir, "models.json"), armModelsJson(loadArmConfig(projectRoot)));
+	writeFileSync(join(agentDir, "models.json"), armModelsJson(loadShared(projectRoot)));
 
 	// Only real units. Archives and notes in units/ are not task material.
 	const units = join(root, "units");
@@ -140,11 +139,12 @@ export function checkMinimalSetup(options: { projectRoot?: string; env?: NodeJS.
 		if (!existsSync(join(projectRoot, path))) problems.push(`${path} is missing: run ./dev setup`);
 	}
 	if (!existsSync(join(projectRoot, "units", "index.json"))) problems.push("units/index.json is missing: prepare the course units first");
-	if (!existsSync(join(projectRoot, ARM_CONFIG))) return [...problems, `${ARM_CONFIG} is missing: the arm needs its own model configuration`];
-	const config = loadArmConfig(projectRoot);
-	const model = options.model ?? config.defaultModel;
-	const provider = config.providers?.[String(model).split("/")[0] ?? ""];
-	if (provider?.apiKeyEnv && !env[provider.apiKeyEnv]) problems.push(`${provider.apiKeyEnv} is not set: add it to .env (needed by ${model})`);
+	let config: ExperimentConfig;
+	try { config = loadShared(projectRoot); } catch (error) { return [...problems, error instanceof Error ? error.message : String(error)]; }
+	const model = options.model ?? modelReference(config);
+	const provider = config.providers[String(model).split("/")[0] ?? ""];
+	if (!provider) problems.push(`${model}: its provider is not in ${EXPERIMENT_CONFIG}`);
+	else if (provider.apiKeyEnv && !env[provider.apiKeyEnv]) problems.push(`${provider.apiKeyEnv} is not set: add it to .env (needed by ${model})`);
 	return problems;
 }
 
@@ -153,11 +153,17 @@ export function withModel(args: readonly string[], defaultModel: string): string
 	return args.includes("--model") ? [...args] : ["--model", defaultModel, ...args];
 }
 
+/** The batch driver's arguments: the shared model unless one is named, and --offline unless the experiment is online. */
+export function minimalArgs(args: readonly string[], config: Pick<ExperimentConfig, "model" | "online">): string[] {
+	if (args.includes("--offline")) throw new Error("Set \"online\" in experiment.config.json instead of passing --offline");
+	return [...withModel(args, modelReference(config)), ...(config.online ? [] : ["--offline"])];
+}
+
 /** Run the arm's batch driver inside the boundary. Resolves with its exit code. */
 export function runMinimal(run: MinimalRun, args: readonly string[], options: { projectRoot?: string } = {}): Promise<number> {
 	const policy = minimalPolicy(run, { commit: repositoryState() });
-	const config = loadArmConfig(options.projectRoot ?? PROJECT_ROOT);
-	const command = [realpathSync(process.execPath), "agent/run/solve_units.ts", ...withModel(args, config.defaultModel)];
+	const config = loadShared(options.projectRoot ?? PROJECT_ROOT);
+	const command = [realpathSync(process.execPath), "agent/run/solve_units.ts", ...minimalArgs(args, config)];
 	return new Promise((accept, reject) => {
 		const child = spawn(policy.executable, policy.args(command), { stdio: "inherit" });
 		child.on("error", reject);

@@ -1,5 +1,9 @@
 {
-  "defaultModel": "mythllm/qwen3.8-flash-next-a5b",
+  "online": false,
+  "model": {
+    "provider": "mythllm",
+    "id": "qwen3.8-flash-next-a5b"
+  },
   "providers": {
     "mythllm": {
       "name": "TU Berlin MythLLM",
@@ -11,30 +15,19 @@
           "id": "qwen3.8-flash-next-a5b",
           "name": "Qwen3.8 Flash Next A5B",
           "reasoning": true,
-          "input": [
-            "text"
-          ],
+          "input": ["text"],
           "contextWindow": 262144,
           "maxTokens": 32768,
-          "cost": {
-            "input": 0,
-            "output": 0,
-            "cacheRead": 0,
-            "cacheWrite": 0
+          "compat": {
+            "supportsDeveloperRole": false,
+            "supportsReasoningEffort": false,
+            "thinkingFormat": "chat-template",
+            "chatTemplateKwargs": {
+              "reasoning_effort": "xhigh"
+            }
           }
         }
-      ],
-      "compat": {
-        "supportsDeveloperRole": false,
-        "supportsReasoningEffort": false,
-        "thinkingFormat": "chat-template",
-        "chatTemplateKwargs": {
-          "reasoning_effort": "xhigh"
-        }
-      }
-    },
-    "google-vertex": {
-      "builtin": true
+      ]
     },
     "saia": {
       "name": "SAIA / GWDG Chat AI",
@@ -46,14 +39,14 @@
           "id": "mistral-medium-3.5-128b",
           "name": "Mistral Medium 3.5 128B",
           "reasoning": false,
-          "input": [
-            "text",
-            "image"
-          ],
+          "input": ["text", "image"],
           "contextWindow": 256000,
           "maxTokens": 16384
         }
       ]
+    },
+    "google-vertex": {
+      "builtin": true
     }
   }
 }

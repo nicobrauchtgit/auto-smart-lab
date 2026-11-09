@@ -1,11 +1,11 @@
 # Configuration reference
 
-This file covers the harness. The minimal arm has its own model configuration in
-`harness/minimal/pipeline.config.json` (`defaultModel` and `providers`, with the same
-keys as below) and reads nothing from the two files described here.
+This file covers the harness. The settings both arms share (`online`, the chosen
+`model` and all `providers`) are in `experiment.config.json` at the repository root,
+described in `docs/experiment.md` there; `pipeline.config.json` must not repeat them.
 
-All harness tuning values live in two version-controlled JSON files at the repository
-root. JSON has no comments, so this file explains every key. Restart the
+All harness tuning values live in two version-controlled JSON files at the top of
+`harness/finetuned/`. JSON has no comments, so this file explains every key. Restart the
 pipeline process after editing; values are read once per process, and every
 agent session records the effective `harness.config.json` in Langfuse
 (`harness_configuration`). `agent/harness/config.ts` validates the file at
@@ -22,8 +22,6 @@ Secrets never go in these files: API keys live in the ignored `.env`
 | `pipeline.stages.<stage>.enabled` | Turns a stage on or off. `submit` stays disabled: CSVs are submitted manually. |
 | `pipeline.stages.<stage>.options` | Per-stage overrides. Research accepts `injectStartupContext`; solve accepts `maxIterations`, `seed`, `foldPolicy` and `experimentUpdateIntervalSeconds`, overriding the `solve` section below. |
 | `pipeline.tasks.<task>` | Typed task declaration: sample source, train/test archives, targets, metric, holdout and refit mode, submission format. |
-| `defaultModel` | `provider/model` used by every agent unless `--model` overrides it. |
-| `providers.<id>` | Endpoint, API style, the environment variable holding the key, and per-model `contextWindow`/`maxTokens`. |
 | `agent` | Pi working directory and agent directory. |
 
 ## `harness.config.json`: how it runs

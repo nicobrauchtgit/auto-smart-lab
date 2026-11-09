@@ -32,8 +32,6 @@ function configFile(dir: string, stages: Record<string, { enabled: boolean }>): 
 	writeFileSync(path, JSON.stringify({
 		pipeline: { version: 1, entryStage: "research", scheduling: "configured", stages, tasks: { spam1: spamConfiguration() } },
 		agent: { cwd: ".", agentDir: ".pi/agent", initialPrompt: "hi" },
-		defaultModel: "saia/test-model",
-		providers: {},
 	}));
 	return path;
 }

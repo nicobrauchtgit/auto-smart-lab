@@ -1,8 +1,8 @@
 # auto-smart-lab — what, why and how
 
 > **Since the merge (2026-11-06):** this arm runs through `./dev bun run experiment -- --arm minimal`
-> from the repository root, in a fresh confined `runs/minimal/<stamp>/`. Its model settings are in
-> `pipeline.config.json`. Sections about the lab VM, `scripts/vm`, `npm`, devbox and `~/.pi/agent/models.json`
+> from the repository root, in a fresh confined `runs/minimal/<stamp>/`. Its model and online/offline
+> settings are in `experiment.config.json` at the root. Sections about the lab VM, `scripts/vm`, `npm`, devbox and `~/.pi/agent/models.json`
 > describe the setup before the merge; see `docs/experiment.md` at the root.
 
 This document is the durable context for the agent: the research question behind it, the

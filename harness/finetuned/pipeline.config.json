@@ -93,54 +93,5 @@
     "cwd": ".",
     "agentDir": ".pi/agent",
     "initialPrompt": "hi"
-  },
-  "defaultModel": "mythllm/qwen3.8-flash-next-a5b",
-  "providers": {
-    "mythllm": {
-      "name": "TU Berlin MythLLM",
-      "baseUrl": "https://mythllm.mlsec.tu-berlin.de/v1",
-      "api": "openai-completions",
-      "apiKeyEnv": "MYTHLLM_API_KEY",
-      "models": [
-        {
-          "id": "qwen3.8-flash-next-a5b",
-          "name": "Qwen 3.8 Flash Next A5B",
-          "reasoning": true,
-          "input": ["text"],
-          "contextWindow": 262144,
-          "maxTokens": 32768,
-          "compat": {
-            "supportsDeveloperRole": false,
-            "supportsReasoningEffort": false,
-            "thinkingFormat": "chat-template",
-            "chatTemplateKwargs": {
-              "reasoning_effort": "xhigh"
-            }
-          }
-        }
-      ]
-    },
-    "google-vertex": {
-      "builtin": true
-    },
-    "saia": {
-      "name": "SAIA / GWDG Chat AI",
-      "baseUrl": "https://chat-ai.academiccloud.de/v1",
-      "api": "openai-completions",
-      "apiKeyEnv": "SAIA_API_KEY",
-      "models": [
-        {
-          "id": "mistral-medium-3.5-128b",
-          "name": "Mistral Medium 3.5 128B",
-          "reasoning": false,
-          "input": [
-            "text",
-            "image"
-          ],
-          "contextWindow": 256000,
-          "maxTokens": 16384
-        }
-      ]
-    }
   }
 }

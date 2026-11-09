@@ -126,7 +126,7 @@ test("configuration rejects missing keys and credential-bearing endpoints; child
 
 test("final-flush failures reach the pipeline result while authoritative success is preserved", async () => {
  const root = directory(), configPath = join(root, "config.json"), previous = STAGE_REGISTRY.research;
- writeFileSync(configPath, JSON.stringify({ agent: { cwd: ".", agentDir: ".", initialPrompt: "" }, providers: {}, defaultModel: "unused/model",
+ writeFileSync(configPath, JSON.stringify({ agent: { cwd: ".", agentDir: ".", initialPrompt: "" },
   pipeline: { entryStage: "research", stages: { research: { enabled: true } }, tasks: { fixture: spamConfiguration() } } }));
  STAGE_REGISTRY.research = { name: "research", version: 1, description: "fixture", parseOptions: () => ({}), checkInput() {},
   async run() { return { artifacts: [], validation: { valid: true, errors: [] } }; } };

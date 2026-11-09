@@ -68,10 +68,11 @@ test("model probe sends rendered prompt text through the SDK", async () => {
  } });
  try {
   const configPath = join(root, "pipeline.config.json");
-  writeFileSync(configPath, JSON.stringify({ agent: { cwd: ".", agentDir: ".", initialPrompt: "" },
-   defaultModel: "setup-test/fixture", providers: { "setup-test": { baseUrl: `http://localhost:${server.port}/v1`,
+  const experimentConfigPath = join(root, "experiment.config.json");
+  writeFileSync(configPath, JSON.stringify({ agent: { cwd: ".", agentDir: ".", initialPrompt: "" } }));
+  writeFileSync(experimentConfigPath, JSON.stringify({ online: false, model: { provider: "setup-test", id: "fixture" }, providers: { "setup-test": { baseUrl: `http://localhost:${server.port}/v1`,
     api: "openai-completions", apiKeyEnv: "SETUP_TEST_API_KEY", models: [{ id: "fixture", contextWindow: 10000, maxTokens: 100 }] } } }));
-  await new SetupSession().check(setupChecks(["model"], { taskId: "fixture", configPath, prompts: loadPromptSnapshot() }), signal(), () => {});
+  await new SetupSession().check(setupChecks(["model"], { taskId: "fixture", configPath, experimentConfigPath, prompts: loadPromptSnapshot() }), signal(), () => {});
   expect(content).toBe(loadPromptSnapshot().render("setup.model-check", {}).text);
  } finally {
   server.stop(true); rmSync(root, { recursive: true, force: true });

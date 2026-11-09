@@ -6,7 +6,7 @@ here and are chosen with a flag.
 
 ```bash
 ./dev setup                                                       # toolchain, venv, JS dependencies
-./dev bun run experiment -- --arm minimal --offline --only spam1
+./dev bun run experiment -- --arm minimal --only spam1
 ./dev bun run experiment -- --arm finetuned spam1
 ```
 
@@ -17,6 +17,7 @@ experiment/          the switch, run locations and jails, boundary tests
 runs/                run state: runs/minimal/, runs/finetuned/ (ignored by Git)
 units/               task data, shared by both arms (ignored by Git)
 docs/                the experiment, the work queue, open questions
+experiment.config.json  shared by both arms: online or offline, provider and model
 ```
 
 Start with [docs/experiment.md](docs/experiment.md). Each arm's own README describes

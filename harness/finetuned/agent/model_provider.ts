@@ -6,11 +6,12 @@ import { loadPipelineConfig, type PipelineConfig } from "./pipeline_config.ts";
 export interface InitializeModelOptions {
 	config?: PipelineConfig;
 	configPath?: string;
+	experimentConfigPath?: string;
 	model?: string;
 }
 
 export async function initializeModel(options: InitializeModelOptions = {}) {
-	const config = options.config ?? (await loadPipelineConfig(options.configPath)).config;
+	const config = options.config ?? (await loadPipelineConfig(options.configPath, options.experimentConfigPath)).config;
 	const modelRef = options.model ?? config.defaultModel;
 	const separator = modelRef.indexOf("/");
 	if (separator < 1) throw new Error(`Invalid model reference: ${modelRef}`);

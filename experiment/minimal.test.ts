@@ -3,7 +3,8 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { armModelsJson, checkMinimalSetup, minimalPolicy, prepareMinimalRun, withModel } from "./minimal.js";
+import { armModelsJson, checkMinimalSetup, minimalArgs, minimalPolicy, prepareMinimalRun, withModel } from "./minimal.js";
+import { experimentConfigProblems } from "./config.js";
 import { harnessStatePaths, parseExperimentArgs } from "./cli.js";
 import { shellEnvironment } from "../harness/minimal/agent/run/session_runner.js";
 
@@ -18,11 +19,10 @@ function fixture() {
 	write("harness/minimal/agent/instructions/solver.md", "solver prompt\n");
 	write("harness/minimal/.pi/settings.json", "{}\n");
 	write("harness/minimal/docs/EXPERIMENT_LOG.md", "earlier results\n");
-	write("harness/minimal/pipeline.config.json", JSON.stringify({ defaultModel: "mythllm/m", providers: {
-		mythllm: { name: "M", baseUrl: "https://example.invalid/v1", api: "openai-completions", apiKeyEnv: "MYTHLLM_API_KEY", models: [{ id: "m" }] },
+	write("experiment.config.json", JSON.stringify({ online: false, model: { provider: "mythllm", id: "m" }, providers: {
+		mythllm: { name: "M", baseUrl: "https://example.invalid/v1", api: "openai-completions", apiKeyEnv: "MYTHLLM_API_KEY", models: [{ id: "m", contextWindow: 1, maxTokens: 1 }] },
 		"google-vertex": { builtin: true } } }));
-	write("harness/finetuned/pipeline.config.json", JSON.stringify({ defaultModel: "harness/h", providers: {
-		harness: { name: "H", baseUrl: "https://harness.invalid/v1", api: "openai-completions", apiKeyEnv: "HARNESS_ONLY_KEY", models: [{ id: "h" }] } } }));
+	write("harness/finetuned/pipeline.config.json", JSON.stringify({ agent: { cwd: ".", agentDir: ".", initialPrompt: "" } }));
 	write("units/index.json", "{}\n");
 	write("units/01-spam/task/prompt.md", "the task\n");
 	write("units/_vm-archive/old/prompt.md", "archived\n");
@@ -59,14 +59,14 @@ describe("minimal arm run location", () => {
 		expect(JSON.parse(text).providers["google-vertex"]).toBeUndefined();
 	});
 
-	test("model configuration comes from the arm's own file, not the harness's", () => {
+	test("model configuration comes from the shared experiment file", () => {
 		const root = fixture();
 		const run = prepareMinimalRun({ projectRoot: root, stamp: "a" });
 		const providers = JSON.parse(readFileSync(join(run.home, ".pi/agent/models.json"), "utf8")).providers;
 		expect(Object.keys(providers)).toEqual(["mythllm"]);
 		expect(checkMinimalSetup({ projectRoot: root, bwrap: "/nonexistent", env: {} }).join("\n")).toContain("MYTHLLM_API_KEY is not set");
-		rmSync(join(root, "harness/minimal/pipeline.config.json"));
-		expect(checkMinimalSetup({ projectRoot: root, bwrap: "/nonexistent", env: {} }).join("\n")).toContain("pipeline.config.json is missing");
+		rmSync(join(root, "experiment.config.json"));
+		expect(checkMinimalSetup({ projectRoot: root, bwrap: "/nonexistent", env: {} }).join("\n")).toContain("experiment.config.json");
 	});
 });
 
@@ -109,6 +109,22 @@ describe("experiment switch", () => {
 	test("the arm always gets a named model", () => {
 		expect(withModel(["--offline"], "mythllm/m")).toEqual(["--model", "mythllm/m", "--offline"]);
 		expect(withModel(["--model", "other/x", "--offline"], "mythllm/m")).toEqual(["--model", "other/x", "--offline"]);
+	});
+
+	test("online comes from the shared file only", () => {
+		const shared = { model: { provider: "mythllm", id: "m" } };
+		expect(minimalArgs(["--only", "spam1"], { ...shared, online: false })).toEqual(["--model", "mythllm/m", "--only", "spam1", "--offline"]);
+		expect(minimalArgs(["--only", "spam1"], { ...shared, online: true })).toEqual(["--model", "mythllm/m", "--only", "spam1"]);
+		expect(() => minimalArgs(["--offline"], { ...shared, online: false })).toThrow("experiment.config.json");
+	});
+
+	test("the shared file names the chosen provider and model explicitly", () => {
+		const provider = { baseUrl: "u", api: "a", apiKeyEnv: "KEY", models: [{ id: "m", contextWindow: 1, maxTokens: 1 }] };
+		expect(experimentConfigProblems({ online: false, model: { provider: "p", id: "m" }, providers: { p: provider } })).toEqual([]);
+		expect(experimentConfigProblems({ online: false, model: { provider: "q", id: "m" }, providers: { p: provider } }).join()).toContain("not in \"providers\"");
+		expect(experimentConfigProblems({ online: false, model: { provider: "p", id: "x" }, providers: { p: provider } }).join()).toContain("does not list");
+		expect(experimentConfigProblems({ online: false, model: { provider: "p", id: "m" }, providers: { p: { ...provider, apiKeyEnv: undefined } } }).join()).toContain("apiKeyEnv");
+		expect(experimentConfigProblems({ online: "no", defaultModel: "p/m", model: { provider: "p", id: "m" }, providers: { p: provider } }).join()).toMatch(/online.*defaultModel|defaultModel.*online/);
 	});
 
 	test("requires an arm and leaves other arguments for it", () => {

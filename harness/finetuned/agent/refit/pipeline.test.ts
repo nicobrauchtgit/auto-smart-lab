@@ -15,7 +15,7 @@ import type { TaskConfiguration } from "../pipeline/task_configuration.js";
 
 function configuration(root: string, chain = false) {
  const path = join(root, "pipeline.config.json");
- writeFileSync(path, JSON.stringify({ agent: { cwd: ".", agentDir: ".", initialPrompt: "" }, defaultModel: "unused/local", providers: {},
+ writeFileSync(path, JSON.stringify({ agent: { cwd: ".", agentDir: ".", initialPrompt: "" },
   pipeline: { version: 1, entryStage: chain ? "solve" : "refit", stages: { solve: { enabled: chain }, refit: { enabled: true } },
    tasks: { fixture: spamConfiguration(), "fixture-missing": spamConfiguration() } } }));
  return path;

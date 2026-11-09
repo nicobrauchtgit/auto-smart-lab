@@ -2,9 +2,11 @@
  * Choose the experiment arm. Each arm keeps its own entry point and arguments:
  *
  *   ./dev bun run experiment -- --arm finetuned spam1 [pipeline arguments]
- *   ./dev bun run experiment -- --arm minimal --offline --only spam1 [solve_units arguments]
+ *   ./dev bun run experiment -- --arm minimal --only spam1 [solve_units arguments]
  *   ./dev bun run experiment -- --arm minimal --check-setup
  *   ./dev bun run experiment -- --arm finetuned --reset --yes
+ *
+ * Online or offline, the provider and the model come from experiment.config.json for both arms.
  *
  * The minimal arm starts every run in a fresh directory under runs/minimal/.
  * The finetuned arm keeps state in runs/finetuned/; --reset clears it except deliveries/.
@@ -13,6 +15,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadExperimentConfig } from "./config.js";
 import { checkMinimalSetup, createMinimalVenv, prepareMinimalRun, runMinimal } from "./minimal.js";
 
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -53,6 +56,8 @@ async function main(): Promise<number> {
 		return 0;
 	}
 	if (options.arm === "finetuned") {
+		// Online mode for the finetuned arm arrives with the orchestrator rework (docs/cleanup-plan.md).
+		if (loadExperimentConfig().online) { console.error("The finetuned arm runs offline only for now; set \"online\": false in experiment.config.json."); return 1; }
 		const args = [join(PROJECT_ROOT, "harness", "finetuned", "agent", "pipeline_cli.ts"), ...options.rest, ...(options.checkSetup ? ["--check-setup"] : [])];
 		return spawnSync(process.execPath, args, { cwd: PROJECT_ROOT, stdio: "inherit" }).status ?? 1;
 	}

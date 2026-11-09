@@ -90,6 +90,8 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
  /** The orchestrator declares the configuration later; its tool validates the data then. */
  taskConfigurationDeclaredLater?: boolean;
  model?: string; configPath?: string; prompts: PromptSnapshot;
+ /** Test seam; production reads experiment.config.json at the repository root. */
+ experimentConfigPath?: string;
  /** Executable overrides for regression tests; production resolves them from the environment. */
  executables?: { python?: string; git?: string; bwrap?: string };
  candidateProducedUpstream?: boolean; refitTrainingRoot?: string;
@@ -257,8 +259,8 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
   });
  }
  if (needs.has("model")) {
-  add("model-configuration", "local", "Check the selected provider/model in pipeline.config.json and its apiKeyEnv credential in .env (or builtin provider credentials).", async () => {
-   const { config } = await loadPipelineConfig(options.configPath);
+  add("model-configuration", "local", "Check model.provider, model.id and that provider's apiKeyEnv in experiment.config.json, and set that variable in .env (or the builtin provider's credentials).", async () => {
+   const { config } = await loadPipelineConfig(options.configPath, options.experimentConfigPath);
    const reference = options.model ?? config.defaultModel;
    const provider = config.providers[reference.split("/")[0]];
    if (!provider) throw new Error("Unknown provider");
@@ -266,7 +268,7 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
    await initializeModel({ config, model: options.model });
   });
   add("model-access", "remote", "The selected model failed a minimal request. Check its credentials, model access, quota and provider connectivity.", async signal => {
-   const { modelRuntime, model } = await initializeModel({ configPath: options.configPath, model: options.model });
+   const { modelRuntime, model } = await initializeModel({ configPath: options.configPath, experimentConfigPath: options.experimentConfigPath, model: options.model });
    const result = await modelRuntime.completeSimple(model, { messages: [{ role: "user", content: options.prompts.render("setup.model-check", {}).text, timestamp: Date.now() }] }, {
     maxTokens: HARNESS_CONFIG.setup.modelMaxTokens,
     signal: AbortSignal.any([signal, AbortSignal.timeout(HARNESS_CONFIG.setup.timeoutMs)]),
