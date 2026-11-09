@@ -104,7 +104,7 @@ minimal live completion through the project adapter. This does not establish
 whole-chain readiness. Limits (2026-11-09): the server's `/model/info` now
 reports 262,144 input and output tokens. A 130k synthetic probe failed on 2026-11-02,
 but a 194,879-token prompt returned a correct answer on 2026-11-09, so the harness
-uses 200,000 context, 32,768 output tokens and reasoning on; the minimal arm keeps
+uses 262,144 context (tested to 195k), 32,768 output tokens and reasoning on; the minimal arm keeps
 Leo's entry (`arms/minimal/arm.config.json`). Prompts above 195k are untested. The
 handoff threshold is 80,000 tokens (lowered from 100,000 after a handoff overflowed
 during exercise 1). With reasoning on, the harness sends the `developer` role and

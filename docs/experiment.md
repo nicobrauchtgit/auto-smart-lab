@@ -73,7 +73,7 @@ These are part of what is compared. Do not equalize them; report them with resul
 | Budgets | 30-minute sessions, 3 failed sessions per task | 8-hour session limit, stall detection, 6 solve iterations |
 | Installing packages | Plain `pip` in its own venv | `python_environment` tool, recorded in `changes.jsonl` |
 | Extra packages | None beyond the shared base | `optuna`, `dpkt`, `joblib`, `matplotlib`, `beautifulsoup4`, `cloudpickle`, `smartlab-eval` |
-| Model limits | Leo's entry: 262,144 context, 32,768 output, reasoning on, `compat` set | 200,000 context, 32,768 output, reasoning on, no `compat` |
+| Model limits | Leo's entry: 262,144 context, 32,768 output, reasoning on, `compat` set | 262,144 context, 32,768 output, reasoning on, no `compat` |
 | Memory within a batch | Later tasks may reuse earlier solvers (`--reset once`) | `solutions/` and `knowledge/` carry over between tasks |
 
 ## Kept the same
@@ -111,3 +111,21 @@ Earlier results in `arms/minimal/docs/EXPERIMENT_LOG.md` are not directly compar
 - **Removed:** `scripts/vm/`, since the VM is gone.
 
 `solver.md` is unchanged, so its prompt hash still matches.
+
+## Reasoning settings measured on MythLLM
+
+2026-11-09, `qwen3.8-flash-next-a5b`, one question ("primes below 200"), 3 requests each.
+All variants answered correctly and followed the system instruction.
+
+| Request | Thinking tokens (mean) | Seconds |
+| --- | --- | --- |
+| `system` role, no reasoning parameter (Leo's `compat`, minimal arm) | 364 | 6 |
+| `developer` role, no parameter | 679 | 10 |
+| `developer` role, `reasoning_effort: medium` (harness now) | 739 | 12 |
+| `system`, `reasoning_effort: low` | 382 | 7 |
+| `system`, `reasoning_effort: high` | 253 | 6 |
+| `system`, `chat_template_kwargs.enable_thinking: false` | 0 | 0 |
+
+`reasoning_effort` had no consistent effect; the `developer` role roughly doubled the
+thinking; only `enable_thinking: false` turns thinking off. One easy question is not a
+quality comparison.

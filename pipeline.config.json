@@ -107,7 +107,7 @@
           "name": "Qwen 3.8 Flash Next A5B",
           "reasoning": true,
           "input": ["text"],
-          "contextWindow": 200000,
+          "contextWindow": 262144,
           "maxTokens": 32768
         }
       ]

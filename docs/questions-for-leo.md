@@ -40,3 +40,9 @@ an answer can be checked against the current setup. Started 2026-11-09.
    score them?
 10. **Instructor scores.** `docs/instructor_scores.json` is empty. Did any offline delivery get
     a score back?
+
+## Documentation
+
+11. **Your README and `docs/AGENT.md`.** Both now start with a short note on how the arm runs
+    since the merge; your text below it is unchanged. Could you check them, so we can later
+    merge both arms' docs into one consistent description?
