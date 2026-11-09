@@ -73,7 +73,7 @@ These are part of what is compared. Do not equalize them; report them with resul
 | Budgets | 30-minute sessions, 3 failed sessions per task | 8-hour session limit, stall detection, 6 solve iterations |
 | Installing packages | Plain `pip` in its own venv | `python_environment` tool, recorded in `changes.jsonl` |
 | Extra packages | None beyond the shared base | `optuna`, `dpkt`, `joblib`, `matplotlib`, `beautifulsoup4`, `cloudpickle`, `smartlab-eval` |
-| Model limits | Leo's entry: 262,144 context, 32,768 output, reasoning on, `compat` set | 262,144 context, 32,768 output, reasoning on, no `compat` |
+| Model limits | Leo's entry: 262,144 context, 32,768 output, reasoning on, `compat` set | 262,144 context, 32,768 output, reasoning on, same `compat` |
 | Memory within a batch | Later tasks may reuse earlier solvers (`--reset once`) | `solutions/` and `knowledge/` carry over between tasks |
 
 ## Kept the same
@@ -114,18 +114,30 @@ Earlier results in `arms/minimal/docs/EXPERIMENT_LOG.md` are not directly compar
 
 ## Reasoning settings measured on MythLLM
 
-2026-11-09, `qwen3.8-flash-next-a5b`, one question ("primes below 200"), 3 requests each.
-All variants answered correctly and followed the system instruction.
+The model is hybrid: thinking is on by default, and its documentation lists effort levels
+`xhigh` (default), `medium`, `low` and `none`, selected with the chat template argument
+`reasoning_effort`, plus `enable_thinking`. MythLLM is LiteLLM in front of vLLM; its
+model metadata lists no reasoning support for this model, so it documents nothing here.
 
-| Request | Thinking tokens (mean) | Seconds |
-| --- | --- | --- |
-| `system` role, no reasoning parameter (Leo's `compat`, minimal arm) | 364 | 6 |
-| `developer` role, no parameter | 679 | 10 |
-| `developer` role, `reasoning_effort: medium` (harness now) | 739 | 12 |
-| `system`, `reasoning_effort: low` | 382 | 7 |
-| `system`, `reasoning_effort: high` | 253 | 6 |
-| `system`, `chat_template_kwargs.enable_thinking: false` | 0 | 0 |
+2026-11-09, 3 requests per row, all followed the system instruction unless noted.
+Question A: primes below 200 (easy). Question B: smallest n whose factorial ends in
+exactly 100 zeros (405).
 
-`reasoning_effort` had no consistent effect; the `developer` role roughly doubled the
-thinking; only `enable_thinking: false` turns thinking off. One easy question is not a
-quality comparison.
+| Request | Q | Correct | Thinking tokens (mean) | Seconds |
+| --- | --- | --- | --- | --- |
+| `system` role, no parameter (`compat`, both arms) | A | 3/3 | 364 | 6 |
+| `developer` role, no parameter | A | 3/3 | 679 | 10 |
+| `developer` role, top-level `reasoning_effort: medium` (pi without `compat`) | A | 3/3 | 739 | 12 |
+| No parameter | B | 3/3 | 442 | 11 |
+| Template `reasoning_effort: xhigh` | B | 3/3 | 523 | 13 |
+| Template `reasoning_effort: medium` | B | 3/3 | 476 | 11 |
+| Template `reasoning_effort: low` | B | 3/3 (2/3 followed the instruction) | 673 | 16 |
+| Template `reasoning_effort: none` | B | 3/3 | 644 | 10 |
+| Top-level `reasoning_effort: low` | B | 3/3 | 504 | 6 |
+| Template `enable_thinking: false` | B | 2/3 | 0 | 7 |
+
+The server accepts the effort levels without error, but with three requests no level
+changed the thinking length in the documented order, and `none` still thought. Either the
+deployed chat template ignores `reasoning_effort` or the effect is too small to see here.
+Only `enable_thinking: false` reliably turns thinking off. The `developer` role roughly
+doubled the thinking, so both arms use `compat` (`system` role, no effort parameter).

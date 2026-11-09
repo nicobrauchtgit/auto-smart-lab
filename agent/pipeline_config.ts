@@ -17,6 +17,8 @@ export type PipelineProviderConfig =
 			input?: ("text" | "image")[];
 			contextWindow: number;
 			maxTokens: number;
+			/** pi's request settings for OpenAI-compatible servers, e.g. no developer role. */
+			compat?: { supportsDeveloperRole?: boolean; supportsReasoningEffort?: boolean };
 		}>;
 	};
 
