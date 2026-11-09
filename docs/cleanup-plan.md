@@ -8,8 +8,30 @@ not additional active queues.
 ## Current focus: the two-arm experiment
 
 The minimal agent and the harness now share this branch; see
-[experiment.md](experiment.md). Next: inventory the shared-drive tasks and configure
-both arms for them. Results are comparable only on tasks both arms can run.
+[experiment.md](experiment.md). Results are comparable only on tasks both arms can run.
+
+Finetuned harness work finished on 2026-11-09 (commits 49e1d78, 6507140):
+- every task runs under the orchestrator;
+- `online` alone decides fetching, submitting and score feedback;
+- offline runs hand over one refit;
+- follow-ups (up to three of six trials, 12 h) run on branches from the champion;
+- every agent stage writes a stage report and captures lessons (NOTES.md is gone);
+- the solve prompt asks for a code self-check before each trial.
+
+Next, in order:
+1. Shakedown on spam1–3 offline in both arms, not measured.
+2. Shared-drive tasks: re-request the share password, inventory 01–05, get the GPG
+   keys, grow the disk, then prepare each task for both arms (instructions,
+   labels, CSV contract, `units/index.json` entry, task configuration).
+3. Decide the protocol for measured runs: repetitions, sequential or parallel
+   arms given MythLLM throughput, and what memory carries over between tasks.
+4. Before each measured run: `--arm finetuned --reset --yes`, `--check-setup` for
+   both arms.
+
+Open questions:
+- The reviewer is told to keep sealed confirmation results out of knowledge
+  notes; this is an instruction, not a filter.
+- The lesson step adds two model turns per stage.
 
 ## Earlier focus: useful signals for the agent
 
@@ -50,10 +72,9 @@ tuning value is in `harness.config.json`/`pipeline.config.json`, explained in
 - [x] **Stall check.** Replace the 30-minute session race with a
   "no streamed tokens for N minutes" check; `session.timeoutMs` stays only as
   a safety limit.
-- [ ] **Orchestrator re-research.** On a solve plateau the orchestrator
-  decides, guided by few-shot examples rather than a fixed rule, whether to
-  start another research round with a focus and a typed diagnosis. It
-  records its reason for each decision.
+- [x] **Orchestrator re-research.** The orchestrator may rerun research with
+  directions drawn from the reviewer's hand-off report (2026-11-09). Few-shot
+  examples and a typed diagnosis were not added.
 
 ## Exercise 1 results (2026-11-04)
 
