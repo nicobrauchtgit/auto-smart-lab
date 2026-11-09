@@ -19,7 +19,8 @@ Secrets never go in these files: API keys live in the ignored `.env`
 | Key | Meaning |
 | --- | --- |
 | `pipeline.entryStage` | First stage of a run (`research`). |
-| `pipeline.stages.<stage>.enabled` | Turns a stage on or off. `submit` stays disabled: CSVs are submitted manually. |
+| `pipeline.scheduling` | `"agent"`: the orchestrator picks stages (the default for experiment runs). `"configured"` runs the fixed chain from `entryStage`, for development only. |
+| `pipeline.stages.<stage>.enabled` | Makes a stage available. `submit` is available but only used when `online` is true in `experiment.config.json`; offline, the run hands over one refit and uploads nothing. |
 | `pipeline.stages.<stage>.options` | Per-stage overrides. Research accepts `injectStartupContext`; solve accepts `maxIterations`, `seed`, `foldPolicy` and `experimentUpdateIntervalSeconds`, overriding the `solve` section below. |
 | `pipeline.tasks.<task>` | Typed task declaration: sample source, train/test archives, targets, metric, holdout and refit mode, submission format. |
 | `agent` | Pi working directory and agent directory. |
@@ -116,9 +117,13 @@ is a suggestion to the agent, not a constraint.
 | `timeoutMs` | 30000 | Time limit per preflight check. |
 | `modelMaxTokens` | 16 | Output tokens of the tiny live model probe. |
 
-### `subagents` and `orchestrator`
-`subagents` bounds helper agents (turn and wait timeouts, concurrency,
-message sizes). `orchestrator` bounds an autonomous controller run (sessions,
-model requests, tool calls, stages, trials, retries, wall time, summary
-sizes). Neither is used by a configured `research → solve → evaluate → refit`
-chain.
+### `orchestrator`
+Bounds one task's controller run. `maxWallMs` (12 h) is the run's deadline; the
+orchestrator sees the time left, with notes at 50% and 20%, as information rather
+than a reserve. `maxTrials` (24) with 6 trials per solve allows the first solve
+round plus three follow-ups; each solve reserves its whole allocation. The other
+keys bound sessions, model requests, tool calls, stages, retries, summary sizes
+and notifications.
+
+### `subagents`
+Bounds helper agents (turn and wait timeouts, concurrency, message sizes).

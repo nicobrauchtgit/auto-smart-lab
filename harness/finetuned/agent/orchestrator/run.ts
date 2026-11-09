@@ -20,6 +20,7 @@ import { Coordinator } from "./coordinator.js";
 import { runDecisionAgent } from "./session.js";
 import type { PipelineRunResult, StageInput } from "../pipeline/types.js";
 import { statePath } from "../paths.js";
+import { followUpBranches } from "../training/branches.js";
 export interface OrchestratorOptions {
  telemetry?: import("../telemetry/runtime.js").TelemetryOptions;
  taskId: string; targetScore?: number; maxSubmissions?: number; noSubmit?: boolean; checkSetupOnly?: boolean;
@@ -53,13 +54,14 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Pip
  try {
   const { resolved: config } = await loadResolvedPipelineConfig(options.configPath);
   // The task's own data, downloaded only if missing, before its dataset fingerprint is taken.
-  const taskData = await ensureTaskData(task.taskId, { signal: controller.signal });
+  const taskData = await ensureTaskData(task.taskId, { signal: controller.signal, offline: !config.online });
   const snapshot = loadPromptSnapshot(), runId = options.resumeRunId ?? randomUUID();
   const { context } = buildResearchContext(task.taskId);
   const taskDescription = [boundedFile(join(task.taskDir, "prompt.md")), ...(existsSync(join(dirname(task.taskDir), "unit-intro.md")) ? [boundedFile(join(dirname(task.taskDir), "unit-intro.md"), 16000)] : [])].join("\n\n");
   const taskFingerprint = hash({ taskId: task.taskId, taskDescription, dataset: context.dataset.snapshot_sha256 });
   store = new StateStore(join(runsDir, task.taskId, "pipeline", runId), options.resumeRunId ? undefined : initialState({ taskId: task.taskId, taskFingerprint, config, promptTemplates: snapshot.serialize(), promptFingerprint: snapshot.fingerprint,
-   authorized: options.noSubmit !== true && options.maxSubmissions !== 0 && config.enabledStages.includes("submit"), maxSubmissions: options.maxSubmissions, targetScore: options.targetScore, limits: options.limits, runId }));
+   // Submitting needs the online experiment as well as an explicit caller policy.
+   authorized: config.online && options.noSubmit !== true && options.maxSubmissions !== 0 && config.enabledStages.includes("submit"), maxSubmissions: options.maxSubmissions, targetScore: options.targetScore, limits: options.limits, runId }));
   const saved = store.state;
   if (saved.taskFingerprint !== taskFingerprint || saved.config.fingerprint !== config.fingerprint) throw new Error("Task/config changed since this run; refusing resumed effects");
   if (options.resumeRunId && ((options.targetScore !== undefined && options.targetScore !== saved.goal.targetScore) || (options.maxSubmissions !== undefined && options.maxSubmissions !== saved.policy.maxSubmissions) || (options.noSubmit === true && saved.policy.authorized))) throw new Error("Resume policy is immutable; start a separate no-submit run instead");
@@ -78,6 +80,8 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Pip
    inspectTaskData: configuration => inspectTaskData(task.taskId, configuration, projectPython()),
    // The file's entry is advice; stages run under what the agent declares.
    suggestedConfiguration: saved.config.taskConfigurations?.[task.taskId],
+   budgetNote: percent => percent <= 20 ? prompts.render("orchestrator.budget-low", {}).text.trim() : percent <= 50 ? prompts.render("orchestrator.budget-half", {}).text.trim() : undefined,
+   branches: () => followUpBranches(statePath(PROJECT_ROOT, "solutions"), task.taskId),
    start: (work, input) => startStageInvocation({ invocationId: work.id, stage: work.stage, input: { ...input, model: options.model }, config: saved.config, configPath: options.configPath, trace: trace!, prompts, setupSession: setup, optionOverrides: work.options, reason: "orchestrator_decision", signal: controller.signal, executionGuard: coordinator!.executionGuard }),
    officialStatus: async () => { const accounting = await readSubmissionAccounting({ taskId: task.taskId, transport: submissionTransport(task.taskId), accountingRoot: statePath(PROJECT_ROOT, "submissions"), report, signal: controller.signal }); const s = accounting.officialStatus; return { triesUsed: s.triesUsed, reservedUnknown: accounting.reservedUnknown, effectiveTriesUsed: accounting.effectiveTriesUsed, unresolved: accounting.unresolved, results: s.attempts.map(a => ({ attemptId: a.id, status: a.state, ...(a.score === null ? {} : { score: a.score }) })) }; },
    recover: async (work, input) => {

@@ -2,7 +2,7 @@
   "pipeline": {
     "version": 1,
     "entryStage": "research",
-    "scheduling": "configured",
+    "scheduling": "agent",
     "stages": {
       "research": {
         "enabled": true,
@@ -16,7 +16,7 @@
         "enabled": true
       },
       "submit": {
-        "enabled": false
+        "enabled": true
       },
       "refit": {
         "enabled": true,

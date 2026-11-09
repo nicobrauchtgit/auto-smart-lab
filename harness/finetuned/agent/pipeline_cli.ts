@@ -14,6 +14,7 @@ import { readFileSync } from "node:fs";
 
 import { runPipeline } from "./pipeline/executor.js";
 import { loadResolvedPipelineConfig } from "./pipeline/config.js";
+import { loadPipelineConfig } from "./pipeline_config.js";
 import { listTasks, resolveTask, TaskNotFoundError, type TaskRef } from "./pipeline/resolve_task.js";
 import type { StageName } from "./pipeline/types.js";
 
@@ -132,6 +133,8 @@ async function main(): Promise<void> {
 		// An ambiguous selection is a caller mistake, not a missing unit: fetching
 		// here would download whatever unit the fetcher makes of the query.
 		if (!(error instanceof TaskNotFoundError) || error.reason !== "not_found" || !unit || !autoFetch) throw error;
+		// Offline experiments never fetch: only local tasks count.
+		if (!(await loadPipelineConfig()).config.online) throw error;
 		console.log(`[pipeline] No local metadata for unit ${unit}; fetching it.`);
 		const { fetchUnit } = await import("./setup/fetch_unit.js");
 		await fetchUnit(unit, { insecure: !secureTls });

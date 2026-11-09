@@ -55,3 +55,12 @@ test("tasks fetched before links were recorded use their local files; without an
 	expect(await ensureTaskData("spam1", { taskDir: legacy })).toMatchObject({ legacy: true, present: ["spam1-train.zip"] });
 	await expect(ensureTaskData("code1", { taskDir: task() })).rejects.toThrow("records no download links");
 });
+
+test("offline experiments never download: present files are used and a missing one is an error", async () => {
+	const taskDir = task([{ name: "code1-train.zip", url: "https://download.example/code1-train.zip" }]);
+	const never = () => { throw new Error("no download expected offline"); };
+	await expect(ensureTaskData("code1", { taskDir, downloader: never, offline: true })).rejects.toThrow("the experiment is offline");
+	mkdirSync(join(taskDir, "data"), { recursive: true });
+	writeFileSync(join(taskDir, "data", "code1-train.zip"), ZIP);
+	expect(await ensureTaskData("code1", { taskDir, downloader: never, offline: true })).toMatchObject({ downloaded: [], present: ["code1-train.zip"] });
+});

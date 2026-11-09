@@ -34,6 +34,8 @@ export interface ResolvedPipelineConfig {
 	enabledStages: StageName[];
 	/** Validated `pipeline.tasks` entries: the harness parts of each configured task. */
 	taskConfigurations: Record<string, TaskConfiguration>;
+	/** From experiment.config.json: whether tasks are fetched and submitted, with score feedback. */
+	online: boolean;
 	snapshot: Record<string, unknown>;
 	fingerprint: string;
 	warnings: string[];
@@ -150,6 +152,7 @@ export function resolvePipelineSettings(config: PipelineConfig): ResolvedPipelin
 		effectiveOptions,
 		enabledStages,
 		taskConfigurations,
+		online: config.online ?? false,
 		snapshot,
 		fingerprint: createHash("sha256").update(JSON.stringify(snapshot)).digest("hex"),
 		warnings,

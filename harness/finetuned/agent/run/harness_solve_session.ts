@@ -30,6 +30,7 @@ import { createIdleWaiter } from "./idle_wait.js";
 import { runConfirmation, type ConfirmationOutput } from "../confirmation/service.js";
 import { ARM_ROOT, statePath } from "../paths.js";
 import { stageReportPath } from "../knowledge/lessons.js";
+import { finishFollowUp, recoverFollowUp, startFollowUp } from "../training/branches.js";
 
 export type HarnessSolveStopReason = "agent_finished" | "agent_failed" | "cancelled" | "no_promotion";
 
@@ -315,6 +316,22 @@ export async function runHarnessSolveSession(
 
 	try { await training.ready?.(); }
     catch (error) { await training.close(); throw error; }
+	// A task with a champion gets a follow-up round on its own branch from the champion.
+	// A failure to branch is recorded; the round then runs where the repository stands.
+	let followUp: ReturnType<typeof startFollowUp>;
+	try {
+		// A round a crash left open is closed first, so this one starts from the right place.
+		const recovered = recoverFollowUp(workspace.solutionsRoot);
+		if (recovered.recovered || recovered.error) report?.event("follow_up_branch_recovered", { branch: recovered.recovered?.branch, previous: recovered.recovered?.previous, ...(recovered.error ? { error: recovered.error } : {}) });
+		// Still in an open round: this one runs where the repository stands, without a new branch.
+		if (recovered.error) throw new Error(`Earlier follow-up round could not be closed: ${recovered.error}`); followUp = startFollowUp(workspace.solutionsRoot, taskId, runId.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 12)); }
+	catch (error) { report?.event("follow_up_branch_failed", { message: error instanceof Error ? error.message : String(error) }); }
+	if (followUp) {
+		const note = prompts.render("solve.follow-up", { branch: followUp.branch, champion: followUp.champion.slice(0, 12), previous: followUp.previous });
+		opening.prompt += `\n\n${note.text}`;
+		opening.promptReferences.push(note.reference);
+		report?.event("follow_up_branch_started", { branch: followUp.branch, champion_commit: followUp.champion, previous: followUp.previous });
+	}
 
 	let sessionError: string | undefined;
 	let stopReason: HarnessSolveStopReason = "agent_finished";
@@ -359,6 +376,10 @@ export async function runHarnessSolveSession(
 		report?.event("agent_attempt_error", { attempt: 1, message: sessionError });
 	} finally {
 		await training.close();
+		if (followUp) {
+			const restored = finishFollowUp(workspace.solutionsRoot, followUp);
+			report?.event("follow_up_branch_finished", { branch: followUp.branch, previous: followUp.previous, ...restored });
+		}
 	}
 
 	const collection = await championSelection(await dependencies.collectResults(trainingRoot), workspace.solutionsRoot, taskId);

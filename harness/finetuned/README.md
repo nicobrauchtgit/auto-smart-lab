@@ -10,10 +10,10 @@ Auto SmartLab is an experimental autonomous machine-learning pipeline for the [S
 The intended pipeline is:
 
 ```text
-resolve task -> research -> solve and measure -> evaluate -> submit
+resolve task -> orchestrator: research -> solve -> review -> (follow-ups) -> refit (hand-over) [-> submit, online only]
 ```
 
-Research, solve, evaluation and refit run through the shared pipeline executor. Configured runs stop before submission; uploads require an explicit controller policy. See [Remaining work](../../docs/cleanup-plan.md) for current run blockers and the single active work queue. Every tuning value (budgets, limits, timeouts, seeds, folds) lives in `harness.config.json` and `pipeline.config.json`; [the configuration reference](docs/configuration.md) explains each key.
+An orchestrator agent runs every task (`scheduling: "agent"`): it chooses the stages, their order and the context each gets, and hands over one refit offline or submits up to three times online (`online` in `experiment.config.json`). Research, solve, evaluation and refit run through the shared pipeline executor. After its work, every agent stage writes a stage report and records lessons in the knowledge store. See [Remaining work](../../docs/cleanup-plan.md) for current run blockers and the single active work queue. Every tuning value (budgets, limits, timeouts, seeds, folds) lives in `harness.config.json` and `pipeline.config.json`; [the configuration reference](docs/configuration.md) explains each key.
 
 ## The experiment
 

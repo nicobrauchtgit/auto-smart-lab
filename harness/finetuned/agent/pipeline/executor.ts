@@ -262,11 +262,14 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
  const seededArtifacts = structuredClone(options.seedArtifacts ?? []);
  const evidenceCatalog = structuredClone(options.evidenceCatalog ?? []);
 	const { resolved } = await loadResolvedPipelineConfig(options.configPath);
-	if (resolved.settings.scheduling === "agent") {
+	// Chain options (a start or stop stage, guidance, seeded artifacts) ask for the configured
+	// chain: single-stage commands and development runs. Everything else goes to the orchestrator.
+	const chainRequested = !!(options.entryStage || options.stopAfter || options.guidance !== undefined || options.seedArtifacts?.length || options.evidenceCatalog?.length);
+	if (resolved.settings.scheduling === "agent" && chainRequested) console.warn("[pipeline] Stage or guidance options given: running the configured chain instead of the orchestrator");
+	if (resolved.settings.scheduling === "agent" && !chainRequested) {
 		const { runOrchestrator } = await import("../orchestrator/run.js");
-		// The generic chain API never grants uploading; autonomous CLI/API invocation
-		// must explicitly choose an immutable submission policy.
-		return runOrchestrator({ taskId: options.taskId, model: options.model, configPath: options.configPath, noSubmit: true, telemetry: options.telemetry, checkSetupOnly: options.checkSetupOnly, signal: options.signal, runsDir: options.runsDir });
+		// Submission follows "online" in experiment.config.json and nothing else.
+		return runOrchestrator({ taskId: options.taskId, model: options.model, configPath: options.configPath, noSubmit: !resolved.online, telemetry: options.telemetry, checkSetupOnly: options.checkSetupOnly, signal: options.signal, runsDir: options.runsDir });
 	}
 	for (const warning of resolved.warnings) console.warn(`[pipeline] ${warning}`);
 
@@ -302,7 +305,7 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
 		// One configuration for the whole chain, resolved before any setup check.
 		const taskConfiguration = resolveTaskConfiguration(options.taskId, undefined, resolved.taskConfigurations[options.taskId]);
 		// Only this task's data is downloaded, and only what is missing; setup then checks it.
-		if (listTasks().some(task => task.taskId === options.taskId)) await ensureTaskData(options.taskId, { record: trace.event, signal: options.signal });
+		if (listTasks().some(task => task.taskId === options.taskId)) await ensureTaskData(options.taskId, { record: trace.event, signal: options.signal, offline: !resolved.online });
 		trace.event("pipeline_task_configuration", { source: taskConfiguration.source, sha256: taskConfiguration.sha256, configuration: taskConfiguration.configuration });
 		trace.event("pipeline_prompt_snapshot", { prompt_snapshot_sha256: prompts.fingerprint });
 		const setupSession = new SetupSession();

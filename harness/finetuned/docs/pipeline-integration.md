@@ -498,9 +498,9 @@ workers must inspect evidence and the harness still validates their artifacts.
 ## Dynamic agent scheduling and recovery
 
 `agent/orchestrator/run.ts` replaces scheduling policy while retaining this executor.
-The explicit `orchestrate` CLI authorizes an immutable controller submission policy;
-configured scheduling and the generic pipeline API never grant uploads merely by
-enabling submit. `scheduling: "agent"` is opt-in; the generic API uses no-submit mode.
+Experiment runs use `scheduling: "agent"`. Uploads need `online: true` in
+`experiment.config.json`; offline, the generic API runs in no-submit mode and hands
+over one refit. Configured scheduling never uploads, even with submit enabled.
 All available enabled capabilities receive shared preflight before the first agent.
 Official recovery and already-complete goals can terminate before model prerequisites.
 

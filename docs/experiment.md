@@ -79,14 +79,14 @@ These are part of what is compared. Do not equalize them; report them with resul
 | | Minimal | Finetuned |
 | --- | --- | --- |
 | Instructions | Environment and protocol facts only, no coaching | Authored prompts per stage, with coaching |
-| Stages | One solver session, then a deterministic check | Research, solve, advisory evaluate, refit |
+| Stages | One solver session, then a deterministic check | An orchestrator agent picks the stages: research, solve, a code and evidence review, up to three follow-up rounds, then one refit as the hand-over (online: up to three submissions with score feedback) |
 | Who trains | The agent runs its own code | The harness runs the agent's pipeline and owns folds, seeds and promotion |
 | Labels | All labels visible to the agent | A sealed split stays hidden until the terminal refit |
-| Budgets | 30-minute sessions, 3 failed sessions per task | 8-hour session limit, stall detection, 6 solve iterations |
+| Budgets | 30-minute sessions, 3 failed sessions per task | 12 hours per task, 6 trials per solve round, 24 trials in all, stall detection |
 | Installing packages | Plain `pip` in its own venv | `python_environment` tool, recorded in `changes.jsonl` |
 | Extra packages | None beyond the shared base | `optuna`, `dpkt`, `joblib`, `matplotlib`, `beautifulsoup4`, `cloudpickle`, `smartlab-eval` |
 | Model limits | Leo's entry: 262,144 context, 32,768 output, reasoning on, `compat` set | 262,144 context, 32,768 output, reasoning on, same `compat` |
-| Memory within a batch | Later tasks may reuse earlier solvers (`--reset once`) | `solutions/` and `knowledge/` carry over between tasks |
+| Memory within a batch | Later tasks may reuse earlier solvers (`--reset once`) | `solutions/` and `knowledge/` carry over between tasks; every stage writes a report and records lessons in `knowledge/` |
 
 ## Kept the same
 

@@ -15,7 +15,6 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadExperimentConfig } from "./config.js";
 import { checkMinimalSetup, createMinimalVenv, prepareMinimalRun, runMinimal } from "./minimal.js";
 
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -56,8 +55,6 @@ async function main(): Promise<number> {
 		return 0;
 	}
 	if (options.arm === "finetuned") {
-		// Online mode for the finetuned arm arrives with the orchestrator rework (docs/cleanup-plan.md).
-		if (loadExperimentConfig().online) { console.error("The finetuned arm runs offline only for now; set \"online\": false in experiment.config.json."); return 1; }
 		const args = [join(PROJECT_ROOT, "harness", "finetuned", "agent", "pipeline_cli.ts"), ...options.rest, ...(options.checkSetup ? ["--check-setup"] : [])];
 		return spawnSync(process.execPath, args, { cwd: PROJECT_ROOT, stdio: "inherit" }).status ?? 1;
 	}

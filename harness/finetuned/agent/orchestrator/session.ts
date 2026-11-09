@@ -14,6 +14,8 @@ export function orchestrationSessionOptions(options: { coordinator: Coordinator;
  return { prompts, system, prompt: start.text, promptReferences: [system.reference, start.reference, tool.reference],
   tools: [], extensions: false, extensionPaths: [], customTools: controllerTools(coordinator, prompts), observe: { ...report.observation(options.attempt), executionGuard: coordinator.executionGuard }, reportInput: input => report.input(input), model: options.model, signal: options.signal,
   sessionContext: () => JSON.stringify({ controllerState: coordinator.status() }),
+  // The run's own deadline bounds the controller, not the per-session safety limit.
+  maxWallMs: Math.max(1000, coordinator.state.deadline - Date.now()),
   onSessionReady: (_session, identity) => { report.event("orchestrator_session_bound", { logical_owner: coordinator.state.controlInvocationId, ...identity, revision: coordinator.state.revision }); },
  };
 }

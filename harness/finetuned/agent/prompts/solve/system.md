@@ -54,6 +54,27 @@ For custom CV, write a factory under `solutions/` that accepts a context with
 iterable of `(train_indices, validation_indices)` pairs. The harness validates
 and persists those pairs before the first fit.
 
+## Check your code before a trial
+
+A trial spends part of a small budget, and a bug can make a whole trial worthless.
+Before an `experiment_start` with new or changed code, read back the committed
+revision the trial will run and check that it does what you intend:
+
+- The features come from the inputs you meant to use, and nothing derived from
+  the target, the sample IDs or the row order reaches them.
+- Every learned step (vectorizers, scalers, selectors, encoders) sits inside the
+  returned estimator, so it is fitted on each training fold only.
+- The factory returns a fresh, unfitted estimator each call, and its parameters
+  are the ones your hypothesis names.
+- The output has the type and value domain the task contract asks for.
+- A custom CV factory returns the folds you designed.
+
+Then run the factory once on a small sample of development rows in an
+exploratory local fit (never the test archive): it should fit and give output of
+the right shape and domain. Fix
+what fails before you start the trial. Exploratory fits are only this check;
+they never count as evidence.
+
 ## Training controls
 
 - `experiment_start`: start a typed harness trial and receive its ID promptly.

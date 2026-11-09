@@ -331,3 +331,66 @@ test("stage reports stay visible in status and are paged like the research docum
  const page = c.inspect(report.id) as any; expect(page.content.startsWith("- **Status**: done")).toBe(true); expect(page.nextOffset).toBe(f.state.limits.maxDetailBytes);
  expect((c.inspect(report.id, page.nextOffset) as any).nextOffset).toBeNull(); c.close();
 });
+
+test("offline runs hand over one result: a second successful refit is refused", async () => {
+ const f = fixture(false); let owned!: ReturnType<typeof controllable>;
+ const c = new Coordinator(f.store, { start: work => { owned = controllable(work); return owned.handle; } });
+ expect((c.status() as any).handOver).toEqual({ mode: "offline", submissionsAuthorized: false, refits: 0, allowed: 1 });
+ c.start(request(c, "refit", "first-refit")); owned.resolve(fakeResult(c.state.works[0]!, { outcome: "failure" })); await c.settle();
+ // A failed refit handed nothing over, so another attempt is allowed.
+ c.start(request(c, "refit", "second-refit")); owned.resolve(fakeResult(c.state.works[1]!)); await c.settle();
+ expect((c.status() as any).handOver.refits).toBe(1);
+ expect(() => c.start(request(c, "refit", "third-refit"))).toThrow("hand over one result");
+ c.close();
+});
+
+test("status shows remaining time with a note at half and a fifth, and the follow-up branches", () => {
+ const f = fixture(true);
+ const notes: number[] = [];
+ const c = new Coordinator(f.store, { start: () => { throw new Error("unused"); }, budgetNote: percent => { notes.push(percent); return percent <= 50 ? "half" : undefined; }, branches: () => ({ champion: null, branches: [] }) });
+ const status = c.status() as any;
+ expect(status.time.remainingPercent).toBeGreaterThan(95); expect(status.time.note).toBeUndefined();
+ expect(status.handOver.submissionsAuthorized).toBe(true); expect(status.branches).toEqual({ champion: null, branches: [] });
+ expect(status.trials.limit).toBe(f.state.limits.maxTrials);
+ f.store.transaction("simulate-elapsed", {}, s => { s.startedAt -= Math.round(s.limits.maxWallMs * 0.6); s.deadline -= Math.round(s.limits.maxWallMs * 0.6); });
+ expect((c.status() as any).time.note).toBe("half");
+ c.close();
+});
+
+test("the controller's prompts carry the budget notes", () => {
+ const prompts = loadPromptSnapshot();
+ expect(prompts.render("orchestrator.budget-low", {}).text).toContain("refit the best validated champion");
+ expect(prompts.render("orchestrator.system", {}).text).toContain("exactly one result");
+});
+
+test("research and solve never receive the confirmation or anything the reviewer produced", async () => {
+ const f = fixture(); let owned!: ReturnType<typeof controllable>;
+ const c = new Coordinator(f.store, { start: work => { owned = controllable(work); return owned.handle; } });
+ c.start(request(c, "evaluate", "review")); const work = c.state.works[0]!, path = join(f.directory, "handoff.md"); writeFileSync(path, "sealed 0.91");
+ const artifacts = ["stage_report", "evaluation_report"].map(kind => ({ kind, path, sha256: hash("sealed 0.91"), provenance: { artifactId: `${work.id}:${kind}`, taskId: "fixture", pipelineRunId: f.state.runId, invocationId: work.id, sha256: hash("sealed 0.91") } }));
+ owned.resolve(fakeResult(work, { artifacts })); await c.settle();
+ for (const stage of ["research", "solve"] as const) {
+  expect(() => c.start(request(c, stage, `${stage}-upstream`, [`${work.id}:stage_report`]))).toThrow("Held-back confirmation must not enter");
+  expect(() => c.start({ ...request(c, stage, `${stage}-evidence`), evidenceIds: [`${work.id}:evaluation_report`], guidance: "Use the review" })).toThrow("Held-back confirmation must not enter");
+ }
+ c.close();
+});
+
+test("a solve after a successful solve is not a retry, a solve after a failed one is", async () => {
+ const f = fixture(); let owned!: ReturnType<typeof controllable>;
+ const c = new Coordinator(f.store, { start: work => { owned = controllable(work); return owned.handle; } });
+ c.start(request(c, "solve", "s1")); owned.resolve(fakeResult(c.state.works[0]!, { outcome: "failure" })); await c.settle();
+ c.start(request(c, "solve", "s2")); owned.resolve(fakeResult(c.state.works[1]!)); await c.settle();
+ expect(c.state.counters.retries).toBe(1);
+ c.start(request(c, "solve", "s3")); owned.resolve(fakeResult(c.state.works[2]!, { outcome: "failure" })); await c.settle();
+ expect(c.state.counters.retries).toBe(1);
+ c.close();
+});
+
+test("a branch list too large for the status budget is dropped, not fatal", () => {
+ const f = fixture(true, { maxSummaryBytes: 6000 });
+ const big = { branches: Array.from({ length: 8 }, (_, i) => ({ name: `followup/fixture/${i}`, subject: "x".repeat(2000) })) };
+ const c = new Coordinator(f.store, { start: () => { throw new Error("unused"); }, branches: () => big });
+ expect((c.status() as any).branches).toEqual({ omitted: "Branch list did not fit the status budget" });
+ c.close();
+});

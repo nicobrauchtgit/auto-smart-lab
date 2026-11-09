@@ -20,6 +20,10 @@ export interface CoordinatorDependencies {
  inspectTaskData?(configuration: TaskConfiguration): unknown;
  /** The task's pipeline.config.json entry, offered while nothing is declared; never applied implicitly. */
  suggestedConfiguration?: TaskConfiguration;
+ /** A note on the remaining time at 50% and 20%; information, not a reserve. */
+ budgetNote?(remainingPercent: number): string | undefined;
+ /** Follow-up branches in solutions/ for this task, bounded. */
+ branches?(): unknown;
 }
 function text(value: unknown, bytes: number): asserts value is string { if (typeof value !== "string" || !value.trim() || Buffer.byteLength(value) > bytes) throw new Error("Missing or oversized text"); }
 function terminal(w: Work) { return w.status === "terminal" || w.status === "interrupted"; }
@@ -70,6 +74,11 @@ export class Coordinator {
    goal: s.goal, availableModules: s.config.enabledStages.filter(name => name !== "submit" || s.policy.authorized), policy: s.policy,
    taskConfiguration: s.taskConfiguration ? { declared: true, sha256: s.taskConfiguration.sha256, configuration: s.taskConfiguration.configuration }
     : { declared: false, required: "Declare it with task_configure before starting a stage", ...(this.deps.suggestedConfiguration ? { suggested: this.deps.suggestedConfiguration } : {}) },
+   time: timeBudget(s, this.deps.budgetNote),
+   handOver: { mode: s.config.online ? "online" : "offline", submissionsAuthorized: s.policy.authorized,
+    ...(s.policy.authorized ? { submissions: "up to the cap below, each with official score feedback" } : { refits: s.works.filter(w => w.stage === "refit" && w.result?.outcome === "success").length, allowed: 1 }) },
+   trials: { used: s.counters.trials, limit: s.limits.maxTrials, perSolve: (s.config.effectiveOptions.solve as { maxIterations?: number } | undefined)?.maxIterations },
+   branches: (() => { try { return this.deps.branches?.(); } catch (error) { return { unavailable: error instanceof Error ? error.message.slice(0, 200) : "branch listing failed" }; } })() as unknown,
    budgets: { limits: s.limits, used: s.counters, deadline: s.deadline, triesUsed: this.remoteUsed, reservedUnknown: s.reservedUnknown, effectiveTriesUsed: this.remoteUsed + s.reservedUnknown, submissionsRemaining: Math.max(0, Math.min(3, s.policy.maxSubmissions) - this.remoteUsed - s.reservedUnknown) },
    works: s.works.slice(-4).map(w => ({ id: w.id, stage: w.stage, status: w.status, objective: w.objective, summary: w.summary })),
    // Keep the newest artifact of each kind available after large training
@@ -78,6 +87,8 @@ export class Coordinator {
    artifacts: [...new Map(s.artifacts.map(a => [a.kind, a])).values()].sort((a, b) => Number(requiredArtifact(b.kind)) - Number(requiredArtifact(a.kind))).slice(0, 16).map(a => ({ id: a.id, kind: a.kind, sha256: a.sha256, bytes: a.bytes, producer: a.producer })),
    bestOfficial: s.bestOfficial, officialResults: s.official.slice(-3), cursor: notifications.at(-1)?.cursor ?? (cursor ?? s.acknowledgedCursor), latestCursor: s.cursor, acknowledgedCursor: s.acknowledgedCursor,
    notifications, truncated: false };
+  // The branch list is optional; it goes before any stage summary is cut.
+  if (Buffer.byteLength(JSON.stringify(status)) > s.limits.maxSummaryBytes) status.branches = { omitted: "Branch list did not fit the status budget" };
   if (Buffer.byteLength(JSON.stringify(status)) > s.limits.maxSummaryBytes) {
    status.truncated = true;
    status.works = status.works.map(w => ({ ...w, summary: w.summary ? { outcome: w.summary.outcome, validation: w.summary.validation, detailRequired: true } : undefined }));
@@ -115,6 +126,11 @@ export class Coordinator {
   }
   return false;
  }
+ /** Confirmation artifacts, and anything the reviewer produced (it reads the confirmation), stay away from research and solve. */
+ private sealedExposure(ids: string[]): boolean {
+  const s = this.state;
+  return ids.some(id => { const a = s.artifacts.find(a => a.id === id); return !!a && (a.kind === "holdout_confirmation" || s.works.find(w => w.id === a.producer)?.stage === "evaluate"); });
+ }
  private selected(ids: string[], verify = true): StageArtifact[] {
   if (!Array.isArray(ids) || ids.length > 32 || new Set(ids).size !== ids.length) throw new Error("Invalid artifact IDs");
   return ids.map(id => { const a = this.state.artifacts.find(a => a.id === id); if (!a) throw new Error("Unknown trusted artifact ID");
@@ -150,11 +166,13 @@ export class Coordinator {
   if (s.works.some(w => w.stage === "solve" && w.status === "interrupted" && (w.summary as any)?.trainingRecoveryRequired) && request.stage !== "solve") throw new Error("Reconcile lost solver's owned training through a new solve invocation before other workspace work");
   if (s.counters.stages >= s.limits.maxStages) throw new Error("Stage budget exhausted");
   const upstream = this.selected(request.artifactIds);
-  if (request.stage === "solve" && [...upstream, ...this.selected(request.evidenceIds ?? [])].some(a => a.kind === "holdout_confirmation")) throw new Error("Held-back confirmation must not enter solve inputs or guidance");
+  if ((request.stage === "solve" || request.stage === "research") && this.sealedExposure([...request.artifactIds, ...(request.evidenceIds ?? [])])) throw new Error(`Held-back confirmation must not enter ${request.stage} inputs or guidance`);
   for (const artifact of upstream) {
    const producer = s.works.find(w => w.id === artifact.provenance?.invocationId);
    if (producer?.result?.outcome !== "success" || producer.result.validation?.valid !== true) throw new Error("Upstream artifact did not pass its producer's authoritative validation");
   }
+  // Offline, the run hands over exactly one result: its one successful terminal refit.
+  if (request.stage === "refit" && !s.policy.authorized && s.works.some(w => w.stage === "refit" && w.result?.outcome === "success")) throw new Error("Offline runs hand over one result, and a refit already produced it");
   if (request.stage === "submit") {
    if (!s.policy.authorized || this.remoteUsed + s.reservedUnknown >= s.policy.maxSubmissions || this.remoteUsed + s.reservedUnknown >= 3) throw new Error("Submission is not authorized or the three-attempt cap is exhausted");
    if (s.reservedUnknown > 0) throw new Error("Unknown submission reservation requires reconciliation before another upload");
@@ -176,7 +194,9 @@ export class Coordinator {
    if (trials < 1) throw new Error("Global trial budget exhausted");
    options = { maxIterations: trials };
   }
-  const retry = s.works.filter(w => w.stage === request.stage && w.result?.outcome !== "success").length > 0;
+  // A retry repeats a stage whose latest invocation failed; a later follow-up after a success is not one.
+  const latest = s.works.filter(w => w.stage === request.stage).at(-1);
+  const retry = latest !== undefined && latest.result?.outcome !== "success";
   if (retry && s.counters.retries >= s.limits.maxRetries) throw new Error("Retry budget exhausted");
   const work: Work = { id, stage: request.stage, actionId: request.actionId, objective: request.objective, upstream: request.artifactIds, status: "reserved", guidance: note ? { ...note, contentSha256: guidanceHash(note) } : undefined, options, taskConfiguration: s.taskConfiguration.configuration };
   const receipt = { invocationId: id, accepted: true };
@@ -255,7 +275,7 @@ export class Coordinator {
   if (!work || !handle || terminal(work)) throw new Error("Invocation has no live feedback receiver; start a new invocation");
   if (!["research", "solve", "evaluate"].includes(work.stage)) throw new Error("Feedback unsupported for deterministic stage");
   const selectedEvidence = this.selected(request.evidenceIds);
-  if (work.stage === "solve" && selectedEvidence.some(a => a.kind === "holdout_confirmation")) throw new Error("Held-back confirmation must not enter solve feedback");
+  if ((work.stage === "solve" || work.stage === "research") && this.sealedExposure(request.evidenceIds)) throw new Error(`Held-back confirmation must not enter ${work.stage} feedback`);
   const evidence: EvidenceReference[] = selectedEvidence.map(a => a.provenance!);
   const note = { id: request.actionId, stage: work.stage, taskId: this.state.taskId, content: request.message, evidence, author: { name: "orchestrator", logicalSessionId: this.state.controlInvocationId } };
   const receipt = { accepted: true, deliveryId: request.actionId, state: "pending" };
@@ -338,6 +358,12 @@ export class Coordinator {
 function unresolvedSubmission(work: Work): boolean {
  const content = (work.summary?.measurements as any)?.content;
  return work.stage === "submit" && (work.status === "uncertain" || ["pending", "unknown"].includes(content?.state) || content?.reservedUnknown > 0);
+}
+function timeBudget(s: RunState, note?: (remainingPercent: number) => string | undefined) {
+ const now = Date.now(), remainingMs = Math.max(0, s.deadline - now);
+ const remainingPercent = Math.round(100 * remainingMs / s.limits.maxWallMs);
+ const text = note?.(remainingPercent);
+ return { elapsedMinutes: Math.round((now - s.startedAt) / 60000), remainingMinutes: Math.round(remainingMs / 60000), remainingPercent, ...(text ? { note: text } : {}) };
 }
 function requiredArtifact(kind: string) { return ["research_document", "stage_report", "training_selected_result", "holdout_confirmation", "evaluation_report", "terminal_refit_result", "submission_receipt"].includes(kind); }
 function statExists(path: string) { try { statSync(path); return true; } catch { return false; } }

@@ -3,9 +3,15 @@
 `npm run orchestrate -- unit 1 task 1 --goal 1` resolves the canonical task and
 starts a Pi decision agent. It selects actions; no configured stage chain is
 run under an orchestrator label. Enable/disable available modules in
-`pipeline.config.json`. The default scheduler stays `configured`; setting
-`scheduling: "agent"` routes the generic pipeline API to this controller with
-submission disabled. Explicit `orchestrate` invocation authorizes deterministic
+`pipeline.config.json`. Experiment runs use `scheduling: "agent"`, which routes
+the generic pipeline API to this controller; submission is authorized only when
+`online` is true in `experiment.config.json`. Offline, the run hands over exactly
+one successful refit and fetches nothing. Status also shows the time left (with
+notes at 50% and 20%), the trial budget, the hand-over mode and the task's
+follow-up branches in `solutions/` (`agent/training/branches.ts`): a solve on a
+task with a champion runs on `followup/<task>/<id>` from the champion commit and
+the harness switches back afterwards. Stage reports from the lesson step reach
+the controller as `stage_report` artifacts. Explicit `orchestrate` invocation authorizes deterministic
 submission under its immutable policy. `--no-submit` exposes local modules only,
 `--max-submissions 0..3` reduces the absolute cap, and `--check-setup` checks the
 whole available chain without agent sessions, fits or task uploads. Setup model

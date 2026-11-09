@@ -56,6 +56,8 @@ export async function ensureTaskData(taskId: string, options: {
 	taskDir?: string;
 	record?: (event: string, payload: Record<string, unknown>) => void;
 	signal?: AbortSignal;
+	/** Offline experiments use local files only; a missing file is an error, never a download. */
+	offline?: boolean;
 } = {}): Promise<TaskDataResult> {
 	const taskDir = options.taskDir ?? resolveTask({ taskId }).taskDir;
 	const metaPath = join(taskDir, "meta.json");
@@ -79,6 +81,7 @@ export async function ensureTaskData(taskId: string, options: {
 			present.push(file.name);
 			continue;
 		}
+		if (options.offline) throw new Error(`Task data ${file.name} is missing and the experiment is offline; copy it into ${dataDir} or set "online": true in experiment.config.json`);
 		client ??= (options.downloader ?? defaultDownloader)();
 		options.record?.("task_data_download_started", { task_id: taskId, file: file.name });
 		const response = await client.get(file.url);

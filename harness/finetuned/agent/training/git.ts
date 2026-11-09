@@ -13,7 +13,7 @@ import { dirname, join } from "node:path";
 
 /** Committer identity for harness-created commits and annotated tags only. */
 // Harness commits and tags never depend on the user's personal signing setup.
-const HARNESS_IDENTITY = ["-c", "user.name=SmartLab harness", "-c", "user.email=harness@smartlab.invalid",
+export const HARNESS_IDENTITY = ["-c", "user.name=SmartLab harness", "-c", "user.email=harness@smartlab.invalid",
 	"-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"] as const;
 
 /**
