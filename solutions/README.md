@@ -6,7 +6,8 @@ and runs so later work can import earlier work.
 One convention: `solutions/tasks/<task_id>.py` is the orchestration entrypoint
 for a task. It defines a factory — `build_pipeline()` unless `metrics.json` says
 otherwise — returning an **unfitted** estimator with `fit(X, y)` and `predict(X)`,
-where `X` is a pandas DataFrame with `id` and `text` columns.
+where `X` is a pandas DataFrame with `id` and `input` columns. Each `input` names
+a zip archive and member; the pipeline reads and represents the raw bytes itself.
 
 That convention exists so the harness can re-run the pipeline for the leakage
 canary and the paired champion comparison. It is not a design constraint:

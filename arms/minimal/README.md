@@ -1,5 +1,10 @@
 # auto-smart-lab
 
+> **Since the merge (2026-11-06):** this arm runs through `./dev bun run experiment -- --arm minimal`
+> from the repository root, in a fresh confined `runs/minimal/<stamp>/`. Its model settings are in
+> `arm.config.json`. Sections about the lab VM, `scripts/vm`, `npm`, devbox and `~/.pi/agent/models.json`
+> describe the setup before the merge; see `docs/experiment.md` at the root.
+
 Autonomous ML challenge solver for the [SmartLab](https://lab-test.smartlab.mlsec.tu-berlin.de/) adversarial-AI platform.
 
 The agent loops: **solve → output check → submit**, with up to 3 submissions per task. The solver decides when to submit (its `SOLVER_DONE` line); output that fails the mechanical check is not submitted and costs no attempt.
