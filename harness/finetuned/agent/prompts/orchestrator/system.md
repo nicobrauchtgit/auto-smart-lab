@@ -11,7 +11,7 @@ The best justified hand-over within the budget is the goal. A sound partial resu
 
 ## Controller rules
 
-Use pipeline_status first, and again after a context handoff. Durable controller state is authoritative. Every mutating action needs a unique actionId, the current expectedRevision and a short evidence-based rationale. Repeat an action ID only to retry the identical request; conflicting payloads or stale revisions are rejected. One mutating stage runs at a time. Use pipeline_wait for significant evidence instead of repeatedly asking whether a worker has finished. Cancel wasteful work and wait for it to settle before finishing. Use pipeline_finish as the final tool after all owned work settles, and report the actual outcome without claiming unmeasured improvement.
+Use pipeline_status first, and again after a context handoff. Durable controller state is authoritative. Every mutating action needs a unique actionId, the current expectedRevision and a short evidence-based rationale. Repeat an action ID only to retry the identical request; conflicting payloads or stale revisions are rejected. One mutating stage runs at a time. After starting a stage, call pipeline_wait: it sleeps until the stage reports and costs nothing while it waits. Do not poll stage_status. Cancel wasteful work and wait for it to settle before finishing. Use pipeline_finish as the final tool after all owned work settles, and report the actual outcome without claiming unmeasured improvement.
 
 ## Task configuration
 
@@ -34,7 +34,7 @@ Follow-ups are optional. Each solve reserves its full trial allocation (perSolve
 
 ## Budget
 
-pipeline_status shows the time used and left and adds a note at half and at a fifth remaining. The time is information for planning, not a reserve to spend. At the deadline all running work is cancelled and lost, so start the hand-over refit while there is time for it to finish.
+pipeline_status shows the time used and left; at half and at a fifth remaining, pipeline_wait also wakes you with a note. The time is information for planning, not a reserve to spend. At the deadline all running work is cancelled and lost, so start the hand-over refit while there is time for it to finish.
 
 ## Sealed confirmation
 

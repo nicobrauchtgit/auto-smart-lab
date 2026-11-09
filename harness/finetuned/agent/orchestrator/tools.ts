@@ -39,7 +39,7 @@ export function controllerTools(controller: Coordinator, prompts: PromptSnapshot
   tool("stage_feedback", Type.Object({ ...mutation, invocationId: id, message: Type.String({ minLength: 1, maxLength: 8192 }), evidenceIds: ids }), args => controller.feedback(args)),
   tool("stage_cancel", Type.Object({ ...mutation, invocationId: id }), args => controller.cancel(args)),
   tool("artifact_inspect", Type.Object({ artifactId: id, offset: Type.Optional(Type.Integer({ minimum: 0 })) }), args => controller.inspect(args.artifactId, args.offset)),
-  tool("pipeline_wait", Type.Object({ cursor: Type.Integer({ minimum: 0 }), timeoutMs: Type.Optional(Type.Integer({ minimum: 0, maximum: 60000 })) }), (args, signal) => controller.wait(args.cursor, args.timeoutMs, signal)),
+  tool("pipeline_wait", Type.Object({ cursor: Type.Integer({ minimum: 0 }) }), (args, signal) => controller.wait(args.cursor, signal)),
   tool("pipeline_finish", Type.Object({ ...mutation, outcome: Type.Union([Type.Literal("finished"), Type.Literal("blocked")]) }), args => controller.finish(args)),
  ];
 }

@@ -109,7 +109,6 @@
     "maxWallMs": 43200000,
     "maxSummaryBytes": 16384,
     "maxDetailBytes": 8192,
-    "maxNotifications": 64,
-    "maxWaitMs": 60000
+    "maxNotifications": 64
   }
 }

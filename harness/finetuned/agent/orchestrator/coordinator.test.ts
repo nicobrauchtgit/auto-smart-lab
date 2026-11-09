@@ -145,7 +145,7 @@ async function scenario(scores: number[], expected: { authorized?: boolean; cons
     const state = await read(); const choose = (kind: string) => state.artifacts.filter((a: any) => a.kind === kind).at(-1)?.id;
     const upstream = stage === "research" ? [] : stage === "solve" ? [choose("research_document")] : stage === "evaluate" ? [choose("training_selected_result")] : stage === "refit" ? [choose("training_selected_result"), choose("evaluation_report")] : [choose("terminal_refit_result")];
     const result = await call("stage_start", { ...request(c, stage, `model-${stage}-${c.state.counters.stages}`, upstream), guidance }); expect(result.rejected).not.toBe(true);
-    await call("pipeline_wait", { cursor: state.cursor, timeoutMs: 1000 }); await c.settle();
+    await call("pipeline_wait", { cursor: state.cursor }); await c.settle();
    };
    await start("research", "Establish baseline input knowledge");
    do {
@@ -198,7 +198,7 @@ test("restart marks lost model invocation interrupted and preserves finite budge
  const reopened = new StateStore(f.directory), restarted = new Coordinator(reopened, { start() { throw new Error("No model reattach"); } });
  await restarted.recover(); expect(restarted.stageStatus(work.id).status).toBe("interrupted"); expect(restarted.state.counters.modelRequests).toBe(1); expect(restarted.state.counters.trials).toBe(6);
  const status = restarted.status(); expect(status.notifications[0].kind).toBe("stage_interrupted");
- await restarted.wait(status.cursor, 0); expect(restarted.status().notifications).toEqual([]);
+ await restarted.wait(status.cursor, undefined, 0); expect(restarted.status().notifications).toEqual([]);
  expect(restorePromptSnapshot(restarted.state.promptTemplates).fingerprint).toBe(f.prompts.fingerprint); restarted.close();
 });
 

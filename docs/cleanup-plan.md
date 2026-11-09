@@ -1,6 +1,7 @@
 # Remaining work
 
-Single work queue for this repository. Updated 2026-11-02. Remove items when
+Single work queue for this repository. Updated 2026-11-10. **The active plan is
+[redesign-plan.md](redesign-plan.md)**; the lists below are the queue after it. Remove items when
 finished; implementation contracts and feature references stay in their own
 module documentation. Older handovers and design plans are historical inputs,
 not additional active queues.

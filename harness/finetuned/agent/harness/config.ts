@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import document from "../../harness.config.json";
 
 const fields = {
-	orchestrator: ["maxSessions", "maxModelRequests", "maxToolCalls", "maxStages", "maxTrials", "maxRetries", "maxWallMs", "maxSummaryBytes", "maxDetailBytes", "maxNotifications", "maxWaitMs"],
+	orchestrator: ["maxSessions", "maxModelRequests", "maxToolCalls", "maxStages", "maxTrials", "maxRetries", "maxWallMs", "maxSummaryBytes", "maxDetailBytes", "maxNotifications"],
 	setup: ["timeoutMs", "modelMaxTokens"],
 	pipeline: ["maxStageInvocations"],
 	session: ["maxWallMs", "stallMs", "stallRetries", "lessonMaxMs"], context: ["handoffTokens", "maxHandoffBytes"],
@@ -60,7 +60,7 @@ export function parseHarnessConfig(raw: unknown): HarnessConfig {
 	}
 	const limits = object(value.subagents.limits, ["maxConcurrent", "maxChildren", "maxQueuedMessages", "maxMessageBytes", "maxResultBytes"], "subagents.limits");
 	for (const [key, count] of Object.entries(limits)) positive(count, key);
-	if (value.orchestrator.maxWaitMs > 60000 || value.orchestrator.maxWallMs > 2_147_483_647) throw new Error("Invalid orchestrator timer bound");
+	if (value.orchestrator.maxWallMs > 2_147_483_647) throw new Error("Invalid orchestrator timer bound");
 	if (value.subagents.waitTimeoutMs > value.subagents.maxWaitTimeoutMs) throw new Error("Wait timeout exceeds maximum");
 	for (const timeout of [value.setup.timeoutMs, value.session.maxWallMs, value.session.stallMs, value.session.lessonMaxMs, value.solve.idleWakeMs, value.subagents.turnTimeoutMs, value.subagents.maxWaitTimeoutMs]) {
 		if (timeout > 2_147_483_647) throw new Error("Timeout exceeds timer range");

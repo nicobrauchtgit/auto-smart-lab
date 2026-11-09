@@ -306,12 +306,20 @@ export class Coordinator {
   const page = bytes.subarray(offset, offset + s.limits.maxDetailBytes);
   return { id, provenance: artifact.provenance, content: page.toString("utf8"), nextOffset: offset + page.length < bytes.length ? offset + page.length : null, truncated: page.length < bytes.length };
  }
- async wait(cursor: number, timeoutMs = 60000, signal?: AbortSignal) {
+ /**
+  * Block until there is input for the controller: a stage result, the time budget
+  * crossing 50% or 20% remaining, or the deadline. No periodic wake-ups: a waiting
+  * controller makes no model requests. `timeoutMs` is a test seam, not a tool argument.
+  */
+ async wait(cursor: number, signal?: AbortSignal, timeoutMs?: number) {
   this.status(cursor); const s = this.state;
-  if (!Number.isInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > s.limits.maxWaitMs) throw new Error("Invalid bounded wait timeout");
+  if (timeoutMs !== undefined && (!Number.isInteger(timeoutMs) || timeoutMs < 0)) throw new Error("Invalid wait timeout");
   if (cursor > s.acknowledgedCursor) this.commit("notifications_acknowledged", { cursor }, next => { next.acknowledgedCursor = cursor; next.inbox = next.inbox.filter(n => n.cursor > cursor); });
-  const end = Math.min(Date.now() + timeoutMs, s.deadline);
-  while (this.state.cursor <= cursor && this.state.works.some(w => !terminal(w)) && Date.now() < end) {
+  const limit = timeoutMs === undefined ? s.deadline : Math.min(Date.now() + timeoutMs, s.deadline);
+  for (;;) {
+   this.timeNotices();
+   const end = Math.min(limit, this.nextTimeNotice() ?? limit);
+   if (!(this.state.cursor <= cursor && this.state.works.some(w => !terminal(w)) && Date.now() < limit)) break;
    signal?.throwIfAborted();
    await new Promise<void>((resolve, reject) => {
     const done = () => { clearTimeout(timer); this.waiters.delete(done); signal?.removeEventListener("abort", abort); resolve(); };
@@ -319,8 +327,26 @@ export class Coordinator {
     const timer = setTimeout(done, Math.max(0, end - Date.now())); this.waiters.add(done); signal?.addEventListener("abort", abort, { once: true });
    });
   }
+  this.timeNotices();
   if (this.failure) throw new Error("Coordinator durability failed during stage work");
   return this.status(cursor);
+ }
+ /** Remaining-time thresholds that wake a waiting controller, once each. */
+ private static readonly TIME_NOTICES = [50, 20];
+ private timeNoticeAt(percent: number) { const s = this.state; return s.startedAt + Math.round(s.limits.maxWallMs * (100 - percent) / 100); }
+ private sentTimeNotices() { return new Set(this.state.journal.filter(e => e.kind === "time_budget_notice").map(e => e.payload.remainingPercent as number)); }
+ private nextTimeNotice(): number | undefined {
+  const sent = this.sentTimeNotices();
+  return Coordinator.TIME_NOTICES.filter(p => !sent.has(p)).map(p => this.timeNoticeAt(p)).sort((a, b) => a - b)[0];
+ }
+ private timeNotices() {
+  if (this.state.status !== "running") return;
+  const sent = this.sentTimeNotices();
+  for (const percent of Coordinator.TIME_NOTICES) {
+   if (sent.has(percent) || Date.now() < this.timeNoticeAt(percent)) continue;
+   const note = this.deps.budgetNote?.(percent);
+   this.commit("time_budget_notice", { remainingPercent: percent }, s => { this.notice(s, "time_budget", { remainingPercent: percent, ...(note ? { note } : {}) }); });
+  }
  }
  finish(request: Mutation & { outcome: "finished" | "blocked" }) {
   const prior = this.inspectMutation(request, "pipeline_finish"); if (prior) return prior.receipt;
