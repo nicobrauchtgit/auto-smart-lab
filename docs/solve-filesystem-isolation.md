@@ -18,7 +18,7 @@ Shell commands also get a private temporary filesystem: files created outside
 mounted persistent roots are transient and vanish after that tool call. In
 particular, truncated bash full-output files under `/tmp` are transient; redirect
 important logs into the agent workspace. System runtimes, project `.venv`, its
-managed interpreter, editable `libs/smartlab-eval`, JS dependencies, declarations
+managed interpreter, editable `agent/libs/smartlab-eval`, JS dependencies, declarations
 and lockfile are mounted read-only. No separate Python environment is created.
 
 `python_environment` is an observed trusted controller service for inspect,

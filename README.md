@@ -391,7 +391,7 @@ agent/
 ├── telemetry/          Langfuse runtime, preflight, emergency journal and Cloud smoke
 ├── setup/              Unit fetching, SmartLab helpers, and Python environment manager
 └── observability.ts    Pi event and final-request adapter
-libs/smartlab-eval/     Corpus loading and measurement library
+agent/libs/smartlab-eval/  Corpus loading library (solve agent, evaluation diagnostics)
 solutions/              Agent-owned reusable model code
 units/                  Downloaded task prompts, metadata, and datasets
 runs/                   Harness artifacts, durable records and emergency traces

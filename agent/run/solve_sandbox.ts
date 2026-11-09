@@ -86,12 +86,12 @@ export function prepareSolveSandbox(workspace: SolveWorkspace, python: PythonEnv
   ...[workspace.devZip, workspace.testZip, workspace.sampleManifestPath, workspace.taskPath, workspace.researchDir]
    .filter(existsSync).map(source => ({ source })),
   { source: python.prefix }, { source: dirname(runtimePython) }, { source: WORKER },
-  ...[join(dirname(python.prefix), "libs/smartlab-eval")].filter(existsSync).map(source => ({ source })),
+  ...[join(dirname(python.prefix), "agent/libs/smartlab-eval")].filter(existsSync).map(source => ({ source })),
   { source: join(ROOT, "node_modules") }, { source: realpathSync(join(ROOT, "node_modules")) },
   { source: dirname(realpathSync(process.execPath)) },
   ...binaries.map(path => ({ source: dirname(path) })),
   ...["pyproject.toml", "uv.lock", "agent/runtime/python/NOTES.md", "agent/setup/python_environment.py",
-   "libs/smartlab-eval"].map(path => ({ source: join(ROOT, path) })).filter(mount => existsSync(mount.source)),
+   "agent/libs/smartlab-eval"].map(path => ({ source: join(ROOT, path) })).filter(mount => existsSync(mount.source)),
  ];
  const notes = join(ROOT, "agent/runtime/python/NOTES.md");
  if (existsSync(notes)) mounts.push({ source: notes, writable: true });
@@ -114,7 +114,7 @@ export function prepareResearchSandbox(workspace: string, taskDir: string, pytho
   { source: join(ROOT, "node_modules") }, { source: realpathSync(join(ROOT, "node_modules")) },
   { source: dirname(realpathSync(process.execPath)) },
   ...binaries.map(path => ({ source: dirname(path) })),
-  ...["pyproject.toml", "uv.lock", "agent/setup/python_environment.py", "libs/smartlab-eval"]
+  ...["pyproject.toml", "uv.lock", "agent/setup/python_environment.py", "agent/libs/smartlab-eval"]
    .map(path => ({ source: join(ROOT, path) })).filter(mount => existsSync(mount.source)),
  ];
  if (existsSync(notes)) mounts.push({ source: notes, writable: true });

@@ -54,7 +54,7 @@ requires-dist = [
     { name = "pandas", specifier = ">=3.0.5" },
     { name = "scikit-learn", specifier = ">=1.9.0" },
     { name = "scipy", specifier = ">=1.18.1" },
-    { name = "smartlab-eval", editable = "libs/smartlab-eval" },
+    { name = "smartlab-eval", editable = "agent/libs/smartlab-eval" },
     { name = "torch", specifier = ">=2.15.0", index = "https://download.pytorch.org/whl/cpu" },
 ]
 
@@ -526,7 +526,7 @@ wheels = [
 [[package]]
 name = "smartlab-eval"
 version = "0.1.0"
-source = { editable = "libs/smartlab-eval" }
+source = { editable = "agent/libs/smartlab-eval" }
 dependencies = [
     { name = "numpy" },
     { name = "pandas" },

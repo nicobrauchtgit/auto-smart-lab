@@ -36,7 +36,7 @@ non-zero when it does not.
 | `agent/solve/iteration.py` | Recomputes every reported number and emits the signal |
 | `agent/solve/canary.py` | Filename-leakage canary |
 | `agent/solve/champion.py` | Champion re-run under the challenger's folds |
-| `libs/smartlab-eval/` | Corpus loader and measurement library, installed into the venv |
+| `agent/libs/smartlab-eval/` | Corpus loader and measurement library, installed into the venv |
 | `agent/observability.ts` | Pi event and final-request observer |
 
 ## Current entry points

@@ -376,7 +376,7 @@ judgement, not a gate. Final artifact validation stays a controller gate.
 
 ## Reuse the diagnostic library
 
-`libs/smartlab-eval/smartlab_eval/metrics.py` already implements ROC and AUC,
+`agent/libs/smartlab-eval/smartlab_eval/metrics.py` (since removed) already implements ROC and AUC,
 precision-recall and average precision, threshold sweeps, calibration bins,
 confusion counts, per-class recall, paired comparisons, and paired bootstrap
 intervals. `Results` and the corpus loaders already handle data and result
