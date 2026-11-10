@@ -226,3 +226,7 @@ Decisions taken while carrying out the plan, newest last.
 - **2026-11-10, many classes.** Tor website fingerprinting needs a multi-class
   task kind the harness does not have. It is out of scope for this plan and
   listed in [tasks.md](tasks.md) as not runnable.
+- **2026-11-10, rate limit.** Four Opus 5.5 subagents use up the Claude API
+  limit in about 20 minutes and then stall for hours. From now on at most three
+  run at once, and fixes for review findings go to GPT 6.1 (`gpt-6.1-sol`, high
+  effort), which also does the reviews. The core packages stay on Opus 5.5.
