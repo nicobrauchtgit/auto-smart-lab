@@ -50,7 +50,7 @@ Run all commands from the repository root through `./dev`.
 | Inventory generation, `--check`, `--self-test` | Passed against integrated source; source and generator hashes in [inventory](code-inventory.md) |
 | Strict standalone inventory-generator typecheck | Passed; `scripts/**/*.ts` is also included in the root typecheck |
 | Documentation navigation, anchors and Mermaid structure | Integrated audit: 19 maintained documents, 284 local links/anchors, six Mermaid blocks, zero errors; structural coverage only |
-| `git diff --check` | Passed at integration and final sign-off |
+| Change-only `git diff --check` | Passed for preparation/status edits. The full merge-relative audit also reports inherited whitespace in older training files and archived VM code/patches; tracked as F8 rather than rewriting historical material |
 | Target merge preview | Local `main` and `origin/main` merge without conflicts and produce the candidate tree; read-only remote lookup confirmed `main` at `98c5f14b9297c5eb19f9e90c9196704c10b52787` on 2026-11-10 |
 | Final `./dev mise run test` | Passed: root typecheck, 652 Bun tests passed / 4 skipped / 0 failed, then 155 Python tests passed |
 
