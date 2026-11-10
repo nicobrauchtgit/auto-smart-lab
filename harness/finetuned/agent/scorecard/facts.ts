@@ -7,6 +7,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
+import { validateReview } from "../evaluation/reviewer.js";
 import { codeCensus, type CodeCensus } from "./code.js";
 import { place, type ScorecardLayout } from "./layout.js";
 
@@ -21,7 +22,7 @@ export interface StageRun {
 export interface TrialFact {
  experimentId: string; directory: string; invocationId: string;
  kind: "pilot" | "promotion" | "search" | "unknown"; status: string; startedAt?: number; durationSeconds?: number;
- score?: number; exitCode?: number; peakMemoryBytes?: number;
+ score?: number; fitSeconds?: number; exitCode?: number; peakMemoryBytes?: number;
 }
 export interface ScriptObservation { command: string; durationSeconds?: number; peakMemoryBytes?: number; source: string }
 export interface RunFacts {
@@ -34,11 +35,11 @@ export interface RunFacts {
   /** Only when budget entries name their requester (`payload.source`). */
   orchestratorRequestsWhileWaiting?: number };
  firstModellingStart?: number; firstTrialStart?: number; minutesToFirstTrial?: number;
- trials: TrialFact[];
- champion?: { experimentId: string; commit: string; taggedAt?: number; inRun: boolean; score?: number; trialFound: boolean; module?: string; source?: string; kind?: string };
+ trials: TrialFact[]; referencedTrials: TrialFact[]; championUnknown?: boolean; sealedUnknown?: boolean;
+ champion?: { experimentId: string; commit: string; taggedAt?: number; inRun: boolean; score?: number; fitSeconds?: number; trialFound: boolean; module?: string; source?: string; kind?: string };
  sealed?: { status: string; score?: number; cvMean?: number; interval?: { lower: number; upper: number }; agrees?: boolean; at: number; inRun: boolean; path: string };
  handOver: { directory: string; deliveredAt?: number; files: string[]; rows?: number; inRun: boolean }[];
- reports: { stageReports: string[]; agentStagesNeedingReport: string[]; knowledgeNotes: number; knowledgeRevisions: number };
+ reports: { stageReports: string[]; agentStagesNeedingReport: string[]; knowledgeNotes: number; knowledgeRevisions: number; unknownRevisionAuthors: number; validationReports: string[] };
  memory: { trialPeakBytes?: number; trialsWithMemory: number; scripts: ScriptObservation[] };
  code: CodeCensus;
  notes: string[];
@@ -69,7 +70,7 @@ function peakBytes(value: unknown): number | undefined {
   if (!node || typeof node !== "object" || depth > 6) return;
   for (const [key, item] of Object.entries(node)) {
    let bytes: number | undefined;
-   if (typeof item === "number" && Number.isFinite(item)) {
+   if (typeof item === "number" && Number.isFinite(item) && item >= 0) {
     if (/^(peak(Rss|Memory)?Bytes|peak_(rss|memory)_bytes|maxRssBytes)$/.test(key)) bytes = item;
     else if (/^(peak(Rss|Memory)?(Mb|MB)|peak_(rss|memory)_mb|maxRssMb)$/.test(key)) bytes = item * 1024 ** 2;
    }
@@ -110,7 +111,7 @@ function readTrial(directory: string, invocationId: string, metricKey: string, l
  for (const name of layout.trialResourceFiles) { const value = peakBytes(readJson(join(directory, name))); if (value !== undefined) peak = Math.max(peak ?? 0, value); }
  return { experimentId: basename(directory), directory, invocationId, kind, status: typeof result?.status === "string" ? result.status : "unfinished",
   startedAt, durationSeconds: typeof runtime?.seconds === "number" ? runtime.seconds : undefined,
-  score: typeof score === "number" ? score : undefined, exitCode: typeof exit?.exitCode === "number" ? exit.exitCode : undefined, peakMemoryBytes: peak };
+  score: typeof score === "number" && Number.isFinite(score) ? score : undefined, fitSeconds: typeof result?.diagnostics?.fitSeconds === "number" && Number.isFinite(result.diagnostics.fitSeconds) && result.diagnostics.fitSeconds >= 0 ? result.diagnostics.fitSeconds : undefined, exitCode: typeof exit?.exitCode === "number" ? exit.exitCode : undefined, peakMemoryBytes: peak };
 }
 
 function lineCount(path: string): number {
@@ -171,36 +172,41 @@ export function readRunFacts(options: { runsDir: string; task: string; runId: st
  const modelling = stages.filter(stage => stage.role === "modelling");
  const directories = new Map<string, string>();
  for (const stage of modelling) for (const directory of trialDirectories(resolve(runsDir, place(layout.trainingDir, { task, invocation: stage.invocationId })))) directories.set(directory, stage.invocationId);
- for (const artifact of (s.artifacts ?? []) as Json[]) {
+ const artifacts: Json[] = [...(s.artifacts ?? []), ...(s.works ?? []).flatMap((w: Json) => w.result?.artifacts ?? [])];
+ const referencedDirectories = new Set<string>();
+ for (const artifact of artifacts) {
   if (typeof artifact.path !== "string" || !String(artifact.kind).startsWith("training_")) continue;
-  const directory = dirname(artifact.path);
-  const local = resolve(runsDir, place(layout.trainingDir, { task, invocation: "" }));
-  const relocated = within(directory, local) ? directory : undefined;
-  if (relocated && existsSync(join(relocated, "request.json")) && ![...directories.keys()].some(known => resolve(known) === resolve(relocated))) directories.set(relocated, basename(dirname(relocated)));
+  const directory = resolve(dirname(artifact.path));
+  if (existsSync(join(directory, "request.json")) && !directories.has(directory)) referencedDirectories.add(directory);
  }
+ const referencedTrials = [...referencedDirectories].map(directory => readTrial(directory, basename(dirname(directory)), options.metricKey, layout));
  const trials = [...directories].map(([directory, invocation]) => readTrial(directory, invocation, options.metricKey, layout)).sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0));
  const firstModellingStart = modelling.find(stage => stage.startedAt)?.startedAt;
  const firstTrialStart = trials.find(trial => trial.startedAt)?.startedAt;
 
- // Champion: the solutions repository's tag.
+ // Resolve selection from immutable run artifacts before consulting mutable tags.
  const solutions = resolve(runsDir, layout.solutionsRoot);
  let champion: RunFacts["champion"];
+ let championUnknown = false;
+ const selected = artifacts.filter(a => a.kind === "training_selected_result").at(-1);
+ const selectedWork = [...(s.works ?? [])].reverse().find((w: Json) => w.summary?.selected_experiment_id);
+ const selectedId = selected ? basename(dirname(selected.path)) : selectedWork?.summary?.selected_experiment_id;
  const tagName = place(layout.championTag, { task });
- if (existsSync(join(solutions, ".git"))) {
-  const commit = git(solutions, ["rev-parse", "--verify", "--quiet", `refs/tags/${tagName}^{commit}`])?.trim();
-  if (commit) {
-   const message = git(solutions, ["tag", "-l", "--format=%(contents)", tagName])?.trim() ?? "";
-   const date = git(solutions, ["for-each-ref", "--format=%(taggerdate:unix)%(committerdate:unix)", `refs/tags/${tagName}`])?.trim();
-   const taggedAt = date ? Number(date.slice(0, 10)) * 1000 : undefined;
-   let parsed: Json = {};
-   try { parsed = JSON.parse(message); } catch { notes.push("Champion tag message is not JSON"); }
-   const experimentId = String(parsed.experimentId ?? "");
-   const local = trials.find(trial => trial.experimentId === experimentId);
-   const elsewhere = !local && typeof parsed.trainingRoot === "string" && existsSync(join(parsed.trainingRoot, experimentId, "request.json"))
-    ? readTrial(join(parsed.trainingRoot, experimentId), basename(parsed.trainingRoot), options.metricKey, layout) : undefined;
-   const trial = local ?? elsewhere;
-   const module = typeof parsed.pipeline?.module === "string" ? parsed.pipeline.module
-    : readJson(join(trial?.directory ?? "", "request.json"))?.pipeline?.module;
+ const tagCommit = git(solutions, ["rev-parse", "--verify", "--quiet", `refs/tags/${tagName}^{commit}`])?.trim();
+ let parsed: Json = {};
+ try { parsed = JSON.parse(git(solutions, ["tag", "-l", "--format=%(contents)", tagName]) ?? "{}"); } catch { /* unknown tag */ }
+ const date = git(solutions, ["for-each-ref", "--format=%(taggerdate:unix)%(committerdate:unix)", `refs/tags/${tagName}`])?.trim();
+ const tagTime = date ? Number(date.slice(0, 10)) * 1000 : undefined;
+ const historicalTag = tagCommit && tagTime !== undefined && tagTime <= endedAt + 1000;
+ const experimentId = selectedId ?? (historicalTag ? parsed.experimentId : undefined);
+ if (experimentId) {
+  const trial = [...trials, ...referencedTrials].find(t => t.experimentId === experimentId)
+   ?? (historicalTag && typeof parsed.trainingRoot === "string" && existsSync(join(parsed.trainingRoot, experimentId, "request.json"))
+    ? readTrial(join(parsed.trainingRoot, experimentId), basename(parsed.trainingRoot), options.metricKey, layout) : undefined);
+  const invocation = trial ? readJson(join(trial.directory, "invocation.json")) : undefined;
+  const commit = invocation?.source?.commit ?? (historicalTag && parsed.experimentId === experimentId ? tagCommit : "unknown");
+  const taggedAt = selectedId ? undefined : tagTime;
+   const module = trial ? readJson(join(trial.directory, "request.json"))?.pipeline?.module : undefined;
    let source: string | undefined;
    if (typeof module === "string") {
     const path = module.startsWith(layout.solutionsModulePrefix) ? module.slice(layout.solutionsModulePrefix.length) : module;
@@ -212,15 +218,17 @@ export function readRunFacts(options: { runsDir: string; task: string; runId: st
      if (extra) source += `\n${extra}`;
     }
    }
-   champion = { experimentId, commit, taggedAt, inRun: taggedAt !== undefined && taggedAt >= s.startedAt && taggedAt <= endedAt + 1000,
-    score: trial?.score, trialFound: !!trial, module, source, kind: trial?.kind };
-  }
- } else notes.push(`No solutions repository at ${solutions}`);
+   champion = { experimentId, commit, taggedAt, inRun: trials.some(t => t.experimentId === experimentId),
+    score: trial?.score, fitSeconds: trial?.fitSeconds, trialFound: !!trial, module, source, kind: trial?.kind };
+ } else if ((tagCommit && !historicalTag) || modelling.some(stage => stage.outcome === "success")) championUnknown = true;
+ if (selectedId && !champion?.trialFound) championUnknown = true;
 
  // Sealed check: the confirmation pointer and its record.
  let sealed: RunFacts["sealed"];
  const pointerPath = resolve(runsDir, place(layout.confirmationPointer, { task }));
- const pointer = readJson(pointerPath);
+ const confirmationArtifact = artifacts.filter(a => a.kind === "holdout_confirmation").at(-1);
+ const pointer = confirmationArtifact ?? readJson(pointerPath);
+ let sealedUnknown = (!!confirmationArtifact && !readJson(confirmationArtifact.path)) || (!pointer?.path && modelling.some(stage => stage.outcome === "success"));
  if (pointer?.path && existsSync(pointer.path)) {
   const record = readJson(pointer.path) ?? {};
   const at = statSync(pointer.path).mtimeMs;
@@ -254,7 +262,14 @@ export function readRunFacts(options: { runsDir: string; task: string; runId: st
  const index = readJson(resolve(runsDir, layout.knowledgeIndex));
  const notesList = (index?.notes ?? []) as Json[];
  const knowledgeNotes = notesList.filter(note => note.origin?.pipelineRunId === runId).length;
- const knowledgeRevisions = notesList.reduce((sum, note) => sum + ((note.revisions ?? []) as Json[]).filter(revision => (revision.origin ?? note.origin)?.pipelineRunId === runId).length, 0);
+ const knowledgeRevisions = notesList.reduce((sum, note) => sum + ((note.revisions ?? []) as Json[]).filter(revision => revision.author?.pipelineRunId === runId).length, 0);
+ const unknownRevisionAuthors = notesList.flatMap(note => note.revisions ?? []).filter(revision => !revision.author?.pipelineRunId).length;
+ if (unknownRevisionAuthors) notes.push(`${unknownRevisionAuthors} knowledge revision(s) have unknown authorship`);
+ const validationReports = artifacts.filter(a => a.kind === "evaluation_report").filter(a => {
+  const r = readJson(a.path);
+  if (!r || r.taskId !== task || r.validation?.valid !== true || !Array.isArray(r.validation.errors) || !r.metrics || !Array.isArray(r.sourceArtifacts)) return false;
+  try { validateReview(r.review); return true; } catch { return false; }
+ }).map(a => a.path);
 
  // Memory: trial records and P1's script observations, when present.
  const scripts: ScriptObservation[] = [];
@@ -284,8 +299,8 @@ export function readRunFacts(options: { runsDir: string; task: string; runId: st
   run: { runId, taskId: s.taskId, status: s.status, reason: s.reason, startedAt: s.startedAt, endedAt, durationMs: endedAt - s.startedAt, checksumValid, ended: terminal },
   stages, stageTotals, budget, firstModellingStart, firstTrialStart,
   minutesToFirstTrial: firstModellingStart && firstTrialStart ? (firstTrialStart - firstModellingStart) / 60_000 : undefined,
-  trials, champion, sealed, handOver,
-  reports: { stageReports, agentStagesNeedingReport, knowledgeNotes, knowledgeRevisions },
+  trials, referencedTrials, champion, championUnknown, sealed, sealedUnknown: sealedUnknown || (!!sealed && !sealed.inRun), handOver,
+  reports: { stageReports, agentStagesNeedingReport, knowledgeNotes, knowledgeRevisions, unknownRevisionAuthors, validationReports },
   memory: { trialPeakBytes: trialPeaks.length ? Math.max(...trialPeaks) : undefined, trialsWithMemory: trialPeaks.length, scripts },
   code, notes,
  };
