@@ -162,7 +162,7 @@ async function scenario(scores: number[], expected: { authorized?: boolean; cons
   expect(receivedGoal.state.goal).toEqual({ objective: "maximize_official_score", targetScore: 1 });
   expect(uploads).toBe(expected.expectedSubmissions); expect(solves).toBe(expected.expectedSolves); expect(reviews).toBe(solves); expect(freezes).toBe(solves);
   expect(c.state.bestOfficial?.score).toBe(expected.best);
-  expect(c.state.status).toBe("finished"); expect(c.state.counters.trials).toBe(solves * 6);
+  expect(c.state.status).toBe("finished"); expect(c.state.counters.trials).toBe(0);
   expect(c.state.actions.filter(a => a.kind === "stage_start").length).toBe(1 + solves * 3 + uploads);
  } finally { Object.assign(STAGE_REGISTRY, original); c.close(); await trace.close(); }
 }
@@ -196,7 +196,7 @@ test("restart marks lost model invocation interrupted and preserves finite budge
  const c = new Coordinator(f.store, { start: w => { work = w; return controllable(w).handle; } });
  c.charge("modelRequests"); c.start(request(c, "solve", "active")); c.close();
  const reopened = new StateStore(f.directory), restarted = new Coordinator(reopened, { start() { throw new Error("No model reattach"); } });
- await restarted.recover(); expect(restarted.stageStatus(work.id).status).toBe("interrupted"); expect(restarted.state.counters.modelRequests).toBe(1); expect(restarted.state.counters.trials).toBe(6);
+ await restarted.recover(); expect(restarted.stageStatus(work.id).status).toBe("interrupted"); expect(restarted.state.counters.modelRequests).toBe(1); expect(restarted.state.counters.trials).toBe(0);
  const status = restarted.status(); expect(status.notifications[0].kind).toBe("stage_interrupted");
  await restarted.wait(status.cursor, undefined, 0); expect(restarted.status().notifications).toEqual([]);
  expect(restorePromptSnapshot(restarted.state.promptTemplates).fingerprint).toBe(f.prompts.fingerprint); restarted.close();
@@ -227,7 +227,7 @@ test("bounded summaries preserve structure and omit row-level labels/predictions
 test("finite budgets and CLI reject increases above hard submission cap", () => {
  const f = fixture(true, { maxModelRequests: 1, maxToolCalls: 1, maxTrials: 2 });
  const c = new Coordinator(f.store, { start: work => controllable(work).handle }); c.charge("modelRequests"); expect(() => c.charge("modelRequests")).toThrow("budget exhausted");
- c.start(request(c, "solve", "trial-budget")); expect(c.state.counters.trials).toBe(2); c.close();
+ c.start(request(c, "solve", "trial-budget")); expect(c.state.works.at(-1)!.options).toEqual({ maxIterations: 2 }); expect(c.state.counters.trials).toBe(0); c.close();
  expect(parseOrchestrateArgs(["unit", "1", "task", "1", "--goal", "1", "--no-submit"]).options.noSubmit).toBe(true);
  expect(() => parseOrchestrateArgs(["task", "1", "--max-submissions", "4"])).toThrow();
  expect(() => fixture(true, { maxStages: 1000 })).toThrow("increased persisted budget");
@@ -426,4 +426,36 @@ test("a branch list too large for the status budget is dropped, not fatal", () =
  const c = new Coordinator(f.store, { start: () => { throw new Error("unused"); }, branches: () => big });
  expect((c.status() as any).branches).toEqual({ omitted: "Branch list did not fit the status budget" });
  c.close();
+});
+
+test("the trial counter equals the distinct trials run, also after an interrupted solve and its recovery", async () => {
+ const f = fixture(false); let owned!: ReturnType<typeof controllable>;
+ const solveResult = (work: Work, ids: string[], extra: Partial<StageInvocation> = {}) => fakeResult(work, { summary: { trials: ids.length, trial_ids: ids }, ...extra });
+ let c = new Coordinator(f.store, { start: work => { owned = controllable(work); return owned.handle; } });
+ // A solve that ran two of its six allowed trials is charged two.
+ c.start(request(c, "solve", "first")); expect(c.state.counters.trials).toBe(0); expect((c.status() as any).trials.runningSolveAllocation).toBe(6);
+ owned.resolve(solveResult(c.state.works.at(-1)!, ["t1", "t2"])); await c.settle(); expect(c.state.counters.trials).toBe(2);
+ // A second solve starts (it runs t3 and t4 in its root), then the host dies.
+ c.start(request(c, "solve", "lost")); expect(c.state.works.at(-1)!.options).toEqual({ maxIterations: 6 }); c.close();
+ const reopened = new StateStore(f.directory);
+ c = new Coordinator(reopened, { start: work => { owned = controllable(work); return owned.handle; } });
+ await c.recover(); expect(c.state.works.at(-1)!.status).toBe("interrupted");
+ // The interrupted solve keeps no reservation: the recovery gets the full allocation from what is left.
+ expect(c.state.counters.trials).toBe(2);
+ c.start(request(c, "solve", "recovering")); expect(c.state.works.at(-1)!.options).toEqual({ maxIterations: 6 });
+ // It reuses the lost solve's root, so it reports t3 and t4 again with its own t5; a stale t2 is not charged twice.
+ owned.resolve(solveResult(c.state.works.at(-1)!, ["t2", "t3", "t4", "t5"])); await c.settle();
+ expect(c.state.counters.trials).toBe(5); expect(c.state.trialIds).toEqual(["t1", "t2", "t3", "t4", "t5"]);
+ // A cancelled solve is charged for the trials it ran before the cancel.
+ c.start(request(c, "solve", "cancelled")); owned.resolve(solveResult(c.state.works.at(-1)!, ["t6"], { outcome: "cancelled" })); await c.settle();
+ expect(c.state.counters.trials).toBe(6);
+ console.log(`[measure] trials run: 6 distinct (t1..t6), trial counter: ${c.state.counters.trials}`);
+ c.close(); const persisted = new StateStore(f.directory); expect(persisted.state.counters.trials).toBe(6); persisted.close();
+});
+
+test("a solve's allocation never exceeds what is left of the run's trials", () => {
+ const f = fixture(false, { maxTrials: 8 }); let owned!: ReturnType<typeof controllable>;
+ const c = new Coordinator(f.store, { start: work => { owned = controllable(work); return owned.handle; } });
+ c.start(request(c, "solve", "one")); owned.resolve(fakeResult(c.state.works[0]!, { summary: { trial_ids: ["a", "b", "c", "d", "e"] } }));
+ return c.settle().then(() => { c.start(request(c, "solve", "two")); expect(c.state.works.at(-1)!.options).toEqual({ maxIterations: 3 }); c.close(); });
 });

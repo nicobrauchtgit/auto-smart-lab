@@ -28,6 +28,8 @@ export interface RunState {
  status: "running" | "finished" | "blocked" | "cancelled"; reason?: string;
  works: Work[]; actions: Action[]; artifacts: CatalogArtifact[]; official: OfficialResult[]; bestOfficial?: OfficialResult;
  taskConfiguration?: DeclaredConfiguration;
+ /** Distinct harness trials charged to counters.trials; absent in runs that reserved whole allocations. */
+ trialIds?: string[];
  remoteTriesUsed: number; reservedUnknown: number; cursor: number; acknowledgedCursor: number; inbox: Notification[]; journal: { revision: number; at: number; kind: string; payload: Record<string, unknown> }[];
 }
 function validate(s: RunState): void {
@@ -50,6 +52,7 @@ function validate(s: RunState): void {
  for (const declared of [s.taskConfiguration, ...s.works.map(w => w.taskConfiguration && { configuration: w.taskConfiguration, sha256: taskConfigurationHash(w.taskConfiguration) })]) {
   if (declared && taskConfigurationHash(parseTaskConfiguration(declared.configuration)) !== declared.sha256) throw new Error("Invalid persisted task configuration");
  }
+ if (s.trialIds !== undefined && (!Array.isArray(s.trialIds) || s.trialIds.some(id => typeof id !== "string" || !id || id.length > 256) || new Set(s.trialIds).size !== s.trialIds.length || s.counters.trials < Math.min(s.trialIds.length, s.limits.maxTrials))) throw new Error("Invalid trial accounting");
  if (s.taskConfiguration && !s.actions.some(a => a.id === s.taskConfiguration!.actionId && a.kind === "task_configure")) throw new Error("Unowned persisted task configuration");
 }
 export class StateStore {

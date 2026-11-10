@@ -196,7 +196,7 @@ async function executeStage(options: InvokeStageOptions, invocationId: string,
 		if (!runner) throw new Error(`Stage ${options.stage} has no registered reconciliation path`);
 		const result = await runner({ input, options: effective, report, feedback, signal: controller.signal,
 			prompts: options.prompts! });
-        if (controller.signal.aborted) return finish("cancelled", { artifacts: result.artifacts, validation: result.validation, attempts: result.attempts });
+        if (controller.signal.aborted) return finish("cancelled", { artifacts: result.artifacts, validation: result.validation, attempts: result.attempts, summary: result.summary });
 		const attempts = result.attempts ?? 0;
 		if (result.summary) report.event("stage_summary", result.summary);
 		if (result.validation && !result.validation.valid && result.validation.partial) {

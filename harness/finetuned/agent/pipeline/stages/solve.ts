@@ -158,6 +158,7 @@ export const solveStage: StageDefinition<SolveOptions> = {
 			attempts: result.attempts,
 			summary: {
 				trials: result.collection.trials.length,
+				trial_ids: result.collection.trials.map((trial) => trial.experimentId),
 				eligible_trials: result.collection.trials.filter((trial) => trial.eligible).length,
 				stop_reason: result.stopReason,
 				selected_experiment_id: result.collection.selected?.experimentId,

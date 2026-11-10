@@ -75,7 +75,8 @@ export class Coordinator {
    time: timeBudget(s),
    handOver: { mode: s.config.online ? "online" : "offline", submissionsAuthorized: s.policy.authorized,
     ...(s.policy.authorized ? { submissions: "up to the cap below, each with official score feedback" } : { refits: s.works.filter(w => w.stage === "refit" && w.result?.outcome === "success").length, allowed: 1 }) },
-   trials: { used: s.counters.trials, limit: s.limits.maxTrials, perSolve: (s.config.effectiveOptions.solve as { maxIterations?: number } | undefined)?.maxIterations },
+   trials: { used: s.counters.trials, limit: s.limits.maxTrials, perSolve: (s.config.effectiveOptions.solve as { maxIterations?: number } | undefined)?.maxIterations,
+    ...(() => { const live = s.works.find(w => w.stage === "solve" && !terminal(w)); return live ? { runningSolveAllocation: (live.options as { maxIterations?: number } | undefined)?.maxIterations, note: "Charged when the solve reports the trials it ran" } : {}; })() },
    branches: (() => { try { return this.deps.branches?.(); } catch (error) { return { unavailable: error instanceof Error ? error.message.slice(0, 200) : "branch listing failed" }; } })() as unknown,
    budgets: { limits: s.limits, used: s.counters, deadline: s.deadline, triesUsed: this.remoteUsed, reservedUnknown: s.reservedUnknown, effectiveTriesUsed: this.remoteUsed + s.reservedUnknown, submissionsRemaining: Math.max(0, Math.min(3, s.policy.maxSubmissions) - this.remoteUsed - s.reservedUnknown) },
    works: s.works.slice(-4).map(w => ({ id: w.id, stage: w.stage, status: w.status, objective: w.objective, summary: w.summary })),
@@ -185,10 +186,10 @@ export class Coordinator {
   const id = randomUUID();
   const note = request.guidance === undefined ? undefined : { id: `${request.actionId}:guidance`, version: 1, stage: request.stage, taskId: s.taskId, objective: request.objective, content: request.guidance, author: { name: "orchestrator", logicalSessionId: s.controlInvocationId }, evidence };
   let options: unknown;
-  let trials = 0;
   if (request.stage === "solve") {
+   // The allocation bounds this solve; trials are charged when the solve reports them.
    const configured = s.config.effectiveOptions.solve as { maxIterations: number };
-   trials = Math.min(configured.maxIterations, s.limits.maxTrials - s.counters.trials);
+   const trials = Math.min(configured.maxIterations, s.limits.maxTrials - s.counters.trials);
    if (trials < 1) throw new Error("Global trial budget exhausted");
    options = { maxIterations: trials };
   }
@@ -199,7 +200,7 @@ export class Coordinator {
   const work: Work = { id, stage: request.stage, actionId: request.actionId, objective: request.objective, upstream: request.artifactIds, status: "reserved", guidance: note ? { ...note, contentSha256: guidanceHash(note) } : undefined, options, taskConfiguration: s.taskConfiguration.configuration };
   const receipt = { invocationId: id, accepted: true };
   this.commit("action_accepted", { ...request, invocationId: id }, next => {
-   next.actions.push(this.action(request, "stage_start", receipt)); next.works.push(work); next.counters.stages++; next.counters.trials += trials; if (retry) next.counters.retries++;
+   next.actions.push(this.action(request, "stage_start", receipt)); next.works.push(work); next.counters.stages++; if (retry) next.counters.retries++;
   });
   this.launch(work); return { ...receipt, revision: this.state.revision };
  }
@@ -253,6 +254,7 @@ export class Coordinator {
     if (Number.isInteger(effective) && effective > this.remoteUsed + s.reservedUnknown) s.reservedUnknown = effective - this.remoteUsed;
    }
    const work = s.works.find(w => w.id === id)!; work.status = "terminal"; work.result = { ...result, artifacts: [], summary: undefined }; work.summary = summary;
+   if (result.stage === "solve") chargeTrials(s, id, result.summary);
    if (work.stage === "solve") for (const old of s.works.filter(w => w.stage === "solve" && w.status === "interrupted")) { if (old.summary) old.summary.trainingRecoveryRequired = false; }
    s.artifacts.push(...artifacts.filter(a => !s.artifacts.some(old => old.id === a.id)));
    if (result.stage === "submit" && submission?.attemptId) {
@@ -357,6 +359,19 @@ export class Coordinator {
  }
  async settle() { await Promise.allSettled([...this.pending]); if (this.failure) throw this.failure; }
  close() { this.store.close(); }
+}
+/**
+ * Charge the harness trials a solve actually started, once each. A solve that
+ * recovers an interrupted one reuses its training root and reports the earlier
+ * trials again; their IDs are charged only the first time they are seen.
+ */
+function chargeTrials(s: RunState, invocationId: string, summary: Record<string, unknown> | undefined) {
+ const reported = Array.isArray(summary?.trial_ids) ? (summary.trial_ids as unknown[]).filter((id): id is string => typeof id === "string" && !!id && id.length <= 256)
+  : Number.isSafeInteger(summary?.trials) && (summary!.trials as number) > 0 ? Array.from({ length: summary!.trials as number }, (_, i) => `${invocationId}:${i}`) : [];
+ const seen = new Set(s.trialIds ?? []), fresh = [...new Set(reported)].filter(id => !seen.has(id));
+ s.trialIds = [...seen, ...fresh];
+ // The per-solve allocation keeps the count inside the limit; the clamp only guards a stale root.
+ s.counters.trials = Math.min(s.limits.maxTrials, s.counters.trials + fresh.length);
 }
 function unresolvedSubmission(work: Work): boolean {
  const content = (work.summary?.measurements as any)?.content;
