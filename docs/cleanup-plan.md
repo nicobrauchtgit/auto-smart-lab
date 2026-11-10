@@ -28,28 +28,28 @@ and official scores separate.
 | Package | State | Required next action |
 | --- | --- | --- |
 | P1: observed scripts and shared memory pool | Deferred from this merge by the user; not integrated | Future strict-protection implementation; see [counterexamples and scope decision](p1-memory-pool-blocker.md) |
-| P3: waits, accounting, recovery, hand-over and detached runs | Integrated in `fd96ccd` | Final whole-branch verification |
+| P3: waits, accounting, recovery, hand-over and detached runs | Integrated in `fd96ccd`; final whole-branch validation passed | Human review and merge |
 | P4: scorecard | Integrated in `d57b703` | Use on the next live shakedown |
 | P5: expert-team design and draft prompts | Integrated in `6901a54` | Keep labelled as design |
-| Reviewer documentation and source inventory | Integrated; independent review and source refresh complete | Record the final whole-branch validation result |
+| Reviewer documentation and source inventory | Integrated; independent review, source refresh and navigation checks complete | Human review and merge |
 
 P3 passed type checking and 61 focused tests after its final review fixes:
 terminal champion recovery, charging only launched workers, and recovered
 budget-end refits crossing the deadline. Older persisted harness versions need
 a new run; there is no state migration.
 
-Before calling this branch merge-ready:
+Merge preparation is complete in the reduced scope. Independent review found no
+remaining blockers. `./dev mise run test` passed: typecheck, 652 Bun tests with
+four platform skips, and all 155 Python tests. The shared Python environment
+reports 39 healthy packages after repairing its stale editable-package reference.
+The source inventory is fresh; 284 local links/anchors across 19 maintained
+documents and six Mermaid blocks passed structural checks. See
+[the full merge evidence](merge-readiness.md) for the earlier timeout failure,
+its bounded correction, validation scope and remaining limits.
 
-1. Resolve complete correctness/resource blockers. Record smaller issues below
-   with impact and next action; keep future packages out of this merge.
-2. Keep the shared Python environment healthy. Its stale editable-package
-   reference was repaired on 2026-11-10; the manager reports 39 packages healthy.
-3. Run `./dev mise run test` and experiment boundary tests against integrated
-   source. Record skips and unverified live behavior alongside passes.
-4. Check reviewer navigation, local links, Mermaid source, current/proposed
-   labels, reproducible metrics and ADR references.
-5. Record final review evidence and limitations. Local tests do not establish
-   experimental results.
+Next: human review of the [review guide](review-guide.md), then merge when
+chosen. No push or merge into `main` was performed. Local tests do not establish
+live experimental results; those remain follow-ups below.
 
 ## Follow-ups and readiness limits
 
@@ -65,7 +65,7 @@ before claiming its corresponding capability or experiment ready.
 | F5: beyond spam | Clustering sealed confirmation and label-free hand-over are incomplete; multiclass Tor is not runnable | Implement P7c after the core experts; verify withheld-family/execution-mode semantics on code2 and label-free behavior on attacks1 |
 | F6: concentration and legacy code | Large controller/training modules and legacy entry points increase maintenance cost | Use code analysis for later refactoring. Audit optional subagents, interactive SmartLab tools and old instructions before wiring/deleting; check running processes and external references |
 | F7: additional primitives | CPU torch, generic experiment tools, service/download metadata and units 5/6 VM tools are unfinished | Add when required with shared setup/observation and task evidence; no automatic proxy fallback |
-| F8: hygiene | Formatting and indexed-access checking remain deferred | Keep formatting/type-strictness migration separate from behavior; reconcile historical references without rewriting runtime prompts |
+| F8: hygiene and typecheck scope | Formatting/indexed-access checking are deferred; root semantic typecheck excludes the minimal arm | Assess additional coverage separately from behavior; reconcile historical references without rewriting runtime prompts |
 | F9: P1 resource supervision | Agent scripts retain current observation/RAM limits; Linux sampling and the shared protected pool are not integrated | P1 is deferred by explicit user choice. Keep its strict acceptance criteria and counterexamples in [the blocker report](p1-memory-pool-blocker.md); do not claim best-effort priority satisfies them |
 
 Before malware-task runs, establish permitted parsing and network boundaries.

@@ -14,7 +14,7 @@ validation are in the [inventory](../code-inventory.md) and
 | [001](001-independent-arms.md) | Independent arms and shared experiment conditions | Accepted; implemented |
 | [002](002-model-freedom-evidence.md) | Agent-owned design, harness-owned execution and evidence | Accepted; implemented, with task-adapter limitations. |
 | [003](003-finite-ram-observation.md) | Finite RAM, observation and flexible modelling | Accepted design; P1 deferred, strict future acceptance retained |
-| [004](004-durable-controller.md) | Durable controller, event-driven waits and budget-end hand-over | Accepted; durable controller and P3 implemented in fd96ccd; whole-branch validation pending. |
+| [004](004-durable-controller.md) | Durable controller, event-driven waits and budget-end hand-over | Accepted; P3 integrated in fd96ccd and local whole-branch validation passed; live shakedown remains |
 | [005](005-isolation-confirmation-provenance.md) | Isolation, sealed confirmation and prompt provenance | Accepted; implemented boundaries with explicit limitations and planned strengthening. |
 | [006](006-shared-expert-workspace.md) | One expert workspace and restrained concurrency | Accepted design; implementation planned in P6/P7. The four experts are not current runtime. |
 

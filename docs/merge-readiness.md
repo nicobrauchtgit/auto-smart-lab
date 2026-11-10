@@ -2,7 +2,9 @@
 
 Updated 2026-11-10. Candidate branch: `merge-arms`. Target: `main`.
 The branch has not been pushed or merged into `main` by this work.
-Final whole-branch verification is running; readiness is not yet signed off.
+**Ready for human review and merge in the reduced scope below.** Final local
+whole-branch verification passed. This is code/documentation readiness, not a
+claim of successful live experimental runs.
 
 ## Included and excluded
 
@@ -47,9 +49,10 @@ Run all commands from the repository root through `./dev`.
 | Python environment manager `setup` | Healthy: 39 packages, Python 3.13.15; repaired stale editable-package worktree reference without changing declared dependencies |
 | Inventory generation, `--check`, `--self-test` | Passed against integrated source; source and generator hashes in [inventory](code-inventory.md) |
 | Strict standalone inventory-generator typecheck | Passed; `scripts/**/*.ts` is also included in the root typecheck |
-| Documentation navigation, anchors and Mermaid structure | Integrated audit: 19 maintained documents, 281 local links/anchors, six Mermaid blocks, zero errors; structural coverage only |
-| `git diff --check` | Passed at integration; repeat before sign-off |
-| Final `./dev mise run test` | Running after the bounded recovery-test timeout correction |
+| Documentation navigation, anchors and Mermaid structure | Integrated audit: 19 maintained documents, 284 local links/anchors, six Mermaid blocks, zero errors; structural coverage only |
+| `git diff --check` | Passed at integration and final sign-off |
+| Target merge preview | Local `main` and `origin/main` merge without conflicts and produce the candidate tree; read-only remote lookup confirmed `main` at `98c5f14b9297c5eb19f9e90c9196704c10b52787` on 2026-11-10 |
+| Final `./dev mise run test` | Passed: root typecheck, 652 Bun tests passed / 4 skipped / 0 failed, then 155 Python tests passed |
 
 The first whole-branch run completed its Bun suite with 651 passes, four skips,
 one timeout failure and one resulting error across 656 tests. The recovery test
@@ -57,8 +60,18 @@ one timeout failure and one resulting error across 656 tests. The recovery test
 used Bun's default five-second limit despite real Python setup/recovery checks.
 Its diagnostic rerun took 5.3 seconds and passed with a test-local 30-second
 limit. The assertion that restart cannot increase the original trial budget is
-unchanged. The final complete suite is rerunning with that bounded test limit;
-the first run must not be described as passing.
+unchanged. The final complete suite passed with that bounded test limit: 656
+Bun cases across 84 files in 778.77 seconds (652 passed, four skipped), followed
+by 18 setup, 123 training, nine evaluation and five research Python tests, all
+passing. The four skips are Darwin/libproc sampling and watcher cases on Linux.
+The first run remains failed evidence; it is superseded by this successful
+rerun rather than relabelled as passing.
+
+The rerun used the integrated runtime/test source committed in `c4fcfe3`.
+Subsequent sign-off edits are documentation only and do not change the source
+inventory digest. Typecheck also passed after adding the inventory script to
+the root TypeScript configuration. The final Python environment check reports
+healthy declared and locked dependencies.
 
 The earlier documentation checkout separately passed 155 Python tests and
 68 focused tests with four platform skips. Those are historical supporting

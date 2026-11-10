@@ -9,7 +9,7 @@ work queue and distinguishes merge preparation from later implementation.
 | Package | State on `merge-arms` | Remaining gate |
 | --- | --- | --- |
 | P1: observed scripts and memory pool | Deferred from this merge by the user; not integrated | [Strict victim ordering remains unimplemented](p1-memory-pool-blocker.md); future implementation/review |
-| P3: run mechanics | Integrated in `fd96ccd`, including three recovery/accounting review fixes | Whole-branch validation after P1 integration |
+| P3: run mechanics | Integrated in `fd96ccd`, including three recovery/accounting review fixes; whole-branch validation passed | Live spam1 shakedown before wave 2; P1 remains deferred |
 | P4: scorecard | Integrated in `d57b703`; 21 focused tests passed at integration | Refresh evidence against the next real run |
 | P5: expert-team design | Integrated in `6901a54`; documents and draft prompts only | Runtime implementation is future work |
 | P6, P7a/P7b/P7c, P8, P9 | Planned | Wave gates below; these are not implemented runtime features |

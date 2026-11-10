@@ -8,6 +8,12 @@ The inventory is the numeric source of truth. It counts tracked working-tree sou
 
 Regenerate after staging integrated source with `./dev bun scripts/code-inventory.ts`. Verify with `./dev bun scripts/code-inventory.ts --check` and `./dev bun scripts/code-inventory.ts --self-test`. The script uses the installed TypeScript 7 asynchronous compiler API (the package root exports version metadata, not the older parser API) over a closed virtual filesystem, plus the shared Python interpreter. No dependency was added. AST traversal counts anonymous and nested callables, so callback-heavy TypeScript tests can have many functions in few lines. Python lambdas and methods count too. These are syntax counts, not cyclomatic complexity, runtime reachability, coverage or maintainability scores.
 
+The [root TypeScript configuration](../tsconfig.json) checks finetuned runtime,
+experiment host and development scripts. The minimal arm is parsed for this
+inventory and exercised by shared boundary tests, but is not included in that
+semantic typecheck. Extending typecheck coverage is a separate maintenance
+follow-up; parser success must not be reported as a typecheck of the minimal arm.
+
 At this documentation snapshot:
 
 | Scope | Files | Physical lines | Callables | Classes |
