@@ -193,3 +193,36 @@ Then the shared-drive tasks and the protocol for measured runs, as in
 - Prompts stay in `agent/prompts/`; setup prerequisites are declared in the
   shared preflight; development guidance stays out of pipeline prompts (see
   `AGENTS.md`).
+
+## Decision log
+
+Decisions taken while carrying out the plan, newest last.
+
+- **2026-11-10, subagents.** Four Opus 5.5 subagents at once hit the Claude API
+  rate limit; the host resumes them. Code review of each package is done by
+  GPT 6.1 (`gpt-6.1-sol`, high effort) after the implementation.
+- **2026-11-10, second datasets.** The redesign is also checked on `code2`
+  (clustering of PHP and Perl bots) and `attacks1` (adversarial example
+  detection, no labels), so that it is not fitted to spam. See
+  [tasks.md](tasks.md).
+- **2026-11-10, scorecard hooks.** The scorecard needs two records: who caused
+  each charged model request (`source` in the journal's `budget_reserved`
+  entries, from P3), and the peak memory of trials and agent scripts
+  (`processes.jsonl` and `worker-exit.json`, from P1).
+- **2026-11-10, one working tree.** The first design gave every expert its own
+  git worktree with harness merges, so that two code-writing experts could run
+  at once. Rejected: it brings back separate folders per agent. Instead all
+  experts work in the one checkout of `solutions/`, at most one code-writing
+  expert (data, modelling, validation) is active at a time, and the literature
+  expert, which has no shell or write tool, may run alongside it. Follow-up
+  branches from the champion stay.
+- **2026-11-10, sealed numbers.** No automatic filter on the orchestrator's
+  guidance text; the earlier decision stands that this is an instruction. The
+  validation expert no longer reads the sealed confirmation at all.
+- **2026-11-10, label-free tasks.** Getting a task without labels to a
+  hand-over is its own package (P7c), after the core works on spam1 and the
+  clustering task: first an unscored hand-over (offline only), then labels the
+  experts establish by inspection, with a part held back for the sealed check.
+- **2026-11-10, many classes.** Tor website fingerprinting needs a multi-class
+  task kind the harness does not have. It is out of scope for this plan and
+  listed in [tasks.md](tasks.md) as not runnable.
