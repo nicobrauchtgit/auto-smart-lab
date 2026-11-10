@@ -1,7 +1,7 @@
 # P1: unresolved memory victim ordering
 
-Recorded 2026-11-10. **Not integrated into `merge-arms`.** This is an investigation
-result and merge-scope decision, not an implemented resource guarantee.
+Recorded 2026-11-10. **Deferred from this merge by the user.** This is an
+investigation result and scope decision, not an implemented resource guarantee.
 
 ## Required behavior
 
@@ -48,18 +48,15 @@ research/solve on this machine if merged as the default. It is not integrated
 and is not an operational P1 completion. The current branch retains its earlier
 runtime and its known resource limitations.
 
-The user has been asked to choose the merge scope:
+On 2026-11-10 the user chose to **defer P1 and prepare the existing runnable code
+and documentation for merge**. P3 recovery improvements, P4 scorecard and P5
+design remain in scope. P1's strict acceptance requirement remains for future
+work; best-effort victim ordering was not accepted as a substitute. Neither its
+resource implementation nor its unconditional production guard is integrated.
 
-- Defer P1 and review/merge the existing runtime, P3 recovery improvements and
-  documentation, retaining strict P1 acceptance for later.
-- Explicitly accept a bounded pool with best-effort trial priority and document
-  the remaining risk. This changes the accepted guarantee and needs a separate
-  implementation/review pass; the fail-closed branch cannot simply be merged.
-- Keep the merge blocked until an enforcing mechanism is implemented and
-  independently pressure-tested.
-
-Until that choice, P1 is a blocker for a merge scope that includes completed
-P1, rather than a smaller issue silently moved to the follow-up list.
+The remaining resource limitations are explicit follow-ups for this merge.
+Deferral is not evidence that P1 passed or that current research/solve scripts
+have its proposed observation, Linux sampling or shared memory protection.
 
 ## Completion evidence for strict P1
 

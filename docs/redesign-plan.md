@@ -8,7 +8,7 @@ work queue and distinguishes merge preparation from later implementation.
 
 | Package | State on `merge-arms` | Remaining gate |
 | --- | --- | --- |
-| P1: observed scripts and memory pool | Blocked; not integrated | [Strict victim ordering remains unimplemented](p1-memory-pool-blocker.md); merge-scope decision pending |
+| P1: observed scripts and memory pool | Deferred from this merge by the user; not integrated | [Strict victim ordering remains unimplemented](p1-memory-pool-blocker.md); future implementation/review |
 | P3: run mechanics | Integrated in `fd96ccd`, including three recovery/accounting review fixes | Whole-branch validation after P1 integration |
 | P4: scorecard | Integrated in `d57b703`; 21 focused tests passed at integration | Refresh evidence against the next real run |
 | P5: expert-team design | Integrated in `6901a54`; documents and draft prompts only | Runtime implementation is future work |
@@ -288,3 +288,9 @@ Decisions taken while carrying out the plan, newest last.
   The four-expert implementation remains a later wave. Reviewer documentation
   includes current/proposed flow diagrams, reproducible source metrics, and
   ADRs covering the accepted design and its trade-offs.
+- **2026-11-10, P1 deferred.** The user chose to prepare the existing runnable
+  code and documentation for merge, leaving P1 out. Its unprivileged pressure
+  tests did not establish strict scripts-first/largest-script ordering. Neither
+  best-effort priority nor the unconditional production launch guard is merged.
+  The original strict acceptance criteria and wave-2 prerequisites remain;
+  this is a merge-scope reduction, not completion of wave 1.

@@ -27,7 +27,7 @@ and official scores separate.
 
 | Package | State | Required next action |
 | --- | --- | --- |
-| P1: observed scripts and shared memory pool | Blocked; not integrated | Decide merge scope; see [counterexamples and options](p1-memory-pool-blocker.md) |
+| P1: observed scripts and shared memory pool | Deferred from this merge by the user; not integrated | Future strict-protection implementation; see [counterexamples and scope decision](p1-memory-pool-blocker.md) |
 | P3: waits, accounting, recovery, hand-over and detached runs | Integrated in `fd96ccd` | Final whole-branch verification |
 | P4: scorecard | Integrated in `d57b703` | Use on the next live shakedown |
 | P5: expert-team design and draft prompts | Integrated in `6901a54` | Keep labelled as design |
@@ -66,6 +66,7 @@ before claiming its corresponding capability or experiment ready.
 | F6: concentration and legacy code | Large controller/training modules and legacy entry points increase maintenance cost | Use code analysis for later refactoring. Audit optional subagents, interactive SmartLab tools and old instructions before wiring/deleting; check running processes and external references |
 | F7: additional primitives | CPU torch, generic experiment tools, service/download metadata and units 5/6 VM tools are unfinished | Add when required with shared setup/observation and task evidence; no automatic proxy fallback |
 | F8: hygiene | Formatting and indexed-access checking remain deferred | Keep formatting/type-strictness migration separate from behavior; reconcile historical references without rewriting runtime prompts |
+| F9: P1 resource supervision | Agent scripts retain current observation/RAM limits; Linux sampling and the shared protected pool are not integrated | P1 is deferred by explicit user choice. Keep its strict acceptance criteria and counterexamples in [the blocker report](p1-memory-pool-blocker.md); do not claim best-effort priority satisfies them |
 
 Before malware-task runs, establish permitted parsing and network boundaries.
 The lab prohibits external detection services; filesystem isolation alone does
