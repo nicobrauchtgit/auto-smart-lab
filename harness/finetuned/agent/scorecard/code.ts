@@ -1,13 +1,8 @@
 /**
  * Census of agent-written Python and where data loading is implemented.
  *
- * Data-loading heuristic (documented in README): a Python file implements data
- * loading when it opens the task data itself, i.e. it uses `zipfile` /
- * `ZipFile(` or names one of the task's data files (the train/test archive or
- * the targets file from the declared task configuration). A file that only
- * imports such a module does not count; a file that imports one *and* opens the
- * archives again does. Files that read a saved copy of the data (`np.load`,
- * `pickle.load`, `joblib.load`, `read_parquet`) are listed as cache readers.
+ * Read-operation census: imports and path mentions alone are not evidence.
+ * Unknown path provenance is reported separately from confirmed task reads.
  *
  * Attribution: task folders and solutions/ are reused between runs, so a file
  * is placed by its modification time relative to the run window: before, during
@@ -28,6 +23,7 @@ export interface PythonFile {
  modifiedAt: number;
  period: Period;
  opensData: boolean;
+ uncertainDataRead: boolean;
  readsCache: boolean;
  /** Paths (runs-relative) of census files this file imports. */
  imports: string[];
@@ -38,6 +34,7 @@ export interface CodeCensus {
  folders: FolderTotal[];
  /** Present at the run's end as far as mtimes tell (before + during), copies excluded. */
  loaderImplementations: string[];
+ uncertainLoaders: string[];
  loaderFolders: string[];
  loaderImporters: string[];
  cacheReaders: string[];
@@ -48,7 +45,23 @@ export interface CodeCensus {
  moduleIndex: { path: string; exists: boolean; missing: string[] };
 }
 
-const OPENS_ZIP = /\bzipfile\b|\bZipFile\s*\(/;
+const READ = /(?:\b(?:ZipFile|read_csv|read_table|read_parquet|read_json|read_excel|read_pickle|imread|fromfile|load_npz)|\b(?:tarfile|Image|np|numpy|pickle|joblib)\.(?:open|load)|\bopen|\.read_bytes|\.read_text)\s*\(([^)\n]*)\)/g;
+/** Conservative static evidence; dynamic paths cannot prove which dataset was read. */
+export function dataReads(source: string, dataFiles: string[]): { confirmed: boolean; uncertain: boolean } {
+ const text = source.split("\n").map(line => line.replace(/#.*$/, "").replace(/(?:^|;)\s*(?:from\s+[^;]+|import\s+[^;]+)(?=;|$)/g, "")).join("\n");
+ const operations = [...text.matchAll(READ)].filter(m => !/[, ]+["'](?:w|a|x)[bt+]*["']/.test(m[1]));
+ // Calls using a path variable are confirmed only when its assignment names task data.
+ const assignments = new Map([...text.matchAll(/\b(\w+)\s*=\s*([^\n]+)/g)].map(m => [m[1], m[2]]));
+ let confirmed = false, uncertain = false;
+ for (const m of operations) {
+  let argument = m[1];
+  const variable = /^\s*(\w+)\s*(?:,|$)/.exec(argument)?.[1];
+  if (variable && assignments.has(variable)) argument += assignments.get(variable);
+  if (dataFiles.some(file => argument.includes(file))) confirmed = true;
+  else uncertain = true;
+ }
+ return { confirmed, uncertain };
+}
 const CACHE = /\bnp\.load\s*\(|\bnumpy\.load\s*\(|\bpickle\.load\s*\(|\bjoblib\.load\s*\(|\bread_parquet\s*\(|\bload_npz\s*\(/;
 const IMPORT = /^\s*(?:from\s+([\w.]+)\s+import|import\s+([\w., ]+))/gm;
 
@@ -63,7 +76,6 @@ function walk(directory: string, skip: (path: string) => boolean, out: string[] 
  return out;
 }
 
-function escape(text: string) { return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 
 export function codeCensus(options: { runsDir: string; task: string; layout: ScorecardLayout; window: { start: number; end: number }; dataFiles: string[] }): CodeCensus {
  const { runsDir, task, layout, window } = options;
@@ -73,7 +85,6 @@ export function codeCensus(options: { runsDir: string; task: string; layout: Sco
  const folders = layout.codeFolders.map(folder => ({ ...folder, abs: abs(folder.path) })).sort((a, b) => b.abs.length - a.abs.length);
  const solutionsRoot = abs(layout.solutionsRoot);
  const paths = [...new Set([...walk(resolve(runsDir, task), skip), ...walk(solutionsRoot, skip)])].sort();
- const dataPattern = options.dataFiles.length ? new RegExp(options.dataFiles.filter(Boolean).map(escape).join("|")) : undefined;
  const rel = (path: string) => relative(runsDir, path);
  const texts = new Map(paths.map(path => [path, readFileSync(path, "utf8")]));
 
@@ -94,11 +105,12 @@ export function codeCensus(options: { runsDir: string; task: string; layout: Sco
    const modules = match[1] ? [match[1]] : match[2].split(",").map(item => item.trim().split(/\s+/)[0]);
    for (const module of modules) { const target = module && resolveImport(path, module); if (target && target !== path) imports.add(rel(target)); }
   }
+  const reads = dataReads(text, options.dataFiles);
   return {
    path: rel(path), folder: folder ? folder.label : "unclassified", role: folder ? folder.role : "unclassified",
    lines: text.length === 0 ? 0 : text.split("\n").length - (text.endsWith("\n") ? 1 : 0),
    modifiedAt, period: modifiedAt < window.start ? "before" : modifiedAt <= window.end ? "during" : "after",
-   opensData: OPENS_ZIP.test(text) || !!dataPattern?.test(text), readsCache: CACHE.test(text), imports: [...imports].sort(),
+   opensData: reads.confirmed, uncertainDataRead: reads.uncertain, readsCache: CACHE.test(text), imports: [...imports].sort(),
   };
  });
 
@@ -122,6 +134,7 @@ export function codeCensus(options: { runsDir: string; task: string; layout: Sco
   files,
   folders: [...totals.values()],
   loaderImplementations: loaders.map(file => file.path),
+  uncertainLoaders: atEnd.filter(file => file.uncertainDataRead).map(file => file.path),
   loaderFolders: [...new Set(loaders.map(file => file.folder))],
   loaderImporters: atEnd.filter(file => !file.opensData && file.imports.some(path => loaderPaths.has(path))).map(file => file.path),
   cacheReaders: atEnd.filter(file => file.readsCache && !file.opensData).map(file => file.path),
