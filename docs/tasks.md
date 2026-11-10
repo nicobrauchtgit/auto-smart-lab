@@ -70,3 +70,18 @@ into an agent's workspace.
 `spam1` is the quick check (see [redesign-plan.md](redesign-plan.md)). `code2`
 (clustering of scripts) and `attacks1` (label-free images) are the checks that
 the design is not fitted to spam.
+
+## Naive references for the non-spam checks
+
+Hand-made on 2026-11-10, each in a few seconds and about 0.5 GB or less. Unlike
+spam1, the obvious approach does not solve these two, so a good run has to beat
+the naive number, not match it.
+
+| Task | Naive approach | Result |
+| --- | --- | --- |
+| `code2` | TF-IDF (word tokens or character 4-grams), 100 SVD components, agglomerative clustering; scored on the 657 scripts with known families ([redesign-code2-reference.py](redesign-code2-reference.py)) | adjusted Rand index 0.11 to 0.34; one family holds 538 of the 657 scripts |
+| `attacks1` | One number per image (high-frequency energy, total variation, blur residual, PNG size) or an isolation forest on them; scored against the hidden truth ([redesign-attacks1-reference.py](redesign-attacks1-reference.py)) | ROC AUC 0.52 to 0.70; flagging the top 4% gives 0.50 to 0.55 balanced accuracy |
+
+The images are 32 by 32 pixels in colour; 127 of the 2,990 training images are
+attacks. The last character before the extension in each file name runs from 0
+to 9 and is present in the test set too.
