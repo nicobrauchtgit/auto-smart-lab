@@ -1,0 +1,55 @@
+# Python dependencies for the pipeline's local ML environment.
+#
+# This file is the source of truth for declared dependencies. `uv.lock` records
+# the resolved graph with hashes and platform markers. The environment manager
+# checks the installed environment against both files.
+#
+# uv owns the interpreter and the virtualenv: `./dev setup` creates `.venv` with
+# the uv-managed Python named in `.python-version`. `UV_PROJECT_ENVIRONMENT`
+# points uv at that same `.venv`, so there is exactly one environment.
+#
+# Add packages through `agent/setup/python_environment.py add`, which records the
+# reason and the pipeline run that asked for it in `changes.jsonl`.
+[project]
+name = "auto-smart-lab-runtime"
+version = "0.1.0"
+description = "Local ML environment for the SmartLab pipeline agents"
+requires-python = "==3.13.*"
+dependencies = [
+    "beautifulsoup4>=4.15.0",
+    "cloudpickle>=3.1.2",
+    "dpkt>=1.9.8",
+    "joblib>=1.6.0",
+    "matplotlib>=3.11.1",
+    "numpy>=2.5.3",
+    "optuna>=5.0.0",
+    "pandas>=3.0.5",
+    "scikit-learn>=1.9.0",
+    "scipy>=1.18.1",
+    # The solve agent's own library, kept in this repo. Declared here rather
+    # than injected on PYTHONPATH so the stage stops handing the agent a path
+    # into the harness tree.
+    "smartlab-eval",
+    "torch>=2.15.0",
+]
+
+[tool.uv.sources]
+# Editable: an edit to the library takes effect immediately. A copied install
+# would let the harness and the agent diverge whenever a reinstall was missed.
+smartlab-eval = { path = "agent/libs/smartlab-eval", editable = true }
+torch = { index = "pytorch-cpu" }
+
+[tool.uv]
+# Only uv-managed Python (a standalone build, kept under .tools/ by ./dev), never
+# a Nix or system interpreter from PATH: the same interpreter on every machine.
+python-preference = "only-managed"
+# This file declares an environment; it does not ship a distribution. Without
+# this uv would try to build and install the project itself.
+package = false
+
+# CPU build of torch: no GPU is available to the experiments, and the default
+# Linux wheel pulls several GB of CUDA libraries.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

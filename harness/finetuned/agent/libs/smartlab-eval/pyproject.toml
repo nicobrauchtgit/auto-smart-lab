@@ -1,0 +1,19 @@
+# The measurement and corpus library the solve agent imports.
+#
+# A real distribution rather than a directory on PYTHONPATH: the stage no longer
+# hands the agent a path into the harness tree, and the package is imported the
+# way any other dependency is. Installed editable, so an edit here takes effect
+# without a reinstall step that could silently leave the agent running old code.
+[project]
+name = "smartlab-eval"
+version = "0.1.0"
+description = "Corpus loading and measurement helpers for SmartLab solve sessions"
+requires-python = "==3.13.*"
+dependencies = ["numpy>=2.5.3", "pandas>=3.0.5"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["smartlab_eval"]

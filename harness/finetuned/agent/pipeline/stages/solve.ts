@@ -1,0 +1,178 @@
+/**
+ * Solve stage: build a model for a task and improve it across measured iterations.
+ *
+ * The stage owns its artifact contract and nothing about the model. Its outcome
+ * comes from what the predictions measured, never from a finished agent session:
+ * a run whose canary failed or whose results could not be measured returns its
+ * artifacts and a failed validation rather than throwing.
+ */
+
+import { HARNESS_CONFIG } from "../../harness/config.js";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
+
+import { selectionSummary } from "../../training/selection_summary.js";
+import { primaryMetric, runHarnessSolveSession } from "../../run/harness_solve_session.js";
+import { resolveTask } from "../resolve_task.js";
+import { stageConfiguration, taskDataPaths } from "../task_configuration.js";
+import type { StageArtifact, StageDefinition } from "../types.js";
+import { recordedRepository } from "../../training/development_selection.js";
+import { git } from "../../training/git.js";
+import type { TrainingTrialResult } from "../../training/results.js";
+import { stageReport } from "../../knowledge/lessons.js";
+
+/**
+ * The selected trial's entrypoint, hashed for provenance. The path is the
+ * live file, so it is handed over only while it still matches the commit the
+ * trial measured; an edited file is not the selected pipeline's code.
+ */
+export function entrypointArtifact(selected: TrainingTrialResult | undefined): StageArtifact | { mismatch: string } | undefined {
+	const module = selected?.request?.pipeline.module;
+	const repository = recordedRepository(selected);
+	const commit = (selected?.invocation?.source as { commit?: string } | undefined)?.commit;
+	if (!module || !repository || !commit) return undefined;
+	const path = join(dirname(repository), module);
+	if (!existsSync(path)) return { mismatch: `${module} no longer exists` };
+	const committed = git(repository, ["rev-parse", "--verify", "--quiet", `${commit}:${relative(repository, path)}`]);
+	const live = git(repository, ["hash-object", "--", path]);
+	if (committed.status !== 0 || live.status !== 0 || committed.stdout.trim() !== live.stdout.trim()) {
+		return { mismatch: `${module} differs from commit ${commit.slice(0, 12)}` };
+	}
+	const bytes = readFileSync(path);
+	return { kind: "solve_entrypoint", path, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") };
+}
+
+export interface SolveOptions {
+	/** Maximum harness trials the agent may start; it may stop earlier. */
+	maxIterations: number;
+	/** Root seed for the sealed draw and harness-owned training seed lineage. */
+	seed: number;
+	foldPolicy: "auto" | { folds: number; repeats: number };
+	/** Minimum seconds between routine training updates sent to the agent. */
+	experimentUpdateIntervalSeconds: number;
+}
+
+function parseFoldPolicy(raw: unknown): SolveOptions["foldPolicy"] {
+	if (raw === undefined) return HARNESS_CONFIG.solve.foldPolicy;
+	if (raw === "auto") return "auto";
+	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+		throw new Error('solve.foldPolicy must be "auto" or an object with folds and repeats');
+	}
+	const value = raw as Record<string, unknown>;
+	const unknown = Object.keys(value).filter((key) => !["folds", "repeats"].includes(key));
+	if (unknown.length > 0) throw new Error(`unknown solve.foldPolicy keys: ${unknown.join(", ")}`);
+	for (const key of ["folds", "repeats"] as const) {
+		if (!Number.isInteger(value[key]) || (value[key] as number) < 1) {
+			throw new Error(`solve.foldPolicy.${key} must be a positive integer`);
+		}
+	}
+	if ((value.folds as number) < 2) throw new Error("solve.foldPolicy.folds must be at least 2");
+	return { folds: value.folds as number, repeats: value.repeats as number };
+}
+
+export const solveStage: StageDefinition<SolveOptions> = {
+	name: "solve",
+	setupRequirements: ["observability", "knowledge", "knowledge-history", "model", "python", "task", "training", "web-search", "solve-isolation", "confirmation"],
+	version: 1,
+	description: "Build and iteratively improve a model, judged on recomputed out-of-fold measurements",
+	next: "evaluate",
+
+	parseOptions(raw) {
+		if (raw !== undefined && (typeof raw !== "object" || raw === null || Array.isArray(raw))) {
+			throw new Error("solve options must be an object");
+		}
+		const options = (raw ?? {}) as Record<string, unknown>;
+		const known = new Set(["maxIterations", "seed", "foldPolicy", "experimentUpdateIntervalSeconds"]);
+		const unknown = Object.keys(options).filter((key) => !known.has(key));
+		if (unknown.length > 0) throw new Error(`unknown solve options: ${unknown.join(", ")}`);
+
+		const maxIterations = options.maxIterations ?? HARNESS_CONFIG.solve.maxIterations;
+		if (!Number.isInteger(maxIterations) || (maxIterations as number) < 1) {
+			throw new Error("solve.maxIterations must be a positive integer");
+		}
+		const seed = options.seed ?? HARNESS_CONFIG.solve.seed;
+		if (!Number.isInteger(seed)) throw new Error("solve.seed must be an integer");
+		const experimentUpdateIntervalSeconds = options.experimentUpdateIntervalSeconds ?? HARNESS_CONFIG.solve.experimentUpdateIntervalSeconds;
+		if (!Number.isInteger(experimentUpdateIntervalSeconds) || (experimentUpdateIntervalSeconds as number) < 1) {
+			throw new Error("solve.experimentUpdateIntervalSeconds must be a positive integer");
+		}
+
+		return {
+			maxIterations: maxIterations as number,
+			seed: seed as number,
+			foldPolicy: parseFoldPolicy(options.foldPolicy),
+			experimentUpdateIntervalSeconds: experimentUpdateIntervalSeconds as number,
+		};
+	},
+
+	checkInput(input) {
+		const task = resolveTask({ taskId: input.taskId });
+		if (!task.hasData) {
+			throw new Error(`Task ${task.taskId} has no local dataset; run \`npm run fetch-unit -- ${task.unitSlug}\``);
+		}
+		// The declared archives and targets are what make the sealed split and every
+		// recomputed score possible, so their absence is a contract failure.
+		const paths = taskDataPaths(task.taskId, stageConfiguration(input));
+		for (const path of [paths.trainZip, paths.targetsPath].filter((p): p is string => !!p)) {
+			if (!existsSync(path)) throw new Error(`Task ${task.taskId} lacks the declared file ${relative(paths.dataDir, path)}`);
+		}
+		const research = input.upstream.find((entry) => entry.kind === "research_document");
+		if (!research || !existsSync(research.path)) {
+			throw new Error(`Task ${task.taskId} has no research document upstream; run the research stage first`);
+		}
+	},
+
+	async run(context) {
+		const result = await runHarnessSolveSession(context.input.taskId, context.input.model, {
+			taskConfiguration: stageConfiguration(context.input),
+			maxTrials: context.options.maxIterations,
+			seed: context.options.seed,
+			foldPolicy: context.options.foldPolicy,
+			experimentUpdateIntervalSeconds: context.options.experimentUpdateIntervalSeconds,
+			upstream: context.input.upstream,
+			prompts: context.prompts,
+ guidance: context.input.guidance, feedback: context.feedback,
+			report: context.report,
+			signal: context.signal,
+			// Fold seeds rotate from the invocation id, so two runs of the same
+			// task draw different partitions and a fixed split cannot be ground down.
+			runId: context.report.agentIdentity(1).stageInvocationId ?? undefined,
+		});
+		const artifacts: StageArtifact[] = result.collection.artifacts.map(({ kind, path, bytes, sha256 }) => ({
+			kind, path, bytes, sha256,
+		}));
+		if (result.collection.selected) {
+			const selected = result.collection.selected.artifacts.find(entry => entry.kind === "training_trial_result")!;
+			artifacts.push({ kind: "training_selected_result", path: selected.path, bytes: selected.bytes, sha256: selected.sha256 });
+		}
+		const entrypoint = entrypointArtifact(result.collection.selected);
+		if (result.confirmation) artifacts.push(result.confirmation.artifact);
+		if (entrypoint && "kind" in entrypoint) artifacts.push(entrypoint);
+		const report = stageReport(result.reportPath);
+		if (report) artifacts.push(report.artifact);
+
+		return {
+			artifacts,
+			validation: { valid: result.valid, errors: result.errors },
+			attempts: result.attempts,
+			summary: {
+				trials: result.collection.trials.length,
+				trial_ids: result.collection.trials.map((trial) => trial.experimentId),
+				eligible_trials: result.collection.trials.filter((trial) => trial.eligible).length,
+				stop_reason: result.stopReason,
+				selected_experiment_id: result.collection.selected?.experimentId,
+				task_kind: result.configuration.kind,
+				selected_metric: primaryMetric(result, result.collection.selected?.result?.metrics as Record<string, unknown> | undefined),
+                selected_selection: selectionSummary(result.collection.selected?.result),
+                holdout_confirmation: result.confirmation?.summary,
+                holdout_balanced_accuracy: result.confirmation?.summary.balancedAccuracy,
+                holdout_gap: result.confirmation?.summary.gap,
+				session_error: result.sessionError,
+				...(entrypoint && "mismatch" in entrypoint ? { entrypoint_mismatch: entrypoint.mismatch } : {}),
+				trial_validation_errors: result.collection.errors,
+				...(report ? { stage_report: report.excerpt } : {}),
+			},
+		};
+	},
+};
