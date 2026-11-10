@@ -27,18 +27,18 @@ function fixture(authorized = true, caps: Partial<RunState["limits"]> = {}) {
 const TASK_CONFIGURATION = spamConfiguration();
 function fakeResult(work: Work, extra: Partial<StageInvocation> = {}): StageInvocation { return { stage: work.stage, invocationId: work.id, stageVersion: 1, options: {}, startedAt: "now", finishedAt: "now", outcome: "success", artifacts: [], validation: { valid: true, errors: [] }, attempts: 0, ...extra }; }
 function controllable(work: Work) {
- let resolve!: (v: StageInvocation) => void;
- const result = new Promise<StageInvocation>(r => { resolve = r; });
+ let resolve!: (v: StageInvocation) => void; let reject!: (error: Error) => void;
+ const result = new Promise<StageInvocation>((r, j) => { resolve = r; reject = j; });
  const feedback: unknown[] = [];
  const handle: StageInvocationHandle = { invocationId: work.id, result, state: () => "active", cancel: () => resolve(fakeResult(work, { outcome: "cancelled" })), feedback: async note => { feedback.push(note); return { id: note.id, state: "queued" } as any; } };
- return { handle, resolve, feedback };
+ return { handle, resolve, reject, feedback };
 }
 function request(c: Coordinator, stage: StageName, id: string, artifactIds: string[] = []) { return { stage, actionId: id, expectedRevision: c.state.revision, rationale: "Use validated evidence to investigate the next candidate", objective: "Measured task improvement", artifactIds }; }
 
 test("confirmation remains visible to the controller but cannot enter solve inputs or feedback", async () => {
  const f = fixture();
  let child!: ReturnType<typeof controllable>;
- const c = new Coordinator(f.store, { start: work => { child = controllable(work); return child.handle; } });
+ const c = new Coordinator(f.store, { trainingDirectory: join(f.directory, "training"), start: work => { child = controllable(work); return child.handle; } });
  const producer = c.start(request(c, "solve", "champion"));
  const artifacts = Array.from({ length: 20 }, (_, index) => ({ kind: `fold-${index}`, contents: {} }));
  artifacts.push({ kind: "holdout_confirmation", contents: { readCount: 1, populationReadCount: 1 } as any });
@@ -63,7 +63,7 @@ test("confirmation remains visible to the controller but cannot enter solve inpu
 
 test("durable action IDs reject conflicts/stale revisions and serialize mutating work", async () => {
  const f = fixture(); let child!: ReturnType<typeof controllable>; let launches = 0;
- const c = new Coordinator(f.store, { start: work => { launches++; child = controllable(work); return child.handle; } });
+ const c = new Coordinator(f.store, { trainingDirectory: join(f.directory, "training"), start: work => { launches++; child = controllable(work); return child.handle; } });
  const action = request(c, "research", "baseline"); const first = c.start(action);
  expect(c.start(action).invocationId).toBe(first.invocationId); expect(launches).toBe(1);
  expect(() => c.start({ ...action, objective: "changed" })).toThrow("Action ID conflict");
@@ -132,7 +132,7 @@ async function scenario(scores: number[], expected: { authorized?: boolean; cons
   return { artifacts: [{ kind: artifactKinds[name], path, sha256: hash(contents) }], validation: { valid: true, errors: [] }, summary };
  } };
  let c!: Coordinator;
- c = new Coordinator(f.store, { start: (work, input) => startStageInvocation({ invocationId: work.id, stage: work.stage, input, config: f.config, trace, prompts: f.prompts, reason: "orchestrator_decision", optionOverrides: work.options }), officialStatus: async () => ({ triesUsed: (expected.consumed ?? 0) + uploads }) });
+ c = new Coordinator(f.store, { trainingDirectory: join(f.directory, "training"), start: (work, input) => startStageInvocation({ invocationId: work.id, stage: work.stage, input, config: f.config, trace, prompts: f.prompts, reason: "orchestrator_decision", optionOverrides: work.options }), officialStatus: async () => ({ triesUsed: (expected.consumed ?? 0) + uploads }) });
  try {
   await c.refreshOfficial();
   const report = trace.stage("orchestrator", f.state.controlInvocationId);
@@ -170,20 +170,20 @@ async function scenario(scores: number[], expected: { authorized?: boolean; cons
 test("disabled policy and already-used attempts reject submission before dispatch", async () => {
  for (const [authorized, triesUsed] of [[false, 0], [true, 3]] as const) {
   const f = fixture(authorized); let effects = 0;
-  const c = new Coordinator(f.store, { start() { effects++; throw new Error("not reached"); }, officialStatus: async () => ({ triesUsed }) });
+  const c = new Coordinator(f.store, { trainingDirectory: join(f.directory, "training"), start() { effects++; throw new Error("not reached"); }, officialStatus: async () => ({ triesUsed }) });
   await c.refreshOfficial(); expect(() => c.start(request(c, "submit", "upload"))).toThrow(/not authorized|cap is exhausted/); expect(effects).toBe(0); c.close();
  }
 });
 
 test("action dispatch failure is durable, never interpreted as agent success", () => {
- const f = fixture(), c = new Coordinator(f.store, { start() { throw new Error("mock dispatch failure"); } });
+ const f = fixture(), c = new Coordinator(f.store, { trainingDirectory: join(f.directory, "training"), start() { throw new Error("mock dispatch failure"); } });
  c.start(request(c, "research", "failed")); expect(c.state.works[0].summary).toMatchObject({ outcome: "failure", error: "mock dispatch failure" });
  expect(c.state.inbox[0].kind).toBe("stage_failure"); c.close();
 });
 
 test("corrupt state and failed persistence refuse before effects; single writer lock", () => {
  const f = fixture(); expect(() => new StateStore(f.directory)).toThrow("owned by another service");
- let effects = 0; const c = new Coordinator(f.store, { start() { effects++; throw new Error("should not dispatch"); } });
+ let effects = 0; const c = new Coordinator(f.store, { trainingDirectory: join(f.directory, "training"), start() { effects++; throw new Error("should not dispatch"); } });
  const original = f.store.transaction.bind(f.store); f.store.transaction = () => { throw new Error("disk failure"); };
  expect(() => c.start(request(c, "research", "disk"))).toThrow("disk failure"); expect(effects).toBe(0);
  f.store.transaction = original; c.close(); const envelope = JSON.parse(readFileSync(f.store.path, "utf8")); envelope.state.policy.maxSubmissions = 99;
@@ -193,9 +193,9 @@ test("corrupt state and failed persistence refuse before effects; single writer 
 
 test("restart marks lost model invocation interrupted and preserves finite budgets and cursors", async () => {
  const f = fixture(); let work!: Work;
- const c = new Coordinator(f.store, { start: w => { work = w; return controllable(w).handle; } });
+ const c = new Coordinator(f.store, { trainingDirectory: join(f.directory, "training"), start: w => { work = w; return controllable(w).handle; } });
  c.charge("modelRequests"); c.start(request(c, "solve", "active")); c.close();
- const reopened = new StateStore(f.directory), restarted = new Coordinator(reopened, { start() { throw new Error("No model reattach"); } });
+ const reopened = new StateStore(f.directory), restarted = new Coordinator(reopened, { trainingDirectory: join(f.directory, "training"), start() { throw new Error("No model reattach"); } });
  await restarted.recover(); expect(restarted.stageStatus(work.id).status).toBe("interrupted"); expect(restarted.state.counters.modelRequests).toBe(1); expect(restarted.state.counters.trials).toBe(0);
  const status = restarted.status(); expect(status.notifications[0].kind).toBe("stage_interrupted");
  await restarted.wait(status.cursor, undefined, 0); expect(restarted.status().notifications).toEqual([]);
@@ -203,14 +203,14 @@ test("restart marks lost model invocation interrupted and preserves finite budge
 });
 
 test("deterministic restart uncertainty blocks new effects without duplicating dispatch", async () => {
- const f = fixture(), c = new Coordinator(f.store, { start: work => controllable(work).handle }); c.start(request(c, "refit", "freeze")); c.close();
+ const f = fixture(), c = new Coordinator(f.store, { trainingDirectory: join(f.directory, "training"), start: work => controllable(work).handle }); c.start(request(c, "refit", "freeze")); c.close();
  const reopened = new StateStore(f.directory); let launches = 0;
- const restarted = new Coordinator(reopened, { start() { launches++; throw new Error("never"); }, recover: async () => undefined });
+ const restarted = new Coordinator(reopened, { trainingDirectory: join(f.directory, "training"), start() { launches++; throw new Error("never"); }, recover: async () => undefined });
  await restarted.recover(); expect(restarted.state.status).toBe("blocked"); expect(restarted.state.works[0].status).toBe("uncertain"); expect(() => restarted.start(request(restarted, "solve", "more"))).toThrow("terminal"); expect(launches).toBe(0); restarted.close();
 });
 
 test("physical handoff attaches current controller state and narrow allowlist without new work", async () => {
- const f = fixture(), c = new Coordinator(f.store, { start: work => controllable(work).handle });
+ const f = fixture(), c = new Coordinator(f.store, { trainingDirectory: join(f.directory, "training"), start: work => controllable(work).handle });
  c.start(request(c, "research", "active"));
  const report: any = { input() {}, event() {}, observation: () => ({ identity: {}, sink: {} }) };
  const options = orchestrationSessionOptions({ coordinator: c, prompts: f.prompts, report, taskDescription: "task", signal: new AbortController().signal, attempt: 2 });
@@ -226,7 +226,7 @@ test("bounded summaries preserve structure and omit row-level labels/predictions
 
 test("finite budgets and CLI reject increases above hard submission cap", () => {
  const f = fixture(true, { maxModelRequests: 1, maxToolCalls: 1, maxTrials: 2 });
- const c = new Coordinator(f.store, { start: work => controllable(work).handle }); c.charge("modelRequests"); expect(() => c.charge("modelRequests")).toThrow("budget exhausted");
+ const c = new Coordinator(f.store, { trainingDirectory: join(f.directory, "training"), start: work => controllable(work).handle }); c.charge("modelRequests"); expect(() => c.charge("modelRequests")).toThrow("budget exhausted");
  c.start(request(c, "solve", "trial-budget")); expect(c.state.works.at(-1)!.options).toEqual({ maxIterations: 2 }); expect(c.state.counters.trials).toBe(0); c.close();
  expect(parseOrchestrateArgs(["unit", "1", "task", "1", "--goal", "1", "--no-submit"]).options.noSubmit).toBe(true);
  expect(() => parseOrchestrateArgs(["task", "1", "--max-submissions", "4"])).toThrow();
@@ -236,7 +236,7 @@ test("finite budgets and CLI reject increases above hard submission cap", () => 
 test("read-only official refresh upserts pending to scored zero or one and preserves candidate evidence", async () => {
  for (const score of [0, 1]) {
   const f = fixture(); let scored = false;
-  const c = new Coordinator(f.store, { start() { throw new Error("No dispatch"); }, officialStatus: async () => ({ triesUsed: 1, results: [{ attemptId: "1", status: scored ? "scored" : "pending", ...(scored ? { score } : {}) }] }) });
+  const c = new Coordinator(f.store, { trainingDirectory: join(f.directory, "training"), start() { throw new Error("No dispatch"); }, officialStatus: async () => ({ triesUsed: 1, results: [{ attemptId: "1", status: scored ? "scored" : "pending", ...(scored ? { score } : {}) }] }) });
   await c.refreshOfficial(); f.store.transaction("provenance", {}, s => { s.official[0].candidateId = "frozen-candidate"; s.official[0].artifactId = "receipt-evidence"; });
   scored = true; await c.refreshOfficial(); expect(c.state.official).toHaveLength(1);
   expect(c.state.bestOfficial).toMatchObject({ score, status: "scored", candidateId: "frozen-candidate", artifactId: "receipt-evidence" }); c.close();
@@ -245,7 +245,7 @@ test("read-only official refresh upserts pending to scored zero or one and prese
 
 test("unknown submission reservations consume reported budget and block another upload", async () => {
  const f = fixture(); let owned!: ReturnType<typeof controllable>;
- const c = new Coordinator(f.store, { start: w => { owned = controllable(w); return owned.handle; } });
+ const c = new Coordinator(f.store, { trainingDirectory: join(f.directory, "training"), start: w => { owned = controllable(w); return owned.handle; } });
  c.start(request(c, "refit", "freeze")); const refit = c.state.works[0]; const path = join(f.directory, "result.json"); writeFileSync(path, "{}");
  const artifact = { kind: "terminal_refit_result", path, sha256: hash("{}"), provenance: { artifactId: "frozen-result", sha256: hash("{}"), taskId: f.state.taskId, pipelineRunId: f.state.runId, invocationId: refit.id } };
  owned.resolve(fakeResult(refit, { artifacts: [artifact] })); await c.settle();
@@ -278,7 +278,7 @@ test("production preflight reconciles pending before unrelated model checks and 
  const { prepareDecisionLoop } = await import("./run.js");
  for (const early of ["pending", "exhausted", "target"] as const) {
   const f = fixture(); const order: string[] = [];
-  const c = new Coordinator(f.store, { start: work => controllable(work).handle, officialStatus: async () => ({ triesUsed: early === "exhausted" ? 3 : 1, results: [{ attemptId: "1", status: early === "pending" ? "pending" : "scored", ...(early === "target" ? { score: 1 } : {}) }] }), recover: async work => { order.push("reconcile"); return fakeResult(work, { outcome: "failure", summary: { state: "pending", reservedUnknown: 0, triesUsed: 1 } }); } });
+  const c = new Coordinator(f.store, { trainingDirectory: join(f.directory, "training"), start: work => controllable(work).handle, officialStatus: async () => ({ triesUsed: early === "exhausted" ? 3 : 1, results: [{ attemptId: "1", status: early === "pending" ? "pending" : "scored", ...(early === "target" ? { score: 1 } : {}) }] }), recover: async work => { order.push("reconcile"); return fakeResult(work, { outcome: "failure", summary: { state: "pending", reservedUnknown: 0, triesUsed: 1 } }); } });
   if (early === "pending") { c.start(request(c, "refit", "placeholder")); f.store.transaction("simulate-crash-before-submit", {}, s => { s.works[0].stage = "submit"; }); }
   const ready = await prepareDecisionLoop(c, { resume: early === "pending", recoverySetup: async () => { order.push("recovery-setup"); }, allSetup: async () => { order.push("model-preflight"); throw new Error("No modelling required"); } });
   expect(ready).toBe(false); expect(order).toEqual(early === "pending" ? ["recovery-setup", "reconcile"] : ["recovery-setup"]); c.close();
@@ -287,7 +287,7 @@ test("production preflight reconciles pending before unrelated model checks and 
 
 test("bounded status retains required stage inputs after many training artifact kinds", async () => {
  const f = fixture(); let owned!: ReturnType<typeof controllable>;
- const c = new Coordinator(f.store, { start: work => { owned = controllable(work); return owned.handle; } });
+ const c = new Coordinator(f.store, { trainingDirectory: join(f.directory, "training"), start: work => { owned = controllable(work); return owned.handle; } });
  c.start(request(c, "research", "large-catalog")); const work = c.state.works[0], path = join(f.directory, "artifact.json"); writeFileSync(path, "{}");
  const artifacts = ["research_document", ...Array.from({ length: 30 }, (_, i) => `training_detail_${i}`)].map(kind => ({ kind, path, sha256: hash("{}"), provenance: { artifactId: `${work.id}:${kind}`, taskId: "fixture", pipelineRunId: f.state.runId, invocationId: work.id, sha256: hash("{}") } }));
  owned.resolve(fakeResult(work, { artifacts })); await c.settle();
@@ -298,7 +298,7 @@ test("coordinator recovery reconciles an actual pending submit when its original
  const { reconcileOwnedInvocation } = await import("./run.js");
  const f = fixture(); let owned!: ReturnType<typeof controllable>;
  const original = STAGE_REGISTRY.submit; const trace = await createPipelineTrace({ telemetry: testTelemetry(), taskId: "fixture", pipelineRunId: f.state.runId, runsDir: f.directory });
- const c = new Coordinator(f.store, { start: work => { owned = controllable(work); return owned.handle; } });
+ const c = new Coordinator(f.store, { trainingDirectory: join(f.directory, "training"), start: work => { owned = controllable(work); return owned.handle; } });
  c.start(request(c, "refit", "frozen")); const refit = c.state.works[0], path = join(f.directory, "original-refit-result.json"); writeFileSync(path, "{}");
  const artifact = { kind: "terminal_refit_result", path, sha256: hash("{}"), provenance: { artifactId: "real-upstream-reference", taskId: "fixture", pipelineRunId: f.state.runId, invocationId: refit.id, sha256: hash("{}") } };
  owned.resolve(fakeResult(refit, { artifacts: [artifact] })); await c.settle();
@@ -306,7 +306,7 @@ test("coordinator recovery reconciles an actual pending submit when its original
  rmSync(path); c.close(); let uploads = 0, reconciles = 0;
  STAGE_REGISTRY.submit = { name: "submit", version: 1, description: "durable ledger", parseOptions: () => ({}), checkInput(input) { expect(input.upstream[0].sha256).toBe(hash("{}")); },
   async run() { uploads++; throw new Error("No recovery upload"); }, async reconcile(context) { reconciles++; expect(context.input.submissionPolicy?.controllerInvocationId).toBe(submitId); return { artifacts: [], validation: { valid: false, errors: ["pending"] }, summary: { state: "pending", triesUsed: 1, reservedUnknown: 0, newAttempt: false } }; } };
- const reopened = new StateStore(f.directory), restarted = new Coordinator(reopened, { start() { throw new Error("No model"); }, recover: (work, input) => reconcileOwnedInvocation(work, input, { config: f.config, trace, prompts: f.prompts }) });
+ const reopened = new StateStore(f.directory), restarted = new Coordinator(reopened, { trainingDirectory: join(f.directory, "training"), start() { throw new Error("No model"); }, recover: (work, input) => reconcileOwnedInvocation(work, input, { config: f.config, trace, prompts: f.prompts }) });
  try { await restarted.recover(); expect(reconciles).toBe(1); expect(uploads).toBe(0); expect(restarted.state.status).toBe("blocked"); }
  finally { STAGE_REGISTRY.submit = original; restarted.close(); await trace.close(); }
 });
@@ -314,7 +314,7 @@ test("coordinator recovery reconciles an actual pending submit when its original
 test("a new run reads task-global unresolved reservations before any model or stage effects", async () => {
  const { prepareDecisionLoop } = await import("./run.js");
  const f = fixture(); let effects = 0, modelChecks = 0, unresolved = true;
- const c = new Coordinator(f.store, { start() { effects++; throw new Error("No stages before task-global reconciliation"); }, officialStatus: async () => ({ triesUsed: 0, reservedUnknown: unresolved ? 1 : 0, effectiveTriesUsed: unresolved ? 1 : 0, unresolved, results: [] }) });
+ const c = new Coordinator(f.store, { trainingDirectory: join(f.directory, "training"), start() { effects++; throw new Error("No stages before task-global reconciliation"); }, officialStatus: async () => ({ triesUsed: 0, reservedUnknown: unresolved ? 1 : 0, effectiveTriesUsed: unresolved ? 1 : 0, unresolved, results: [] }) });
  const ready = await prepareDecisionLoop(c, { resume: false, recoverySetup: async () => {}, allSetup: async () => { modelChecks++; } });
  expect(ready).toBe(false); expect(c.state.works).toHaveLength(0); expect(c.state.status).toBe("blocked"); expect(c.status().budgets).toMatchObject({ triesUsed: 0, reservedUnknown: 1, effectiveTriesUsed: 1, submissionsRemaining: 2 }); expect(modelChecks).toBe(0); expect(effects).toBe(0);
  unresolved = false; await c.recover(); expect(c.state.status).toBe("running"); expect(c.state.reservedUnknown).toBe(0); c.close();
@@ -322,7 +322,7 @@ test("a new run reads task-global unresolved reservations before any model or st
 
 test("stage reports stay visible in status and are paged like the research document", async () => {
  const f = fixture(); let owned!: ReturnType<typeof controllable>;
- const c = new Coordinator(f.store, { start: work => { owned = controllable(work); return owned.handle; } });
+ const c = new Coordinator(f.store, { trainingDirectory: join(f.directory, "training"), start: work => { owned = controllable(work); return owned.handle; } });
  c.start(request(c, "research", "report")); const work = c.state.works[0], path = join(f.directory, "report.md");
  const text = "- **Status**: done\n" + "x".repeat(f.state.limits.maxDetailBytes + 10); writeFileSync(path, text);
  const artifacts = ["stage_report", ...Array.from({ length: 30 }, (_, i) => `training_detail_${i}`)].map(kind => ({ kind, path, sha256: hash(text), provenance: { artifactId: `${work.id}:${kind}`, taskId: "fixture", pipelineRunId: f.state.runId, invocationId: work.id, sha256: hash(text) } }));
@@ -334,7 +334,7 @@ test("stage reports stay visible in status and are paged like the research docum
 
 test("offline runs hand over one result: a second successful refit is refused", async () => {
  const f = fixture(false); let owned!: ReturnType<typeof controllable>;
- const c = new Coordinator(f.store, { start: work => { owned = controllable(work); return owned.handle; } });
+ const c = new Coordinator(f.store, { trainingDirectory: join(f.directory, "training"), start: work => { owned = controllable(work); return owned.handle; } });
  expect((c.status() as any).handOver).toEqual({ mode: "offline", submissionsAuthorized: false, refits: 0, allowed: 1 });
  c.start(request(c, "refit", "first-refit")); owned.resolve(fakeResult(c.state.works[0]!, { outcome: "failure" })); await c.settle();
  // A failed refit handed nothing over, so another attempt is allowed.
@@ -346,7 +346,7 @@ test("offline runs hand over one result: a second successful refit is refused", 
 
 test("status shows the time used and left, without notes, and the follow-up branches", () => {
  const f = fixture(true);
- const c = new Coordinator(f.store, { start: () => { throw new Error("unused"); }, branches: () => ({ champion: null, branches: [] }) });
+ const c = new Coordinator(f.store, { trainingDirectory: join(f.directory, "training"), start: () => { throw new Error("unused"); }, branches: () => ({ champion: null, branches: [] }) });
  const status = c.status() as any;
  expect(status.time.remainingPercent).toBeGreaterThan(95); expect(status.time).not.toHaveProperty("note");
  expect(status.handOver.submissionsAuthorized).toBe(true); expect(status.branches).toEqual({ champion: null, branches: [] });
@@ -366,7 +366,7 @@ test("the controller's prompts describe the hand-over and no time notices", () =
 /** A decision agent that charges one model request per tool call, as the real session does; the stage's own agent makes requests while it runs. */
 async function waitingAgent(stageMs: number, stages = 2) {
  const f = fixture(false); let waits = 0;
- const c: Coordinator = new Coordinator(f.store, { start: work => {
+ const c: Coordinator = new Coordinator(f.store, { trainingDirectory: join(f.directory, "training"), start: work => {
   const owned = controllable(work), guard = c.guardFor(work.id);
   const busy = setInterval(() => guard.beforeModelRequest(), 5);
   setTimeout(() => { clearInterval(busy); owned.resolve(fakeResult(work)); }, stageMs); return owned.handle; } });
@@ -405,13 +405,13 @@ test("pipeline_wait makes no model requests while a stage runs: the count is the
 }, 120_000);
 
 test("journal entries written before sources were recorded still load", () => {
- const f = fixture(false); const c = new Coordinator(f.store, { start: () => { throw new Error("unused"); } });
+ const f = fixture(false); const c = new Coordinator(f.store, { trainingDirectory: join(f.directory, "training"), start: () => { throw new Error("unused"); } });
  f.store.transaction("budget_reserved", { counter: "modelRequests" }, s => { s.counters.modelRequests++; }); c.close();
  const reopened = new StateStore(f.directory); expect(reopened.state.journal.at(-1)!.payload).toEqual({ counter: "modelRequests" }); reopened.close();
 });
 
 test("pipeline_wait returns at the deadline when no stage reports", async () => {
- const f = fixture(false); const c = new Coordinator(f.store, { start: work => controllable(work).handle });
+ const f = fixture(false); const c = new Coordinator(f.store, { trainingDirectory: join(f.directory, "training"), start: work => controllable(work).handle });
  c.start(request(c, "research", "hangs"));
  f.store.transaction("simulate-elapsed", {}, s => { s.startedAt = Date.now() + 150 - s.limits.maxWallMs; s.deadline = s.startedAt + s.limits.maxWallMs; });
  const started = Date.now(); const status = await c.wait(c.state.cursor) as any;
@@ -422,7 +422,7 @@ test("pipeline_wait returns at the deadline when no stage reports", async () => 
 
 test("research and solve never receive the confirmation or anything the reviewer produced", async () => {
  const f = fixture(); let owned!: ReturnType<typeof controllable>;
- const c = new Coordinator(f.store, { start: work => { owned = controllable(work); return owned.handle; } });
+ const c = new Coordinator(f.store, { trainingDirectory: join(f.directory, "training"), start: work => { owned = controllable(work); return owned.handle; } });
  c.start(request(c, "evaluate", "review")); const work = c.state.works[0]!, path = join(f.directory, "handoff.md"); writeFileSync(path, "sealed 0.91");
  const artifacts = ["stage_report", "evaluation_report"].map(kind => ({ kind, path, sha256: hash("sealed 0.91"), provenance: { artifactId: `${work.id}:${kind}`, taskId: "fixture", pipelineRunId: f.state.runId, invocationId: work.id, sha256: hash("sealed 0.91") } }));
  owned.resolve(fakeResult(work, { artifacts })); await c.settle();
@@ -435,7 +435,7 @@ test("research and solve never receive the confirmation or anything the reviewer
 
 test("a solve after a successful solve is not a retry, a solve after a failed one is", async () => {
  const f = fixture(); let owned!: ReturnType<typeof controllable>;
- const c = new Coordinator(f.store, { start: work => { owned = controllable(work); return owned.handle; } });
+ const c = new Coordinator(f.store, { trainingDirectory: join(f.directory, "training"), start: work => { owned = controllable(work); return owned.handle; } });
  c.start(request(c, "solve", "s1")); owned.resolve(fakeResult(c.state.works[0]!, { outcome: "failure" })); await c.settle();
  c.start(request(c, "solve", "s2")); owned.resolve(fakeResult(c.state.works[1]!)); await c.settle();
  expect(c.state.counters.retries).toBe(1);
@@ -447,22 +447,25 @@ test("a solve after a successful solve is not a retry, a solve after a failed on
 test("a branch list too large for the status budget is dropped, not fatal", () => {
  const f = fixture(true, { maxSummaryBytes: 6000 });
  const big = { branches: Array.from({ length: 8 }, (_, i) => ({ name: `followup/fixture/${i}`, subject: "x".repeat(2000) })) };
- const c = new Coordinator(f.store, { start: () => { throw new Error("unused"); }, branches: () => big });
+ const c = new Coordinator(f.store, { trainingDirectory: join(f.directory, "training"), start: () => { throw new Error("unused"); }, branches: () => big });
  expect((c.status() as any).branches).toEqual({ omitted: "Branch list did not fit the status budget" });
  c.close();
 });
 
 test("the trial counter equals the distinct trials run, also after an interrupted solve and its recovery", async () => {
  const f = fixture(false); let owned!: ReturnType<typeof controllable>;
- const solveResult = (work: Work, ids: string[], extra: Partial<StageInvocation> = {}) => fakeResult(work, { summary: { trials: ids.length, trial_ids: ids }, ...extra });
- let c = new Coordinator(f.store, { start: work => { owned = controllable(work); return owned.handle; } });
+ const solveResult = (work: Work, ids: string[], extra: Partial<StageInvocation> = {}) => {
+  for (const id of ids) writeStartedTrial(f, work.id, id);
+  return fakeResult(work, extra);
+ };
+ let c = new Coordinator(f.store, { trainingDirectory: join(f.directory, "training"), start: work => { owned = controllable(work); return owned.handle; } });
  // A solve that ran two of its six allowed trials is charged two.
  c.start(request(c, "solve", "first")); expect(c.state.counters.trials).toBe(0); expect((c.status() as any).trials.runningSolveAllocation).toBe(6);
  owned.resolve(solveResult(c.state.works.at(-1)!, ["t1", "t2"])); await c.settle(); expect(c.state.counters.trials).toBe(2);
  // A second solve starts (it runs t3 and t4 in its root), then the host dies.
  c.start(request(c, "solve", "lost")); expect(c.state.works.at(-1)!.options).toEqual({ maxIterations: 6 }); c.close();
  const reopened = new StateStore(f.directory);
- c = new Coordinator(reopened, { start: work => { owned = controllable(work); return owned.handle; } });
+ c = new Coordinator(reopened, { trainingDirectory: join(f.directory, "training"), start: work => { owned = controllable(work); return owned.handle; } });
  await c.recover(); expect(c.state.works.at(-1)!.status).toBe("interrupted");
  // The interrupted solve keeps no reservation: the recovery gets the full allocation from what is left.
  expect(c.state.counters.trials).toBe(2);
@@ -479,7 +482,30 @@ test("the trial counter equals the distinct trials run, also after an interrupte
 
 test("a solve's allocation never exceeds what is left of the run's trials", () => {
  const f = fixture(false, { maxTrials: 8 }); let owned!: ReturnType<typeof controllable>;
- const c = new Coordinator(f.store, { start: work => { owned = controllable(work); return owned.handle; } });
- c.start(request(c, "solve", "one")); owned.resolve(fakeResult(c.state.works[0]!, { summary: { trial_ids: ["a", "b", "c", "d", "e"] } }));
+ const c = new Coordinator(f.store, { trainingDirectory: join(f.directory, "training"), start: work => { owned = controllable(work); return owned.handle; } });
+ c.start(request(c, "solve", "one")); for (const id of ["a", "b", "c", "d", "e"]) writeStartedTrial(f, c.state.works[0]!.id, id); owned.resolve(fakeResult(c.state.works[0]!));
  return c.settle().then(() => { c.start(request(c, "solve", "two")); expect(c.state.works.at(-1)!.options).toEqual({ maxIterations: 3 }); c.close(); });
+});
+
+function writeStartedTrial(f: ReturnType<typeof fixture>, invocationId: string, id: string, runId = f.state.runId, charged = true) {
+ const directory = join(f.directory, "training", invocationId, id); mkdirSync(directory, { recursive: true });
+ writeFileSync(join(directory, "recovery.json"), JSON.stringify({ schemaVersion: 1, trial: { id }, budgetUnit: id, budgetCharged: charged, originPipelineRunId: runId, originStageInvocationId: invocationId }));
+}
+for (const outcome of ["cancelled", "throws", "interrupted"] as const) test(`durable trials are counted when solve ${outcome} without returning a summary`, async () => {
+ const f = fixture(false); let owned!: ReturnType<typeof controllable>;
+ let c = new Coordinator(f.store, { trainingDirectory: join(f.directory, "training"), start: work => { owned = controllable(work); return owned.handle; } });
+ c.start(request(c, "solve", "lost")); const work = c.state.works.at(-1)!;
+ writeStartedTrial(f, work.id, "t1"); writeStartedTrial(f, work.id, "t2");
+ writeStartedTrial(f, work.id, "foreign", "another-run"); writeStartedTrial(f, work.id, "failed-launch", f.state.runId, false);
+ if (outcome === "interrupted") {
+  c.close(); c = new Coordinator(new StateStore(f.directory), { trainingDirectory: join(f.directory, "training"), start: () => { throw new Error("unused"); } });
+  await c.recover(); expect(c.state.works.at(-1)!.status).toBe("interrupted");
+ } else {
+  if (outcome === "throws") owned.reject(new Error("solve died during confirmation"));
+  else owned.handle.cancel();
+  await c.settle();
+ }
+ expect(c.state.counters.trials).toBe(2); expect(c.state.trialIds).toEqual(["t1", "t2"]);
+ if (outcome === "interrupted") { await c.recover(); expect(c.state.counters.trials).toBe(2); }
+ c.close(); const saved = new StateStore(f.directory); expect(saved.state.counters.trials).toBe(2); saved.close();
 });

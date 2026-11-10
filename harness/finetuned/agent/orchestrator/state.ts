@@ -41,7 +41,7 @@ function validate(s: RunState): void {
  if (!Array.isArray(s.works) || !Array.isArray(s.actions) || !Array.isArray(s.artifacts) || !Array.isArray(s.official) || !Array.isArray(s.journal) || !Array.isArray(s.inbox) || !["running", "finished", "blocked", "cancelled"].includes(s.status)) throw new Error("Invalid coordinator collections");
  for (const [key, value] of Object.entries(s.limits)) if (!Number.isSafeInteger(value) || value < 1 || value > HARNESS_CONFIG.orchestrator[key as keyof Limits]) throw new Error("Invalid or increased persisted budget");
  if (Object.keys(s.limits).length !== Object.keys(HARNESS_CONFIG.orchestrator).length || !Number.isSafeInteger(s.startedAt) || s.deadline !== s.startedAt + s.limits.maxWallMs) throw new Error("Invalid deadline/budgets");
- for (const key of ["sessions", "modelRequests", "toolCalls", "stages", "trials", "retries"] as const) if (!Number.isSafeInteger(s.counters[key]) || s.counters[key] < 0 || s.counters[key] > s.limits[`max${key[0].toUpperCase()}${key.slice(1)}` as keyof Limits]) throw new Error("Invalid budget counter");
+ for (const key of ["sessions", "modelRequests", "toolCalls", "stages", "trials", "retries"] as const) if (!Number.isSafeInteger(s.counters[key]) || s.counters[key] < 0 || (key !== "trials" && s.counters[key] > s.limits[`max${key[0].toUpperCase()}${key.slice(1)}` as keyof Limits])) throw new Error("Invalid budget counter");
  if (s.journal.length < s.revision || s.journal.some((entry, i) => entry.revision < (s.journal[i - 1]?.revision ?? 0) || entry.revision > (s.journal[i - 1]?.revision ?? 0) + 1) || (s.journal.at(-1)?.revision ?? 0) !== s.revision) throw new Error("Journal revision mismatch");
  if (new Set(s.actions.map(a => a.id)).size !== s.actions.length || new Set(s.works.map(w => w.id)).size !== s.works.length || new Set(s.artifacts.map(a => a.id)).size !== s.artifacts.length) throw new Error("Duplicate coordinator identity");
  if (s.works.filter(w => ["reserved", "active", "uncertain"].includes(w.status)).length > 1) throw new Error("Parallel mutating stages in persisted state");
@@ -54,7 +54,7 @@ function validate(s: RunState): void {
  for (const declared of [s.taskConfiguration, ...s.works.map(w => w.taskConfiguration && { configuration: w.taskConfiguration, sha256: taskConfigurationHash(w.taskConfiguration) })]) {
   if (declared && taskConfigurationHash(parseTaskConfiguration(declared.configuration)) !== declared.sha256) throw new Error("Invalid persisted task configuration");
  }
- if (s.trialIds !== undefined && (!Array.isArray(s.trialIds) || s.trialIds.some(id => typeof id !== "string" || !id || id.length > 256) || new Set(s.trialIds).size !== s.trialIds.length || s.counters.trials < Math.min(s.trialIds.length, s.limits.maxTrials))) throw new Error("Invalid trial accounting");
+ if (s.trialIds !== undefined && (!Array.isArray(s.trialIds) || s.trialIds.some(id => typeof id !== "string" || !id || id.length > 256) || new Set(s.trialIds).size !== s.trialIds.length || s.counters.trials !== s.trialIds.length)) throw new Error("Invalid trial accounting");
  if (s.taskConfiguration && !s.actions.some(a => a.id === s.taskConfiguration!.actionId && a.kind === "task_configure")) throw new Error("Unowned persisted task configuration");
 }
 export class StateStore {

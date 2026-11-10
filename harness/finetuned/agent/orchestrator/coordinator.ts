@@ -1,4 +1,4 @@
-import { promotedChampion } from "./training_facts.js";
+import { promotedChampion, startedTrials, trainingDirectory } from "./training_facts.js";
 import type { TrainingTrialResult } from "../training/results.js";
 import { randomUUID } from "node:crypto";
 import { readFileSync, statSync, mkdirSync, writeFileSync } from "node:fs";
@@ -13,6 +13,7 @@ export interface ConfigureRequest extends Mutation { configuration: unknown }
 export interface StartRequest extends Mutation { stage: StageName; objective: string; artifactIds: string[]; guidance?: string; evidenceIds?: string[] }
 export interface CoordinatorDependencies {
  /** Read the authoritative champion tag and validate its trial evidence. */
+ trainingDirectory?: string;
  promotedChampion?(taskId: string): Promise<TrainingTrialResult | undefined>;
  start(work: Work, input: StageInput): StageInvocationHandle;
  /** Read-only aggregate remote attempts; module ledger remains upload authority. */
@@ -241,9 +242,13 @@ export class Coordinator {
    this.pending.add(pending);
   } catch (error) { this.failWork(work.id, error); }
  }
+ private reconcileTrials(s: RunState) {
+  s.trialIds = startedTrials(this.deps.trainingDirectory ?? trainingDirectory(s.taskId), s.runId, s.works.filter(w => w.stage === "solve").map(w => w.id));
+  s.counters.trials = s.trialIds.length;
+ }
  private failWork(id: string, error: unknown) {
   const message = error instanceof Error ? error.message : "Stage dispatch failed";
-  this.commit("stage_dispatch_failed", { invocationId: id }, s => { const w = s.works.find(w => w.id === id)!; w.status = "terminal"; w.summary = { outcome: "failure", error: message.slice(0, 1000) }; this.notice(s, "stage_failure", w.summary, id); });
+  this.commit("stage_dispatch_failed", { invocationId: id }, s => { const w = s.works.find(w => w.id === id)!; w.status = "terminal"; if (w.stage === "solve") this.reconcileTrials(s); w.summary = { outcome: "failure", error: message.slice(0, 1000) }; this.notice(s, "stage_failure", w.summary, id); });
   const work = this.state.works.find(w => w.id === id)!;
   this.emit({ kind: "stage_finished", stage: work.stage, invocationId: id, outcome: "failure", valid: false, error: message.slice(0, 200) });
  }
@@ -276,7 +281,7 @@ export class Coordinator {
     if (Number.isInteger(effective) && effective > this.remoteUsed + s.reservedUnknown) s.reservedUnknown = effective - this.remoteUsed;
    }
    const work = s.works.find(w => w.id === id)!; work.status = "terminal"; work.result = { ...result, artifacts: [], summary: undefined }; work.summary = summary;
-   if (result.stage === "solve") chargeTrials(s, id, result.summary);
+   if (result.stage === "solve") this.reconcileTrials(s);
    if (work.stage === "solve") for (const old of s.works.filter(w => w.stage === "solve" && w.status === "interrupted")) { if (old.summary) old.summary.trainingRecoveryRequired = false; }
    s.artifacts.push(...artifacts.filter(a => !s.artifacts.some(old => old.id === a.id)));
    if (result.stage === "submit" && submission?.attemptId) {
@@ -363,13 +368,14 @@ export class Coordinator {
   this.commit("pipeline_finished", { ...request }, s => { s.actions.push(this.action(request, "pipeline_finish", receipt)); s.status = request.outcome; s.reason = request.rationale; }); return receipt;
  }
  async recover() {
+  this.commit("trials_reconciled", {}, s => { this.reconcileTrials(s); });
   if (this.state.status === "blocked" && (this.state.reason?.startsWith("Task-global submission accounting") || this.state.works.some(w => unresolvedSubmission(w) || w.status === "uncertain"))) this.commit("explicit_reconciliation_resume", {}, s => { s.status = "running"; s.reason = undefined; });
   await this.refreshOfficial();
   for (const work of this.state.works.filter(w => !terminal(w) || unresolvedSubmission(w))) {
    if (["research", "solve", "evaluate"].includes(work.stage)) {
     // Lost Pi session cannot be reattached. Live training is recovered by the next
     // solver's existing harness root ownership path; no worker is duplicated here.
-    this.commit("agent_invocation_interrupted", { invocationId: work.id }, s => { const w = s.works.find(w => w.id === work.id)!; w.status = "interrupted"; w.summary = { outcome: "interrupted", trainingRecoveryRequired: w.stage === "solve", reason: "Host restarted; in-memory agent session lost. Existing training requires harness reconciliation before the next fit." }; this.notice(s, "stage_interrupted", w.summary, w.id); });
+    this.commit("agent_invocation_interrupted", { invocationId: work.id }, s => { const w = s.works.find(w => w.id === work.id)!; w.status = "interrupted"; if (w.stage === "solve") this.reconcileTrials(s); w.summary = { outcome: "interrupted", trainingRecoveryRequired: w.stage === "solve", reason: "Host restarted; in-memory agent session lost. Existing training requires harness reconciliation before the next fit." }; this.notice(s, "stage_interrupted", w.summary, w.id); });
    } else {
     this.commit("recovery_uncertain", { invocationId: work.id }, s => { s.works.find(w => w.id === work.id)!.status = "uncertain"; });
     const result = await this.deps.recover?.(work, this.input(work, true));
@@ -458,19 +464,6 @@ export class Coordinator {
  }
  async settle() { await Promise.allSettled([...this.pending]); if (this.failure) throw this.failure; }
  close() { this.store.close(); }
-}
-/**
- * Charge the harness trials a solve actually started, once each. A solve that
- * recovers an interrupted one reuses its training root and reports the earlier
- * trials again; their IDs are charged only the first time they are seen.
- */
-function chargeTrials(s: RunState, invocationId: string, summary: Record<string, unknown> | undefined) {
- const reported = Array.isArray(summary?.trial_ids) ? (summary.trial_ids as unknown[]).filter((id): id is string => typeof id === "string" && !!id && id.length <= 256)
-  : Number.isSafeInteger(summary?.trials) && (summary!.trials as number) > 0 ? Array.from({ length: summary!.trials as number }, (_, i) => `${invocationId}:${i}`) : [];
- const seen = new Set(s.trialIds ?? []), fresh = [...new Set(reported)].filter(id => !seen.has(id));
- s.trialIds = [...seen, ...fresh];
- // The per-solve allocation keeps the count inside the limit; the clamp only guards a stale root.
- s.counters.trials = Math.min(s.limits.maxTrials, s.counters.trials + fresh.length);
 }
 function unresolvedSubmission(work: Work): boolean {
  const content = (work.summary?.measurements as any)?.content;
