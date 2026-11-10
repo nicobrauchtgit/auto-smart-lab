@@ -1,9 +1,10 @@
 # Optional subagents
 
 This module gives a parent Pi agent independent child sessions. It is not wired
-into the pipeline or enabled in configuration. There is no context cutoff,
-handover, session replacement, workflow scheduler, or automatic task selection.
-Pi's normal session behavior, including its default compaction, still applies.
+into the pipeline or enabled in configuration. The Pi backend uses shared
+logical sessions for context handover and session replacement. There is no
+durable workflow scheduler or automatic task selection; context replacement
+does not recover a child after its host process dies.
 
 The parent chooses tasks and receives stable handles. Each child keeps its own
 conversation, tools, and final replies. Only an explicit wait returns a bounded
@@ -180,7 +181,9 @@ truncated but repeats the marker. No corrected live rerun has occurred. See
 [the handover](../../docs/HANDOVER.md#live-smoke-evidence) for evidence paths and
 identities, and [telemetry operations](../../docs/telemetry.md) for SQL/API checks.
 
-Automatic 100k-token handovers and session replacement remain deferred.
+Shared logical sessions now support context handovers and session replacement;
+see [Smart context sessions](../context/README.md). Durable workflow recovery
+and automatic pipeline delegation remain separate, unimplemented capabilities.
 Subagent sessions do not replace durable experiment state or supervision.
 
 Parent and child context can roll over through the [smart context module](../context/README.md).

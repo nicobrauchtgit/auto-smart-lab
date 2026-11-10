@@ -8,7 +8,7 @@ work queue and distinguishes merge preparation from later implementation.
 
 | Package | State on `merge-arms` | Remaining gate |
 | --- | --- | --- |
-| P1: observed scripts and memory pool | Implementation under revision; not integrated | Trial protection under memory pressure, independent review, integrated checks |
+| P1: observed scripts and memory pool | Blocked; not integrated | [Strict victim ordering remains unimplemented](p1-memory-pool-blocker.md); merge-scope decision pending |
 | P3: run mechanics | Integrated in `fd96ccd`, including three recovery/accounting review fixes | Whole-branch validation after P1 integration |
 | P4: scorecard | Integrated in `d57b703`; 21 focused tests passed at integration | Refresh evidence against the next real run |
 | P5: expert-team design | Integrated in `6901a54`; documents and draft prompts only | Runtime implementation is future work |

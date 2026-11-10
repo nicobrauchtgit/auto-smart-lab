@@ -4,8 +4,9 @@
 > Paths in this README and in `docs/` are relative to `harness/finetuned/`. Run state
 > lives in `runs/finetuned/` at the repository root: task runs (`runs/finetuned/<task>/`),
 > `solutions/`, `knowledge/` and `deliveries/`.
+> Run all `./dev` commands from the repository root.
 
-Auto SmartLab is an experimental autonomous machine-learning pipeline for the [SmartLab](https://lab-test.smartlab.mlsec.tu-berlin.de/) adversarial-AI platform. It gives an agent the task, local data, research notes, and measured feedback. Deterministic code owns input preparation, metric recomputation, artifact validation, trace recording, and, once the safety work is complete, submission.
+Auto SmartLab is an experimental autonomous machine-learning pipeline for the [SmartLab](https://lab-test.smartlab.mlsec.tu-berlin.de/) adversarial-AI platform. It gives an agent the task, local data, research notes, and measured feedback. Deterministic code owns input preparation, metric recomputation, artifact validation, trace recording, refit and authorized submission.
 
 The intended pipeline is:
 
@@ -45,6 +46,9 @@ Start with [Remaining work](../../docs/cleanup-plan.md). Older handovers and roa
 | Optional subagent sessions | Implemented and tested in isolation, not enabled in the pipeline |
 | Live experiment supervision | Harness-owned processes, progress and recovery |
 | Terminal refit | Registered and deterministic |
+| Blocking controller waits and budget-end hand-over | Implemented; recovery retains refit ownership and actual trial accounting |
+| Observed agent scripts and shared memory pool (P1) | Not integrated; strict trial protection is unresolved |
+| Four experts in one shared workspace | Accepted design and draft prompts; runtime implementation is planned |
 
 The configured chain is research → solve → evaluate → refit and stops before submission.
 
@@ -85,7 +89,7 @@ The main pieces have narrow responsibilities:
 
 A run has one `pipelineRunId`. Each stage execution gets a `stageInvocationId`, and each model attempt gets its own agent run ID and attempt number. This hierarchy lets Langfuse show which model session produced an artifact without treating model completion as proof that the artifact passed validation.
 
-Artifacts are the handoff between stages. Research returns a validated document and analysis references. Solve consumes those artifacts with the task data and returns measured result files. Future evaluation must approve one exact artifact, and future submission must upload that same artifact only after deterministic checks pass.
+Artifacts are the handoff between stages. Research returns a validated document and analysis references. Solve consumes those artifacts with the task data and returns measured result files. Evaluation reviews exact evidence and remains advisory; refit freezes the selected pipeline. Submission checks the frozen bundle and an explicit controller policy. A review score does not authorize an upload.
 
 The executor stops when a stage fails validation, is cancelled, has no enabled successor, or reaches the requested `--stop-after` stage. Standalone research and solve commands call this same executor rather than maintaining a second execution path.
 
@@ -118,7 +122,7 @@ Everything else is pinned and installed by `./dev`: [mise](https://mise.jdx.dev/
 (checksum-verified), bun, uv, ripgrep and fd from `mise.toml`, and the
 uv-managed Python 3.13 from `.python-version`. All of it, including caches,
 lives under `.tools/` in the repository; nothing is installed into your home
-directory, shell configuration or Nix profile. Deleting `.tools/`, `.venv/` and
+directory, shell configuration or Nix profile. Deleting `.tools/`, `harness/finetuned/.venv/` and
 `node_modules/` removes every trace. On NixOS the downloaded binaries run
 through nix-ld, which must provide libstdc++ and zlib.
 
@@ -129,14 +133,14 @@ git clone <repository-url>
 cd auto-smart-lab
 cp .env.example .env
 
-# Install the pinned tools, create .venv from uv.lock, install bun.lock.
+# Install pinned tools, sync harness/finetuned/.venv, install bun.lock.
 ./dev setup
 
 ./dev mise run test
 ```
 
 Run every project command through `./dev`, for example `./dev bun test` or
-`./dev bun run pipeline -- spam1`. It loads `.env`, puts `.venv/bin` on `PATH`
+`./dev bun run pipeline -- spam1`. It loads `.env`, puts `harness/finetuned/.venv/bin` on `PATH`
 and sets the project's environment variables from `mise.toml`, so no shell
 activation is needed. Do not install pipeline packages with `pip`; use
 `agent/setup/python_environment.py` so `pyproject.toml`, `uv.lock`, the installed
@@ -161,12 +165,14 @@ LAB_PASS='...'
 
 Quote values containing spaces or shell metacharacters. The university SSH settings in `.env.example` are only needed by workflows that use that server.
 
-The default is `mythllm/qwen3.8-flash-next-a5b` at
-`https://mythllm.mlsec.tu-berlin.de/v1`. Its token limits are conservatively
-configured at 128,000 context and 8,192 output tokens, with a 100,000-token
-handoff threshold. The upstream model advertises 262,144 native context tokens,
-but the hosted deployment's limit remains unverified. SAIA remains available with an explicit `--model` override and its
-own `SAIA_API_KEY`.
+The shared provider/model settings are in
+[`experiment.config.json`](../../experiment.config.json), currently
+`mythllm/qwen3.8-flash-next-a5b`, with configured context/output limits of
+262,144/32,768 tokens. The context handoff threshold is 100,000 tokens in
+[`harness.config.json`](harness.config.json). These are configuration values,
+not a guarantee of hosted capacity; dated deployment measurements are in
+[the experiment](../../docs/experiment.md). Other providers need their own
+declared credentials and successful setup checks.
 
 `./dev` loads `.env` for every command. Do not commit `.env`, cookies, traces, or credentials.
 
@@ -367,8 +373,7 @@ Subagents do not yet provide durable workflow recovery:
 - they share the same filesystem and need explicit file ownership;
 - they cannot spawn grandchildren;
 - they do not replace the durable experiment record;
-- ordinary Pi compaction still applies;
-- automatic 100k-token handovers and session replacement are deferred;
+- logical sessions use the shared context-handoff machinery;
 - child requests still have a configurable timeout.
 
 The intended use is context partitioning. A long-lived solver remains responsible for the task hypothesis and experiment history, while children handle bounded investigations or isolated implementation tasks. The pipeline must record durable state separately so a restarted parent can recover without relying on a child transcript.
@@ -376,7 +381,7 @@ The intended use is context partitioning. A long-lived solver remains responsibl
 Read [agent/subagents/README.md](agent/subagents/README.md) before enabling it. Run its deterministic tests with:
 
 ```bash
-./dev bun test agent/subagents agent/prompts agent/run/session_resources.test.ts
+./dev bun test ./harness/finetuned/agent/subagents/ ./harness/finetuned/agent/prompts/ ./harness/finetuned/agent/run/session_resources.test.ts
 ```
 
 `agent/subagents/live_smoke.ts` makes paid model calls and is not part of the normal test suite. Its original run produced valid artifacts but exited nonzero on a flawed marker assertion. The assertion now distinguishes automatic transcript forwarding from text repeated in a bounded reply. The original failed evidence is preserved, and no corrected live rerun has occurred. See the [handover evidence](docs/HANDOVER.md#live-smoke-evidence).
@@ -394,35 +399,41 @@ The TypeScript tests cover pipeline execution, prompt loading, tracing, session 
 
 ```text
 agent/
+├── orchestrator/       Durable decision loop, budgets, recovery and progress
 ├── pipeline/           Shared executor, registry, stages, configuration, and trace lifecycle
 ├── prompts/            Versioned prompt templates and typed loader
 ├── research/           Research context preparation and artifact validation
 ├── solve/              Measurement, sealed split, canary, and champion comparison
 ├── subagents/          Optional parent/child session manager, not pipeline-enabled
-├── run/                Shared session code plus the legacy orchestration path
+├── run/                Shared agent sessions, sandbox and Python environment scopes
 ├── telemetry/          Langfuse runtime, preflight, emergency journal and Cloud smoke
 ├── setup/              Unit fetching, SmartLab helpers, and Python environment manager
 └── observability.ts    Pi event and final-request adapter
 agent/libs/smartlab-eval/  Corpus loading library (solve agent, evaluation diagnostics)
-solutions/              Agent-owned reusable model code
-units/                  Downloaded task prompts, metadata, and datasets
-runs/                   Harness artifacts, durable records and emergency traces
+../../runs/finetuned/solutions/  Agent-owned reusable model code
+../../units/            Downloaded task prompts, metadata, and datasets
+../../runs/finetuned/   Harness artifacts, durable records and emergency traces
 pipeline.config.json    Enabled stages, options and tasks (model and providers: ../../experiment.config.json)
 pyproject.toml          Declared Python dependencies
 uv.lock                 Locked Python environment
 ```
 
-## Safety warning about the legacy command
+## Entry points and submission policy
 
-`bun run solve -- <task>` invokes `agent/run/orchestrate.ts`, the old solve/evaluate/submit loop. It can upload to SmartLab and consume a limited submission. It currently has known safety defects, including fail-open evaluator parsing and overly broad source archive collection.
-
-Do not run that command unattended. Do not treat it as the current pipeline entry point. The safe development path is `bun run pipeline -- ...`, which only runs registered stages and currently cannot submit.
+Use the root `experiment` command to select an arm, or the registered root
+pipeline/stage commands. There is no root `solve` package script. Legacy
+interactive tools and optional subagents are not the experiment entry point.
+The default experiment is offline and hands over files for manual submission.
+Changing to online autonomous operation can authorize submission under its
+controller policy; stage availability or an evaluation score alone cannot.
 
 ## Further reading
 
-- [Autonomous experimentation and safety plan](docs/autonomous-experimentation-plan.md)
-- [Developer handover and preserved decisions](docs/HANDOVER.md)
-- [Current status and implementation roadmap](docs/WIP.md)
+- [Current work queue and readiness limits](../../docs/cleanup-plan.md)
+- [Accepted expert-team design, implementation planned](docs/expert-team.md)
+- [Historical autonomous experimentation plan](docs/autonomous-experimentation-plan.md)
+- [Historical developer handover](docs/HANDOVER.md)
+- [Historical implementation roadmap](docs/WIP.md)
 - [Telemetry operations and troubleshooting](docs/telemetry.md)
 - [Pipeline integration and observability contract](docs/pipeline-integration.md)
 - [Solve stage harness](agent/solve/README.md)

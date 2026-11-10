@@ -27,7 +27,7 @@ and official scores separate.
 
 | Package | State | Required next action |
 | --- | --- | --- |
-| P1: observed scripts and shared memory pool | Under revision; not integrated | Resolve trial protection under pressure, review, then integrate |
+| P1: observed scripts and shared memory pool | Blocked; not integrated | Decide merge scope; see [counterexamples and options](p1-memory-pool-blocker.md) |
 | P3: waits, accounting, recovery, hand-over and detached runs | Integrated in `fd96ccd` | Final whole-branch verification |
 | P4: scorecard | Integrated in `d57b703` | Use on the next live shakedown |
 | P5: expert-team design and draft prompts | Integrated in `6901a54` | Keep labelled as design |
@@ -42,8 +42,8 @@ Before calling this branch merge-ready:
 
 1. Resolve complete correctness/resource blockers. Record smaller issues below
    with impact and next action; keep future packages out of this merge.
-2. Repair the shared Python environment's editable-package reference to an old
-   worktree after active tests stop, then pass the environment manager's check.
+2. Keep the shared Python environment healthy. Its stale editable-package
+   reference was repaired on 2026-11-10; the manager reports 39 packages healthy.
 3. Run `./dev mise run test` and experiment boundary tests against integrated
    source. Record skips and unverified live behavior alongside passes.
 4. Check reviewer navigation, local links, Mermaid source, current/proposed

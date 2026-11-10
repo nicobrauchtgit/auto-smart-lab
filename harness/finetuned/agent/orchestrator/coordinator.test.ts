@@ -15,6 +15,7 @@ import type { StageInput, StageInvocation, StageName } from "../pipeline/types.j
 import { parseOrchestrateArgs } from "../orchestrate_cli.js";
 import { spamConfiguration } from "../pipeline/task_configuration.testing.js";
 import type { TaskConfiguration } from "../pipeline/task_configuration.js";
+import { PROJECT_ROOT } from "../pipeline/resolve_task.js";
 function fixture(authorized = true, caps: Partial<RunState["limits"]> = {}) {
  const directory = mkdtempSync(join(tmpdir(), "orchestrator-")), prompts = loadPromptSnapshot();
  const config = resolvePipelineSettings({ defaultModel: "fixture/model", providers: {}, agent: { cwd: directory, agentDir: directory, initialPrompt: "" }, pipeline: { version: 1, scheduling: "agent", entryStage: "research", stages: Object.fromEntries(["research", "solve", "evaluate", "refit", "submit"].map(name => [name, { enabled: true, options: {} }])) } } as any);
@@ -567,8 +568,15 @@ test("real resume rejects a previous harness version before changing state or ch
  old.promptTemplates["orchestrator.budget-half"] = "old prompt";
  old.promptTemplates["orchestrator.budget-low"] = "old prompt";
  old.counters.trials = 6; delete old.trialIds;
- const directory = join(f.directory, "spam1", "pipeline", "old-run"); mkdirSync(directory, { recursive: true });
- const path = join(directory, "state.json"), bytes = JSON.stringify({ state: old, sha256: hash(old) }); writeFileSync(path, bytes);
- await expect(runOrchestrator({ taskId: "spam1", runsDir: f.directory, resumeRunId: "old-run", configPath: join(f.directory, "missing-config.json") })).rejects.toThrow("started by a different harness version; a new run must be started");
- expect(readFileSync(path, "utf8")).toBe(bytes);
+ // Task lookup needs metadata, not private spam1 data or an authenticated fetch.
+ const unit = mkdtempSync(join(PROJECT_ROOT, "units", "99-version-fixture-"));
+ const taskId = unit.split("/").at(-1)!;
+ try {
+  const taskDirectory = join(unit, "task"); mkdirSync(taskDirectory);
+  writeFileSync(join(taskDirectory, "meta.json"), JSON.stringify({ short_id: taskId, task: "Version rejection fixture" }));
+  const directory = join(f.directory, taskId, "pipeline", "old-run"); mkdirSync(directory, { recursive: true });
+  const path = join(directory, "state.json"), bytes = JSON.stringify({ state: old, sha256: hash(old) }); writeFileSync(path, bytes);
+  await expect(runOrchestrator({ taskId, runsDir: f.directory, resumeRunId: "old-run", configPath: join(f.directory, "missing-config.json") })).rejects.toThrow("started by a different harness version; a new run must be started");
+  expect(readFileSync(path, "utf8")).toBe(bytes);
+ } finally { rmSync(unit, { recursive: true, force: true }); rmSync(f.directory, { recursive: true, force: true }); }
 });
