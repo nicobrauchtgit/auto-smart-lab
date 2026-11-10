@@ -41,7 +41,7 @@ solutions/
     features/          representations: transformers with fit/transform
     models/            reusable estimators and wrappers
     cv/                splitter factories
-  checks/              short checks; each file has a header line "Checks: ..."
+  checks/              short checks, run with pytest by the agents and by the harness
     lib/               checks of shared modules (run against a small fixture or a sample)
     <task>/            task checks (data facts, leakage controls, output domain)
   tasks/
@@ -124,7 +124,8 @@ sealed. In the design, `agent/workspace/task_data.ts` (P6) runs
 (`agent/orchestrator/coordinator.ts:145`), right after the task files are
 inspected, and writes `runs/finetuned/<task>/data/`:
 
-- `sealed_ids.txt`, `holdout.json` (harness only, never mounted);
+- `sealed/`: sealed IDs, `holdout.json`, sealed evidence labels (harness only,
+  never mounted);
 - the development archive (sealed members removed, as today);
 - `development-samples.json` (descriptors and development targets);
 - `profile.json` (harness data profile of the development data);
@@ -159,10 +160,10 @@ functions by one `expertSandbox(task, role)`:
   findings view, the Python prefix, binaries;
 - writable: the role's worktree (section 6.3) and the repository's git common
   directory (objects, refs; needed for commits);
-- literature gets no shell and no write tool (section 4), so its mounts only
-  matter for the read tool.
+- literature has no worktree: it gets no shell and no write tool (section 4),
+  so its mounts only matter for the read tool.
 
-The sealed files live in `data/sealed/`, a directory no policy mounts. The
+No policy mounts `data/sealed/` or the original training archive. The
 setup check `solve-isolation` (bubblewrap) stays and now covers every expert.
 
 ### 3.4 Test archive visibility
@@ -188,8 +189,8 @@ champion (`agent/run/harness_solve_session.ts:388`) and produces the
 - guidance and feedback text is rejected when it contains a sealed metric
   rendered at two to four decimals (cheap string check, done in `start` and
   `feedback`);
-- `lessons.sealed` stays for the orchestrator's own notes only; experts never
-  receive sealed numbers, so they need no instruction about them.
+- `lessons.sealed` is deleted: no expert receives sealed numbers, and the
+  orchestrator has no lesson step.
 
 ### 3.6 Disk and memory
 
@@ -254,8 +255,7 @@ tool allowlist, not by instruction.
 Validated by: every URL was returned by this session's `web_search` (the
 existing check in `research/validate.ts:141-178`, kept as
 `agent/team/sources.ts`); every idea cites at least one data entry or says
-"general"; no more than the configured number of ideas; its worktree is
-untouched.
+"general"; no more than the configured number of ideas.
 
 ### 4.3 Modelling expert
 
@@ -500,11 +500,16 @@ design uses that path end to end. Example: Adversarial Example Detection
    reason, method})`; each label carries its method (visual inspection, a
    statistic, a check file). The validation expert reviews every proposed
    positive independently and accepts or rejects it. Only accepted labels count.
-3. Sealed evidence: when the orchestrator starts the first modelling
-   invocation, the harness draws a seeded third of the accepted labels per
-   class into `data/sealed/evidence.json` and writes the rest as development
-   evidence (the path `measurement.evidence` points to, `workspace.ts:163`).
-   Modelling sees only development evidence and its counts.
+3. Sealed evidence: an accepted label goes to the sealed part when a seeded
+   hash of its sample ID falls below one third, so the split does not depend
+   on when labels were accepted. Sealed labels go to
+   `data/sealed/evidence.json`; the rest form the development evidence file
+   that `measurement.evidence` points to (today agent-written at
+   `solve/agent/evidence.json`, `workspace.ts:163`; now harness-written). The
+   label store is harness state and not mounted; `evidence_label` returns only
+   the caller's own proposals and counts. Modelling sees the development file
+   and counts, never which labels were sealed. Journal entries about evidence
+   give counts and methods, not sample IDs.
 4. Trials select by development evidence. The sealed check scores the frozen
    champion on the sealed evidence for the orchestrator only.
 5. Verify well means: at least the configured minimum of accepted positives
@@ -519,7 +524,10 @@ design uses that path end to end. Example: Adversarial Example Detection
 If too few positives can be established, the orchestrator may hand over an
 "unscored" candidate: a validated, completed trial chosen by the orchestrator
 with its reason, refit offline only and marked unscored in the hand-over
-(open question 2).
+(open question 2). This needs one addition: a `declared` champion tag that
+records the orchestrator's choice instead of a promotion score
+(`training/development_selection.ts`), accepted by refit only for
+`metric: none` under an offline policy.
 
 ### 7.5 Other tasks in scope
 
@@ -583,7 +591,7 @@ Owns: `agent/workspace/` (new: `task_data.ts`, `repository.ts`, `check.ts`),
 `agent/research/profile.ts` (dev input), `agent/training/branches.ts`
 (removed), the path comparisons in `training/service.ts`,
 `training/development_selection.ts`, `refit/service.ts`, `pipeline/setup.ts`
-(`disk` requirement), the sealed evidence split.
+(`disk` requirement), the `declared` champion tag for label-free hand-over.
 Must not touch: orchestrator, stage definitions, prompts, findings.
 Order: task data and identity first, then sandbox, then worktrees and merge,
 then the check.
@@ -594,12 +602,13 @@ concurrently and both merge into `main`; a conflicting merge is aborted and
 reported; a trial measured in the modelling worktree is refit from the
 integration checkout; `workspace_check` flags a missing header, an unlisted
 module and a duplicated function on fixtures in under 2 s; setup refuses a task
-when free disk is below the bound; on a label-free image fixture the evidence
-split puts a third of each class into the sealed file.
+when free disk is below the bound; a `declared` tag is refit for a label-free
+fixture offline and refused online or for a labelled task.
 
 ### P7a. The four experts and the findings journal
 
-Owns: `agent/team/` (`findings.ts`, `sources.ts`, `evidence_labels.ts`),
+Owns: `agent/team/` (`findings.ts`, `sources.ts`, `evidence_labels.ts` with
+the sealed evidence split), evidence scoring in `agent/confirmation/`,
 `agent/pipeline/stages/{data,literature,modelling,validation}.ts`,
 `agent/pipeline/registry.ts`, `agent/pipeline/types.ts` (`StageName`),
 `agent/prompts/experts/` (from the drafts), `agent/prompts/lessons/report.md`,
@@ -614,7 +623,10 @@ channel and the answer comes back; result entries show the trial's measured
 metric, not agent text; the validation expert's tools never return
 confirmation fields; a fixture `AGENTS.md` marker does not enter any expert's
 system prompt while the expert prompt does; prompt templates reject missing and
-unknown variables.
+unknown variables; on a label-free image fixture about a third of each class
+lands in the sealed file whatever the order of acceptance, a positive without
+validation's acceptance is in neither file, and the sealed evidence score
+reaches only the orchestrator's artifact.
 
 ### P7b. Parallel calls and the orchestrator
 
@@ -663,3 +675,36 @@ peak memory under the pool.
    git; the view is mounted read-only.
 5. **Test archive visible to all experts.** Recommended: yes, read-only (3.4);
    validation checks that no trial reads test rows outside batch refit.
+
+## 11. Where the current code resists the decisions
+
+- One mutating stage is enforced twice: `orchestrator/state.ts:88` (persisted
+  state) and `orchestrator/coordinator.ts:165` (start).
+- Sessions share `process.env`: `run/session_runner.ts:131-146`, read back by
+  `tools/web_search.ts:26,87`. Parallel experts need this removed first.
+- Research reads sealed rows: `run/solve_sandbox.ts:110` mounts the whole task
+  directory; the split is made only in `solve/workspace.ts:133`.
+- Trial records bind the repository path, compared in
+  `training/service.ts:446`, `training/development_selection.ts:50` and
+  `refit/service.ts:141`; per-invocation worktrees would break recovery and
+  refit, hence one stable worktree per role and a common-dir comparison.
+- `experiment_start` needs a clean tree (`training/service.ts:546`), so one
+  shared working tree cannot host two writers.
+- The training service lives for one solve session
+  (`run/harness_solve_session.ts:280,378`), so only the modelling expert can
+  run trials; validation reads records instead.
+- Three dataset fingerprints for one task (`run/research_session.ts:208`,
+  `run/harness_solve_session.ts:98-103`, evaluation's seed plan) keep knowledge
+  from passing between stages.
+- The reviewer is bound to the sealed confirmation
+  (`evaluation/evidence.ts:58-67`) and the coordinator treats all evaluate
+  output as sealed (`orchestrator/coordinator.ts:130-133`).
+- The selected entrypoint is read from the live file and compared with its
+  commit (`pipeline/stages/solve.ts:30-44`); with role worktrees it must be
+  read from the commit (`git show`), since the live file may have moved on.
+- Label-free runs stop at solve by policy (orchestrator prompt) although
+  evidence selection exists; the evidence file is agent-written
+  (`solve/workspace.ts:163`).
+- Multi-class targets are absent from the configuration
+  (`pipeline/task_configuration.ts:26,41`) and from sealing
+  (`solve/workspace.ts:102`).
