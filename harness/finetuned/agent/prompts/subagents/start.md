@@ -1,3 +1,0 @@
-Parent-assigned task:
-
-{{task}}
