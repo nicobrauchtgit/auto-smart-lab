@@ -1,0 +1,4 @@
+- Parameter importance estimated from few configurations is unreliable; treat it as a hint about where to look, not a measurement.
+- The best of many configurations is optimistically biased: it was selected on the same folds that scored it.
+- These scores are cross-validation estimates on development data, not a test-set estimate.
+- A search trial is never promotion-eligible. Confirm the winner with the suggested fixed-parameter request on fresh folds.
