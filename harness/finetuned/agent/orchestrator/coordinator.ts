@@ -395,14 +395,17 @@ export class Coordinator {
  champion(): RunState["artifacts"][number] | undefined {
   return this.state.artifacts.filter(a => a.kind === "training_selected_result").at(-1);
  }
+ private earlierChampion = false;
  private async refreshChampion() {
+  this.earlierChampion = false;
   const s = this.state;
   const trial = await (this.deps.promotedChampion ?? promotedChampion)(s.taskId);
   if (!trial) return undefined;
   const evidence = trial.artifacts.find(a => a.kind === "training_trial_result");
   if (!evidence) return undefined;
   const metadata = JSON.parse(readFileSync(join(trial.directory, "recovery.json"), "utf8"));
-  const producer = s.works.find(w => w.id === metadata.originStageInvocationId && w.stage === "solve") ?? s.works.filter(w => w.stage === "solve").at(-1);
+  if (metadata.originPipelineRunId !== s.runId) { this.earlierChampion = true; return undefined; }
+  const producer = s.works.find(w => w.id === metadata.originStageInvocationId && w.stage === "solve");
   if (!producer) return undefined;
   const bytes = readFileSync(evidence.path), sha256 = hash(bytes);
   if (sha256 !== evidence.sha256) throw new Error("Champion evidence hash mismatch");
@@ -436,6 +439,7 @@ export class Coordinator {
   // Nobody reads the inbox any more; acknowledge it so the refit's notice always fits.
   if (this.state.cursor > this.state.acknowledgedCursor) this.commit("notifications_acknowledged", { cursor: this.state.cursor, reason: "budget_end" }, s => { s.acknowledgedCursor = s.cursor; s.inbox = []; });
   const champion = await this.refreshChampion();
+  if (!champion && this.earlierChampion) return end("cancelled", `Budget end (${why}): nothing from this run to hand over; an earlier run's champion exists`, false);
   if (!champion) return end("cancelled", `Budget end (${why}): nothing to hand over; no solve produced a validated champion`, false);
   const s = this.state, refits = s.works.filter(w => w.stage === "refit" && w.result?.outcome === "success");
   const done = s.policy.authorized ? refits.find(w => w.upstream.includes(champion.id)) : refits[0];

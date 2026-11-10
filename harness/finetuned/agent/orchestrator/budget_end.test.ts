@@ -19,7 +19,7 @@ import { spamConfiguration } from "../pipeline/task_configuration.testing.js";
 const original = { ...STAGE_REGISTRY };
 afterEach(() => { Object.assign(STAGE_REGISTRY, original); });
 
-type Behaviour = { solveValid?: boolean; cancelAfterPromotion?: boolean; solveMs?: number; researchMs?: number; refitMs?: number };
+type Behaviour = { solveValid?: boolean; cancelAfterPromotion?: boolean; earlierChampion?: boolean; solveMs?: number; researchMs?: number; refitMs?: number };
 /**
  * A coordinator whose stages run through the real executor with fake stage
  * bodies, wired like run.ts: stages stop at the deadline, the budget-end refit
@@ -42,7 +42,7 @@ async function harness(limits: Partial<RunState["limits"]>, behaviour: Behaviour
    if (behaviour.solveValid === false) return { artifacts: [], validation: { valid: false, errors: ["no eligible trial"] }, summary: { trial_ids: ["t1"] } };
    const selected = artifact("training_selected_result", `trial-${id}`, JSON.stringify({ experimentId: `trial-${id}`, balancedAccuracy: 0.99 }));
    const trialDirectory = join(directory, `trial-${id}`);
-   writeFileSync(join(trialDirectory, "recovery.json"), JSON.stringify({ originPipelineRunId: store.state.runId, originStageInvocationId: id }));
+   writeFileSync(join(trialDirectory, "recovery.json"), JSON.stringify({ originPipelineRunId: behaviour.earlierChampion ? "earlier-run" : store.state.runId, originStageInvocationId: id }));
    promoted = { experimentId: `trial-${id}`, directory: trialDirectory, artifacts: [{ ...selected, kind: "training_trial_result" }] };
    if (behaviour.cancelAfterPromotion) await sleep(60_000, context.signal);
    return { artifacts: [selected], validation: { valid: true, errors: [] }, summary: { trial_ids: [`trial-${id}`] } };
@@ -184,5 +184,17 @@ test("deadline hands over a promoted trial while its solve is still running and 
  expect(h.coordinator.state.status).toBe("finished");
  expect(h.coordinator.state.journal.some(e => e.kind === "champion_evidence_reconciled")).toBe(true);
  expect(existsSync(join(h.deliveries, "output.csv"))).toBe(true);
+ await h.close();
+});
+
+test("budget end refuses an earlier run's champion even when this solve imports its selected artifact", async () => {
+ const h = await harness({}, { earlierChampion: true });
+ h.start("solve"); await h.wait();
+ expect(h.coordinator.champion()).toBeDefined(); // imported artifact has this solve's provenance
+ const result = await h.coordinator.handOverAtBudgetEnd("test budget", { cancelLive: false });
+ expect(result.handedOver).toBe(false);
+ expect(result.reason).toContain("nothing from this run to hand over; an earlier run's champion exists");
+ expect(h.coordinator.state.works.some(w => w.stage === "refit")).toBe(false);
+ expect(h.coordinator.state.journal.at(-1)?.payload.reason).toBe(result.reason);
  await h.close();
 });
