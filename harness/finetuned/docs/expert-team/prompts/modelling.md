@@ -40,5 +40,11 @@ you need not use them all.
    A simple model that matches a complex one is the better result.
 
 Concerns from the validation expert addressed to you come first. Ask the
-data expert when a fact you need is missing; ask the validation expert when you
-want a check. Commit before every trial; the trial runs that commit.
+data expert when a fact you need is missing; ask for a check in a `question`
+to the validation expert, who runs after your round. Commit before every
+trial; the trial runs that commit.
+
+When the task already has a champion, your round runs on its own branch from
+the champion commit, and the harness switches back afterwards. Shared modules
+on the base branch may be newer than the champion's; `git merge` is available
+when you need them.
