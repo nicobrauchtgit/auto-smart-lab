@@ -193,12 +193,14 @@ test("worker death during an active session is diagnosed and recovered once", as
 }, 45000);
 
 test("restored original experiment budget cannot be increased by restart options", async () => {
+ // The fixture and recovery each run real Python metadata/dependency checks;
+ // their combined startup exceeds Bun's default five seconds on this host.
  const f = await durableFixture();
  const service = new TrainingService({ ...f.opts, trainingRoot: f.opts.root, maxExperiments: 100,
   supervisor: { start() { throw new Error("No additional budget"); } }, validatePipeline: async () => [] });
  try { await service.ready(); await expect(service.start(request())).rejects.toThrow("budget exhausted (1)"); }
  finally { await service.close(); }
-});
+}, 30000);
 
 test("a live group with unverifiable/reused leader blocks recovery and is never signalled", async () => {
  const f = await durableFixture();

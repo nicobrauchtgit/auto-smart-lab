@@ -31,7 +31,7 @@ and official scores separate.
 | P3: waits, accounting, recovery, hand-over and detached runs | Integrated in `fd96ccd` | Final whole-branch verification |
 | P4: scorecard | Integrated in `d57b703` | Use on the next live shakedown |
 | P5: expert-team design and draft prompts | Integrated in `6901a54` | Keep labelled as design |
-| Reviewer documentation and source inventory | In progress | Review, integrate and regenerate metrics against integrated source |
+| Reviewer documentation and source inventory | Integrated; independent review and source refresh complete | Record the final whole-branch validation result |
 
 P3 passed type checking and 61 focused tests after its final review fixes:
 terminal champion recovery, charging only launched workers, and recovered

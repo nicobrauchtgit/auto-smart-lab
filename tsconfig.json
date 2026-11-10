@@ -10,5 +10,5 @@
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["harness/finetuned/agent/**/*.ts", "experiment/**/*.ts"]
+  "include": ["harness/finetuned/agent/**/*.ts", "experiment/**/*.ts", "scripts/**/*.ts"]
 }
