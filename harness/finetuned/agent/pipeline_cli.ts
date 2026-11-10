@@ -38,6 +38,7 @@ Options:
   --allow-telemetry-fallback  allow emergency tracing during an initial Cloud outage
   --echo-events              print every recorded trace event
   --check-setup              verify setup (including live API access), then exit
+  --resume <run-id>          continue an orchestrator run with its remaining budget
   --dry-run                  resolve the task and print the plan only
   --list                     list locally available units and tasks`);
 	process.exit(1);
@@ -92,6 +93,7 @@ async function main(): Promise<void> {
  const model = takeOption("--model");
 	const entryStage = takeOption("--stage") as StageName | undefined;
 	const stopAfter = takeOption("--stop-after") as StageName | undefined;
+	const resumeRunId = takeOption("--resume");
 
 	let unit = takeOption("--unit");
 	let task = takeOption("--task");
@@ -168,6 +170,7 @@ async function main(): Promise<void> {
 		model,
 		entryStage,
 		stopAfter,
+		resumeRunId,
 		signal: controller.signal,
 		echoEvents,
 		optionOverrides: injectStartupContext ? undefined : { research: { injectStartupContext: false } },

@@ -251,6 +251,8 @@ export interface RunPipelineOptions {
 	seedArtifacts?: StageArtifact[];
 	/** Root for the local trace mirror. Defaults to the project `runs/` directory. */
 	runsDir?: string;
+	/** Resume this orchestrator run (scheduling "agent" only). */
+	resumeRunId?: string;
 }
 
 /**
@@ -265,11 +267,12 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
 	// Chain options (a start or stop stage, guidance, seeded artifacts) ask for the configured
 	// chain: single-stage commands and development runs. Everything else goes to the orchestrator.
 	const chainRequested = !!(options.entryStage || options.stopAfter || options.guidance !== undefined || options.seedArtifacts?.length || options.evidenceCatalog?.length);
+	if (options.resumeRunId && (resolved.settings.scheduling !== "agent" || chainRequested)) throw new Error("--resume continues an orchestrator run: it needs scheduling \"agent\" and no stage or guidance options");
 	if (resolved.settings.scheduling === "agent" && chainRequested) console.warn("[pipeline] Stage or guidance options given: running the configured chain instead of the orchestrator");
 	if (resolved.settings.scheduling === "agent" && !chainRequested) {
 		const { runOrchestrator } = await import("../orchestrator/run.js");
 		// Submission follows "online" in experiment.config.json and nothing else.
-		return runOrchestrator({ taskId: options.taskId, model: options.model, configPath: options.configPath, noSubmit: !resolved.online, telemetry: options.telemetry, checkSetupOnly: options.checkSetupOnly, signal: options.signal, runsDir: options.runsDir });
+		return runOrchestrator({ taskId: options.taskId, model: options.model, configPath: options.configPath, noSubmit: !resolved.online, telemetry: options.telemetry, checkSetupOnly: options.checkSetupOnly, signal: options.signal, runsDir: options.runsDir, resumeRunId: options.resumeRunId });
 	}
 	for (const warning of resolved.warnings) console.warn(`[pipeline] ${warning}`);
 
