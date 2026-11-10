@@ -230,3 +230,31 @@ Decisions taken while carrying out the plan, newest last.
   limit in about 20 minutes and then stall for hours. From now on at most three
   run at once, and fixes for review findings go to GPT 6.1 (`gpt-6.1-sol`, high
   effort), which also does the reviews. The core packages stay on Opus 5.5.
+- **2026-11-10, design review.** GPT 6.1 reviewed the expert-team design
+  against the code. Decisions written into the design:
+  - Checks that concern a trial run against that trial's immutable source
+    snapshot, not the live tree, so a later commit or a branch switch cannot make
+    a broken champion pass.
+  - The sealed split is task-level state: once drawn it is reused by every later
+    run until the task is reset, and a declaration that would change it is
+    refused.
+  - Prepared data of other tasks is never deleted automatically; refit and
+    recovery read it.
+  - Rules about fitting on test inputs follow the task's execution contract,
+    because clustering the unknown items fits on the test batch by design.
+  - The findings journal is one append-only file with links to evidence. No
+    automatic upgrades of a finding's authority.
+  - A follow-up round that produced the new champion is merged into the base
+    branch after the harness switches back.
+  - Wave 2 is built as P6 "Foundations" first (shared types, workspace, sandbox,
+    per-session environment), then P7a (experts, findings, prompts) and P7b
+    (orchestrator) in parallel. This removes the stubs and cycles of the first
+    split.
+  - P7c becomes "Verification beyond binary classification": a sealed check for
+    clustering on withheld families (today it is skipped for every non-binary
+    task) and the label-free path.
+- **2026-11-10, who implements.** The Claude API limit allows about ten minutes
+  of four Opus agents per five-hour window. Opus 5.5 keeps the packages it has
+  started (P1) and the prompt-heavy package P7a; GPT 6.1 implements the more
+  mechanical ones and all review fixes. Each package is still reviewed by the
+  other model than the one that wrote it.
