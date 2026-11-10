@@ -1,8 +1,24 @@
 # Redesign plan: a team of expert agents
 
-Written 2026-11-10. This is the active plan for the finetuned arm
-(`harness/finetuned/`). It replaces the "next steps" list in
-[cleanup-plan.md](cleanup-plan.md) until it is finished.
+Written 2026-11-10. This is the design and package plan for the finetuned arm
+(`harness/finetuned/`). [cleanup-plan.md](cleanup-plan.md) owns the current
+work queue and distinguishes merge preparation from later implementation.
+
+## Implementation status (2026-11-10)
+
+| Package | State on `merge-arms` | Remaining gate |
+| --- | --- | --- |
+| P1: observed scripts and memory pool | Implementation under revision; not integrated | Trial protection under memory pressure, independent review, integrated checks |
+| P3: run mechanics | Integrated in `fd96ccd`, including three recovery/accounting review fixes | Whole-branch validation after P1 integration |
+| P4: scorecard | Integrated in `d57b703`; 21 focused tests passed at integration | Refresh evidence against the next real run |
+| P5: expert-team design | Integrated in `6901a54`; documents and draft prompts only | Runtime implementation is future work |
+| P6, P7a/P7b/P7c, P8, P9 | Planned | Wave gates below; these are not implemented runtime features |
+
+The P3 integration passed type checking and 61 focused tests, including frozen
+champion hand-over reconciliation, pre-spawn trial accounting, and recovered
+budget-end refits crossing the deadline. These tests use local fixtures; they
+do not establish a successful live model run. Merge preparation records smaller
+issues as follow-ups rather than pulling every future package into this change.
 
 ## Goal
 
@@ -10,7 +26,10 @@ A collaborative, multi-stage environment: expert agents, one per field, build
 the best pipeline for a dataset together. They share one workspace, reuse each
 other's code and stop at the right time.
 
-## Why (what two spam1 runs on 2026-11-09 showed)
+## Why (baseline observations from two spam1 runs on 2026-11-09)
+
+These observations describe the runs before the packages below. They explain
+the redesign; they are not a current inventory of implemented features.
 
 - Research wrote 742 lines of scripts in its own folder, solve wrote 358 lines
   in a scratch folder with its own data loader. One file reached `solutions/`.
@@ -260,3 +279,12 @@ Decisions taken while carrying out the plan, newest last.
   started (P1) and the prompt-heavy package P7a; GPT 6.1 implements the more
   mechanical ones and all review fixes. Each package is still reviewed by the
   other model than the one that wrote it.
+- **2026-11-10, merge preparation.** The user requested GPT 6.1 Sol subagents
+  for the remaining work, then asked for a branch another person can review.
+  Complete blockers remain merge gates; smaller issues are recorded with their
+  impact and follow-up. P1 completion, P3 review, and reviewer documentation
+  use `gpt-6.1-sol` at high effort. This supersedes the model allocation above
+  for the current merge work; separate implementation and review remain.
+  The four-expert implementation remains a later wave. Reviewer documentation
+  includes current/proposed flow diagrams, reproducible source metrics, and
+  ADRs covering the accepted design and its trade-offs.
