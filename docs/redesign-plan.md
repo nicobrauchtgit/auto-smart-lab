@@ -157,6 +157,8 @@ hand-over.
 - Measurable test: it runs on the two existing spam1 runs and reports their
   known facts (57 minutes to the first trial, no hand-over, loader written
   twice).
+- Command: `./dev bun run scorecard -- spam1 [--run <id>] [--compare <id>]`; see
+  [the scorecard README](../harness/finetuned/agent/scorecard/README.md).
 
 **P5. Design of the workspace and the experts (documents only)**
 
