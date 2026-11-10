@@ -1,3 +1,5 @@
+import { promotedChampion } from "./training_facts.js";
+import type { TrainingTrialResult } from "../training/results.js";
 import { randomUUID } from "node:crypto";
 import { readFileSync, statSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -10,6 +12,8 @@ export interface Mutation { actionId: string; expectedRevision: number; rational
 export interface ConfigureRequest extends Mutation { configuration: unknown }
 export interface StartRequest extends Mutation { stage: StageName; objective: string; artifactIds: string[]; guidance?: string; evidenceIds?: string[] }
 export interface CoordinatorDependencies {
+ /** Read the authoritative champion tag and validate its trial evidence. */
+ promotedChampion?(taskId: string): Promise<TrainingTrialResult | undefined>;
  start(work: Work, input: StageInput): StageInvocationHandle;
  /** Read-only aggregate remote attempts; module ledger remains upload authority. */
  officialStatus?(): Promise<{ triesUsed: number; reservedUnknown?: number; effectiveTriesUsed?: number; unresolved?: boolean; results?: OfficialResult[] }>;
@@ -381,15 +385,29 @@ export class Coordinator {
   const s = this.state;
   return (["sessions", "modelRequests", "toolCalls"] as const).find(counter => s.counters[counter] >= s.limits[`max${counter[0].toUpperCase()}${counter.slice(1)}` as keyof RunState["limits"]]);
  }
- /** The newest validated champion: the selected result of the latest successful solve. */
+ /** The last catalogued champion, including interrupted solves. */
  champion(): RunState["artifacts"][number] | undefined {
+  return this.state.artifacts.filter(a => a.kind === "training_selected_result").at(-1);
+ }
+ private async refreshChampion() {
   const s = this.state;
-  for (const work of [...s.works].reverse()) {
-   if (work.stage !== "solve" || work.status !== "terminal" || work.result?.outcome !== "success" || (work.summary?.validation as { valid?: boolean } | undefined)?.valid !== true) continue;
-   const selected = s.artifacts.filter(a => a.producer === work.id && a.kind === "training_selected_result").at(-1);
-   if (selected) return selected;
-  }
-  return undefined;
+  const trial = await (this.deps.promotedChampion ?? promotedChampion)(s.taskId);
+  if (!trial) return undefined;
+  const evidence = trial.artifacts.find(a => a.kind === "training_trial_result");
+  if (!evidence) return undefined;
+  const metadata = JSON.parse(readFileSync(join(trial.directory, "recovery.json"), "utf8"));
+  const producer = s.works.find(w => w.id === metadata.originStageInvocationId && w.stage === "solve") ?? s.works.filter(w => w.stage === "solve").at(-1);
+  if (!producer) return undefined;
+  const bytes = readFileSync(evidence.path), sha256 = hash(bytes);
+  if (sha256 !== evidence.sha256) throw new Error("Champion evidence hash mismatch");
+  const id = `${producer.id}:training_selected_result:${sha256}`;
+  const directory = join(this.store.directory, "artifacts"); mkdirSync(directory, { recursive: true });
+  const snapshotPath = join(directory, sha256);
+  if (!statExists(snapshotPath)) writeFileSync(snapshotPath, bytes, { flag: "wx", flush: true });
+  const artifact = { ...evidence, kind: "training_selected_result", id, producer: producer.id, snapshotPath,
+   provenance: { artifactId: id, taskId: s.taskId, pipelineRunId: s.runId, invocationId: producer.id, sha256 } };
+  if (!s.artifacts.some(a => a.id === id)) this.commit("champion_evidence_reconciled", { experimentId: trial.experimentId, invocationId: producer.id }, next => { next.artifacts.push(artifact); });
+  return artifact;
  }
  /**
   * The decision loop ended without a hand-over (deadline, spent counters, or the
@@ -411,7 +429,7 @@ export class Coordinator {
   if (this.state.works.some(w => !terminal(w))) return end("blocked", `Budget end (${why}): owned work has an uncertain outcome; reconcile it before a hand-over`, false);
   // Nobody reads the inbox any more; acknowledge it so the refit's notice always fits.
   if (this.state.cursor > this.state.acknowledgedCursor) this.commit("notifications_acknowledged", { cursor: this.state.cursor, reason: "budget_end" }, s => { s.acknowledgedCursor = s.cursor; s.inbox = []; });
-  const champion = this.champion();
+  const champion = await this.refreshChampion();
   if (!champion) return end("cancelled", `Budget end (${why}): nothing to hand over; no solve produced a validated champion`, false);
   const s = this.state, refits = s.works.filter(w => w.stage === "refit" && w.result?.outcome === "success");
   const done = s.policy.authorized ? refits.find(w => w.upstream.includes(champion.id)) : refits[0];

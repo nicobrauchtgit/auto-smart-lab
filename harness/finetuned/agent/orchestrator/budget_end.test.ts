@@ -19,7 +19,7 @@ import { spamConfiguration } from "../pipeline/task_configuration.testing.js";
 const original = { ...STAGE_REGISTRY };
 afterEach(() => { Object.assign(STAGE_REGISTRY, original); });
 
-type Behaviour = { solveValid?: boolean; solveMs?: number; researchMs?: number; refitMs?: number };
+type Behaviour = { solveValid?: boolean; cancelAfterPromotion?: boolean; solveMs?: number; researchMs?: number; refitMs?: number };
 /**
  * A coordinator whose stages run through the real executor with fake stage
  * bodies, wired like run.ts: stages stop at the deadline, the budget-end refit
@@ -30,6 +30,7 @@ async function harness(limits: Partial<RunState["limits"]>, behaviour: Behaviour
  const config = resolvePipelineSettings({ defaultModel: "fixture/model", providers: {}, agent: { cwd: directory, agentDir: directory, initialPrompt: "" }, pipeline: { version: 1, scheduling: "agent", entryStage: "research", stages: Object.fromEntries(["research", "solve", "evaluate", "refit", "submit"].map(name => [name, { enabled: true, options: {} }])) } } as any);
  const store = new StateStore(directory, initialState({ taskId: "fixture", taskFingerprint: "a".repeat(64), config, promptTemplates: prompts.serialize(), promptFingerprint: prompts.fingerprint, authorized, limits }));
  const trace = await createPipelineTrace({ telemetry: testTelemetry(), taskId: "fixture", pipelineRunId: store.state.runId, runsDir: directory });
+ let promoted: any;
  const deliveries = join(directory, "deliveries"); const lines: string[] = []; const refitSignals: AbortSignal[] = [];
  const sleep = (ms: number, signal: AbortSignal) => new Promise<void>((resolve, reject) => { const t = setTimeout(resolve, ms); signal.addEventListener("abort", () => { clearTimeout(t); reject(new Error("aborted")); }, { once: true }); });
  const artifact = (kind: string, id: string, contents: string) => { const path = join(directory, id, kind === "training_selected_result" ? "trial-result.json" : `${kind}.json`); mkdirSync(join(directory, id), { recursive: true }); writeFileSync(path, contents); return { kind, path, sha256: hash(contents) }; };
@@ -39,7 +40,12 @@ async function harness(limits: Partial<RunState["limits"]>, behaviour: Behaviour
   if (name === "solve") {
    await sleep(behaviour.solveMs ?? 10, context.signal);
    if (behaviour.solveValid === false) return { artifacts: [], validation: { valid: false, errors: ["no eligible trial"] }, summary: { trial_ids: ["t1"] } };
-   return { artifacts: [artifact("training_selected_result", `trial-${id}`, JSON.stringify({ experimentId: `trial-${id}`, balancedAccuracy: 0.99 }))], validation: { valid: true, errors: [] }, summary: { trial_ids: [`trial-${id}`] } };
+   const selected = artifact("training_selected_result", `trial-${id}`, JSON.stringify({ experimentId: `trial-${id}`, balancedAccuracy: 0.99 }));
+   const trialDirectory = join(directory, `trial-${id}`);
+   writeFileSync(join(trialDirectory, "recovery.json"), JSON.stringify({ originPipelineRunId: store.state.runId, originStageInvocationId: id }));
+   promoted = { experimentId: `trial-${id}`, directory: trialDirectory, artifacts: [{ ...selected, kind: "training_trial_result" }] };
+   if (behaviour.cancelAfterPromotion) await sleep(60_000, context.signal);
+   return { artifacts: [selected], validation: { valid: true, errors: [] }, summary: { trial_ids: [`trial-${id}`] } };
   }
   refitSignals.push(context.signal);
   expect(context.input.upstream.map(a => a.kind)).toContain("training_selected_result");
@@ -50,7 +56,7 @@ async function harness(limits: Partial<RunState["limits"]>, behaviour: Behaviour
  const controller = new AbortController(), handOver = new AbortController();
  let deadlineReached = false;
  const timer = setTimeout(() => { deadlineReached = true; controller.abort(); }, Math.max(0, store.state.deadline - Date.now()));
- const coordinator: Coordinator = new Coordinator(store, { progress: event => lines.push(formatProgress(event)),
+ const coordinator: Coordinator = new Coordinator(store, { promotedChampion: async () => promoted, progress: event => lines.push(formatProgress(event)),
   start: (work, input) => startStageInvocation({ invocationId: work.id, stage: work.stage, input, config, trace, prompts, optionOverrides: work.options,
    ...(work.origin === "budget_end" ? { reason: "budget_end_hand_over", signal: handOver.signal } : { reason: "orchestrator_decision", signal: controller.signal, executionGuard: coordinator.guardFor(work.id) }) }) });
  coordinator.configure({ actionId: "configure", expectedRevision: coordinator.state.revision, rationale: "fixture", configuration: spamConfiguration() });
@@ -167,4 +173,16 @@ test("progress lines name the stage, the objective's first words, outcome, valid
   .toBe('[run 2026-11-10 12:00:00Z] stage started: solve 01234567 — "Build a binary TF-IDF pipeline with a linear SVM and …"');
  expect(formatProgress({ kind: "stage_finished", stage: "solve", invocationId: "0123456789", outcome: "success", valid: true, durationMs: 754_000 }, now)).toBe("[run 2026-11-10 12:00:00Z] stage finished: solve 01234567 success, valid, 12m 34s");
  expect(formatProgress({ kind: "run_ended", runId: "r", outcome: "failure", reason: "x" }, now)).toBe("[run 2026-11-10 12:00:00Z] run r ended: failure — x");
+});
+
+test("deadline hands over a promoted trial while its solve is still running and then cancelled", async () => {
+ const h = await harness({ maxWallMs: 800 }, { cancelAfterPromotion: true });
+ await runDecisionLoop(h.coordinator, { ...h.loop, runAgent: async () => {
+  h.start("solve"); await h.wait(); h.coordinator.executionGuard.beforeModelRequest();
+ } });
+ expect(h.coordinator.state.works[0]!.result?.outcome).toBe("cancelled");
+ expect(h.coordinator.state.status).toBe("finished");
+ expect(h.coordinator.state.journal.some(e => e.kind === "champion_evidence_reconciled")).toBe(true);
+ expect(existsSync(join(h.deliveries, "output.csv"))).toBe(true);
+ await h.close();
 });
