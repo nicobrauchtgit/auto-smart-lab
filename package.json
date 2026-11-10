@@ -16,7 +16,8 @@
     "solve-stage": "bun harness/finetuned/agent/solve_cli.ts",
     "refit-stage": "bun harness/finetuned/agent/refit_cli.ts",
     "orchestrate": "bun harness/finetuned/agent/orchestrate_cli.ts",
-    "experiment": "bun experiment/cli.ts"
+    "experiment": "bun experiment/cli.ts",
+    "scorecard": "bun harness/finetuned/agent/scorecard_cli.ts"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "0.84.1",
