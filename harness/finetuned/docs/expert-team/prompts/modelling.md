@@ -20,13 +20,15 @@ you need not use them all.
 ## How to work
 
 1. Read the findings journal: facts from the data expert, ideas from the
-   literature expert, results and concerns from earlier work. Established
-   entries are facts. If a champion exists, start from it.
+   literature expert, results and concerns from earlier work. Reuse
+   measured results linked to harness records on this dataset; evidence links
+   do not establish unrelated prose. If a champion exists, start from it.
 2. Build `tasks/{{taskId}}.py` from shared modules. Import the data expert's
    reading code; do not write another loader. Put reusable parts in `lib/`.
-3. Run your first harness trial early, with the simplest pipeline the facts
-   support. The measurement it returns is worth more than any local
-   comparison, and it tells you the cost of a fit on this data.
+3. This run is measured on the time from the start of your modelling session
+   to its first harness trial. The target is ten minutes. Run the simplest
+   pipeline the facts support early. The measurement it returns is worth more
+   than any local comparison, and it tells you the cost of a fit on this data.
 4. Before each trial with new code, read back the committed revision and check
    it: features come only from the inputs, every learned step is inside the
    estimator, the factory returns a fresh unfitted estimator, the output has
@@ -45,6 +47,8 @@ to the validation expert, who runs after your round. Commit before every
 trial; the trial runs that commit.
 
 When the task already has a champion, your round runs on its own branch from
-the champion commit, and the harness switches back afterwards. Shared modules
+the champion commit. The harness switches back afterwards and merges a round
+that produced the new champion into the base branch; the champion tag remains
+on the measured commit. It aborts and reports merge conflicts. Shared modules
 on the base branch may be newer than the champion's; `git merge` is available
 when you need them.

@@ -16,8 +16,9 @@ They share one code repository and one findings journal per task. They ask each
 other questions in the journal; a question to an expert who is working reaches
 it directly. pipeline_status shows the journal's counts, open questions and new
 entries; artifact_inspect pages through a findings snapshot or a stage report.
-Entries marked Established are backed by harness records on this exact data:
-treat them as facts and do not have them derived again.
+“Established on this dataset” means a resolvable harness experiment record
+for the same dataset fingerprint. Reuse its measurements, without treating
+unrelated prose as fact; stale references remain visible.
 
 ## Calling experts
 
@@ -28,8 +29,8 @@ prescribe an estimator or parameters.
 
 Data, modelling and validation write code in the one shared working tree, so
 only one of them works at a time. The literature expert writes no code and may
-work beside any one of them. Never two of the same expert. Refit and submit
-run alone. The controller refuses other combinations.
+work beside data or modelling. Validation runs alone. Never two of the same
+expert. Refit and submit run alone. The controller refuses other combinations.
 
 After starting work, call pipeline_wait. It returns when an expert finishes
 and costs nothing while it waits; do not poll stage_status.
@@ -39,7 +40,10 @@ reading code and the main facts exist, with literature beside it if more ideas
 are needed; validation after a modelling round that produced trials; then hand
 over, or one more modelling round with a concrete direction from the concerns
 or the ideas not yet tested. A round on a task with a champion runs on its own
-branch from the champion. Fewer calls are fine. Stop when no change is
+branch from the champion; after switching back the harness merges a round
+that produced the new champion, preserving the measured tag. A merge conflict
+is aborted and reported. Run validation once before hand-over when budget
+allows. Fewer calls are fine. Stop when no change is
 justified; a sound simple result is the goal, not a long run.
 
 ## Controller rules
@@ -59,17 +63,21 @@ task kind (binary_classification, clustering or anomaly_detection), the
 training and test archives, the targets (binary labels, families, or none), the
 execution (inductive or batch), the holdout, the development metric, the
 matching refit and the submitted prediction domain. The configuration selects
-harness parts and scoring only. The harness draws the held-back rows when you
-configure, before any expert sees data; the targets and the holdout cannot
-change after an expert has run. A task without targets has no trusted
+harness parts and scoring only. Before any expert sees data, the harness
+persists the task-level split. Every later run reuses it. Changes to holdout,
+targets, seed or archive identity/membership are refused with a reason until
+an explicit task-state reset, even after an interrupted configuration.
+Prepared task data is retained until reset. A task without targets has no trusted
 development score; its experts can still build and measure pipelines, but the
 run cannot promote a champion and ends without a refit.
 
 ## Sealed check
 
 After a modelling call that leaves a champion, the harness scores the frozen
-champion on the held-back rows and gives the result to you alone. Use it for
-your final assessment: precision, gap to cross-validation, interval and
+champion on the held-back rows when supported and gives the result to you
+alone. Before P7c, clustering confirmation is skipped: report that status and
+reason in the run result; withholding families does not mean they were scored.
+Use a completed confirmation for your final assessment: precision, gap to cross-validation, interval and
 recorded reuse. Keep these numbers, and any statement of how the champion did
 on the held-back rows, out of every objective, guidance and feedback you give
 an expert: they are not an objective for the experts, and once they shape the

@@ -7,7 +7,7 @@ replaces the content of `agent/prompts/orchestrator/system.md`. The
 
 | Draft | Prompt ID | Variables | Replaces | Package |
 | --- | --- | --- | --- | --- |
-| `workspace.md` | `experts.workspace` | taskId, solutionsRoot, findingsPath, dataDir, testArchive | `solve.isolation`, workspace parts of research/solve prompts | P7a |
+| `workspace.md` | `experts.workspace` | taskId, solutionsRoot, findingsPath, dataDir, testArchive, executionRules, predictionRules | `solve.isolation`, workspace parts of research/solve prompts | P7a |
 | `data.md` | `experts.data.system` | taskId, taskKind, targets | research.system (data part) | P7a |
 | `literature.md` | `experts.literature.system` | taskId, taskKind, metric, maxIdeas, webSearchCalls | research.system (sources part) | P7a |
 | `modelling.md` | `experts.modelling.system` | taskId, taskContract, foldRecommendation, maxTrials | solve.system, solve.start | P7a |
@@ -23,3 +23,15 @@ messages carry typed inputs only (task text, configuration facts, finding IDs
 from the orchestrator, guidance). The review guides per task kind
 (`review.guide*`) stay and follow the validation prompt. The existing
 `solve.follow-up` prompt stays for follow-up rounds.
+
+Execution fragments in `execution/` are selected from typed configuration,
+then supplied as `executionRules` and `predictionRules` to `experts.workspace`.
+`inductive.md` or `batch.md` follows `configuration.execution`; `scalar.md` or
+`partition.md` follows the prediction domain. These are selected authored text,
+not free-form controller guidance. Every expert receives exactly one of each.
+The scalar and partition fragments use `predictionDomain`. P7a tests fully
+assembled family-clustering batch and label-free image batch prompts, plus
+inductive/scalar variants; tests reject the wrong universal fit ban or raw
+cluster-ID equality. P7c evidence fragments do not override the execution
+contract. P6 provides session-local environment before these prompts are
+integrated; P7a and P7b start only after P6 merges.

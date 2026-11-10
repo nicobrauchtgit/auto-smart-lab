@@ -1,4 +1,4 @@
-<!-- Draft for P7c: replaces the last two sentences of "Task configuration" in orchestrator.system when the label-free path exists. No variables. -->
+<!-- Draft for P7c step 2 (step 1 uses only the unscored paragraph): replaces the last two sentences of "Task configuration" in orchestrator.system when the label-free path exists. No variables. -->
 ## Tasks without targets
 
 A task without targets gets a development score only from evidence labels:

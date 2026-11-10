@@ -1,739 +1,510 @@
 # Expert team: workspace, sandbox and experts
 
-Status: design for package P5 of [the redesign plan](../../../docs/redesign-plan.md),
-2026-11-10, revised the same day with the user's decisions on the shared tree,
-follow-up branches, sealed numbers and the label-free path. Documents only.
-Paths are relative to `harness/finetuned/` unless they start with `runs/`.
-Draft prompts are in [expert-team/prompts/](expert-team/prompts/); they are not
-registered and move to `agent/prompts/` in wave 2.
+Design for P5 of [the fixed redesign plan](../../../docs/redesign-plan.md),
+revised 2026-11-10. Documents only. Paths are relative to
+`harness/finetuned/` unless prefixed by `runs/`, `experiment/` or “root”.
+[Draft prompts](expert-team/prompts/) are not registered runtime prompts.
+P1 (observed processes and one memory pool), P3 (run mechanics) and P4
+(scorecard) remain prerequisites. This design does not change their decisions.
 
-P1 (observed scripts, one memory pool), P3 (run mechanics) and P4 (scorecard)
-are assumed to exist as the plan describes them. "Run observed" means the P1
-shell: short commands return directly, long ones return an ID and wake the
-agent by rule.
+## 1. Workspace and execution
 
-## 1. At a glance
+Four executor stages replace research, solve and evaluate: **data** establishes
+inputs and writes reusable readers; **literature** supplies sourced ideas at
+the level of what and why; **modelling** builds pipelines and runs harness
+trials; **validation** checks trial code and evidence. Every session uses
+explicit module prompts, typed inputs, prompt snapshots, shared telemetry and
+`noContextFiles: true`. Standalone expert CLIs use the same executor and
+whole-chain setup checks. A completed session is not stage success: artifact
+validation decides. Harness-run trials remain the only model-selection evidence.
 
-| Today | Design | Reused | Deleted |
-| --- | --- | --- | --- |
-| research, solve, evaluate stages | data, literature, modelling, validation stages | `StageDefinition`, executor, registry, session runner, lesson step | research session, brief, research budget, evaluate stage |
-| research folder, solve scratch folder, `solutions/` | the one checkout `runs/finetuned/solutions` | `ensureSolutionsRepository`, `branches.ts` (follow-up rounds, checkpoint) | `runs/<task>/research/analysis/`, `copyResearch` |
-| research sandbox (full task data), solve sandbox (dev data) | one sandbox policy, dev data only | `sandboxPolicy`, `isolatedSolveTools`, `trainingSandboxCommand` | `prepareResearchSandbox` |
-| sealed split made by solve | sealed split made at `task_configure` | `seal()`, `writeDevelopmentZip`, seed plan | sealing inside `prepareSolveWorkspace` |
-| `research.md` + brief validator | per-task findings journal | URL check of `research/validate.ts` | brief checks, `check_brief` |
-| one mutating stage | one code-writing expert, plus literature beside it | coordinator, state store, `pipeline_wait` | none |
-| reviewer reads the sealed confirmation | sealed numbers reach the orchestrator only | confirmation service, receipt, reuse ledger | confirmation input to `evaluation/evidence.ts` |
-
-## 2. The workspace
-
-### 2.1 Layout
-
-`runs/finetuned/solutions/` stays the one versioned repository
-(`ensureSolutionsRepository`, `agent/training/git.ts:90`) and the one working
-tree every expert uses. Its layout:
+All experts share one working tree, `runs/finetuned/solutions/`:
 
 ```text
-solutions/
-  README.md     rules of the workspace (harness-owned, from agent/solve/solutions-README.md)
-  INDEX.md      one line per module: path, purpose, owner role, tasks that import it
-  lib/          shared across tasks; imported as solutions.lib.<area>.<module>
-    io/         reading sample descriptors: archives, members, captures, images
-    parse/      format parsers (text, documents, binaries, sessions, images)
-    features/   representations: transformers with fit/transform
-    models/     reusable estimators and wrappers
-    cv/         splitter factories
-  checks/       short checks, run with pytest by the experts and by the harness
-    lib/        checks of shared modules on a small fixture or sample
-    <task>/     task checks (data facts, leakage controls, output domain)
-  tasks/
-    <task>.py   harness entrypoint (unchanged contract: build_pipeline, optional CV factory)
-    <task>/     task-specific modules not (yet) worth sharing
-  docs/         notes about formats and modules, one file per topic
-  scratch/      ignored; throwaway output, never committed
+README.md             harness-owned workspace rules
+INDEX.md              module path, purpose, owner role, importing tasks
+lib/{io,parse,features,models,cv}/
+tasks/<task>.py       build_pipeline and optional CV factory
+tasks/<task>/         task-specific modules
+checks/{lib,<task>}/  short executable checks
+docs/                 format and module notes
+scratch/              ignored large files and temporary output
 ```
 
-Per task: `tasks/<task>.py`, `tasks/<task>/`, `checks/<task>/`. Shared:
-`lib/`, `checks/lib/`, `docs/`. A module moves from `tasks/<task>/` to `lib/`
-when a second task imports it; the mover updates `INDEX.md`. `solutions.lib...`
-imports already work in harness trials: the worker puts the directory holding
-the trial's `solutions/` on `sys.path` and `PYTHONPATH`
-(`agent/training/python/smartlab_trial/agent_code.py:83`).
+Search `INDEX.md` and `rg` first; extend existing modules. One concern per
+module; every Python file starts with a two-line purpose/input-output
+docstring. Update the index with code. Move task code into `lib/` when a
+second task imports it. Python stays inside `solutions/`; large and temporary
+files go in ignored `scratch/`. Remove the spam-specific filename-label rule
+from the shared README; task text supplies such facts.
 
-The findings journal is the one shared record that is not in git (section 5):
-the literature expert writes it while a code-writing expert works, and the
-harness owns its structure.
+Only data+literature and modelling+literature may overlap. Validation runs
+alone, between modelling rounds and once before hand-over when budget allows.
+Never two of a role; refit and submit run alone. Training recovery blocks all
+roles except modelling recovery. One shared parallel rule validates both
+persisted state and new starts. Literature has read-only file tools, web search
+and findings/knowledge tools, no shell/write/edit and no fitting.
 
-`README.md` loses the sentence that the spam task IDs encode labels
-(`agent/solve/solutions-README.md`): that fact belongs to the task description,
-not to a file every task reads.
+`beginCodeWork` closes any interrupted follow-up before starting a code writer;
+a failure fails the stage with its reason, without starting that expert.
+Checkpoint leftovers on their original branch. Move oversized untracked files
+(above the existing 1 MB threshold) to collision-safe paths in `scratch/` and
+report old/new paths; commit other leftovers. `endCodeWork` must leave
+`uncommittedFiles` empty. Temporary output belongs in scratch from the start.
+The current checkpoint leaves large files behind
+(`agent/training/branches.ts:43-55`); the solve runner catches a failed round
+recovery and continues (`agent/run/harness_solve_session.ts:319-334`). P6 fixes
+both, including the legacy solve execution path.
 
-### 2.2 Rules and their cheap checks
+Follow-up rounds start from the champion on a branch in this same tree.
+After switching back, the harness merges a round that produced the new champion
+into the base branch; the champion tag stays on the measured commit. A conflict
+aborts the merge and is reported, with the round retained and no expert started
+on a conflicted tree. Persist switch/merge progress so recovery is idempotent.
+Rounds without a new champion remain branches. Today switching back performs
+no merge (`agent/training/branches.ts:104-115`). Literature may read the checked
+out round; data and validation start only after round closure.
 
-Rules (stated in the shared workspace prompt):
+`workspace_check` is a static pass, without importing agent code, bounded to
+2 s: missing docstrings/index entries, nonexistent indexed paths and stray
+Python are errors; duplicate function bodies and files over 400 lines are
+warnings. Record shared imports and archive loaders for P4. Validation may
+write anywhere: record every changed path (including files the expert commits),
+and warn on edits outside `checks/`; do not claim a filesystem write boundary.
 
-1. One module per concern: read one format, build one representation, define
-   one estimator, run one check.
-2. Every Python file starts with a docstring: first line what it does, second
-   line its inputs and outputs.
-3. `INDEX.md` lists every module under `lib/` and `tasks/<task>/`; adding or
-   moving a module updates it in the same commit.
-4. Search before writing: `INDEX.md`, then `rg`. Extend an existing module
-   (new function, new parameter) instead of copying it.
-5. Agent Python lives only in `solutions/`; scratch output in `scratch/`.
+## 2. Task data and sealing
 
-`agent/workspace/check.ts` runs after every code-writing invocation and on
-demand through a `workspace_check` tool. It is a bounded static pass (no import
-of agent code, at most 2 s):
+P6 prepares task data at configuration, before any expert. Store it under
+`runs/finetuned/<task>/data/`: development archive, sample/target manifest,
+profile, identity and harness-only `sealed/` containing IDs, holdout metadata,
+original input identity and seed plan. The development archive plus manifest
+hash is the one dataset fingerprint for trials, findings and memory.
 
-| Check | How | Result |
+**The split is task-level state, not run state.** Persist the accepted split
+declaration atomically before producing any agent-visible data. It records task,
+archive bytes and membership, targets identity, holdout policy and root seed.
+Every later run reuses that declaration and its exact split. Reject changes to
+holdout, targets, seed or archive membership/identity with the differing fields
+and the reason: previously exposed rows must not become sealed. Only an
+explicit task-state reset permits a new declaration. Never overwrite a corrupt
+record or redraw after interruption: resume materialization from the stored
+split, or fail with a repair reason. Tests cover a fresh run and interrupted
+configuration reusing the stored split. With unchanged inputs and seed, spam1's
+first split must equal today's draw (`agent/solve/workspace.ts:129-146`).
+
+Prepared data for all tasks is retained until an explicit reset. The disk setup
+check requires free space of 1.2 times the training archive plus 1 GB before
+preparing a new task; reuse needs only missing materialization space. Refit
+rereads the measured development archive and manifest
+(`agent/refit/service.ts:149-154`), so their paths and bytes must remain stable
+for refit and recovery. Stream archives and respect P1's memory pool.
+
+| Contract | Sealing | Agent-visible targets |
 | --- | --- | --- |
-| headers | first statement of each `.py` is a docstring | error per file |
-| index | every `lib/**/*.py` and `tasks/<task>/**/*.py` is listed in `INDEX.md`; every listed path exists | error per path |
-| duplicates | normalised function bodies hashed; same hash in two files | warning with both paths |
-| reuse | `solutions.lib` imports of each task entrypoint | measurement (P4 indicator 5) |
-| loader count | modules that open the task's input archives | measurement; more than one per format is a warning |
-| stray code | agent-written `*.py` outside `solutions/` in the run folders | error |
-| size | file over 400 lines | warning |
+| binary classification | stratified rows | development labels |
+| clustering with families | whole withheld families | development family IDs for scoring only, never fit |
+| label-free anomaly (images/sessions) | no row split initially; P7c can hold back evidence labels | none |
+| label-free capture | whole capture is development input | none |
 
-Errors fail the invocation's validation and are returned as factual feedback;
-warnings go into the stage summary.
+One `expertSandbox` policy replaces the two preparation policies: explicit
+read-only mounts for development data, profile, task text, test inputs, findings
+view, Python and binaries; solutions writable for data/modelling/validation,
+read-only for literature. Never mount the original training archive, sealed
+directory or a parent exposing either. P6's bubblewrap preflight covers every
+expert. Harness-only confirmation metadata stays in `TaskData`, not in expert
+inputs. Today research mounts the task directory
+(`agent/run/solve_sandbox.ts:110`), before solve draws the split
+(`agent/solve/workspace.ts:121-146`).
 
-### 2.3 Research's and solve's folders
+Test inputs are visible read-only. Prompt rules are rendered from the typed
+execution contract and prediction domain, never a universal ban on fitting:
 
-`runs/finetuned/<task>/research/` and `runs/finetuned/<task>/solve/agent/` are
-no longer written. The harness data profile moves to
-`runs/finetuned/<task>/data/profile.json`, built by `agent/research/profile.ts`
-on the development data. `solve/training/` stays where trial records are. Old
-run folders stay as history; P4 reads them.
+- **Inductive:** fits use only fold-training development inputs; no fit on
+  validation or test inputs. Test inspection compares inputs only.
+- **Batch:** harness execution may fit the declared validation/test batch
+  without its scoring labels, including clustering unknown items and batch
+  anomaly detection. No invented targets or pseudo-labels. Local development
+  checks follow the same contract and do not become selection evidence.
+- **Scalar labels/scores:** permute inputs, undo the permutation on outputs,
+  then compare within the declared numerical tolerance.
+- **Cluster IDs:** undo the row permutation, compare the partition modulo
+  cluster-label renaming (and preserve the declared noise convention).
 
-## 3. The one sandbox and its data
+[Execution fragments](expert-team/prompts/execution/) supply both variants;
+assemble and test prompts for family clustering and label-free batch images.
 
-### 3.1 The sealed split exists before the first expert
+Sealed results go only to the orchestrator, never experts, their lessons or
+findings. Remove confirmation from validation evidence and reject confirmation
+artifact IDs as expert inputs. The orchestrator instruction keeps outcomes out
+of objectives, guidance and feedback. Confirmation is advisory, never upload
+permission. **Until P7c, clustering hand-over reports confirmation `skipped`
+with its reason**: the service skips every non-binary kind
+(`agent/confirmation/service.ts:74-77`). Withheld families alone do not establish
+a completed sealed check.
 
-Today the split is drawn inside `prepareSolveWorkspace`
-(`agent/solve/workspace.ts:121-158`), and research mounts the whole task
-directory (`agent/run/solve_sandbox.ts:110`), so research reads sealed rows.
+## 3. Expert deliverables and validation
 
-The draw is deterministic: its seed plan depends on the root seed, the task and
-the training data hash, with a fixed experiment ID (`workspace.ts:129-133`). It
-can move without changing which rows are sealed. `prepareTaskData` (P6) runs
-when `Coordinator.configure` (`agent/orchestrator/coordinator.ts:145`) accepts
-a configuration and writes `runs/finetuned/<task>/data/`:
+All experts read the findings journal, answer addressed questions, and deliver
+an executor-validated stage report: Status, Delivered (entries/modules/trials),
+Open questions, Next. Knowledge capture stores transferable lessons, not a
+second copy of task facts. Shared tools include findings read/add/resolve,
+workspace check and Python environment inspection; role tools are allowlisted.
 
-- `sealed/`: sealed IDs and `holdout.json` (harness only, never mounted);
-- the development archive (sealed members removed, as today);
-- `development-samples.json` (descriptors and development targets);
-- `profile.json` (harness data profile of the development data);
-- `identity.json`: the one dataset fingerprint (development archive plus
-  manifest) used by trials, knowledge and findings.
+| Expert | Delivers | Completion checks |
+| --- | --- | --- |
+| data | readers in `lib/io`/`lib/parse`, indexed modules, input facts with profile/check/output references, short checks | static workspace check, bounded observed data checks, at least one referenced fact and indexed reader imported by checks |
+| literature | at most five ranked ideas, each citing a data finding or “general”, and searched sources | URL provenance, finding references and configured idea limit; no code or parameters prescribed |
+| modelling | `tasks/<task>.py`, hypothesis finding IDs, harness experiments and result entries | trial collection/eligibility/selection, workspace check, entrypoint artifact from the measured commit |
+| validation | executable checks, referenced concerns addressed to owners, advisory `evaluation_report` readiness verdict | record checks with trial/commit, output and exit status; verdict reflects failures and limits; workspace check |
 
-A re-declaration that changes `targets` or `holdout` after any expert has run
-is refused, since development rows already seen could become sealed. Every run
-on the same task and data draws the same split, so findings from an earlier
-run never rest on rows that are sealed in this one.
+Data does not compare models. Literature does not run code. Modelling chooses
+features, estimator, hyperparameters and CV; local fits are only small
+construction checks. The harness owns seeds, folds, processes, predictions,
+measurements and promotion. The modelling prompt states that the run is
+measured from modelling start to its first harness trial, target ten minutes.
+At fifteen minutes without a trial, send one factual reminder, no hard stop.
 
-### 3.2 Per task kind
+Validation checks output domain, permutation-aligned outputs, fold fitting,
+CV design, overlap and execution-contract compliance. It cannot start trials;
+it recommends pipeline fixes to modelling. Its intended deliverable is checks;
+outside-check edits are recorded and warned about, not prevented.
 
-| Kind / input | Sealed rows | Experts see | Development targets |
-| --- | --- | --- | --- |
-| binary classification (text, documents, binaries) | stratified, class-based sizing | development archive, test archive | labels in the manifest |
-| clustering with families (code, binaries) | whole families (`sealGroups`) | development archive without sealed families, test archive | family IDs in the manifest; scoring only, never passed to `fit` |
-| anomaly detection, no labels (images, sessions) | none (`holdout: none`) | all training samples, test samples | none (section 8) |
-| anomaly from a capture (`pcap_tcp_connections`) | none; the whole capture is the development input (`workspace.ts:151`) | capture, connection descriptors | none |
+**Executable trial checks use immutable trial source, including imports.**
+`evaluation_code` and the check runner select the same experiment and commit.
+Mount that trial's `source` read-only and supply `VALIDATION_SOURCE_ROOT` (the
+parent of its `solutions/` package) and `VALIDATION_EXPERIMENT_ID` in the session
+environment. Run checks written in the live `checks/` against that snapshot in
+a fresh Python process: put the snapshot first on `sys.path`/`PYTHONPATH`, remove
+live solutions import roots and verify imported pipeline modules resolve under
+the snapshot. Check code may change; checked pipeline code may not. Report
+missing source explicitly; never fall back to live code. Data-only checks can
+use live readers and must be identified separately.
 
-### 3.3 One policy
+Trials create snapshots using `addWorktree`
+(`agent/training/git.ts:169-172`, `agent/training/service.ts:652-676`), but close
+removes them (`agent/training/service.ts:905-940`). P6 supplies snapshot
+resolution/reconstruction from the recorded commit/tree when absent, verifies
+identity, and mounts it read-only; it never changes the live branch. These are
+trial snapshots, not separate expert working trees. P7a runs validation checks
+through this path. Regression: live pipeline passes, champion snapshot fails;
+validation must fail, also after switch-back and a later live commit.
 
-`agent/run/sandbox.ts` (renamed from `solve_sandbox.ts`) keeps `sandboxPolicy`,
-`isolatedSolveTools` and `trainingSandboxCommand` and replaces the two prepare
-functions by one `expertSandbox(data, role, python)`:
+## 4. Findings and memory
 
-- read-only for every role: `runs/finetuned/<task>/data/` without `sealed/`,
-  the test archive, the task text, the findings view, the Python prefix and the
-  binaries;
-- `runs/finetuned/solutions` (with its `.git`): writable for data, modelling
-  and validation, read-only for literature, which has no write or shell tool
-  anyway.
+One append-only file outside git:
+`runs/finetuned/<task>/findings/journal.jsonl`. Serialize writes across sessions
+and processes: wait and retry an exclusive lock, with cancellation, instead of
+failing on contention. Do not change training's lock semantics: its
+`claimWorkspace` deliberately throws on contention
+(`agent/experiments/ownership.ts:11-19`). Append and flush a complete record
+before acknowledging; derive paged read views on demand, with no persisted
+`FINDINGS.md` to reconcile after crashes. Ignore an incomplete trailing record
+on read, report it, and truncate only that tail under the writer lock before
+appending again. A malformed complete record is an error.
 
-No policy mounts `data/sealed/` or the original training archive. The
-`solve-isolation` setup check (bubblewrap) now covers every expert.
+The shared contract defines entries and append-only resolution events:
 
-### 3.4 Test archive visibility
-
-The unlabelled test archive is visible read-only to every expert, as it is to
-solve today (`workspace.ts:174`). It carries no labels; the data expert must
-compare training and test inputs; batch tasks fit on the test batch itself;
-refit reads it anyway. Pseudo-labelling and fitting on test rows are ruled out
-by the prompts, by harness trials (only refit with `fit_predict_test_batch`
-reads test rows) and by a validation check. Test IDs are neutral.
-
-### 3.5 Who sees sealed numbers
-
-The confirmation still runs at the end of a modelling invocation that leaves a
-champion (`agent/run/harness_solve_session.ts:388`); the `holdout_confirmation`
-artifact goes to the orchestrator only. Structural changes:
-
-- `evaluation/evidence.ts:58-67` stops requiring and passing the confirmation,
-  so the validation expert never sees it;
-- `Coordinator.sealedExposure` (`coordinator.ts:130-133`) refuses confirmation
-  artifact IDs for every expert; validation output is no longer treated as
-  sealed, since validation no longer reads the confirmation;
-- `lessons.sealed` is deleted: no expert receives sealed numbers and the
-  orchestrator has no lesson step.
-
-Keeping the numbers out of objectives, guidance and feedback text is an
-instruction to the orchestrator (its system prompt), not a filter.
-
-### 3.6 Disk and memory
-
-The machine has about 9 GB free disk, 15 GB RAM and 6 cores. The development
-archive is a member copy (`zip --copy`, no inflation), so a 3 GB archive costs
-up to 3 GB more. `prepareTaskData` keeps the prepared data of one task at a
-time and deletes other tasks' development copies (they are rebuilt
-deterministically). A new setup requirement `disk` asks for free space of 1.2
-times the training archive plus 1 GB before a configuration is accepted. P1's
-machine prompt tells experts the pool size and to stream archives.
-
-## 4. The four experts
-
-Each expert is a registered stage running one session through `runSession`
-with its own prompt, tool allowlist and lesson step. Shared tools: read, grep,
-find, ls; `findings_read`, `findings_add`, `findings_resolve`;
-`workspace_check`; knowledge search/read/capture; `python_environment`
-inspect.
-
-| | data | literature | modelling | validation |
-| --- | --- | --- | --- | --- |
-| Field | what is in the dataset | what to try and why | the pipeline | whether code and evidence hold |
-| Delivers | reading code in `lib/`, data facts, data checks | ranked ideas with sources | entrypoint, harness trials, champion | checks, concerns, a verdict |
-| Code-writing | yes | no | yes | yes (checks) |
-| Shell | run observed | none | run observed | run observed |
-| Trials | no | no | `experiment_*` tools | reads records |
-| Web search | no | yes | no | no |
-
-### 4.1 Data expert
-
-Field: inputs, formats, sizes, targets, duplicates, train/test differences, and
-what the task text states about the data. Delivers the reading code for the
-task's input format (extending `lib/io` and `lib/parse` when they exist), facts
-in the journal tied to a check, a profile record or a script output, and the
-checks under `checks/<task>/` that prove them.
-
-Must not: fit estimators to compare models; report as a problem what the task
-text states; write Python outside `solutions/`.
-
-Validated by: `workspace_check` passes; the harness reruns `checks/<task>/`
-and `checks/lib/` in the sandbox (observed, bounded) and they pass; at least
-one data fact exists; a reading module is listed in `INDEX.md` and imported by
-the data checks.
-
-### 4.2 Literature expert
-
-Field: external knowledge at the level of "what and why": what works for this
-kind of input and metric, known pitfalls, algorithms and architectures.
-Delivers at most five ranked ideas, each with the facts it relies on (entry
-IDs, or "general") and at least one source.
-
-Must not: fit, write code, prescribe parameters, state facts about the dataset
-that no data entry supports. It has no shell and no write tool, so "no
-fitting" is enforced by the tool allowlist. This is also what lets it run
-beside a code-writing expert.
-
-Validated by: every URL was returned by this session's `web_search` (the check
-in `research/validate.ts:141-178`, kept as `agent/team/sources.ts`); every
-idea cites a data entry or says "general"; at most the configured number.
-
-### 4.3 Modelling expert
-
-Field: the pipeline. Delivers `tasks/<task>.py` built from shared modules,
-harness trials whose hypotheses name finding IDs, and `result` entries carrying
-experiment IDs (the harness fills in the measurements). Local code only for a
-construction check on a small sample.
-
-First trial early: the opening message states the target "first harness trial
-within 10 minutes"; the harness records `time_to_first_trial`; a modelling
-invocation without a trial after 15 minutes gets one factual reminder through
-its feedback channel. No hard stop.
-
-Must not: compare models with local fits; rewrite history (git guard stays).
-
-Validated by: the existing collection, eligibility, champion selection and
-confirmation (`harness_solve_session.ts:385-398`); `workspace_check` passes.
-
-### 4.4 Validation expert
-
-Field: correctness of code and evidence. It runs between modelling rounds:
-after a round that produced trials, and before the hand-over. Delivers checks
-under `checks/<task>/` that it runs itself (output domain, ID and order
-independence on development rows, a shuffled-target control on a sample,
-train/test overlap, no fitting on test rows); concern entries addressed to the
-expert who can fix them; a verdict through the existing `evaluation_report`
-schema (`agent/evaluation/reviewer.ts`) with a readiness score.
-
-Tools beyond the shared ones: `evaluation_detail` and `evaluation_code` on any
-recorded trial (diagnostics from `prepareEvidence`, without the confirmation),
-`experiment_history`, `experiment_compare`, run observed. `evaluation_code`
-reads the trial's commit (`git show <commit>:<path>`), not the live tree: after
-a follow-up round the tree is back on the base branch, so the live file is not
-the champion's code (section 6.3).
-
-Must not: start trials, edit pipeline code, see sealed numbers.
-
-Validated by: a recorded `evaluation_report` whose concerns each cite an
-experiment ID, a file and line, or a check; its checks pass or fail as reported
-when the harness reruns them.
-
-## 5. Collaboration: the findings journal
-
-### 5.1 Storage and tools
-
-`agent/team/findings.ts` keeps one append-only journal per task at
-`runs/finetuned/<task>/findings/journal.jsonl` and renders the read-only view
-`FINDINGS.md` next to it after every write. Writes go through tools only and
-are serialised in the harness process (append under a `claimWorkspace` lock
-from `agent/experiments/ownership.ts`).
-
-```json
-{ "id": "F12", "kind": "fact|idea|result|question|answer|concern|check|decision",
-  "author": { "role": "data", "invocationId": "...", "runId": "..." },
-  "title": "≤ 100 chars", "text": "≤ 800 chars",
-  "refs": [{ "experiment": "..." }, { "file": "lib/io/x.py", "line": 12 }, { "check": "checks/t/c.py" },
-           { "url": "..." }, { "profile": "training.sizes" }, { "entry": "F3" }],
-  "to": "modelling", "answers": "F9", "status": "open|answered|superseded",
-  "datasetSha256": "...", "authority": "verified|observed|idea" }
+```ts
+type FindingKind = "fact" | "idea" | "result" | "question" | "answer" |
+  "concern" | "check" | "decision";
+type FindingRef = { experiment: string } | { file: string; line: number; commit?: string } |
+  { check: string; experiment?: string; sha256: string } | { url: string } |
+  { profile: string } | { entry: string };
+type FindingEntry = {
+  id: string; cursor: number; kind: FindingKind;
+  author: { role: ExpertRole; invocationId: string; runId: string };
+  title: string; text: string; refs: FindingRef[]; datasetSha256: string;
+  to?: ExpertRole; answers?: string;
+};
+type FindingResolution = { cursor: number; id: string;
+  status: "answered" | "superseded"; answerId?: string; supersededBy?: string };
+type FindingsStatus = { cursor: number; counts: Partial<Record<FindingKind, number>>;
+  openQuestions: { id: string; to: ExpertRole; title: string }[];
+  newEntries: { id: string; title: string }[]; staleRefs: string[] };
 ```
 
-- `findings_add` appends; `question` needs `to`, `answer` needs `answers`.
-- `findings_resolve({id, status, supersededBy?})`: authors supersede their own
-  entries; anyone may mark a question answered by citing an answer.
-- `findings_read({kinds?, since?, to?})` returns bounded pages.
-- `result` entries carry an experiment ID; the harness adds metric, spread and
-  cost from the trial record.
-- `authority` is set by the harness (section 9).
+Titles ≤100 characters, text ≤800; questions require `to`, answers `answers`;
+results require an experiment ID and receive metric/spread/cost from the
+harness record, never agent text. Superseding one's own entry or answering a
+question appends a resolution. Reads page from a cursor, at most 12 new titles
+in status. An active addressee receives a question through invocation feedback;
+route at most eight messages per invocation. Others wait for the orchestrator.
+Every completed expert returns a `findings_snapshot` artifact for paged inspect.
 
-View sections: Facts, Ideas, Results and decisions, Checks and concerns, Open
-questions by addressee, Established and Earlier observations (earlier runs).
+Entries retain evidence links: experiment IDs, hashed check files, profile
+records, source URLs. Report missing or changed references as stale; keep the
+original entry. A passing check supports its stated observation, not arbitrary
+prose. No automatic authority field or upgrades, and no repeated check reruns
+to grant authority. Stage completion may execute checks once as specified above.
 
-### 5.2 Questions between experts
+**“Established on this dataset” means only: has a resolvable harness experiment
+record for the same dataset fingerprint.** It applies to measured results,
+not every claim in an entry. Later runs show those measurements with IDs;
+other entries remain attributed observations/ideas, with stale references
+visible. This definition is the memory contract; prompts must not call all
+established prose facts. Reuse the champion, index and shared modules; P4
+measures fewer data/literature requests on repeated tasks.
 
-A question to an expert that is running (at most the one code-writing expert
-beside literature, or the reverse) is also delivered into its session through
-the invocation feedback channel (`InvocationFeedback`,
-`agent/pipeline/executor.ts:77`); the answer goes back the same way while the
-asker still runs. At most eight routed messages per invocation. Questions to an
-expert that is not running wait in the journal; the orchestrator sees them and
-decides whether to start that expert.
+## 5. Orchestrator and hand-over
 
-### 5.3 What the orchestrator sees
+`stage_start` accepts an expert role, refit or submit, objective, guidance and
+up to 16 finding IDs. `pipeline_status` includes findings status; inspect
+accepts `findings_snapshot`; `pipeline_wait` sleeps until a completion. The
+orchestrator decides sequencing from findings and reports, not model recipes.
+Persistent state supports the allowed pair and interrupted-round recovery.
 
-`pipeline_status` gains a bounded `findings` block: counts per kind and
-authority, open questions with addressee and title, and titles of entries added
-since the last acknowledged cursor (at most 12). Each completed expert
-invocation adds a `findings_snapshot` artifact that `artifact_inspect` pages
-through. This replaces reliance on the 480-byte report excerpt
-(`knowledge/lessons.ts:39`).
+The three old stages, brief validation/budget/tools and research-copy
+requirement are retired by P7a. Keep profiling and extract the searched-URL
+check. Keep research context helpers needed for task resolution, moving their
+startup summary dependencies before deleting startup context. Stage sessions
+and CLI setup remain instrumented. Confirmation and terminal refit retain
+authoritative records; configured chains stop before submit. Only explicit
+controller submission policy authorizes uploads.
 
-### 5.4 Stage report and lesson step
+Labelled hand-over selects the harness champion, freezes and refits it,
+including sealed rows, terminally; no post-refit sealed score. P3 refits an
+unhanded champion at budget end. Validation readiness is advice. P6/P7a/P7b
+reach binary and family-clustering hand-over; the latter says sealed check
+`skipped`, with reason. Label-free tasks have diagnostics and trials but no
+champion/refit until P7c.
 
-The lesson step stays (`agent/knowledge/lessons.ts`), with `LessonStage`
-extended to the four roles. The report asks for Status, Delivered (entry IDs,
-modules, experiment IDs), Open questions, Next. The journal holds this task's
-facts; the knowledge store keeps lessons that transfer to other tasks. The
-capture prompt says so, so a fact is not written to both.
+## 6. Shared contracts and independent builds
 
-## 6. How the orchestrator calls experts
+**Build P6 first and alone. Merge it before starting P7a and P7b in parallel.**
+There are no missing-function stubs. P6 adds `agent/team/contracts.ts` as the
+single source of `StageName`, `ExpertRole`, `TaskData`, `TreeState`,
+`WorkspaceCheck`, `FindingsStatus`, entries, resolutions and findings interface.
+`pipeline/types.ts` re-exports `StageName`. For independent builds, its union
+includes the four roles, refit/submit and deprecated research/solve/evaluate
+for legacy execution/history; P7a removes legacy registry entries, P7b handles
+legacy persisted-state migration. The type union's legacy values do not enable
+stages. P6 preserves functioning legacy APIs as adapters to foundations; P7a
+retires old callers. No second implementation of sealing or sandbox policy.
 
-### 6.1 Tools and state
+`TaskData` is controller-only and includes: task/root, solutionsRoot,
+configuration, taskPath, development archive and manifest, profilePath,
+testArchive, datasetSha256, original training/targets paths, sealedPath,
+holdoutSeedPlan, measurement, fold recommendation, rowCount, targets summary,
+and `split: {sealedIds, fraction, seed, sha256, scheme, sealedGroups?,
+confirmation?: HoldoutMetadata}`. These preserve the confirmation metadata
+currently supplied by `SolveWorkspace` (`agent/solve/workspace.ts:28-56`).
+Preparation remains synchronous so the legacy synchronous workspace adapter
+can call it without a missing async dependency. Both use the same locked,
+persistent split implementation.
 
-- `stage_start.stage` becomes `data | literature | modelling | validation |
-  refit | submit`, with an optional `findingIds` (at most 16) rendered into the
-  opening message.
-- `pipeline_wait` (P3) returns when any running invocation finishes.
-- `pipeline_status` adds the `findings` block; the follow-up branch list stays.
+`TreeState = {commit: string; uncommittedFiles: string[];
+moved: {from: string; to: string}[]; changedPaths: string[]}`.
+`WorkspaceCheck = {valid: boolean; errors: string[]; warnings: string[];
+measurements: Record<string, number>; changedPaths: string[]}`.
 
-`StageName` (`agent/pipeline/types.ts:16`) and `KNOWN_STAGES`
-(`agent/pipeline/registry.ts`) change accordingly; `research`, `solve` and
-`evaluate` leave the registry and `pipeline.config.json`.
+All new cross-package exports are specified here. Async means Promise-returning;
+errors reject. Other listed functions are synchronous. Filesystem errors keep
+a bounded actionable reason, never raw credentials.
 
-The one-stage rule lives in two places today: `validate` in
-`orchestrator/state.ts:88` and `Coordinator.start` (`coordinator.ts:165`). Both
-call one rule in `agent/orchestrator/parallel.ts`:
+| Export and file | Timing / failure contract |
+| --- | --- |
+| `prepareTaskData(taskId: string, configuration: TaskConfiguration, options?: {seed?: number; signal?: AbortSignal}): TaskData` — `workspace/task_data.ts` | sync; locks task state before materialization; throws declaration conflict, invalid/corrupt inputs, disk/setup, materialization or abort error; interrupted work resumes stored split |
+| `readTaskData(taskId: string): TaskData \| undefined` — same | sync; undefined only when absent; throws corrupt/incomplete state (with resume instruction) or I/O error |
+| `expertSandbox(data: TaskData, role: ExpertRole, python: PythonEnvironment, trial?: TrialSnapshot): SolveSandbox` — `run/sandbox.ts` | sync; throws unsafe/missing mounts or invalid role/snapshot; validation requires snapshot for trial checks |
+| `resolveTrialSnapshot(root: string, experimentId: string): Promise<TrialSnapshot>` — `workspace/trial_source.ts` | async; returns `{experimentId, commit, tree, sourceRoot}`; restores absent snapshot; throws missing record/commit, hash mismatch or git/I/O error |
+| `beginCodeWork(root: string, label: string): Promise<TreeState>`; `endCodeWork(root: string, label: string): Promise<TreeState>` — `workspace/tree.ts` | async; throws unresolved round, merge conflict, failed checkpoint/move or dirty final tree; no expert starts after begin failure |
+| `checkWorkspace(root: string, taskId: string, changedPaths?: string[]): Promise<WorkspaceCheck>` — `workspace/check.ts` | async; findings return invalid/warnings; execution/2 s bound or I/O failures throw |
+| `workspaceCheckTool(root: string, taskId: string, prompts: PromptSnapshot): ToolDefinition` — same | sync factory; throws invalid path/prompt; tool awaits check and reports its error |
+| `prepareModellingWorkspace(data: TaskData, configuration: TaskConfiguration): SolveWorkspace` — `solve/workspace.ts` | sync; no split draw; throws mismatched configuration, missing retained inputs or I/O error |
+| `webSearchExtension(options: {maxCalls: number; maxResults: number; logPath: string}): ExtensionFactory` — `tools/web_search.ts` | sync factory; throws invalid options; async tool returns sanitized search failure; limits/log are session-local |
+| `FindingsReader.status(taskId: string, cursor?: number): Promise<FindingsStatus>` — interface in `team/contracts.ts` | P7a implements; P7b injects it, uses a fake only in tests; rejects malformed cursor, corrupt journal or I/O, absent journal returns empty status |
+| `findingsStatus(taskId: string, cursor?: number): Promise<FindingsStatus>` — `team/findings.ts` | P7a async implementation of that interface; same errors |
+| `findingsAdd(taskId: string, entry: Omit<FindingEntry, "id" \| "cursor">, signal?: AbortSignal): Promise<FindingEntry>`; `findingsResolve(taskId: string, event: Omit<FindingResolution, "cursor">, actor: ExpertRole, signal?: AbortSignal): Promise<FindingResolution>` — same | async serialized durable writes; reject malformed/unauthorized entries, corrupt log, I/O or abort; contention waits/retries |
+| `findingsRead(taskId: string, options?: {since?: number; kinds?: FindingKind[]; to?: ExpertRole; limit?: number}): Promise<{entries: FindingEntry[]; resolutions: FindingResolution[]; cursor: number; staleRefs: string[]}>` — same | async derived view; reject invalid filters, complete-record corruption or I/O; report torn tail/stale refs |
 
-- two active works only if one of them is the literature expert;
-- never two of the same role; refit and submit run alone;
-- an interrupted modelling work that needs training recovery blocks everything
-  but a new modelling invocation (the rule at `coordinator.ts:166`).
+`TrialSnapshot`, `FindingsReader`, `FindingKind` and the existing `TrainingLabelRow`
+type moved from startup context also live in the contract file. P7a's check
+runner export is `runTrialChecks(snapshot: TrialSnapshot, checkPaths: string[],
+sandbox: SolveSandbox, signal?: AbortSignal): Promise<{passed: boolean;
+checks: {path: string; exitCode: number; outputPath: string}[]}>` in
+`agent/evaluation/checks.ts`: async, returns failed checks normally; throws
+unsafe path/import origin, source mismatch, launch/I/O or abort errors.
 
-Budget counters stay; P3 charges trials when they run.
+P6 supplies session-local `RunSessionOptions.env` to tool factories/spawn
+hooks, never mutating `process.env`. Legacy web-search registration remains a
+working adapter with frozen options. P7b uses the contract via an injected
+reader; its production composition in `orchestrator/run.ts` uses a real
+read-only journal projection supplied by P6 (`workspace/findings_reader.ts`,
+export `createFindingsReader(root: string): FindingsReader`; sync, throws
+invalid root/I/O; returned async status has the contract errors), so P6+P7b
+runs without P7a. P7a owns
+the writer and may delegate reads to that projection. Absent journals are empty,
+not fabricated findings. The projection uses the contract format, no imports
+from P7a's implementation.
 
-### 6.2 Parallel calls
+## 7. Package table and merge gates
 
-Allowed pairs: data with literature, modelling with literature. Validation runs
-alone, between modelling rounds. Literature makes only model and web requests,
-so it does not compete for the 6 cores; the model server scales (plan decision
-9).
+Ownership below includes tests adjacent to each implementation unless assigned
+explicitly. No concurrently built packages edit the same file. Sequential
+handoffs to P7c are explicit. Every intermediate state must build and pass:
+**P6 alone; P6+P7a; P6+P7b; P6+P7a+P7b**. P6 keeps old entrypoints functioning;
+P7b must tolerate absent expert registrations and report “not implemented”,
+while its fake-expert tests exercise scheduling. P7a alone registers experts
+and runs them through the executor/CLI, without depending on controller edits.
+P7a's setup tests for the new expert chain use new `stages/experts.test.ts`;
+P6's legacy setup fixtures remain until the final integration gate. Its type
+expansion also narrows the legacy stage list in
+`agent/orchestrator/coordinator.test.ts:120-122` to literal legacy values so
+new role names do not index a legacy-only artifact map; P7b later owns that test.
 
-Concurrent sessions in one process need one fix. `runSession` writes its
-environment into `process.env` for the session's lifetime, including the
-invocation identity (`agent/run/session_runner.ts:131-146`), and `web_search`
-reads its limits and log path from `process.env`
-(`agent/tools/web_search.ts:26,87`). Literature running beside another session
-would overwrite the other's identity. The fix passes environment to tools
-through their factories and spawn hooks and removes the global mutation.
+| Package / order | File ownership and deliverable |
+| --- | --- |
+| **P6 Foundations — first, alone** | New `agent/team/contracts.ts`; `agent/pipeline/types.ts` (re-export); `agent/workspace/{task_data,tree,check,trial_source,findings_reader}.ts`, `workspace/python/workspace_check.py`; `agent/solve/{workspace,folds}.ts`, `solutions-README.md`, solve workspace/folds tests (retain legacy research-copy adapter/test until P7a); `agent/run/sandbox.ts`, `solve_sandbox.ts` compatibility adapter and sandbox tests; `agent/training/branches.ts`; `agent/pipeline/setup.ts` and setup tests; `agent/run/session_runner.ts` and tests; `agent/tools/web_search.ts` and tests; `agent/confirmation/{fixture-live.ts,service.test.ts}` sandbox consumers; `experiment/minimal.ts` import-only sandbox migration and `experiment/minimal.test.ts` boundary fixtures (no coaching); `agent/orchestrator/coordinator.test.ts` legacy-stage fixture typing (then handed to P7b); foundation API adapters in `agent/run/harness_solve_session.ts` including fail-closed recovery. P6 hands that session file, `solve/workspace.ts` and `run/research_session.ts` to P7a after merge; the research session only needs sandbox adapter wiring in P6. |
+| **P7a Experts, journal, prompts — parallel after P6** | `agent/team/{findings,sources}.ts`; `agent/pipeline/stages/{data,literature,modelling,validation}.ts` and tests, deletion of `{research,solve,evaluate}.ts` and old stage tests; `agent/pipeline/{registry,guidance,feedback,config}.ts` and tests (guidance/feedback role allowlists and config default become experts); `pipeline.config.json`; replace `agent/pipeline/run_{research,solve,evaluate}.ts` and `agent/{research,solve,evaluate}_cli.ts` with `run_expert.ts`/`expert_cli.ts`; root `package.json` research/solve-stage/evaluate-stage scripts become expert CLI calls. `agent/run/expert_session.ts`, `harness_solve_session.ts`, delete `research_session.ts` and `run/research_sandbox.test.ts`; remove the deprecated `copyResearch` and brief fields in `solve/workspace.ts`, delete `solve/research_copy.test.ts`; `agent/research/{validate,tools,budget,startup_context}.ts` and tests deleted after extracting URL checks and still-used summaries into `research/context.ts`; `research/profile.ts` and tests (development input); `agent/evaluation/{evidence,code,reviewer}.ts` and tests plus new `agent/evaluation/checks.ts` snapshot check runner; `agent/knowledge/lessons.ts` and tests. `agent/prompts/{registry,research,solve}.ts` (delete old prompt preparers), `loader.test.ts`, `experts/`, `lessons/`, `review/{system,start}.md`, `solve/{system,start,follow-up}.md`; delete `research/`, `subagents/`, `context/subagent-probe*.md`. Delete `agent/subagents/`; update its callers in `agent/{context,knowledge}/session.test.ts`, `agent/harness/config.ts`, `harness.config.json`, `harness/config.test.ts`; stage fixtures in `pipeline/{executor,run_pipeline,config}.test.ts`, `refit/pipeline.test.ts`, `research/context.test.ts`, `training/evidence_selection.test.ts`. |
+| **P7b Orchestrator — parallel after P6** | `agent/orchestrator/{coordinator,state,tools,run,session,parallel}.ts`, their tests and README; `agent/prompts/orchestrator/{system,start,tool}.md` content, keeping existing IDs/variable schema (registry belongs to P7a). Parallel rule, state migration, contract reader injection, findings inspect allowlist, configuration persistence calls, and controller prompt. No session runner/web-search ownership. |
+| **P7c Verification beyond binary classification — after all three** | `agent/confirmation/{service,receipt}.ts` and tests, confirmation worker `agent/training/python/confirm.py`, `agent/training/python/smartlab_trial/metrics.py` and tests: withheld-family clustering metric/worker and evidence confirmation. New `agent/team/evidence_labels.ts`; `agent/training/development_selection.ts`, `agent/refit/service.ts` and tests for offline declared unscored tags; label-free fragments and orchestrator label-free content, registry additions and evidence tools in expert stages (ownership handed over from P7a/P7b). Step 1 unscored hand-over, then step 2 evidence labels. |
 
-### 6.3 One tree, one writer
+P6's working adapter for `prepareSolveWorkspace` supplies its data fields from
+retained task data and keeps legacy brief copying until P7a migrates the old
+callers and removes `copyResearch`. These sequential file handoffs do not
+create shared ownership between the parallel packages. P6 moves the
+`TrainingLabelRow` type to the shared contract and changes folds imports; P7a
+moves summary helpers into context before deleting startup context. P6 setup
+fixtures use supported adapters, not imports of stages scheduled for deletion.
 
-All experts work in `runs/finetuned/solutions`. At most one code-writing
-expert (data, modelling, validation) is active at a time; literature has no
-write or shell tool, so it cannot change the tree, the index or a commit while
-it runs. With one writer:
+### Import/deletion audit
 
-- `experiment_start`'s clean-tree requirement (`training/service.ts:546`) is
-  never broken by another expert's files;
-- trial records keep binding the one repository path, so recovery, champion
-  selection and refit compare paths as today (`training/service.ts:446`,
-  `training/development_selection.ts:50`, `refit/service.ts:141`);
-- there are no merges between experts.
+Repository search of every proposed deletion/rename found these consumers;
+owners above must migrate them in the same package as the breaking change.
+Search again before deleting, including prompt registry paths and script
+strings. This is a consumer list, not permission to change the minimal agent.
 
-Start and end of a code-writing invocation call `beginCodeWork` and
-`endCodeWork` (P6, `agent/workspace/tree.ts`). Begin closes a follow-up round a
-crash left open (`recoverFollowUp`, `training/branches.ts:67`) and commits
-leftover work where it was made (`checkpoint`, `branches.ts:43`, exported).
-End commits the invocation's leftover work, so the next expert finds a clean
-tree. The data and validation stages call them; modelling keeps its own
-sequence in `harness_solve_session.ts:319-334,378-382`, which already does both.
+| Removed/renamed API or file | Consumers / owner |
+| --- | --- |
+| `run/solve_sandbox.ts` implementation → `run/sandbox.ts` | P6: `pipeline/setup.ts:2`, `run/harness_solve_session.ts:27,219` (including hashed source path), `run/research_session.ts:32`, `run/{solve_sandbox,research_sandbox}.test.ts`, `confirmation/{fixture-live.ts:4,service.test.ts:15}`, `experiment/minimal.ts:16`. Keep old import path as a functioning adapter until callers retire; P7a deletes research session/test only after migration. P6 owns initial import updates; P7a owns later deletion, never concurrently. |
+| `research/startup_context.ts` | P6: `solve/{folds.ts:14,folds.test.ts:4}` type imports; P7a: `research/context.ts:13`, `prompts/{research.ts:2,loader.test.ts:12}` plus its own test. |
+| `research/{validate,tools,budget}.ts` | P7a: `run/research_session.ts:23-25`, `research/tools.ts:7`, own tests, `knowledge/lessons.test.ts:7`. Move URL validation before deleting. |
+| `run/research_session.ts` | P7a: `pipeline/stages/research.ts:14`. |
+| `pipeline/stages/{research,solve,evaluate}.ts` | P7a: `pipeline/registry.ts:11-13`, old stage tests, `evaluation/reviewer.test.ts:8`, `harness/config.test.ts:4`, `refit/pipeline.test.ts:9`, `research/{context.test.ts:5,profile.test.ts:10}`, `training/evidence_selection.test.ts:1`. P6 owns `pipeline/setup.test.ts:99,118,160`: remove direct stage imports in favor of setup fixtures before P7a deletes them. |
+| `pipeline/run_{research,solve,evaluate}.ts` and three CLIs | P7a: `research_cli.ts:44`, `solve_cli.ts:9`, `evaluate_cli.ts:2`, root `package.json:9,15-16` script entries (script names are authoritative if lines move). |
+| `prompts/{research,solve}.ts` | P7a: `research_cli.ts:5`, `run/{research_session.ts:28,harness_solve_session.ts:13}`, `pipeline/guidance.test.ts:11-12`, `context/session.test.ts:230-231`, `prompts/loader.test.ts:10-11`. |
+| prompt research/subagents folders and context probes; replacement review/solve text | P7a: `prompts/registry.ts:29-30,38-49,73-78` and remaining research IDs; `prompts/loader.test.ts`; P6/P7a migrate sandbox/boundary prompt-path fixtures (`run/research_sandbox.test.ts:32`, `experiment/minimal.test.ts:31,76`). |
+| `agent/subagents/` | P7a: internal imports removed with folder; `context/session.test.ts:8-9`, `knowledge/session.test.ts:7`, `harness/config.test.ts:8`; config sections and registry prompt IDs retired together. |
+| `copyResearch` | P7a after P6 handoff: `solve/workspace.ts:147,213`, `solve/research_copy.test.ts:6,19,35`; retire together with brief consumers/validator. |
 
-Follow-up branches stay as they are. A modelling round on a task with a
-champion runs on `followup/<task>/<id>` from the champion commit and the
-harness switches back afterwards (`branches.ts:79-115`). Literature running
-beside it is unaffected: it reads files and writes only the journal. Data and
-validation never run during a round, so they always start on the base branch.
+### Required gates and measurable tests
 
-Two consequences:
+After **each** package: `./dev bun run typecheck`, prompt snapshot loading
+(`./dev bun test harness/finetuned/agent/prompts/loader.test.ts`), affected TS
+and Python tests, boundary tests, and CLI `--check-setup` on the pipeline and
+available standalone entrypoints. Use fixtures for absent credentials; prove
+missing/invalid prerequisites prevent sessions and aggregate local failures.
+Live probes must remain bounded; no model pipeline run is part of a package.
+New source/check executors declare Python/executable and sandbox prerequisites;
+all requested later stages are checked before any session starts.
 
-- Code written in a follow-up round stays on its branch, as today: the base
-  branch does not get the round's shared-module changes, and later rounds
-  start from the champion commit, not from data work done on the base branch
-  afterwards. The modelling prompt says the base branch may hold newer shared
-  code and that `git merge` is allowed. Whether the harness should merge a
-  round that produced the new champion is open question 1.
-- The live entrypoint after a round is the base branch's, not the champion's.
-  Today `entrypointArtifact` compares the live file with the trial commit and
-  reports a mismatch (`pipeline/stages/solve.ts:30-44`); this already happens
-  for follow-up champions. The modelling stage reads the entrypoint from the
-  commit instead, and `evaluation_code` reads trial code from its commit
-  (4.4). This is needed because of follow-up branches, not for worktrees.
+- **P6:** first split matches current spam1; fresh run and interrupted configure
+  reuse it; holdout/targets/seed/archive changes rejected before mounts; retain
+  another task's refittable data; disk failure; all role mounts hide sealed
+  inputs; literature code read-only. Concurrent sessions preserve IDs/search
+  limits and leave `process.env` unchanged. Recovery failure prevents legacy
+  solve and any code writer starting. Oversized-file move yields clean tree;
+  round champion merges, tag unchanged, conflict aborts, crash replay safe.
+  Snapshot reconstruction verifies commit/tree. Workspace fixture errors under
+  2 s; outside-check changes reported. Journal projection replays contract
+  fixtures without a P7a import.
+- **P7a:** concurrent journal writes survive contention; replay after crash
+  including torn append; stale check/experiment ref reported without upgrading
+  prose; measured result values come from harness records. Role tools and URL
+  provenance; feedback question/answer; snapshot code reader and executable
+  check fail for broken champion even with passing live code. Stage results use
+  measured entrypoint; no confirmation in validation tools. Every assembled
+  expert prompt excludes fixture `AGENTS.md`, includes selected instructions,
+  rejects missing/unknown variables; family-clustering and label-free batch
+  image prompts allow declared batch fits and compare outputs correctly.
+- **P7b:** allowed pairs start, all other pairs/refit overlap refused; persisted
+  pairs resume; fake `FindingsReader` proves no P7a import. Production reader
+  handles no journal. Confirmation inputs rejected, validation upstream allowed;
+  fresh-run reconfiguration uses task split. Equal controller model requests
+  for fake 1 s/30 s stages. P6+P7b with old registry builds and fails unavailable
+  expert starts clearly; full integration exercises real experts and journal.
 
-### 6.4 What replaces the research brief
+Wave-2 measured runs: spam1 has reused reader, complete index, no stray Python,
+first trial ≤10 minutes, hand-over ≤45 minutes and ≤8 trials, completed binary
+confirmation and recorded validation. A repeated run reuses measurements and
+needs fewer data/literature calls. Family clustering reaches hand-over with
+confirmation explicitly **skipped**, bounded pool usage and passed disk check.
+These are the prerequisite runs for P7c, not evidence of clustering verification.
 
-The opening of a run is data with literature; modelling starts when the journal
-has a reading module, the main facts and ideas. The brief's validator is
-replaced by per-expert checks (section 4) and `workspace_check`. Deleted:
-`research/validate.ts` brief checks, `research/tools.ts`, `research/budget.ts`,
-`research/startup_context.ts`, `prompts/research/*`, `copyResearch`, and solve's
-requirement of an upstream `research_document` (`pipeline/stages/solve.ts:120-123`).
-Kept: `research/profile.ts` and the URL check. `research/context.ts` stays for
-now: the orchestrator computes its task fingerprint from it
-(`orchestrator/run.ts:59-61`).
+## 8. P7c: verification beyond binary classification
 
-## 7. What stays of the training machinery
+**Clustering:** implement sealed confirmation on withheld families, using the
+declared clustering metric (adjusted Rand index for family clustering),
+execution mode and partition semantics; scoring labels never enter fit.
+Extend the confirmation worker, metric packet, receipt and service dispatch,
+including reuse identity and a reason when truly unavailable. Gate: a completed
+(not skipped) clustering confirmation from a frozen champion with withheld
+families, with score visible only to the orchestrator.
 
-The contract in [harness-owned-training.md](harness-owned-training.md) is
-unchanged: harness-run trials are the only evidence, seeds and folds belong to
-the harness, the champion tag is the only selection rule, the sealed check
-runs on the frozen champion, terminal refit includes sealed rows and is
-terminal. The training service is still created per modelling invocation
-(`harness_solve_session.ts:280`): the modelling stage is today's solve stage
-with a new prompt and no research copy. Follow-up branches stay (6.3).
+**Label-free step 1, offline unscored hand-over:** name a completed valid trial
+and a reason; harness writes a `declared` tag, refit accepts it only for
+`metric: none` offline, result says unscored. Refuse online and labelled tasks.
+Before this step label-free runs stop with diagnostics, without refit.
 
-Removed or simplified:
+**Step 2, evidence labels:** data proposes clear positive/negative labels via
+`evidence_label({ids,label,reason,method})`; validation independently accepts or
+rejects positives. Keep label provenance and decision records harness-owned.
+Accepted negatives need the data expert's explicit label; accepted positives
+need both experts. A task-persisted seeded ID hash assigns about one third to
+held-back evidence independently of acceptance order. Store labels harness-only;
+only development evidence enters trials, never scoring labels in fit.
+`holdout: none`, anomaly targets/metric `none`, evidence selection on known
+development IDs by evidence AP or ROC AUC. The evidence split seed/membership
+obeys the same task-state reset rule. Expert tools expose only the caller's
+proposals/counts; journal gives counts/methods, never held-back IDs or outcomes.
 
-- the evaluate stage; its evidence preparation and tools serve validation;
-- the 50%/20% notices and the per-solve trial reservation (P3);
-- `agent/subagents/`, unused: experts are executor stages, and question
-  routing (5.2) covers what it offered. P7a deletes it (section 10).
+The confirmation worker scores the frozen champion on held-back evidence for
+the orchestrator. Default minimum accepted positives: 12 development, 6 held
+back. Record label-free diagnostics and flagged share against the task's stated
+rate. Verdict names ascertainment bias: hand-found clear positives need not
+represent official attacks. With insufficient evidence, use step 1. Refit
+retains the task's batch/inductive contract and prediction domain.
 
-Hand-over for labelled tasks is unchanged: the orchestrator refits the
-champion, P3 refits at budget end if it has not. The validation verdict is
-advice.
+Tests: acceptance order leaves membership unchanged; unaccepted positive enters
+neither evidence file; fresh runs reuse evidence split; sealed evidence never
+reaches experts; offline declared tag restrictions. Run label-free batch images
+to hand-over with exact input-ID coverage, evidence-selected or explicitly
+unscored; the FTP-session task uses the same path.
 
-## 8. Label-free tasks (package P7c, after wave 2)
+## 9. Current code obstacles and remaining scope
 
-Today a label-free run cannot promote a champion and "ends after solve"
-(`prompts/orchestrator/system.md`). P7c is built after P6, P7a and P7b are
-merged and spam1 and the malicious-code clustering task reach a hand-over.
-P7a and P7b do not depend on it: they run label-free tasks up to trials with
-label-free diagnostics, as solve does today. Example: Adversarial Example
-Detection, 2,990 training images (PNG, about 2 KB), no labels, about 4%
-manipulated as the task text says.
+These are implementation work, not reopened decisions:
 
-**Step 1, unscored hand-over (offline only).** The orchestrator names a
-completed, valid trial and its reason; the harness writes a `declared`
-champion tag recording that choice instead of a promotion score
-(`training/development_selection.ts`); refit accepts it only for
-`metric: none` under an offline policy; the hand-over is marked unscored. Every
-label-free run then ends with files.
+- Stage names are hardcoded in guidance (`agent/pipeline/guidance.ts:33`),
+  feedback (`agent/pipeline/feedback.ts:40`) and defaults
+  (`agent/pipeline/config.ts:46-48`). P7a owns all three.
+- Session environment is process-global (`agent/run/session_runner.ts:131-146`);
+  search reads the log/limits globally (`agent/tools/web_search.ts:26,87,117`).
+  P6 must fix this before parallel sessions.
+- Review reads live files (`agent/evaluation/code.ts:14-21`); snapshots are
+  removed on training close (`agent/training/service.ts:922,929-940`). P6's
+  resolver and P7a's check runner must bind execution, not just displayed code.
+- Confirmation skips non-binary tasks (`agent/confirmation/service.ts:74-77`),
+  so P7c needs worker/metric work, not just a prompt change. The worker also
+  requires 0/1 targets (`agent/training/python/confirm.py:30-35`) and binary
+  observations/bootstrap (`agent/training/python/confirm.py:49-74`).
+- Refit hashes retained inputs (`agent/refit/service.ts:149-154`); task-level
+  split persistence must keep paths and bytes stable.
+- Current split preparation writes holdout files each invocation
+  (`agent/solve/workspace.ts:121-158`); deterministic redraw alone does not
+  reject changed declarations or survive partial configuration safely.
+- Lock contention throws (`agent/experiments/ownership.ts:11-19`); journal
+  serialization must wait without weakening training ownership.
+- Round checkpoint/recovery and missing merge are the changes in section 1.
 
-**Step 2, evidence labels with a held-back part.** The harness already supports
-evidence selection for anomaly tasks: partial 0/1 labels for development IDs,
-both classes per fold, selection by evidence average precision or ROC AUC
-(`pipeline/task_configuration.ts:122-140`, `training/service.ts:622`).
-
-1. Configuration: `anomaly_detection`, targets `none`, holdout `none`, metric
-   `none`, `selection: {basis: evidence, metric: evidence_average_precision,
-   direction: maximize, population: development}`.
-2. The data expert proposes clear positives and clear negatives with
-   `evidence_label({ids, label, reason, method})`. The validation expert
-   reviews each proposed positive independently and accepts or rejects it.
-   Only accepted labels count.
-3. An accepted label goes to the held-back part when a seeded hash of its
-   sample ID falls below one third, so the split does not depend on when labels
-   were accepted. Held-back labels go to `data/sealed/evidence.json`; the rest
-   form the development evidence file that `measurement.evidence` points to
-   (agent-written today, `workspace.ts:163`; harness-written then). The label
-   store is not mounted; `evidence_label` returns only the caller's proposals
-   and counts; journal entries give counts and methods, not sample IDs.
-4. Trials select by development evidence; the confirmation scores the frozen
-   champion on the held-back labels for the orchestrator only.
-5. Verify well means: at least the configured minimum of accepted positives
-   (default 12 development, 6 held back); two experts agree on every positive;
-   label-free diagnostics recorded; the flagged share on test compared with
-   the rate the task text states; the verdict names the bias of hand-found
-   positives (they are the clearest cases, so evidence AP overstates).
-6. Refit as for labelled tasks (`refit/service.ts:101-104` already handles
-   anomaly score semantics). With too few positives, step 1 applies.
-
-The same path serves the FTP intrusion task (10,000 sessions, label-free).
-
-### Other tasks in scope
-
-- Document malware (PDF, DOCX, RTF; archives of 0.5 to 1.2 GB): binary
-  classification as today; disk check and streaming readers matter; parsers go
-  to `lib/parse/` and are reused by the code clustering task.
-- Clustering of malicious code (PHP, Windows and Android binaries, up to 3 GB):
-  `holdout: group`, sealed families; one task's data prepared at a time.
-- Tor website fingerprinting: closed world is multi-class classification,
-  which the harness does not support. Growth points: a
-  `multiclass_classification` kind and `targets.kind: classes`
-  (`task_configuration.ts:26,41`), per-class sealing (`sealConfirmationSet`
-  takes 0/1 labels, `workspace.ts:102`), a multi-class metric and measurement
-  packet, evidence diagnostics, and a `class_id` prediction domain in refit and
-  submission. Open world adds an unknown class. The experts need no change.
-
-## 9. Memory
-
-Every journal entry records the fingerprint from `identity.json`. Today
-research, solve and review use three fingerprints (the full task snapshot,
-`run/research_session.ts:208`; the development archive plus manifest,
-`run/harness_solve_session.ts:98-103`; the trial seed plan in evaluation), so the
-knowledge store treats research notes as another dataset
-(`knowledge/service.ts:113`). The design uses the development fingerprint
-everywhere.
-
-The harness sets `authority` when an entry is written and again at the start
-of each run:
-
-- `verified`: every ref is a harness record on the same fingerprint (a trial
-  record, a profile record, or a check under `checks/` that passes when the
-  harness reruns it on the current base branch);
-- `observed`: refs that are not all harness records;
-- `idea`: literature entries, with the experiments that tested them.
-
-A later run on the same data shows verified entries as "Established" facts with
-their record IDs, and the orchestrator's opening context says so instead of
-"Prior work only; revalidate" (`orchestrator/run.ts:153`). The champion tag
-persists, so modelling starts from the champion. A second task starts with
-`INDEX.md` and `lib/`; P4 counts `lib` imports and model requests.
-
-## 10. Wave-2 packages
-
-P6, P7a and P7b are built in parallel. No file belongs to two packages. Where a
-package needs another's function, the signature below is the contract;
-the using package codes against it with an injected stub until the provider is merged.
-Merge order: P6, then P7a, then P7b; an integration test runs after the third.
-
-### Contracts between packages
-
-| Function (file) | Provider | Used by |
-| --- | --- | --- |
-| `prepareTaskData(taskId: string, configuration: TaskConfiguration, options?: { seed?: number }): TaskData` (`agent/workspace/task_data.ts`) | P6 | P7b (`configure`) |
-| `readTaskData(taskId: string): TaskData \| undefined` (same file) | P6 | P7a, P7b |
-| `TaskData = { root; devArchive; manifestPath; profilePath; testArchive?; datasetSha256; split: { scheme; sealedRows; sha256 } }` | P6 | P7a, P7b |
-| `expertSandbox(data: TaskData, role: ExpertRole, python: PythonEnvironment): SolveSandbox` (`agent/run/sandbox.ts`) | P6 | P7a |
-| `beginCodeWork(root: string, label: string): TreeState` and `endCodeWork(root: string, label: string): TreeState` (`agent/workspace/tree.ts`) | P6 | P7a |
-| `checkWorkspace(root: string, taskId: string): WorkspaceCheck` and `workspaceCheckTool(root: string, taskId: string, prompts: PromptSnapshot): ToolDefinition` (`agent/workspace/check.ts`) | P6 | P7a |
-| `prepareModellingWorkspace(data: TaskData, configuration: TaskConfiguration): SolveWorkspace` (`agent/solve/workspace.ts`) | P6 | P7a |
-| `findingsStatus(taskId: string, cursor?: number): FindingsStatus` (`agent/team/findings.ts`) | P7a | P7b (`status`) |
-| artifact kind `findings_snapshot` in stage results | P7a | P7b (`inspect` allowlist, `coordinator.ts:299`) |
-| setup requirement `"disk"` in the `SetupRequirement` union and `setupChecks` (`agent/pipeline/setup.ts`) | P6 | P7b (`run.ts` checks it with the chain) |
-| `StageName` union and `ExpertRole = "data" \| "literature" \| "modelling" \| "validation"` (`agent/pipeline/types.ts`) | P7a, first commit | P6, P7b |
-| `RunSessionOptions.env` applied only to the session's tools; `webSearchExtension(options: { maxCalls: number; maxResults: number; logPath: string }): ExtensionFactory` (`agent/run/session_runner.ts`, `agent/tools/web_search.ts`) | P7b | P7a (literature) |
-
-### P6. One workspace and one sandbox
-
-Owns: `agent/workspace/task_data.ts`, `tree.ts`, `check.ts` and
-`agent/workspace/python/workspace_check.py` (new) with their tests;
-`agent/solve/workspace.ts` (reduced to `prepareModellingWorkspace`; deletes
-`copyResearch`), `agent/solve/folds.ts`, `agent/solve/solutions-README.md`,
-`agent/solve/*.test.ts` (deletes `research_copy.test.ts`);
-`agent/run/solve_sandbox.ts` renamed `agent/run/sandbox.ts`, its tests
-(deletes `research_sandbox.test.ts`); `agent/research/profile.ts` and its test
-(development input); `agent/training/branches.ts` (exports `checkpoint`) and
-its test; `agent/pipeline/setup.ts` and its test (`disk`, sandbox check for all
-experts).
-Must not touch: orchestrator, stages, prompts, session runner, findings.
-Order: task data and identity, sandbox, tree functions, check.
-Tests:
-- the split drawn by `prepareTaskData` for spam1 equals today's
-  `prepareSolveWorkspace` split (same sealed IDs and hash);
-- no role's mounts contain `data/sealed/` or the original training archive;
-  literature's mount of `solutions/` is read-only;
-- `beginCodeWork` closes an open follow-up marker and commits leftovers;
-  `endCodeWork` leaves `uncommittedFiles` empty;
-- `workspace_check` flags a missing header, an unlisted module and a duplicated
-  function on fixtures, in under 2 s;
-- setup refuses a configuration when free disk is below the bound.
-
-### P7a. The four experts and the findings journal
-
-Owns: `agent/team/findings.ts`, `agent/team/sources.ts` (new) and tests;
-`agent/pipeline/stages/{data,literature,modelling,validation}.ts` (new;
-`modelling.ts` replaces `solve.ts`) and tests; deletes
-`agent/pipeline/stages/{research,solve,evaluate}.ts` and `solve.test.ts`;
-`agent/pipeline/registry.ts`, `agent/pipeline/types.ts`;
-`agent/pipeline/run_{research,solve,evaluate}.ts` and
-`agent/{research,solve,evaluate}_cli.ts`, replaced by `run_expert.ts` and
-`expert_cli.ts` on the same executor path; `agent/run/research_session.ts`
-(deleted), `agent/run/harness_solve_session.ts` (modelling session),
-`agent/run/expert_session.ts` (new, data/literature/validation);
-`agent/research/{validate,tools,budget,startup_context}.ts` and tests
-(deleted after moving the URL check); `agent/evaluation/{evidence,code,reviewer}.ts`
-and tests; `agent/knowledge/lessons.ts` and test; `agent/prompts/registry.ts`,
-`agent/prompts/{research,solve}.ts`, new `agent/prompts/experts/`,
-`agent/prompts/lessons/`, deletion of `agent/prompts/{research,subagents}/`,
-`agent/prompts/review/{system,start}.md`, `agent/prompts/solve/{system,start}.md`
-and `agent/prompts/context/subagent-probe*.md`; deletion of `agent/subagents/`
-with the subagent parts of `agent/harness/config.ts`, `harness.config.json`,
-`agent/knowledge/session.test.ts`, `agent/context/session.test.ts` and
-`agent/harness/config.test.ts`; `pipeline.config.json` stage entries;
-stage fixtures in `agent/pipeline/{executor,run_pipeline,config}.test.ts`.
-Must not touch: orchestrator, state, controller tools and prompts, session
-runner, web search, sandbox and workspace internals.
-Tests:
-- literature's tool list has no bash, write or edit, and its URL check rejects
-  an unsearched URL;
-- a question to a running expert arrives through its feedback channel, and the
-  answer comes back;
-- result entries show the trial's measured metric, never agent text;
-- validation's tools return no confirmation field; `evaluation_code` returns
-  the commit's content after the live file changed;
-- the modelling stage's entrypoint artifact matches a follow-up champion's
-  commit after the switch back;
-- a fixture `AGENTS.md` marker is absent from every expert's system prompt
-  while the expert prompt is present; templates reject missing and unknown
-  variables;
-- data and validation stages leave a clean tree.
-
-### P7b. Parallel calls and the orchestrator
-
-Owns: `agent/orchestrator/{coordinator,state,tools,run,session}.ts`, new
-`parallel.ts`, their tests and `README.md`;
-`agent/prompts/orchestrator/{system,start,tool}.md` (content only; the IDs stay
-in the registry P7a owns); `agent/run/session_runner.ts` and its test;
-`agent/tools/web_search.ts`.
-Must not touch: stages, sessions other than the runner, workspace, findings
-internals, prompt registry, harness config.
-Tests:
-- data with literature and modelling with literature start; data with
-  modelling, validation with anything, two of a role, and refit beside an
-  expert are refused;
-- persisted state with an expert and literature active validates and resumes;
-- two concurrent sessions keep their own invocation IDs in telemetry and their
-  own web-search limits, and `process.env` is unchanged afterwards;
-- confirmation artifact IDs are refused for every expert; validation output is
-  accepted as upstream for modelling;
-- a re-declaration changing targets or holdout after an expert ran is refused;
-- with fake experts the orchestrator makes the same number of model requests
-  for 1 s and 30 s stages.
-
-### Measured on runs after wave 2 (P4 indicators)
-
-On spam1: one reading module in `lib/` imported by the entrypoint and the
-checks, no agent Python outside `solutions/`, index complete (5); first trial
-within 10 minutes of the modelling start (6); hand-over within 45 minutes and
-at most 8 trials (2); confirmation ran and validation entries exist (3); a
-second run shows Established entries and fewer data and literature model
-requests (7). On the malicious-code clustering task: a hand-over with sealed
-families confirmed, peak memory under the pool, disk check passed. Both are the
-condition for starting P7c.
-
-### P7c. Label-free hand-over (after the above)
-
-Owns: `agent/team/evidence_labels.ts` (new), the `declared` tag in
-`agent/training/development_selection.ts` and `agent/refit/service.ts`,
-evidence scoring in `agent/confirmation/`, the label-free prompt fragments
-([expert-team/prompts/label-free/](expert-team/prompts/label-free/)), and the
-label-free paragraph of the orchestrator prompt. Step 1 first, then step 2.
-Tests: a `declared` tag is refit for a label-free fixture offline and refused
-online or for a labelled task; on an image fixture about a third of each class
-lands in the held-back file whatever the acceptance order; a positive without
-validation's acceptance is in neither file; the held-back score reaches only
-the orchestrator. Run: Adversarial Example Detection ends with refit files for
-2,990 test images, either evidence-selected or unscored with its reason.
-
-## 11. Risks and open questions
-
-1. **Does a follow-up round that produced the new champion reach the base
-   branch?** Today it does not (`branches.ts` keeps the branch "for
-   comparison"), so shared modules improved in the round are invisible to the
-   next data expert and to other tasks. Recommended: at the end of such a round
-   the harness merges the round branch into the base branch (one writer, so a
-   conflict only arises from the modelling expert's own branch; abort and
-   report it); rounds that changed nothing stay as branches.
-2. **Validation only between rounds.** It cannot check trials while modelling
-   runs, which may add a round. Recommended: accept; the orchestrator runs it
-   after the first round with trials and once before the hand-over.
-3. **Validation's write scope.** It may write anywhere in the tree although it
-   should write only checks. Recommended: no enforcement; `workspace_check`
-   warns when validation's commits touch files outside `checks/`.
-4. **Findings outside git.** Recommended: keep them out of git in
-   `runs/finetuned/<task>/findings/`, with the read-only view.
-5. **Test archive visible to all experts.** Recommended: yes, read-only, with
-   a validation check that nothing fits on test rows.
-
-## 12. Where the current code resists the decisions
-
-- One mutating stage is enforced twice: `orchestrator/state.ts:88` and
-  `orchestrator/coordinator.ts:165`.
-- Sessions share `process.env`: `run/session_runner.ts:131-146`, read back by
-  `tools/web_search.ts:26,87`; literature beside another expert needs this
-  removed first.
-- Research reads sealed rows: `run/solve_sandbox.ts:110` mounts the whole task
-  directory; the split is made only in `solve/workspace.ts:133`.
-- `experiment_start` needs a clean tree (`training/service.ts:546`): the reason
-  for one code-writing expert at a time.
-- The training service lives for one solve session
-  (`run/harness_solve_session.ts:280,378`), so only modelling runs trials.
-- Follow-up rounds switch the one tree to another branch and back
-  (`training/branches.ts:79-115`); during a round the base branch is not checked
-  out, so no other code-writing expert may run, and the round's code does not
-  reach the base branch (open question 1).
-- The selected entrypoint is read from the live file and compared with its
-  commit (`pipeline/stages/solve.ts:30-44`); for a follow-up champion the live
-  file is the base branch's after the switch back. The review's code reader
-  reads live files too (`evaluation/code.ts:21`).
-- Three dataset fingerprints for one task (`run/research_session.ts:208`,
-  `run/harness_solve_session.ts:98-103`, evaluation's seed plan) keep knowledge
-  from passing between stages.
-- The reviewer is bound to the sealed confirmation
-  (`evaluation/evidence.ts:58-67`), and the coordinator treats all evaluate
-  output as sealed (`orchestrator/coordinator.ts:130-133`).
-- Controller detail is limited to a fixed list of artifact kinds
-  (`orchestrator/coordinator.ts:299`); `findings_snapshot` must be added.
-- The orchestrator's task fingerprint comes from the research context
-  (`orchestrator/run.ts:59-61`), not from the development data identity.
-- Label-free runs stop at solve by policy (orchestrator prompt) although
-  evidence selection exists; the evidence file is agent-written
-  (`solve/workspace.ts:163`).
-- Multi-class targets are absent from the configuration
-  (`pipeline/task_configuration.ts:26,41`) and from sealing
-  (`solve/workspace.ts:102`).
+Document malware uses the binary path and shared parsers. Multi-class Tor
+classification remains an extension: class targets, sealing, metrics and
+prediction domain must be designed together; it is not silently mapped to
+binary classification. P7c's evidence validation thresholds and batch numerical
+tolerances must be typed configuration with defaults recorded in receipts.
+Remaining implementation choices requiring an explicit configuration decision:
+the minimum evidence-negative count, scalar tolerances and cluster noise-label
+convention for each task; this design does not infer them from absent task
+instructions. These do not reopen the nine decisions above.
+No decided open questions remain. The current worktree's redesign plan has a
+“Decisions” section but no separate “Decision log”; its decisions remain fixed.
