@@ -14,7 +14,9 @@ export type Counter = "sessions" | "modelRequests" | "toolCalls" | "stages" | "t
 export interface CatalogArtifact extends StageArtifact { id: string; snapshotPath: string; producer: string }
 export interface Work { id: string; stage: StageName; actionId: string; objective: string; upstream: string[]; status: "reserved" | "active" | "interrupted" | "uncertain" | "terminal"; guidance?: StageGuidance; options?: unknown; result?: StageInvocation; summary?: Record<string, unknown>;
  /** The configuration this invocation ran under; recovery reuses it even after a re-declaration. */
- taskConfiguration?: TaskConfiguration }
+ taskConfiguration?: TaskConfiguration;
+ /** "budget_end": the harness started this hand-over refit itself after the decision loop ended. */
+ origin?: "budget_end" }
 /** The controller's declared harness parts for this task. */
 export interface DeclaredConfiguration { configuration: TaskConfiguration; sha256: string; actionId: string; revision: number }
 export interface Action { id: string; requestHash: string; kind: string; revision: number; receipt: Record<string, unknown> }

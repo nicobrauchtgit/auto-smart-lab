@@ -22,7 +22,13 @@ export interface CoordinatorDependencies {
  suggestedConfiguration?: TaskConfiguration;
  /** Follow-up branches in solutions/ for this task, bounded. */
  branches?(): unknown;
+ /** One event per stage start, stage end and hand-over, for the run's progress lines. Never throws into the coordinator. */
+ progress?(event: ProgressEvent): void;
 }
+export type ProgressEvent =
+ | { kind: "stage_started"; stage: StageName; invocationId: string; objective: string; origin?: "budget_end" }
+ | { kind: "stage_finished"; stage: StageName; invocationId: string; outcome: string; valid: boolean; durationMs?: number; error?: string }
+ | { kind: "hand_over"; handedOver: boolean; reason: string; invocationId?: string };
 function text(value: unknown, bytes: number): asserts value is string { if (typeof value !== "string" || !value.trim() || Buffer.byteLength(value) > bytes) throw new Error("Missing or oversized text"); }
 function terminal(w: Work) { return w.status === "terminal" || w.status === "interrupted"; }
 export class Coordinator {
@@ -214,6 +220,7 @@ export class Coordinator {
  }
  private launch(work: Work) {
   this.commit("stage_dispatched", { invocationId: work.id }, s => { s.works.find(w => w.id === work.id)!.status = "active"; });
+  this.emit({ kind: "stage_started", stage: work.stage, invocationId: work.id, objective: work.objective, ...(work.origin ? { origin: work.origin } : {}) });
   try {
    const handle = this.deps.start(work, this.input(work));
    if (handle.invocationId !== work.id) { handle.cancel(); throw new Error("Executor invocation reservation mismatch"); }
@@ -225,7 +232,10 @@ export class Coordinator {
  private failWork(id: string, error: unknown) {
   const message = error instanceof Error ? error.message : "Stage dispatch failed";
   this.commit("stage_dispatch_failed", { invocationId: id }, s => { const w = s.works.find(w => w.id === id)!; w.status = "terminal"; w.summary = { outcome: "failure", error: message.slice(0, 1000) }; this.notice(s, "stage_failure", w.summary, id); });
+  const work = this.state.works.find(w => w.id === id)!;
+  this.emit({ kind: "stage_finished", stage: work.stage, invocationId: id, outcome: "failure", valid: false, error: message.slice(0, 200) });
  }
+ private emit(event: ProgressEvent) { try { this.deps.progress?.(event); } catch { /* progress output is advisory */ } }
  private complete(id: string, result: StageInvocation) {
   if (result.invocationId !== id) throw new Error("Stage result identity mismatch");
   const directory = join(this.store.directory, "artifacts"); mkdirSync(directory, { recursive: true });
@@ -267,6 +277,12 @@ export class Coordinator {
    this.notice(s, "stage_terminal", summary, id);
    if (result.stage === "submit" && (submission?.state === "unknown" || submission?.state === "pending" || submission?.reservedUnknown > 0)) { s.status = "blocked"; s.reason = "Submission outcome is pending or unknown; reconcile the same durable invocation without another upload"; }
   });
+  const started = Date.parse(result.startedAt), finished = Date.parse(result.finishedAt);
+  this.emit({ kind: "stage_finished", stage: result.stage, invocationId: id, outcome: result.outcome, valid: result.validation?.valid === true,
+   ...(Number.isFinite(started) && Number.isFinite(finished) ? { durationMs: finished - started } : {}), ...(result.error ? { error: result.error.slice(0, 200) } : {}) });
+  // The budget-end refit reports its own hand-over line once the run's status is set.
+  if (result.stage === "refit" && result.outcome === "success" && result.validation?.valid === true && this.state.works.find(w => w.id === id)?.origin !== "budget_end")
+   this.emit({ kind: "hand_over", handedOver: true, reason: `terminal refit ${id} produced the hand-over files`, invocationId: id });
  }
  stageStatus(id: string) { const w = this.state.works.find(w => w.id === id); if (!w) throw new Error("Unknown invocation"); return { invocationId: id, stage: w.stage, status: w.status, summary: boundedSummary(w.summary ?? {}, this.state.limits.maxSummaryBytes - 1024), revision: this.state.revision }; }
  async feedback(request: Mutation & { invocationId: string; message: string; evidenceIds: string[] }) {
@@ -351,6 +367,63 @@ export class Coordinator {
   }
   // A feedback acceptance without a durable delivery receipt cannot be replayed.
   for (const a of this.state.actions.filter(a => a.kind === "stage_feedback" && a.receipt.state === "pending")) this.commit("feedback_interrupted", { actionId: a.id }, s => { s.actions.find(n => n.id === a.id)!.receipt = { ...a.receipt, state: "interrupted", reason: "Host restarted before delivery receipt" }; });
+ }
+ /** The decision-loop counter that is spent, if any; a spent counter ends the loop instead of a retry. */
+ exhausted(): Counter | undefined {
+  const s = this.state;
+  return (["sessions", "modelRequests", "toolCalls"] as const).find(counter => s.counters[counter] >= s.limits[`max${counter[0].toUpperCase()}${counter.slice(1)}` as keyof RunState["limits"]]);
+ }
+ /** The newest validated champion: the selected result of the latest successful solve. */
+ champion(): RunState["artifacts"][number] | undefined {
+  const s = this.state;
+  for (const work of [...s.works].reverse()) {
+   if (work.stage !== "solve" || work.status !== "terminal" || work.result?.outcome !== "success" || (work.summary?.validation as { valid?: boolean } | undefined)?.valid !== true) continue;
+   const selected = s.artifacts.filter(a => a.producer === work.id && a.kind === "training_selected_result").at(-1);
+   if (selected) return selected;
+  }
+  return undefined;
+ }
+ /**
+  * The decision loop ended without a hand-over (deadline, spent counters, or the
+  * decision agent stopped without finishing). Settle owned work, then refit the
+  * champion through the same stage path if it was not refit yet. The refit runs
+  * to its end even past the deadline; nothing is uploaded, also online.
+  * `cancelLive` cancels running stages first (the deadline); otherwise they finish.
+  */
+ async handOverAtBudgetEnd(why: string, options: { cancelLive: boolean }): Promise<{ handedOver: boolean; reason: string; invocationId?: string }> {
+  if (options.cancelLive) for (const h of this.handles.values()) h.cancel();
+  await Promise.allSettled([...this.pending]);
+  if (this.failure) throw this.failure;
+  const end = (status: RunState["status"], reason: string, handedOver: boolean, invocationId?: string) => {
+   this.commit("budget_end", { why, status, reason, handedOver, ...(invocationId ? { invocationId } : {}) }, s => { s.status = status; s.reason = reason; });
+   this.emit({ kind: "hand_over", handedOver, reason, ...(invocationId ? { invocationId } : {}) });
+   return { handedOver, reason, ...(invocationId ? { invocationId } : {}) };
+  };
+  if (this.state.status !== "running") return { handedOver: false, reason: this.state.reason ?? this.state.status };
+  if (this.state.works.some(w => !terminal(w))) return end("blocked", `Budget end (${why}): owned work has an uncertain outcome; reconcile it before a hand-over`, false);
+  // Nobody reads the inbox any more; acknowledge it so the refit's notice always fits.
+  if (this.state.cursor > this.state.acknowledgedCursor) this.commit("notifications_acknowledged", { cursor: this.state.cursor, reason: "budget_end" }, s => { s.acknowledgedCursor = s.cursor; s.inbox = []; });
+  const champion = this.champion();
+  if (!champion) return end("cancelled", `Budget end (${why}): nothing to hand over; no solve produced a validated champion`, false);
+  const s = this.state, refits = s.works.filter(w => w.stage === "refit" && w.result?.outcome === "success");
+  const done = s.policy.authorized ? refits.find(w => w.upstream.includes(champion.id)) : refits[0];
+  if (done) return end("finished", `Budget end (${why}): the champion was already handed over by refit ${done.id}`, true, done.id);
+  const producer = s.works.find(w => w.id === champion.producer)!;
+  const review = s.artifacts.filter(a => a.kind === "evaluation_report" && s.works.findIndex(w => w.id === a.producer) > s.works.indexOf(producer)
+   && s.works.find(w => w.id === a.producer)?.result?.outcome === "success").at(-1);
+  const id = randomUUID(), actionId = `budget-end-refit:${id}`;
+  const work: Work = { id, stage: "refit", actionId, objective: `Hand over the champion at budget end (${why})`, upstream: [champion.id, ...(review ? [review.id] : [])], status: "reserved", taskConfiguration: producer.taskConfiguration ?? s.taskConfiguration?.configuration, origin: "budget_end" };
+  const receipt = { invocationId: id, accepted: true, origin: "budget_end" };
+  this.commit("budget_end_refit_accepted", { why, invocationId: id, champion: champion.id, review: review?.id ?? null }, next => {
+   next.actions.push({ id: actionId, kind: "budget_end_refit", requestHash: hash({ kind: "budget_end_refit", id }), revision: next.revision + 1, receipt }); next.works.push(work);
+  });
+  this.launch(work);
+  await Promise.allSettled([...this.pending]);
+  if (this.failure) throw this.failure;
+  const finished = this.state.works.find(w => w.id === id)!;
+  const valid = finished.result?.outcome === "success" && (finished.summary?.validation as { valid?: boolean } | undefined)?.valid === true;
+  return valid ? end("finished", `Handed over at budget end (${why}): terminal refit ${id} of champion ${champion.id}`, true, id)
+   : end("cancelled", `Budget end (${why}): the hand-over refit ${id} failed: ${String(finished.summary?.error ?? finished.result?.error ?? "no valid refit result").slice(0, 300)}`, false, id);
  }
  async stop(reason: string) {
   for (const h of this.handles.values()) h.cancel();

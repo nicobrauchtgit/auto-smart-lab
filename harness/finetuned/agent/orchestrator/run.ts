@@ -17,14 +17,17 @@ import { readSubmissionAccounting, submissionTransport } from "../submission/ind
 import { initialState, StateStore, hash, type Limits, type Work } from "./state.js";
 import { inspectTaskData, listTaskDataFiles, projectPython } from "../pipeline/task_configuration.js";
 import { Coordinator } from "./coordinator.js";
+import { formatProgress, type RunProgressEvent } from "./progress.js";
 import { runDecisionAgent } from "./session.js";
-import type { PipelineRunResult, StageInput } from "../pipeline/types.js";
+import type { PipelineRunResult, StageInput, StageReporter } from "../pipeline/types.js";
 import { statePath } from "../paths.js";
 import { followUpBranches } from "../training/branches.js";
 export interface OrchestratorOptions {
  telemetry?: import("../telemetry/runtime.js").TelemetryOptions;
  taskId: string; targetScore?: number; maxSubmissions?: number; noSubmit?: boolean; checkSetupOnly?: boolean;
  model?: string; configPath?: string; runsDir?: string; resumeRunId?: string; limits?: Partial<Limits>; signal?: AbortSignal;
+ /** Receives one line per run event (stage started/finished, hand-over, run start/end). Defaults to stdout. */
+ progress?: (line: string) => void;
 }
 function boundedFile(path: string, maxBytes = 24000): string { if (statSync(path).size > maxBytes) throw new Error("Task description exceeds opening input bound"); return readFileSync(path, "utf8"); }
 /** The production restart path has no fallback to a submission upload runner. */
@@ -40,14 +43,59 @@ export async function prepareDecisionLoop(coordinator: Coordinator, options: { r
  if (coordinator.state.status !== "running") return false;
  await options.allSetup(); return true;
 }
+export interface DecisionLoopOptions {
+ runAgent(attempt: number): Promise<unknown>;
+ /** True once the run's deadline passed; running stages are then cancelled before the hand-over. */
+ deadlineReached(): boolean;
+ /** True when the caller cancelled the run; a cancel never triggers a budget-end hand-over. */
+ userCancelled(): boolean;
+ report: Pick<StageReporter, "event">;
+}
+/**
+ * Run decision sessions until the agent finishes, the caller cancels, or the
+ * budget ends. A failed physical session is restarted with a retry charge; a
+ * spent counter or the deadline ends the loop once instead. When the loop ends
+ * without a finish, the harness hands over what exists.
+ */
+export async function runDecisionLoop(coordinator: Coordinator, options: DecisionLoopOptions) {
+ let attempt = coordinator.state.counters.sessions + 1, budgetEnd: string | undefined;
+ const deadline = () => options.deadlineReached() || Date.now() >= coordinator.state.deadline;
+ const spent = () => { if (deadline()) return "deadline reached"; const counter = coordinator.exhausted(); return counter ? `${counter} budget exhausted` : undefined; };
+ for (;;) {
+  if (options.userCancelled()) throw new Error("Run cancelled");
+  if ((budgetEnd = spent())) break;
+  options.report.event("agent_attempt_start", { attempt, role: "orchestrator" });
+  try {
+   await options.runAgent(attempt);
+   if (coordinator.state.status === "running") budgetEnd = spent() ?? "the decision agent stopped without finishing";
+   break;
+  } catch (error) {
+   if (coordinator.state.status !== "running") break;
+   if (options.userCancelled()) throw error;
+   if ((budgetEnd = spent())) break;
+   if (coordinator.state.counters.retries >= coordinator.state.limits.maxRetries) { budgetEnd = "retries budget exhausted"; break; }
+   coordinator.charge("retries");
+   options.report.event("orchestrator_session_restart", { attempt, reason: "Physical session failed; durable coordinator and owned work retained" }); attempt++;
+  } finally { options.report.event("agent_attempt_end", { attempt, role: "orchestrator", revision: coordinator.state.revision }); }
+ }
+ if (!budgetEnd) return {};
+ options.report.event("budget_end", { why: budgetEnd });
+ const handOver = await coordinator.handOverAtBudgetEnd(budgetEnd, { cancelLive: deadline() });
+ options.report.event("budget_end_hand_over", handOver);
+ return { budgetEnd, handOver };
+}
 export async function runOrchestrator(options: OrchestratorOptions): Promise<PipelineRunResult> {
  const task = resolveTask({ taskId: options.taskId });
  const runsDir = options.runsDir ?? statePath(PROJECT_ROOT);
  if (options.resumeRunId && !/^[A-Za-z0-9_-]{1,128}$/.test(options.resumeRunId)) throw new Error("Invalid resume run ID");
  const releaseWorkspace = claimWorkspace(join(runsDir, task.taskId, "orchestrator-ownership"));
  let store: StateStore | undefined, coordinator: Coordinator | undefined, trace: Awaited<ReturnType<typeof createPipelineTrace>> | undefined;
- const controller = new AbortController();
- const cancel = () => controller.abort(); options.signal?.addEventListener("abort", cancel, { once: true }); if (options.signal?.aborted) cancel();
+ // `controller` stops the decision loop and its stages at the deadline or on a
+ // cancel; `handOver` stops only on a cancel, so a budget-end refit can finish.
+ const controller = new AbortController(), handOver = new AbortController();
+ let deadlineReached = false;
+ const cancel = () => { handOver.abort(); controller.abort(); }; options.signal?.addEventListener("abort", cancel, { once: true }); if (options.signal?.aborted) cancel();
+ const print = (event: RunProgressEvent) => { try { (options.progress ?? console.log)(formatProgress(event)); } catch { /* advisory */ } };
  let timer: ReturnType<typeof setTimeout> | undefined;
  let finalResult: PipelineRunResult | undefined;
  let stoppedBecause = "", outcome: PipelineRunResult["outcome"] = "failure";
@@ -71,6 +119,7 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Pip
   const previousTraceId = [...saved.journal].reverse().find(entry => entry.kind === "telemetry_execution_started")?.payload.traceId;
   store.transaction("telemetry_execution_started", { traceId: trace.traceId, previousTraceId: previousTraceId ?? null, executionId: trace.telemetry.executionId }, () => {});
   const report = trace.stage("orchestrator", saved.controlInvocationId);
+  if (!options.checkSetupOnly) print({ kind: "run_started", runId: saved.runId, taskId: task.taskId, resumed: !!options.resumeRunId, stateDirectory: store.directory });
   const setup = new SetupSession();
   const available = saved.config.enabledStages.filter(name => name !== "submit" || saved.policy.authorized);
   trace.event("task_data_ready", { downloaded: taskData.downloaded, present: taskData.present, legacy: taskData.legacy });
@@ -81,7 +130,10 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Pip
    // The file's entry is advice; stages run under what the agent declares.
    suggestedConfiguration: saved.config.taskConfigurations?.[task.taskId],
    branches: () => followUpBranches(statePath(PROJECT_ROOT, "solutions"), task.taskId),
-   start: (work, input) => startStageInvocation({ invocationId: work.id, stage: work.stage, input: { ...input, model: options.model }, config: saved.config, configPath: options.configPath, trace: trace!, prompts, setupSession: setup, optionOverrides: work.options, reason: "orchestrator_decision", signal: controller.signal, executionGuard: coordinator!.executionGuard }),
+   progress: print,
+   // A budget-end refit is the harness's own hand-over: it outlives the deadline and has no model session to guard.
+   start: (work, input) => startStageInvocation({ invocationId: work.id, stage: work.stage, input: { ...input, model: options.model }, config: saved.config, configPath: options.configPath, trace: trace!, prompts, setupSession: setup, optionOverrides: work.options,
+    ...(work.origin === "budget_end" ? { reason: "budget_end_hand_over", signal: handOver.signal } : { reason: "orchestrator_decision", signal: controller.signal, executionGuard: coordinator!.executionGuard }) }),
    officialStatus: async () => { const accounting = await readSubmissionAccounting({ taskId: task.taskId, transport: submissionTransport(task.taskId), accountingRoot: statePath(PROJECT_ROOT, "submissions"), report, signal: controller.signal }); const s = accounting.officialStatus; return { triesUsed: s.triesUsed, reservedUnknown: accounting.reservedUnknown, effectiveTriesUsed: accounting.effectiveTriesUsed, unresolved: accounting.unresolved, results: s.attempts.map(a => ({ attemptId: a.id, status: a.state, ...(a.score === null ? {} : { score: a.score }) })) }; },
    recover: async (work, input) => {
     // Deterministic adapters reconcile their existing ledger/freeze with the same
@@ -96,42 +148,38 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Pip
    candidateProducedUpstream: available.includes("solve"), refitTrainingRoot: (saved.config.effectiveOptions.refit as { trainingRoot?: string })?.trainingRoot,
   }), controller.signal, trace!.event);
   if (options.checkSetupOnly) { await allSetup(); stoppedBecause = "setup checks passed; no agents or stages executed"; outcome = "success"; return result(); }
-  const remaining = saved.deadline - Date.now(); if (remaining <= 0) throw new Error("Persisted wall budget exhausted");
-  timer = setTimeout(cancel, remaining);
-  // Read-only official/recovery access is checked before unrelated model probes.
-  // Exhausted or already-achieved goals require no new provider session.
-  const ready = await prepareDecisionLoop(coordinator, { resume: !!options.resumeRunId, allSetup, recoverySetup: async () => {
-   await setup.check(setupChecks(["observability", ...(saved.policy.authorized ? ["submission-recovery" as const] : [])], { telemetry: trace!.telemetry, taskId: task.taskId, prompts, submissionPolicy: saved.policy }), controller.signal, trace!.event);
-  } });
-  if (!ready) { stoppedBecause = coordinator.state.reason ?? coordinator.state.status; outcome = coordinator.state.status === "finished" ? "success" : "failure"; return result(); }
-  const knowledge = new TaskKnowledge({ root: statePath(PROJECT_ROOT, "knowledge"), origin: { taskId: task.taskId, datasetSha256: context.dataset.snapshot_sha256, pipelineRunId: saved.runId, stageInvocationId: saved.controlInvocationId } });
-  let attempt = coordinator.state.counters.sessions + 1;
-  for (;;) {
-   controller.signal.throwIfAborted();
-   report.event("agent_attempt_start", { attempt, role: "orchestrator" });
-   try {
-    await runDecisionAgent({ coordinator, prompts, report, taskDescription, taskFiles: listTaskDataFiles(task.taskId), knowledgeSummaries: knowledge.search(task.taskTitle.slice(0, 200), 6), model: options.model, signal: controller.signal, attempt });
-    if (coordinator.state.status === "running") {
-     await coordinator.stop("Decision agent ended without a controller finish; owned work was cancelled and settled");
-    }
-    break;
-   } catch (error) {
-    if (coordinator.state.status !== "running") break;
-    controller.signal.throwIfAborted();
-    coordinator.charge("retries");
-    report.event("orchestrator_session_restart", { attempt, reason: "Physical session failed; durable coordinator and owned work retained" }); attempt++;
-   } finally { report.event("agent_attempt_end", { attempt, role: "orchestrator", revision: coordinator.state.revision }); }
+  const remaining = saved.deadline - Date.now();
+  if (remaining > 0) timer = setTimeout(() => { deadlineReached = true; controller.abort(); }, remaining); else deadlineReached = true;
+  const recoverySetup = async () => {
+   await setup.check(setupChecks(["observability", ...(saved.policy.authorized ? ["submission-recovery" as const] : [])], { telemetry: trace!.telemetry, taskId: task.taskId, prompts, submissionPolicy: saved.policy }), handOver.signal, trace!.event);
+  };
+  const loop = { deadlineReached: () => deadlineReached, userCancelled: () => !!options.signal?.aborted, report };
+  let ended: Awaited<ReturnType<typeof runDecisionLoop>>;
+  if (deadlineReached) {
+   // A run resumed after its deadline only reconciles and hands over what exists.
+   await recoverySetup(); if (options.resumeRunId) await coordinator.recover();
+   ended = await runDecisionLoop(coordinator, { ...loop, runAgent: async () => { throw new Error("Deadline passed before the resume"); } });
+  } else {
+   // Read-only official/recovery access is checked before unrelated model probes.
+   // Exhausted or already-achieved goals require no new provider session.
+   const ready = await prepareDecisionLoop(coordinator, { resume: !!options.resumeRunId, allSetup, recoverySetup });
+   if (!ready) { stoppedBecause = coordinator.state.reason ?? coordinator.state.status; outcome = coordinator.state.status === "finished" ? "success" : "failure"; return result(); }
+   const knowledge = new TaskKnowledge({ root: statePath(PROJECT_ROOT, "knowledge"), origin: { taskId: task.taskId, datasetSha256: context.dataset.snapshot_sha256, pipelineRunId: saved.runId, stageInvocationId: saved.controlInvocationId } });
+   ended = await runDecisionLoop(coordinator, { ...loop, runAgent: attempt => runDecisionAgent({ coordinator: coordinator!, prompts, report, taskDescription, taskFiles: listTaskDataFiles(task.taskId), knowledgeSummaries: knowledge.search(task.taskTitle.slice(0, 200), 6), model: options.model, signal: controller.signal, attempt }) });
   }
   await coordinator.settle();
   stoppedBecause = coordinator.state.reason ?? "agent finished";
-  outcome = coordinator.state.status === "finished" ? "success" : coordinator.state.status === "cancelled" ? "cancelled" : "failure";
+  // A budget end without a hand-over is a failure, not a cancel by the caller.
+  outcome = coordinator.state.status === "finished" ? "success" : coordinator.state.status === "cancelled" && !ended.budgetEnd ? "cancelled" : "failure";
   return result();
  } catch (error) {
-  await coordinator?.stop(controller.signal.aborted ? "Run cancelled or persisted wall budget exhausted" : "Run failed; owned workers settled");
-  stoppedBecause = error instanceof Error ? error.message : "Orchestrator run failed"; outcome = controller.signal.aborted ? "cancelled" : "failure";
+  const cancelled = !!options.signal?.aborted;
+  await coordinator?.stop(cancelled ? "Run cancelled" : deadlineReached ? "Persisted wall budget exhausted" : "Run failed; owned workers settled");
+  stoppedBecause = error instanceof Error ? error.message : "Orchestrator run failed"; outcome = cancelled ? "cancelled" : "failure";
   trace?.event("orchestrator_error", { reason: stoppedBecause }); throw error;
  } finally {
   if (timer) clearTimeout(timer); options.signal?.removeEventListener("abort", cancel);
+  if (store && !options.checkSetupOnly) print({ kind: "run_ended", runId: store.state.runId, outcome, reason: stoppedBecause });
   trace?.event("pipeline_run_end", { outcome, stopped_because: stoppedBecause, revision: store?.state.revision });
   try { await trace?.close(); } finally { coordinator?.close(); if (!coordinator) store?.close(); releaseWorkspace(); }
   if (finalResult && trace) Object.assign(finalResult, delivery());
