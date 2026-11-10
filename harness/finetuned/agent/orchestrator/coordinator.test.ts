@@ -363,27 +363,50 @@ test("the controller's prompts describe the hand-over and no time notices", () =
  for (const id of ["orchestrator.system", "orchestrator.tool"] as const) expect(prompts.render(id, {}).text).not.toMatch(/50%|20%|at half|a fifth/);
 });
 
-/** A decision agent that charges one model request per tool call, as the real session does. */
+/** A decision agent that charges one model request per tool call, as the real session does; the stage's own agent makes requests while it runs. */
 async function waitingAgent(stageMs: number, stages = 2) {
  const f = fixture(false); let waits = 0;
- const c = new Coordinator(f.store, { start: work => {
-  const owned = controllable(work); setTimeout(() => owned.resolve(fakeResult(work)), stageMs); return owned.handle; } });
- const call = async (fn: () => unknown) => { c.executionGuard.beforeModelRequest(); c.executionGuard.beforeToolCall(); return fn(); };
+ const c: Coordinator = new Coordinator(f.store, { start: work => {
+  const owned = controllable(work), guard = c.guardFor(work.id);
+  const busy = setInterval(() => guard.beforeModelRequest(), 5);
+  setTimeout(() => { clearInterval(busy); owned.resolve(fakeResult(work)); }, stageMs); return owned.handle; } });
+ // One model response may carry several tool calls; each call is charged before it runs.
+ const response = () => c.executionGuard.beforeModelRequest(), tool = async (fn: () => unknown) => { c.executionGuard.beforeToolCall(); return fn(); };
  for (let i = 0; i < stages; i++) {
-  const cursor = ((await call(() => c.status())) as any).cursor;
-  await call(() => c.start(request(c, "research", `research-${i}`)));
-  // One pipeline_wait per stage: it returns only with the stage's result.
-  const after = await call(() => c.wait(cursor)) as any; waits++;
+  response(); const cursor = ((await tool(() => c.status())) as any).cursor;
+  // The next response starts the stage and waits for it: one pipeline_wait, returning only with the result.
+  response(); await tool(() => c.start(request(c, "research", `research-${i}`)));
+  const after = await tool(() => c.wait(cursor)) as any; waits++;
   expect(after.notifications.map((n: any) => n.kind)).toContain("stage_terminal");
  }
- await c.settle(); const result = { modelRequests: c.state.counters.modelRequests, waits, timeNotices: c.state.journal.filter(e => /time/.test(e.kind)).length }; c.close(); return result;
+ await c.settle();
+ // Between each stage's dispatch and its result, only that stage's agent reserved anything.
+ const journal = c.state.journal, reservations = journal.filter(e => e.kind === "budget_reserved");
+ let whileWaiting = 0, waitCalls = 0, stageRequests = 0;
+ for (const work of c.state.works) {
+  const from = journal.findIndex(e => e.kind === "stage_dispatched" && e.payload.invocationId === work.id), to = journal.findIndex(e => e.kind === "stage_completed" && e.payload.invocationId === work.id);
+  const orchestrator = journal.slice(from, to).filter(e => e.kind === "budget_reserved" && e.payload.source === "orchestrator");
+  // The only orchestrator entry in the window is the tool call that issues pipeline_wait itself.
+  whileWaiting += orchestrator.filter(e => e.payload.counter !== "toolCalls").length; waitCalls += orchestrator.filter(e => e.payload.counter === "toolCalls").length;
+  stageRequests += journal.slice(from, to).filter(e => e.kind === "budget_reserved" && e.payload.source === work.id).length;
+ }
+ expect(reservations.every(e => typeof e.payload.source === "string")).toBe(true); expect(stageRequests).toBeGreaterThan(0);
+ const orchestratorRequests = reservations.filter(e => e.payload.source === "orchestrator" && e.payload.counter === "modelRequests").length;
+ const result = { orchestratorRequests, waits, whileWaiting, waitCalls, timeNotices: journal.filter(e => /time/.test(e.kind)).length }; c.close(); return { ...result, stageRequests };
 }
 
 test("pipeline_wait makes no model requests while a stage runs: the count is the same for short and long stages", async () => {
  // Stand-ins for N = 1 s and N = 30 s keep the 1:30 ratio (20 ms and 600 ms).
- const short = await waitingAgent(20), long = await waitingAgent(600);
- expect(long).toEqual(short); expect(short).toEqual({ modelRequests: 6, waits: 2, timeNotices: 0 });
- console.log(`[measure] model requests for 2 stages: short=${short.modelRequests} long=${long.modelRequests}; wait returns short=${short.waits} long=${long.waits}`);
+ const { stageRequests: shortStage, ...short } = await waitingAgent(20), { stageRequests: longStage, ...long } = await waitingAgent(600);
+ expect(long).toEqual(short); expect(short).toEqual({ orchestratorRequests: 4, waits: 2, whileWaiting: 0, waitCalls: 2, timeNotices: 0 });
+ expect(longStage).toBeGreaterThan(shortStage);
+ console.log(`[measure] orchestrator model requests for 2 stages: short=${short.orchestratorRequests} long=${long.orchestratorRequests}; wait returns short=${short.waits} long=${long.waits}; orchestrator model requests/sessions between stage start and result: ${short.whileWaiting}/${long.whileWaiting} (tool-call entries: the ${short.waitCalls} wait calls); stage-agent requests short=${shortStage} long=${longStage}`);
+});
+
+test("journal entries written before sources were recorded still load", () => {
+ const f = fixture(false); const c = new Coordinator(f.store, { start: () => { throw new Error("unused"); } });
+ f.store.transaction("budget_reserved", { counter: "modelRequests" }, s => { s.counters.modelRequests++; }); c.close();
+ const reopened = new StateStore(f.directory); expect(reopened.state.journal.at(-1)!.payload).toEqual({ counter: "modelRequests" }); reopened.close();
 });
 
 test("pipeline_wait returns at the deadline when no stage reports", async () => {

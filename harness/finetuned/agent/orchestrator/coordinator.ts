@@ -49,12 +49,20 @@ export class Coordinator {
   // Terminal changes are never coalesced away; budgets cap their total count.
   if (s.inbox.length > s.limits.maxNotifications) throw new Error("Notification capacity reached; acknowledge the inbox");
  }
- charge(counter: Counter) {
+ /**
+  * Reserve one unit of a run counter. `source` says who caused it: "orchestrator"
+  * for the decision agent, a stage invocation ID for that stage's agent. Journal
+  * entries written before sources were recorded have none.
+  */
+ charge(counter: Counter, source = "orchestrator") {
   const s = this.state, key = `max${counter[0].toUpperCase()}${counter.slice(1)}` as keyof RunState["limits"];
   if (s.status !== "running" || Date.now() >= s.deadline || s.counters[counter] >= s.limits[key]) throw new Error(`Controller ${counter}/wall budget exhausted`);
-  this.commit("budget_reserved", { counter }, next => { next.counters[counter]++; });
+  this.commit("budget_reserved", { counter, source }, next => { next.counters[counter]++; });
  }
- readonly executionGuard = { beforeSession: () => this.charge("sessions"), beforeModelRequest: () => this.charge("modelRequests"), beforeToolCall: () => this.charge("toolCalls") };
+ /** The guard for the agents of one source; the run's counters are shared by all of them. */
+ guardFor(source: string) { return { beforeSession: () => this.charge("sessions", source), beforeModelRequest: () => this.charge("modelRequests", source), beforeToolCall: () => this.charge("toolCalls", source) }; }
+ /** The decision agent's own guard. */
+ readonly executionGuard = this.guardFor("orchestrator");
  private inspectMutation(request: Mutation, kind: string): Action | undefined {
   text(request.actionId, 128); text(request.rationale, 2048);
   const s = this.state, prior = s.actions.find(a => a.id === request.actionId);

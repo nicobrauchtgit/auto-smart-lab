@@ -133,7 +133,7 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Pip
    progress: print,
    // A budget-end refit is the harness's own hand-over: it outlives the deadline and has no model session to guard.
    start: (work, input) => startStageInvocation({ invocationId: work.id, stage: work.stage, input: { ...input, model: options.model }, config: saved.config, configPath: options.configPath, trace: trace!, prompts, setupSession: setup, optionOverrides: work.options,
-    ...(work.origin === "budget_end" ? { reason: "budget_end_hand_over", signal: handOver.signal } : { reason: "orchestrator_decision", signal: controller.signal, executionGuard: coordinator!.executionGuard }) }),
+    ...(work.origin === "budget_end" ? { reason: "budget_end_hand_over", signal: handOver.signal } : { reason: "orchestrator_decision", signal: controller.signal, executionGuard: coordinator!.guardFor(work.id) }) }),
    officialStatus: async () => { const accounting = await readSubmissionAccounting({ taskId: task.taskId, transport: submissionTransport(task.taskId), accountingRoot: statePath(PROJECT_ROOT, "submissions"), report, signal: controller.signal }); const s = accounting.officialStatus; return { triesUsed: s.triesUsed, reservedUnknown: accounting.reservedUnknown, effectiveTriesUsed: accounting.effectiveTriesUsed, unresolved: accounting.unresolved, results: s.attempts.map(a => ({ attemptId: a.id, status: a.state, ...(a.score === null ? {} : { score: a.score }) })) }; },
    recover: async (work, input) => {
     // Deterministic adapters reconcile their existing ledger/freeze with the same

@@ -52,7 +52,7 @@ async function harness(limits: Partial<RunState["limits"]>, behaviour: Behaviour
  const timer = setTimeout(() => { deadlineReached = true; controller.abort(); }, Math.max(0, store.state.deadline - Date.now()));
  const coordinator: Coordinator = new Coordinator(store, { progress: event => lines.push(formatProgress(event)),
   start: (work, input) => startStageInvocation({ invocationId: work.id, stage: work.stage, input, config, trace, prompts, optionOverrides: work.options,
-   ...(work.origin === "budget_end" ? { reason: "budget_end_hand_over", signal: handOver.signal } : { reason: "orchestrator_decision", signal: controller.signal, executionGuard: coordinator.executionGuard }) }) });
+   ...(work.origin === "budget_end" ? { reason: "budget_end_hand_over", signal: handOver.signal } : { reason: "orchestrator_decision", signal: controller.signal, executionGuard: coordinator.guardFor(work.id) }) }) });
  coordinator.configure({ actionId: "configure", expectedRevision: coordinator.state.revision, rationale: "fixture", configuration: spamConfiguration() });
  const events: { type: string; payload: unknown }[] = [];
  const loop = { deadlineReached: () => deadlineReached, userCancelled: () => false, report: { event: (type: string, payload: unknown) => { events.push({ type, payload }); } } };
