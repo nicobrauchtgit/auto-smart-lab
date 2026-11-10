@@ -6,8 +6,7 @@ run under an orchestrator label. Enable/disable available modules in
 `pipeline.config.json`. Experiment runs use `scheduling: "agent"`, which routes
 the generic pipeline API to this controller; submission is authorized only when
 `online` is true in `experiment.config.json`. Offline, the run hands over exactly
-one successful refit and fetches nothing. Status also shows the time left (with
-notes at 50% and 20%), the trial budget, the hand-over mode and the task's
+one successful refit and fetches nothing. Status also shows the time used and left, the trial budget, the hand-over mode and the task's
 follow-up branches in `solutions/` (`agent/training/branches.ts`): a solve on a
 task with a champion runs on `followup/<task>/<id>` from the champion commit and
 the harness switches back afterwards. Stage reports from the lesson step reach
@@ -50,8 +49,12 @@ before dispatch. Producer success plus validation is required. Artifact details
 are bounded, row labels/predictions/model pickles are not controller tools, and
 full reports remain outside the session. Status exposes bounded pages of significant
 notifications and delivered cursors; acknowledgment is durable. Terminal events
-are retained until acknowledgment. `pipeline_wait` waits for actual changes and
-never starts periodic model polling. Prompt snapshots are serialized and restored
+are retained until acknowledgment. `pipeline_wait` blocks until a stage result
+(any terminal notification) or the run's deadline: no periodic and no percentage
+wakes, so a waiting controller makes no model requests. Every `budget_reserved`
+journal entry names its `source`: `"orchestrator"` for the decision agent's
+sessions, requests and tool calls, the stage invocation ID for a stage agent's
+(entries from older runs have none). Prompt snapshots are serialized and restored
 without loading mutable authored files. Every physical session uses the existing
 observer, narrow allowlist, disabled ambient context/extensions, and fresh
 controller state through the logical session handoff.
@@ -89,9 +92,14 @@ Current limitations: diagnostic delegation is intentionally unavailable—the
 existing generic child manager has broad worker tools and only in-memory child
 ownership. No durable diagnostic adapter, distributed coordinator, provider-side
 model-request reconciliation, sealed-score disclosure, mandatory three uploads,
-or guarantee of reaching score 1 is implemented. Trial accounting conservatively
-reserves each solve invocation's entire allowed trial allocation; unused slots
-are not refunded. Budgets guard physical sessions, provider requests, tool calls,
+or guarantee of reaching score 1 is implemented. Trials are charged when they run: a solve gets an allocation of at most what is
+left (`maxIterations`), reports the IDs of the harness trials it ran
+(`trial_ids` in its summary, also when cancelled), and the coordinator charges
+each ID once (`trialIds` in the state). An interrupted solve keeps no
+reservation; the solve that recovers it reuses its training root, reports its
+trials again and they are charged only once. A solve that throws instead of
+returning a summary charges nothing. Runs from before this change keep their
+reserved counts. Budgets guard physical sessions, provider requests, tool calls,
 stages, trial allocations, retries and a persisted wall deadline. Provider retries
 inside one SDK HTTP request are not separately observable billable units. State
 contains immutable artifact lineage and bounded summaries, not a separate universal
@@ -106,3 +114,40 @@ those reservations. Resume submission inputs use the durable catalog metadata;
 original refit/source files may be removed after upload without preventing
 GET-only intent reconciliation. Regular submission execution still verifies its
 original upstream artifact hashes and frozen candidate bundle.
+
+## Budget end and hand-over
+
+The decision loop (`runDecisionLoop` in `run.ts`) restarts a failed physical
+session with a retry charge. It ends once, without burning retries, when the
+deadline passes, the session, request or tool counter is spent, or the retry
+budget is spent; it also ends when the decision agent stops without
+`pipeline_finish`. In each of these cases `Coordinator.handOverAtBudgetEnd`
+settles owned work (cancelling it only at the deadline; otherwise a running
+solve may still produce the champion), then:
+
+- if a champion exists (the newest successful, valid solve's
+  `training_selected_result`) that no successful refit used yet (offline: no
+  successful refit at all), it starts a refit with `origin: "budget_end"`
+  through the same stage path, with the champion and a later review as upstream.
+  The refit has its own cancel signal, so it finishes past the deadline; only a
+  cancel by the caller stops it. The run ends `finished`: "Handed over at
+  budget end (<why>)";
+- if the champion was already refit, the run ends `finished` and says so;
+- without a champion it ends `cancelled` with "Budget end (<why>): nothing to
+  hand over"; the run's outcome is then `failure`.
+
+Nothing is uploaded at budget end, also online. The journal records
+`budget_end_refit_accepted` and `budget_end`. A run resumed after its deadline
+reconciles its state and goes straight to this hand-over. A cancel by the caller
+(SIGINT, `kill -INT`) cancels the run without a hand-over.
+
+## Progress lines and detached runs
+
+Every run prints one line per event (`progress.ts`): run started (with its run
+ID and state directory), stage started (stage, invocation ID prefix, the
+objective's first words; budget-end refits are marked), stage finished (outcome,
+valid or not, duration), hand-over (a successful refit or the budget-end result),
+and run end with its outcome. `./dev bun run experiment -- --arm finetuned
+<task> --detach` runs the pipeline CLI in its own session with these lines in
+`runs/finetuned/<task>/logs/<stamp>.log`; `--resume <run-id>` passes through
+the pipeline CLI to this controller.

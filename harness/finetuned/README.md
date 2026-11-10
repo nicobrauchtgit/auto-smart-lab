@@ -263,6 +263,13 @@ A task can be selected by canonical ID or unit/task number:
 ./dev bun run pipeline -- --unit 1 --task 1
 ```
 
+Long runs belong in a detached process, so a closed terminal does not end them:
+`./dev bun run experiment -- --arm finetuned spam1 --detach` prints the log file
+under `runs/finetuned/spam1/logs/` and returns. `--resume <run-id>` continues an
+orchestrator run (the run ID is on the log's `run ... started` line). See
+[the orchestrator](agent/orchestrator/README.md) for the progress lines and what
+happens at the end of the budget.
+
 ## Run the pipeline
 
 The main command uses `agent/pipeline/executor.ts` for every registered stage. It records one pipeline identity across stage lifecycle events, agent sessions, supplied inputs, and artifacts.
