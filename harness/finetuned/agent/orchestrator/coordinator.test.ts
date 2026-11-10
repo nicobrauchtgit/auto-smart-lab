@@ -396,12 +396,13 @@ async function waitingAgent(stageMs: number, stages = 2) {
 }
 
 test("pipeline_wait makes no model requests while a stage runs: the count is the same for short and long stages", async () => {
- // Stand-ins for N = 1 s and N = 30 s keep the 1:30 ratio (20 ms and 600 ms).
- const { stageRequests: shortStage, ...short } = await waitingAgent(20), { stageRequests: longStage, ...long } = await waitingAgent(600);
+ // Stand-ins for N = 1 s and N = 30 s keep the 1:30 ratio (20 ms and 600 ms); ORCHESTRATOR_REAL_WAIT=1 uses the real durations.
+ const [shortMs, longMs] = process.env.ORCHESTRATOR_REAL_WAIT ? [1000, 30_000] : [20, 600];
+ const { stageRequests: shortStage, ...short } = await waitingAgent(shortMs), { stageRequests: longStage, ...long } = await waitingAgent(longMs);
  expect(long).toEqual(short); expect(short).toEqual({ orchestratorRequests: 4, waits: 2, whileWaiting: 0, waitCalls: 2, timeNotices: 0 });
  expect(longStage).toBeGreaterThan(shortStage);
- console.log(`[measure] orchestrator model requests for 2 stages: short=${short.orchestratorRequests} long=${long.orchestratorRequests}; wait returns short=${short.waits} long=${long.waits}; orchestrator model requests/sessions between stage start and result: ${short.whileWaiting}/${long.whileWaiting} (tool-call entries: the ${short.waitCalls} wait calls); stage-agent requests short=${shortStage} long=${longStage}`);
-});
+ console.log(`[measure] stages of ${shortMs} ms and ${longMs} ms: orchestrator model requests for 2 stages: short=${short.orchestratorRequests} long=${long.orchestratorRequests}; wait returns short=${short.waits} long=${long.waits}; orchestrator model requests/sessions between stage start and result: ${short.whileWaiting}/${long.whileWaiting} (tool-call entries: the ${short.waitCalls} wait calls); stage-agent requests short=${shortStage} long=${longStage}`);
+}, 120_000);
 
 test("journal entries written before sources were recorded still load", () => {
  const f = fixture(false); const c = new Coordinator(f.store, { start: () => { throw new Error("unused"); } });
