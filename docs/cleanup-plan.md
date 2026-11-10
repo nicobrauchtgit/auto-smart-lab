@@ -11,8 +11,8 @@ plans without competing with this queue.
 The experiment compares a minimal autonomous agent with a task-adapted harness.
 Both arms now live on local `main`, merged from the reviewed `merge-arms`
 branch on 2026-11-10. They are selected through `experiment/`, with independent
-code/configuration and `runs/minimal/` / `runs/finetuned/` state. The merge has
-not been pushed. See [the experiment contract](experiment.md).
+code/configuration and `runs/minimal/` / `runs/finetuned/` state. See
+[the experiment contract](experiment.md).
 
 The current finetuned runtime has an orchestrator calling research, solve,
 evaluate and deterministic refit. The four experts and their shared workspace
@@ -49,8 +49,8 @@ documents and six Mermaid blocks passed structural checks. See
 its bounded correction, validation scope and remaining limits.
 
 The user authorized the local merge into `main`. P1 remains explicitly deferred;
-neither its implementation nor its production guard is included. No push was
-performed. Use the [review guide](review-guide.md) to inspect the result.
+neither its implementation nor its production guard is included. Use the
+[review guide](review-guide.md) to inspect the result.
 Live experimental results remain follow-ups below.
 
 ## Follow-ups and readiness limits

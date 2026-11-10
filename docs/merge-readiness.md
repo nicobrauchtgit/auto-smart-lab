@@ -1,7 +1,7 @@
 # Merge scope and validation evidence
 
 Updated 2026-11-10. **Merged locally into `main` from reviewed `merge-arms`** at
-the user's request, with P1 explicitly deferred. The merge has not been pushed.
+the user's request, with P1 explicitly deferred.
 Final local whole-branch verification passed before the merge; merge-status
 edits change documentation only. This is code/documentation integration, not a
 claim of successful live experimental runs.
