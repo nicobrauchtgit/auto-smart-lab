@@ -404,7 +404,7 @@ test("pipeline_wait makes no model requests while a stage runs: the count is the
  console.log(`[measure] stages of ${shortMs} ms and ${longMs} ms: orchestrator model requests for 2 stages: short=${short.orchestratorRequests} long=${long.orchestratorRequests}; wait returns short=${short.waits} long=${long.waits}; orchestrator model requests/sessions between stage start and result: ${short.whileWaiting}/${long.whileWaiting} (tool-call entries: the ${short.waitCalls} wait calls); stage-agent requests short=${shortStage} long=${longStage}`);
 }, 120_000);
 
-test("journal entries written before sources were recorded still load", () => {
+test("state storage permits optional source metadata within the current harness version", () => {
  const f = fixture(false); const c = new Coordinator(f.store, { trainingDirectory: join(f.directory, "training"), start: () => { throw new Error("unused"); } });
  f.store.transaction("budget_reserved", { counter: "modelRequests" }, s => { s.counters.modelRequests++; }); c.close();
  const reopened = new StateStore(f.directory); expect(reopened.state.journal.at(-1)!.payload).toEqual({ counter: "modelRequests" }); reopened.close();
@@ -508,4 +508,17 @@ for (const outcome of ["cancelled", "throws", "interrupted"] as const) test(`dur
  expect(c.state.counters.trials).toBe(2); expect(c.state.trialIds).toEqual(["t1", "t2"]);
  if (outcome === "interrupted") { await c.recover(); expect(c.state.counters.trials).toBe(2); }
  c.close(); const saved = new StateStore(f.directory); expect(saved.state.counters.trials).toBe(2); saved.close();
+});
+
+test("real resume rejects a previous harness version before changing state or charging budgets", async () => {
+ const { runOrchestrator } = await import("./run.js");
+ const f = fixture(false); f.store.close();
+ const old: any = structuredClone(f.state); delete old.harnessVersion;
+ old.promptTemplates["orchestrator.budget-half"] = "old prompt";
+ old.promptTemplates["orchestrator.budget-low"] = "old prompt";
+ old.counters.trials = 6; delete old.trialIds;
+ const directory = join(f.directory, "spam1", "pipeline", "old-run"); mkdirSync(directory, { recursive: true });
+ const path = join(directory, "state.json"), bytes = JSON.stringify({ state: old, sha256: hash(old) }); writeFileSync(path, bytes);
+ await expect(runOrchestrator({ taskId: "spam1", runsDir: f.directory, resumeRunId: "old-run", configPath: join(f.directory, "missing-config.json") })).rejects.toThrow("started by a different harness version; a new run must be started");
+ expect(readFileSync(path, "utf8")).toBe(bytes);
 });

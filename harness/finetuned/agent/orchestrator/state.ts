@@ -8,6 +8,9 @@ import type { StageArtifact, StageInvocation, StageName, StageInput } from "../p
 import type { StageGuidance } from "../pipeline/guidance.js";
 import { HARNESS_CONFIG } from "../harness/config.js";
 import { parseTaskConfiguration, taskConfigurationHash, type TaskConfiguration } from "../pipeline/task_configuration.js";
+/** Bump when persisted run semantics change; cross-version resume is unsupported. */
+export const HARNESS_RUN_VERSION = "orchestrator-run-mechanics-2";
+export const DIFFERENT_HARNESS_VERSION = "This run was started by a different harness version; a new run must be started.";
 export const hash = (value: unknown): string => createHash("sha256").update(typeof value === "string" || Buffer.isBuffer(value) ? value : JSON.stringify(value)).digest("hex");
 export type Limits = typeof HARNESS_CONFIG.orchestrator;
 export type Counter = "sessions" | "modelRequests" | "toolCalls" | "stages" | "trials" | "retries";
@@ -23,6 +26,7 @@ export interface Action { id: string; requestHash: string; kind: string; revisio
 export interface Notification { cursor: number; kind: string; invocationId?: string; summary: Record<string, unknown> }
 export interface OfficialResult { attemptId: string; score?: number; candidateId?: string; artifactId?: string; status: string }
 export interface RunState {
+ harnessVersion: typeof HARNESS_RUN_VERSION;
  schemaVersion: 1; runId: string; controlInvocationId: string; taskId: string; taskFingerprint: string;
  config: ResolvedPipelineConfig; promptTemplates: Record<string, string>; promptFingerprint: string;
  policy: NonNullable<StageInput["submissionPolicy"]>; goal: { objective: "maximize_official_score"; targetScore: number };
@@ -35,6 +39,7 @@ export interface RunState {
  remoteTriesUsed: number; reservedUnknown: number; cursor: number; acknowledgedCursor: number; inbox: Notification[]; journal: { revision: number; at: number; kind: string; payload: Record<string, unknown> }[];
 }
 function validate(s: RunState): void {
+ if (s?.harnessVersion !== HARNESS_RUN_VERSION) throw new Error(DIFFERENT_HARNESS_VERSION);
  if (!s || s.schemaVersion !== 1 || !Number.isSafeInteger(s.revision) || s.revision < 0 || !/^[a-f0-9]{64}$/.test(s.taskFingerprint) || !s.runId || !s.controlInvocationId || !s.taskId) throw new Error("Invalid coordinator identity/revision");
  if (!s.policy || s.policy.version !== 1 || typeof s.policy.authorized !== "boolean" || !Number.isInteger(s.policy.maxSubmissions) || s.policy.maxSubmissions < 0 || s.policy.maxSubmissions > 3 || s.policy.pipelineRunId !== s.runId || s.policy.controllerInvocationId !== s.controlInvocationId) throw new Error("Invalid immutable submission policy");
  if (s.goal?.objective !== "maximize_official_score" || !Number.isFinite(s.goal.targetScore) || s.goal.targetScore < 0 || s.goal.targetScore > 1) throw new Error("Invalid goal");
@@ -91,7 +96,7 @@ export class StateStore {
 export function initialState(options: { taskId: string; taskFingerprint: string; config: ResolvedPipelineConfig; promptTemplates: Record<string, string>; promptFingerprint: string; authorized: boolean; maxSubmissions?: number; targetScore?: number; limits?: Partial<Limits>; runId?: string }): RunState {
  const runId = options.runId ?? randomUUID(), controlInvocationId = randomUUID(), startedAt = Date.now();
  const limits = { ...HARNESS_CONFIG.orchestrator, ...options.limits };
- const state: RunState = { schemaVersion: 1, runId, controlInvocationId, taskId: options.taskId, taskFingerprint: options.taskFingerprint, config: structuredClone(options.config), promptTemplates: options.promptTemplates, promptFingerprint: options.promptFingerprint,
+ const state: RunState = { harnessVersion: HARNESS_RUN_VERSION, schemaVersion: 1, runId, controlInvocationId, taskId: options.taskId, taskFingerprint: options.taskFingerprint, config: structuredClone(options.config), promptTemplates: options.promptTemplates, promptFingerprint: options.promptFingerprint,
  policy: { version: 1, authorized: options.authorized, maxSubmissions: options.maxSubmissions ?? 3, pipelineRunId: runId, controllerInvocationId: controlInvocationId },
  goal: { objective: "maximize_official_score", targetScore: options.targetScore ?? 1 }, startedAt, deadline: startedAt + limits.maxWallMs, limits,
  counters: { sessions: 0, modelRequests: 0, toolCalls: 0, stages: 0, trials: 0, retries: 0 }, revision: 0, status: "running", works: [], actions: [], artifacts: [], official: [], remoteTriesUsed: 0, reservedUnknown: 0, cursor: 0, acknowledgedCursor: 0, inbox: [], journal: [] };

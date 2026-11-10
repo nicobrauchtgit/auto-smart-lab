@@ -100,6 +100,8 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Pip
  let finalResult: PipelineRunResult | undefined;
  let stoppedBecause = "", outcome: PipelineRunResult["outcome"] = "failure";
  try {
+  // Reject incompatible durable runs before setup, downloads, telemetry or accounting.
+  if (options.resumeRunId) store = new StateStore(join(runsDir, task.taskId, "pipeline", options.resumeRunId));
   const { resolved: config } = await loadResolvedPipelineConfig(options.configPath);
   // The task's own data, downloaded only if missing, before its dataset fingerprint is taken.
   const taskData = await ensureTaskData(task.taskId, { signal: controller.signal, offline: !config.online });
@@ -107,7 +109,7 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Pip
   const { context } = buildResearchContext(task.taskId);
   const taskDescription = [boundedFile(join(task.taskDir, "prompt.md")), ...(existsSync(join(dirname(task.taskDir), "unit-intro.md")) ? [boundedFile(join(dirname(task.taskDir), "unit-intro.md"), 16000)] : [])].join("\n\n");
   const taskFingerprint = hash({ taskId: task.taskId, taskDescription, dataset: context.dataset.snapshot_sha256 });
-  store = new StateStore(join(runsDir, task.taskId, "pipeline", runId), options.resumeRunId ? undefined : initialState({ taskId: task.taskId, taskFingerprint, config, promptTemplates: snapshot.serialize(), promptFingerprint: snapshot.fingerprint,
+  store ??= new StateStore(join(runsDir, task.taskId, "pipeline", runId), options.resumeRunId ? undefined : initialState({ taskId: task.taskId, taskFingerprint, config, promptTemplates: snapshot.serialize(), promptFingerprint: snapshot.fingerprint,
    // Submitting needs the online experiment as well as an explicit caller policy.
    authorized: config.online && options.noSubmit !== true && options.maxSubmissions !== 0 && config.enabledStages.includes("submit"), maxSubmissions: options.maxSubmissions, targetScore: options.targetScore, limits: options.limits, runId }));
   const saved = store.state;

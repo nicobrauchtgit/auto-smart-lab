@@ -151,3 +151,9 @@ and run end with its outcome. `./dev bun run experiment -- --arm finetuned
 <task> --detach` runs the pipeline CLI in its own session with these lines in
 `runs/finetuned/<task>/logs/<stamp>.log`; `--resume <run-id>` passes through
 the pipeline CLI to this controller.
+
+Resume is supported only for the persisted harness run version that started the
+run. Runs from a different version (including runs before the run-mechanics
+changes) fail before setup, telemetry or budget accounting, with a message to
+start a new run. There is no migration of old prompt snapshots or trial
+reservations. Bump `HARNESS_RUN_VERSION` when persisted run semantics change.
