@@ -1,0 +1,562 @@
+/**
+ * Shared helper: run a pi agent session with a given system prompt and initial user message.
+ * Returns the collected assistant text from the completed run.
+ *
+ * Uses the PI SDK: createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager.
+ */
+
+import { taskEvent, taskStatus } from "./status.js";
+import { snapshotPluginParentEnv } from "./langfuse.js";
+import { readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import {
+	createAgentSession,
+	createBashToolDefinition,
+	defineTool,
+	DefaultResourceLoader,
+	ModelRuntime,
+	SessionManager,
+	getAgentDir,
+	resolveCliModel,
+} from "@earendil-works/pi-coding-agent";
+import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
+
+/** Credentials are for the model client and the lab client, not the agent's shell commands. */
+const SECRET_ENV = /KEY|TOKEN|SECRET|PASS|CREDENTIALS|^LANGFUSE_|^LAB_/i;
+export function shellEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+	return Object.fromEntries(Object.entries(source).filter(([name]) => !SECRET_ENV.test(name)));
+}
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const AGENT_DIR = resolve(HERE, ".."); // agent/run/ → agent/
+const PROJECT_ROOT = resolve(AGENT_DIR, ".."); // agent/ → <root>
+const TOOLS_DIR = join(AGENT_DIR, "tools");
+
+// NOTE: smartlab.ts (the smartlab_submit tool) is deliberately NOT loaded into any LLM session.
+// Submission is a deterministic step owned by the orchestrator (submit_session.ts) so that the
+// 3-attempt budget and the eval gate cannot be bypassed by the model. On 2026-09-10 a solver
+// session burned all three spam2 attempts by calling the tool directly.
+const EXTENSION_PATHS = [
+	join(TOOLS_DIR, "memory.ts"),
+	join(TOOLS_DIR, "web_search.ts"),
+	join(TOOLS_DIR, "challenge_context.ts"),
+	// Langfuse tracing (turns, generations, tokens, tool calls). Observability only: it registers no
+	// tools and does not touch the prompt. Inert unless LANGFUSE_PUBLIC_KEY/LANGFUSE_SECRET_KEY are set.
+	join(PROJECT_ROOT, "node_modules", "@langfuse", "pi-observability-plugin", "src", "index.ts"),
+];
+
+/** Hard cap on one runSession call, including SDK retries and continue re-prompts. Override with PI_SESSION_TIMEOUT_MS. */
+const DEFAULT_SESSION_TIMEOUT_MS = 30 * 60 * 1000;
+/**
+ * Token/cost accounting for the whole process (all sessions of one orchestrator run). pi reports
+ * usage and cost per assistant message; cost is 0 for providers without a price table (GWDG).
+ * PI_MAX_COST_USD, when set, is a hard budget for this process: the session that crosses it is
+ * aborted like a degenerate loop, and the orchestrator stops the task.
+ */
+const processUsage = { input: 0, output: 0, cacheRead: 0, requests: 0, costUsd: 0 };
+export function getProcessUsage() { return { ...processUsage }; }
+export function costBudgetUsd(): number | undefined {
+	const v = Number(process.env.PI_MAX_COST_USD);
+	return Number.isFinite(v) && v > 0 ? v : undefined;
+}
+
+/** Resolved at call time so the orchestrator can set PI_SESSION_TIMEOUT_MS from a CLI flag. */
+export function sessionTimeoutMs(): number {
+	return Number(process.env.PI_SESSION_TIMEOUT_MS) || DEFAULT_SESSION_TIMEOUT_MS;
+}
+/** How many times to re-prompt the same session after the SDK gives up on a model error. */
+const MAX_CONTINUES = 2;
+/** Longest we will sleep for a 429 retry-after before giving up. Override with PI_RATE_LIMIT_MAX_WAIT_MS. */
+// GWDG quotas are per minute AND per hour; an exhausted hourly window means waiting up to ~60 min.
+// The wait is not charged against the session cap. Override with PI_RATE_LIMIT_MAX_WAIT_MS.
+const MAX_RATE_LIMIT_WAIT_MS = Number(process.env.PI_RATE_LIMIT_MAX_WAIT_MS) || 65 * 60 * 1000;
+/** Fallback wait when a 429 carried no usable retry-after header (covers the per-minute window). */
+const DEFAULT_RATE_LIMIT_WAIT_MS = 60 * 1000;
+const RATE_LIMIT_PATTERN = /\b429\b|rate.?limit|too many requests/i;
+
+/** Most recent 429 seen on the model API, recorded by the fetch wrapper below. */
+let lastRateLimit: { retryAfterMs: number; at: number } | undefined;
+
+/** Parse retry-after (seconds or HTTP date) / ratelimit-reset (seconds) into ms, or undefined. */
+function parseRetryAfterMs(headers: Headers): number | undefined {
+	const ra = headers.get("retry-after");
+	if (ra) {
+		const secs = Number.parseFloat(ra);
+		if (!Number.isNaN(secs)) return Math.max(0, secs * 1000);
+		const date = Date.parse(ra);
+		if (!Number.isNaN(date)) return Math.max(0, date - Date.now());
+	}
+	const reset = headers.get("ratelimit-reset");
+	if (reset) {
+		const secs = Number.parseFloat(reset);
+		if (!Number.isNaN(secs)) return Math.max(0, secs * 1000);
+	}
+	return undefined;
+}
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+const CONTINUE_PROMPT =
+	"The previous model call failed with a transient API error. Your session state and files are intact. " +
+	"Continue from exactly where you left off — do not restart the workflow.";
+
+export interface RunSessionOptions {
+	/** Path to the markdown instruction file used as system prompt */
+	instructionsPath: string;
+	/** Initial user message to send */
+	prompt: string;
+	/** Optional env vars to inject into process.env for this session */
+	env?: Record<string, string>;
+	/** Label for log lines, e.g. "solver", "eval" */
+	label?: string;
+}
+
+export interface RunSessionResult {
+	/** All assistant text output collected during the run */
+	output: string;
+}
+
+function elapsed(startMs: number): string {
+	const s = Math.floor((Date.now() - startMs) / 1000);
+	return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m${s % 60}s`;
+}
+
+/** Extract the concatenated text blocks of an assistant message's content. */
+function assistantText(content: unknown): string {
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	return content
+		.filter((b) => b && typeof b === "object" && (b as { type?: string }).type === "text" && "text" in b)
+		.map((b) => String((b as { text: unknown }).text))
+		.join("");
+}
+
+function truncate(s: string, n = 120): string {
+	const oneline = s.replace(/\s+/g, " ").trim();
+	return oneline.length > n ? oneline.slice(0, n) + "…" : oneline;
+}
+
+/**
+ * Run a PI agent session, wait for it to settle, and return the collected output.
+ */
+export async function runSession(options: RunSessionOptions): Promise<RunSessionResult> {
+	const { instructionsPath, prompt, env, label = "agent" } = options;
+	const tag = `[${label}]`;
+	const sessionStart = Date.now();
+
+	// Wrap global fetch (the SDK resolves it at call time) to record the
+	// retry-after of any 429 from the model API, so we can sleep until the
+	// rate-limit window resets before re-prompting. With PI_DEBUG_HTTP=1 it
+	// also dumps the exact request/response shapes for debugging.
+	const debugHttp = process.env.PI_DEBUG_HTTP === "1";
+	if (!(globalThis as Record<string, unknown>).__piFetchPatched) {
+		(globalThis as Record<string, unknown>).__piFetchPatched = true;
+		const origFetch = globalThis.fetch;
+		globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+			const url = typeof input === "string" ? input : (input as Request).url ?? String(input);
+			if (debugHttp && /chat\/completions/.test(url) && init?.body) {
+				try {
+					const parsed = JSON.parse(String(init.body));
+					const toolNames = Array.isArray(parsed.tools) ? parsed.tools.map((t: { function?: { name?: string } }) => t.function?.name) : [];
+					process.stderr.write(`${tag} [HTTP→] model=${parsed.model} msgs=${parsed.messages?.length} tools=[${toolNames.join(",")}]\n`);
+					// Log each message: role + content-type/preview + tool_calls, to find what the API rejects
+					if (Array.isArray(parsed.messages)) {
+						parsed.messages.forEach((m: Record<string, unknown>, i: number) => {
+							const role = m.role;
+							const c = m.content;
+							let cDesc: string;
+							if (c === null || c === undefined) cDesc = String(c);
+							else if (typeof c === "string") cDesc = `str(${c.length})`;
+							else if (Array.isArray(c)) cDesc = `arr[${c.map((b: { type?: string }) => b.type ?? "?").join(",")}]`;
+							else cDesc = typeof c;
+							const tc = Array.isArray(m.tool_calls) ? ` tool_calls=${m.tool_calls.length}` : "";
+							const tcid = m.tool_call_id ? ` tool_call_id=${m.tool_call_id}` : "";
+							const extra = Object.keys(m).filter(k => !["role","content","tool_calls","tool_call_id","name"].includes(k));
+							process.stderr.write(`${tag} [HTTP→]   msg[${i}] role=${role} content=${cDesc}${tc}${tcid}${extra.length ? ` +[${extra.join(",")}]` : ""}\n`);
+						});
+					}
+				} catch { /* non-JSON body */ }
+			}
+			const res = await origFetch(input, init);
+			if (/chat\/completions/.test(url)) {
+				const qMin = res.headers.get("x-ratelimit-remaining-minute");
+				const qHour = res.headers.get("x-ratelimit-remaining-hour");
+				const qDay = res.headers.get("x-ratelimit-remaining-day");
+				const qMonth = res.headers.get("x-ratelimit-remaining-month");
+				if (qMin !== null || qHour !== null) {
+					taskStatus({ apiQuota: { minute: qMin && Number(qMin), hour: qHour && Number(qHour), day: qDay && Number(qDay), month: qMonth && Number(qMonth), status: res.status, at: new Date().toISOString() } });
+				}
+				if (res.status === 429) {
+					const retryAfterMs = parseRetryAfterMs(res.headers);
+					lastRateLimit = { retryAfterMs: retryAfterMs ?? DEFAULT_RATE_LIMIT_WAIT_MS, at: Date.now() };
+					const remHour = res.headers.get("x-ratelimit-remaining-hour");
+					const remMin = res.headers.get("x-ratelimit-remaining-minute");
+					process.stderr.write(`${tag} ⚠ HTTP 429 from model API: retry-after=${retryAfterMs !== undefined ? Math.round(retryAfterMs / 1000) + "s" : "n/a"}${remMin !== null ? ` remaining/min=${remMin}` : ""}${remHour !== null ? ` remaining/hour=${remHour}` : ""}\n`);
+				}
+				if (debugHttp && res.status >= 400) {
+					const clone = res.clone();
+					const text = await clone.text().catch(() => "");
+					process.stderr.write(`${tag} [HTTP←] ${res.status} ${text.slice(0, 500)}\n`);
+				}
+			}
+			return res;
+		}) as typeof fetch;
+	}
+
+	// The Langfuse plugin publishes the open turn in process.env for subagents and withdraws it when
+	// the turn settles. An aborted session may never settle, and the next session in this process
+	// would then nest under the dead turn; restore the values we started with when we are done.
+	const restoreLangfuseEnv = snapshotPluginParentEnv();
+
+	// Inject env vars before session starts (tools read from process.env)
+	const envBackup: Record<string, string | undefined> = {};
+	if (env) {
+		for (const [key, value] of Object.entries(env)) {
+			envBackup[key] = process.env[key];
+			process.env[key] = value;
+		}
+	}
+
+	try {
+		const systemPrompt = readFileSync(instructionsPath, "utf8");
+		const agentDir = getAgentDir();
+		console.log(`${tag} loading extensions...`);
+
+		const resourceLoader = new DefaultResourceLoader({
+			cwd: PROJECT_ROOT,
+			agentDir,
+			additionalExtensionPaths: EXTENSION_PATHS,
+			systemPrompt,
+			noContextFiles: true,
+		});
+
+		await resourceLoader.reload();
+		console.log(`${tag} extensions loaded (${elapsed(sessionStart)})`);
+
+		console.log(`${tag} creating model runtime...`);
+		const modelRuntime = await ModelRuntime.create({ modelsPath: join(agentDir, "models.json"), authPath: join(agentDir, "auth.json") });
+		console.log(`${tag} model runtime ready (${elapsed(sessionStart)})`);
+
+		// Resolve model from PI_MODEL env var (format: "provider/model-id" or bare "model-id")
+		let selectedModel: unknown = undefined;
+		const piModel = process.env.PI_MODEL;
+		if (piModel) {
+			const slash = piModel.indexOf("/");
+			const cliProvider = slash > 0 ? piModel.slice(0, slash) : undefined;
+			const cliModel = slash > 0 ? piModel.slice(slash + 1) : piModel;
+			const resolved = resolveCliModel({ cliProvider, cliModel, modelRuntime });
+			if (resolved.error) {
+				throw new Error(`Could not resolve model "${piModel}": ${resolved.error}`);
+			}
+			if (resolved.model) {
+				selectedModel = resolved.model;
+				console.log(`${tag} model resolved: ${(resolved.model as { provider: string; id: string }).provider}/${(resolved.model as { provider: string; id: string }).id}`);
+			} else {
+				console.warn(`${tag} WARNING: model "${piModel}" not found in runtime, using default`);
+			}
+		}
+
+		const { session } = await createAgentSession({
+			cwd: PROJECT_ROOT,
+			agentDir,
+			modelRuntime,
+			resourceLoader,
+			sessionManager: SessionManager.inMemory(),
+			customTools: [defineTool(createBashToolDefinition(PROJECT_ROOT, {
+				spawnHook: (context) => ({ ...context, env: shellEnvironment(context.env) }),
+			}))],
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			...(selectedModel ? { model: selectedModel as any } : {}),
+		});
+		console.log(`${tag} session created, sending prompt (${elapsed(sessionStart)})`);
+
+		// Collect all assistant text deltas
+		const textParts: string[] = [];
+		let toolCallCount = 0;
+		let currentToolName: string | undefined;
+		// Degenerate-loop guard: models occasionally repeat the same tool call forever
+		// (seen: memory_append_session x46 after the task was done). Abort the session
+		// when the last LOOP_REPEATS calls are identical; the orchestrator salvages.
+		const LOOP_REPEATS = 6;
+		const recentCalls: string[] = [];
+		let loopAbortReason: string | undefined;
+		const sessionUsage = { input: 0, output: 0, requests: 0, costUsd: 0 };
+		let toolStart = 0;
+		let promptSent = false; // guard: ignore agent_settled fired before prompt is sent
+		// Per-run error tracking. The SDK retries transient errors itself
+		// (settings.retry, default 3 consecutive attempts) and emits
+		// auto_retry_start / auto_retry_end. We only need to know whether the
+		// run ENDED on an error: that covers both retry exhaustion and
+		// non-retryable errors (which never produce auto_retry_* events).
+		let lastAssistantWasError = false;
+		let lastErrorMessage = "";
+
+		// Heartbeat: log every 30s so we know the session is alive
+		const publishSession = (extra: Record<string, unknown> = {}) =>
+			taskStatus({
+				session: {
+					label,
+					startedAt: new Date(sessionStart).toISOString(),
+					capMinutes: Math.round(sessionTimeoutMs() / 60000),
+					toolCalls: toolCallCount,
+					state: currentToolName ? `running ${currentToolName}` : "thinking",
+					currentTool: currentToolName ?? null,
+					currentToolSince: toolStart ? new Date(toolStart).toISOString() : null,
+					lastText: lastTextForStatus,
+					...extra,
+				},
+				heartbeatAt: new Date().toISOString(),
+			});
+		let lastTextForStatus = "";
+		publishSession({ state: "starting" });
+		taskEvent(`${label}: session started`);
+		const heartbeat = setInterval(() => {
+			const status = currentToolName ? `running ${currentToolName}` : "thinking";
+			process.stdout.write(`${tag} ⏳ still running (${elapsed(sessionStart)}, ${toolCallCount} tool calls, ${status})\n`);
+			publishSession();
+		}, 30_000);
+
+		const debugEvents = process.env.PI_DEBUG_EVENTS === "1";
+
+		// Verify the selected model has auth configured before sending prompt
+		if (selectedModel) {
+			const m = selectedModel as { provider: string; id: string };
+			const authStatus = modelRuntime.getProviderAuthStatus(m.provider);
+			console.log(`${tag} provider auth: ${m.provider} → configured=${authStatus.configured} source=${authStatus.source ?? "none"}`);
+			if (!authStatus.configured) {
+				clearInterval(heartbeat);
+				const hint = m.provider === "google-vertex"
+					? "Set GOOGLE_CLOUD_API_KEY, or GOOGLE_CLOUD_PROJECT + GOOGLE_CLOUD_LOCATION + credentials (GOOGLE_APPLICATION_CREDENTIALS=<service-account.json> or ~/.config/gcloud/application_default_credentials.json) in .env"
+					: "Check the provider's apiKey in ~/.pi/agent/models.json";
+				throw new Error(`Provider "${m.provider}" has no configured auth. ${hint}`);
+			}
+		}
+
+		// NOTE: never throw/reject from inside this callback — the SDK emits
+		// synchronously and an exception here becomes an unhandled rejection.
+		const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
+			const ev = event as Record<string, unknown>;
+
+			if (debugEvents) {
+				const safeVal = (v: unknown) => {
+					if (typeof v === "string") return v.slice(0, 60);
+					if (typeof v === "object" && v !== null) return JSON.stringify(v).slice(0, 80);
+					return String(v);
+				};
+				const pairs = Object.entries(ev).map(([k, v]) => `${k}=${safeVal(v)}`).join(" ");
+				process.stdout.write(`${tag} [EVENT] ${pairs}\n`);
+			}
+
+			if (event.type === "agent_settled") {
+				if (!promptSent) return; // spurious settle on the idle session before prompt()
+				console.log(`${tag} ✓ settled in ${elapsed(sessionStart)} (${toolCallCount} tool calls, ${sessionUsage.requests} model calls, ${sessionUsage.input} in / ${sessionUsage.output} out tokens${sessionUsage.costUsd ? `, $${sessionUsage.costUsd.toFixed(3)}` : ""})`);
+				publishSession({ state: "settled" });
+				taskEvent(`${label}: settled after ${elapsed(sessionStart)}, ${toolCallCount} tool calls`);
+				return;
+			}
+
+			// The SDK decided to retry a transient error (this is the only
+			// place we can truthfully say "retrying").
+			if (event.type === "auto_retry_start") {
+				const attempt = ev.attempt as number;
+				const max = ev.maxAttempts as number;
+				const delay = Math.round((ev.delayMs as number) / 1000);
+				process.stderr.write(`${tag} ⚠ transient model error, SDK retrying (attempt ${attempt}/${max}, in ${delay}s): ${truncate(String(ev.errorMessage ?? ""), 160)}\n`);
+				return;
+			}
+
+			if (event.type === "auto_retry_end") {
+				if (ev.success === true) {
+					process.stderr.write(`${tag} ✓ recovered after ${ev.attempt} retry attempt(s)\n`);
+				} else {
+					process.stderr.write(`${tag} ✗ SDK gave up after ${ev.attempt} retry attempt(s): ${truncate(String(ev.finalError ?? "unknown error"), 160)}\n`);
+				}
+				return;
+			}
+
+			if (event.type === "message_end") {
+				const msg = ev.message as { role?: string; content?: unknown; stopReason?: string; errorMessage?: string } | undefined;
+				if (msg?.role === "assistant") {
+					const u = (msg as { usage?: { input?: number; output?: number; cacheRead?: number; cost?: { total?: number } } }).usage;
+					if (u) {
+						const cost = Number(u.cost?.total ?? 0) || 0;
+						sessionUsage.input += u.input ?? 0; sessionUsage.output += u.output ?? 0; sessionUsage.requests++; sessionUsage.costUsd += cost;
+						processUsage.input += u.input ?? 0; processUsage.output += u.output ?? 0; processUsage.cacheRead += u.cacheRead ?? 0; processUsage.requests++; processUsage.costUsd += cost;
+						taskStatus({ usage: { ...processUsage, budgetUsd: costBudgetUsd() ?? null } });
+						const budget = costBudgetUsd();
+						if (budget !== undefined && processUsage.costUsd >= budget && !loopAbortReason) {
+							loopAbortReason = `cost budget exhausted: $${processUsage.costUsd.toFixed(2)} >= $${budget.toFixed(2)}`;
+							process.stderr.write(`${tag} ✗ ${loopAbortReason} — aborting session\n`);
+							taskEvent(`${label}: ${loopAbortReason}`);
+							void session.abort().catch(() => undefined);
+						}
+					}
+					if (msg.stopReason === "error") {
+						lastAssistantWasError = true;
+						lastErrorMessage = msg.errorMessage?.trim() || "unknown error";
+					} else {
+						lastAssistantWasError = false;
+						const text = assistantText(msg.content);
+						if (text) {
+							process.stdout.write(`${tag} 💬 ${truncate(text)}\n`);
+							lastTextForStatus = truncate(text, 300);
+							publishSession();
+						}
+					}
+				}
+				return;
+			}
+
+			// Tool call started
+			if (event.type === "tool_execution_start") {
+				toolCallCount++;
+				currentToolName = (ev.toolName ?? "tool") as string;
+				toolStart = Date.now();
+				const input = ev.args ?? {};
+				const signature = `${currentToolName}:${JSON.stringify(input)}`;
+				recentCalls.push(signature);
+				if (recentCalls.length > LOOP_REPEATS) recentCalls.shift();
+				if (!loopAbortReason && recentCalls.length === LOOP_REPEATS && recentCalls.every((c) => c === signature)) {
+					loopAbortReason = `degenerate tool loop: ${currentToolName} called ${LOOP_REPEATS}x in a row with identical arguments`;
+					process.stderr.write(`${tag} ✗ ${loopAbortReason} — aborting session\n`);
+					taskEvent(`${label}: ${loopAbortReason}`);
+					void session.abort().catch(() => undefined);
+				}
+				const inputStr = typeof input === "object"
+					? truncate(JSON.stringify(input).replace(/^{|}$/g, "").replace(/"([^"]+)":/g, "$1:"), 100)
+					: truncate(String(input), 100);
+				process.stdout.write(`${tag} → ${currentToolName}(${inputStr})\n`);
+				publishSession({ lastCall: `${currentToolName}(${truncate(inputStr, 200)})` });
+				return;
+			}
+
+			// Tool call finished
+			if (event.type === "tool_execution_end") {
+				const name = (ev.toolName ?? currentToolName ?? "tool") as string;
+				const took = toolStart ? ` ${elapsed(toolStart)}` : "";
+				const isError = ev.isError === true;
+				const result = ev.result ?? "";
+				const resultStr = typeof result === "string"
+					? truncate(result.trim().split("\n")[0], 80)
+					: typeof result === "object"
+						? truncate(JSON.stringify(result), 80)
+						: "";
+				const suffix = resultStr ? ` → ${isError ? "ERROR: " : ""}${resultStr}` : "";
+				process.stdout.write(`${tag} ← ${name}${took}${suffix}\n`);
+				currentToolName = undefined;
+				toolStart = 0;
+				publishSession({ lastResult: `${name}${took}${suffix}` });
+				return;
+			}
+
+			// Assistant text streaming. Shape: { type: "message_update", message,
+			// assistantMessageEvent: { type: "text_delta", delta, ... } }
+			if (event.type === "message_update") {
+				const ame = ev.assistantMessageEvent as { type?: string; delta?: unknown } | undefined;
+				if (ame?.type === "text_delta" && typeof ame.delta === "string" && ame.delta) {
+					textParts.push(ame.delta);
+				}
+			}
+		});
+
+		// Run one prompt to completion. session.prompt() resolves only after the
+		// agent has fully settled (including the SDK's own retries), so a timeout
+		// must race it AND abort the session — otherwise the run keeps going.
+		const SESSION_TIMEOUT_MS = sessionTimeoutMs();
+		let deadline = sessionStart + SESSION_TIMEOUT_MS; // extended by rate-limit waits
+		const runPrompt = async (text: string): Promise<void> => {
+			lastAssistantWasError = false;
+			const remaining = deadline - Date.now();
+			if (remaining <= 0) throw new Error(`Session timed out after ${elapsed(sessionStart)}`);
+			let timer: NodeJS.Timeout | undefined;
+			const timeout = new Promise<never>((_, reject) => {
+				timer = setTimeout(() => reject(new Error("__timeout__")), remaining);
+			});
+			const run = session.prompt(text);
+			try {
+				await Promise.race([run, timeout]);
+				if (loopAbortReason) throw new Error(`Session aborted after ${elapsed(sessionStart)}: ${loopAbortReason}`);
+			} catch (err) {
+				if (loopAbortReason && !(err instanceof Error && err.message === "__timeout__")) {
+					run.catch(() => undefined);
+					throw new Error(`Session aborted after ${elapsed(sessionStart)}: ${loopAbortReason}`);
+				}
+				if (err instanceof Error && err.message === "__timeout__") {
+					process.stderr.write(`${tag} ✗ timed out after ${elapsed(sessionStart)}, aborting session\n`);
+					taskEvent(`${label}: timed out after ${elapsed(sessionStart)}`);
+					run.catch(() => undefined); // the abandoned run must not become an unhandled rejection
+					await session.abort().catch(() => undefined);
+					throw new Error(`Session timed out after ${elapsed(sessionStart)} (limit ${Math.round(SESSION_TIMEOUT_MS / 1000)}s)`);
+				}
+				throw new Error(`session.prompt() failed: ${err}`);
+			} finally {
+				if (timer) clearTimeout(timer);
+			}
+		};
+
+		try {
+			promptSent = true;
+			await runPrompt(prompt);
+
+			// The run ended on a model error (retry budget exhausted, or a
+			// non-retryable error). The session state is intact, so try to
+			// resume it a bounded number of times before giving up.
+			let continues = 0;
+			while (lastAssistantWasError && continues < MAX_CONTINUES) {
+				continues++;
+				process.stderr.write(`${tag} ⚠ run ended on model error: ${truncate(lastErrorMessage, 160)}\n`);
+
+				// Rate limited: the SDK's 2/4/8s backoff cannot outlast a
+				// per-minute or per-hour window. Sleep until the window resets
+				// (per the last 429's retry-after) before re-prompting, and do
+				// not charge that wait against the session budget.
+				if (RATE_LIMIT_PATTERN.test(lastErrorMessage)) {
+					const recent = lastRateLimit && Date.now() - lastRateLimit.at < 5 * 60 * 1000 ? lastRateLimit : undefined;
+					const waitMs = recent
+						? Math.max(0, recent.retryAfterMs - (Date.now() - recent.at)) + 1000
+						: DEFAULT_RATE_LIMIT_WAIT_MS;
+					if (waitMs > MAX_RATE_LIMIT_WAIT_MS) {
+						throw new Error(`model API rate limited; reset in ${Math.round(waitMs / 1000)}s (${(waitMs / 3600000).toFixed(1)} h — likely the daily or monthly quota) exceeds max wait of ${Math.round(MAX_RATE_LIMIT_WAIT_MS / 1000)}s: ${lastErrorMessage}`);
+					}
+					process.stderr.write(`${tag} ⏸ rate limited — sleeping ${Math.round(waitMs / 1000)}s until the window resets\n`);
+					publishSession({ state: "rate-limited", rateLimitedUntil: new Date(Date.now() + waitMs).toISOString() });
+					taskEvent(`${label}: rate limited, sleeping ${Math.round(waitMs / 1000)}s`);
+					await sleep(waitMs);
+					deadline += waitMs;
+				}
+
+				process.stderr.write(`${tag} ↻ re-prompting session to continue (${continues}/${MAX_CONTINUES})\n`);
+				await runPrompt(CONTINUE_PROMPT);
+			}
+			if (lastAssistantWasError) {
+				throw new Error(`model API error (after ${continues} continue attempt(s)): ${lastErrorMessage}`);
+			}
+		} finally {
+			clearInterval(heartbeat);
+			unsubscribe();
+		}
+
+		// Fallback: if streaming capture yielded nothing, collect text from ALL
+		// assistant messages (the sentinel may not be in the last one).
+		if (textParts.length === 0) {
+			for (const msg of session.messages) {
+				if (!msg || typeof msg !== "object" || (msg as { role?: string }).role !== "assistant") continue;
+				const text = assistantText((msg as { content?: unknown }).content);
+				if (text) textParts.push(text);
+			}
+		}
+
+		return { output: textParts.join("") };
+	} finally {
+		restoreLangfuseEnv();
+		if (env) {
+			for (const [key, originalValue] of Object.entries(envBackup)) {
+				if (originalValue === undefined) delete process.env[key];
+				else process.env[key] = originalValue;
+			}
+		}
+	}
+}
+

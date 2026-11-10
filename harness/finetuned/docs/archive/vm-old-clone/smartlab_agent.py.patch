@@ -1,0 +1,18 @@
+diff --git a/agent/smartlab_agent.py b/agent/smartlab_agent.py
+index 60a256f..36e2c66 100644
+--- a/agent/smartlab_agent.py
++++ b/agent/smartlab_agent.py
+@@ -6,10 +6,12 @@ import argparse
+ from pathlib import Path
+ import sys
+ 
+-from smartlab.tasks import spam1
++from smartlab.tasks import spam1, spam2, spam3
+ 
+ TASKS = {
+     "spam1": spam1,
++    "spam2": spam2,
++    "spam3": spam3,
+ }
+ 
+ 
