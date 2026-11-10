@@ -31,7 +31,7 @@ export function loadPromptSnapshot(root = PROMPT_ROOT): PromptSnapshot {
 	return restorePromptSnapshot(Object.fromEntries(Object.entries(PROMPTS).map(([id, definition]) => [id, readFileSync(resolve(root, definition.file), "utf8")])));
 }
 export function restorePromptSnapshot(saved: Record<string, string>): PromptSnapshot {
-	if (!saved || Object.keys(saved).length !== Object.keys(PROMPTS).length || Object.keys(saved).some(id => !(id in PROMPTS))) throw new Error("Invalid persisted prompt snapshot");
+	if (!saved || Object.keys(saved).length !== Object.keys(PROMPTS).length || Object.keys(saved).some(id => !(id in PROMPTS))) throw new Error("This run was started by a different harness version; a new run must be started.");
 	const templates = new Map<PromptId, { text: string; sha256: string }>();
 	for (const [id, definition] of Object.entries(PROMPTS)) {
 		const text = saved[id];

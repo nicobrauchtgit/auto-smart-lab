@@ -1,3 +1,5 @@
+import { promotedChampion, startedTrials, trainingDirectory } from "./training_facts.js";
+import type { TrainingTrialResult } from "../training/results.js";
 import { randomUUID } from "node:crypto";
 import { readFileSync, statSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -10,6 +12,9 @@ export interface Mutation { actionId: string; expectedRevision: number; rational
 export interface ConfigureRequest extends Mutation { configuration: unknown }
 export interface StartRequest extends Mutation { stage: StageName; objective: string; artifactIds: string[]; guidance?: string; evidenceIds?: string[] }
 export interface CoordinatorDependencies {
+ /** Read the authoritative champion tag and validate its trial evidence. */
+ trainingDirectory?: string;
+ promotedChampion?(taskId: string): Promise<TrainingTrialResult | undefined>;
  start(work: Work, input: StageInput): StageInvocationHandle;
  /** Read-only aggregate remote attempts; module ledger remains upload authority. */
  officialStatus?(): Promise<{ triesUsed: number; reservedUnknown?: number; effectiveTriesUsed?: number; unresolved?: boolean; results?: OfficialResult[] }>;
@@ -20,11 +25,15 @@ export interface CoordinatorDependencies {
  inspectTaskData?(configuration: TaskConfiguration): unknown;
  /** The task's pipeline.config.json entry, offered while nothing is declared; never applied implicitly. */
  suggestedConfiguration?: TaskConfiguration;
- /** A note on the remaining time at 50% and 20%; information, not a reserve. */
- budgetNote?(remainingPercent: number): string | undefined;
  /** Follow-up branches in solutions/ for this task, bounded. */
  branches?(): unknown;
+ /** One event per stage start, stage end and hand-over, for the run's progress lines. Never throws into the coordinator. */
+ progress?(event: ProgressEvent): void;
 }
+export type ProgressEvent =
+ | { kind: "stage_started"; stage: StageName; invocationId: string; objective: string; origin?: "budget_end" }
+ | { kind: "stage_finished"; stage: StageName; invocationId: string; outcome: string; valid: boolean; durationMs?: number; error?: string }
+ | { kind: "hand_over"; handedOver: boolean; reason: string; invocationId?: string };
 function text(value: unknown, bytes: number): asserts value is string { if (typeof value !== "string" || !value.trim() || Buffer.byteLength(value) > bytes) throw new Error("Missing or oversized text"); }
 function terminal(w: Work) { return w.status === "terminal" || w.status === "interrupted"; }
 export class Coordinator {
@@ -45,12 +54,20 @@ export class Coordinator {
   // Terminal changes are never coalesced away; budgets cap their total count.
   if (s.inbox.length > s.limits.maxNotifications) throw new Error("Notification capacity reached; acknowledge the inbox");
  }
- charge(counter: Counter) {
+ /**
+  * Reserve one unit of a run counter. `source` says who caused it: "orchestrator"
+  * for the decision agent, a stage invocation ID for that stage's agent. Journal
+  * entries written before sources were recorded have none.
+  */
+ charge(counter: Counter, source = "orchestrator") {
   const s = this.state, key = `max${counter[0].toUpperCase()}${counter.slice(1)}` as keyof RunState["limits"];
   if (s.status !== "running" || Date.now() >= s.deadline || s.counters[counter] >= s.limits[key]) throw new Error(`Controller ${counter}/wall budget exhausted`);
-  this.commit("budget_reserved", { counter }, next => { next.counters[counter]++; });
+  this.commit("budget_reserved", { counter, source }, next => { next.counters[counter]++; });
  }
- readonly executionGuard = { beforeSession: () => this.charge("sessions"), beforeModelRequest: () => this.charge("modelRequests"), beforeToolCall: () => this.charge("toolCalls") };
+ /** The guard for the agents of one source; the run's counters are shared by all of them. */
+ guardFor(source: string) { return { beforeSession: () => this.charge("sessions", source), beforeModelRequest: () => this.charge("modelRequests", source), beforeToolCall: () => this.charge("toolCalls", source) }; }
+ /** The decision agent's own guard. */
+ readonly executionGuard = this.guardFor("orchestrator");
  private inspectMutation(request: Mutation, kind: string): Action | undefined {
   text(request.actionId, 128); text(request.rationale, 2048);
   const s = this.state, prior = s.actions.find(a => a.id === request.actionId);
@@ -74,10 +91,11 @@ export class Coordinator {
    goal: s.goal, availableModules: s.config.enabledStages.filter(name => name !== "submit" || s.policy.authorized), policy: s.policy,
    taskConfiguration: s.taskConfiguration ? { declared: true, sha256: s.taskConfiguration.sha256, configuration: s.taskConfiguration.configuration }
     : { declared: false, required: "Declare it with task_configure before starting a stage", ...(this.deps.suggestedConfiguration ? { suggested: this.deps.suggestedConfiguration } : {}) },
-   time: timeBudget(s, this.deps.budgetNote),
+   time: timeBudget(s),
    handOver: { mode: s.config.online ? "online" : "offline", submissionsAuthorized: s.policy.authorized,
     ...(s.policy.authorized ? { submissions: "up to the cap below, each with official score feedback" } : { refits: s.works.filter(w => w.stage === "refit" && w.result?.outcome === "success").length, allowed: 1 }) },
-   trials: { used: s.counters.trials, limit: s.limits.maxTrials, perSolve: (s.config.effectiveOptions.solve as { maxIterations?: number } | undefined)?.maxIterations },
+   trials: { used: s.counters.trials, limit: s.limits.maxTrials, perSolve: (s.config.effectiveOptions.solve as { maxIterations?: number } | undefined)?.maxIterations,
+    ...(() => { const live = s.works.find(w => w.stage === "solve" && !terminal(w)); return live ? { runningSolveAllocation: (live.options as { maxIterations?: number } | undefined)?.maxIterations, note: "Charged when the solve reports the trials it ran" } : {}; })() },
    branches: (() => { try { return this.deps.branches?.(); } catch (error) { return { unavailable: error instanceof Error ? error.message.slice(0, 200) : "branch listing failed" }; } })() as unknown,
    budgets: { limits: s.limits, used: s.counters, deadline: s.deadline, triesUsed: this.remoteUsed, reservedUnknown: s.reservedUnknown, effectiveTriesUsed: this.remoteUsed + s.reservedUnknown, submissionsRemaining: Math.max(0, Math.min(3, s.policy.maxSubmissions) - this.remoteUsed - s.reservedUnknown) },
    works: s.works.slice(-4).map(w => ({ id: w.id, stage: w.stage, status: w.status, objective: w.objective, summary: w.summary })),
@@ -187,10 +205,10 @@ export class Coordinator {
   const id = randomUUID();
   const note = request.guidance === undefined ? undefined : { id: `${request.actionId}:guidance`, version: 1, stage: request.stage, taskId: s.taskId, objective: request.objective, content: request.guidance, author: { name: "orchestrator", logicalSessionId: s.controlInvocationId }, evidence };
   let options: unknown;
-  let trials = 0;
   if (request.stage === "solve") {
+   // The allocation bounds this solve; trials are charged when the solve reports them.
    const configured = s.config.effectiveOptions.solve as { maxIterations: number };
-   trials = Math.min(configured.maxIterations, s.limits.maxTrials - s.counters.trials);
+   const trials = Math.min(configured.maxIterations, s.limits.maxTrials - s.counters.trials);
    if (trials < 1) throw new Error("Global trial budget exhausted");
    options = { maxIterations: trials };
   }
@@ -201,7 +219,7 @@ export class Coordinator {
   const work: Work = { id, stage: request.stage, actionId: request.actionId, objective: request.objective, upstream: request.artifactIds, status: "reserved", guidance: note ? { ...note, contentSha256: guidanceHash(note) } : undefined, options, taskConfiguration: s.taskConfiguration.configuration };
   const receipt = { invocationId: id, accepted: true };
   this.commit("action_accepted", { ...request, invocationId: id }, next => {
-   next.actions.push(this.action(request, "stage_start", receipt)); next.works.push(work); next.counters.stages++; next.counters.trials += trials; if (retry) next.counters.retries++;
+   next.actions.push(this.action(request, "stage_start", receipt)); next.works.push(work); next.counters.stages++; if (retry) next.counters.retries++;
   });
   this.launch(work); return { ...receipt, revision: this.state.revision };
  }
@@ -215,6 +233,7 @@ export class Coordinator {
  }
  private launch(work: Work) {
   this.commit("stage_dispatched", { invocationId: work.id }, s => { s.works.find(w => w.id === work.id)!.status = "active"; });
+  this.emit({ kind: "stage_started", stage: work.stage, invocationId: work.id, objective: work.objective, ...(work.origin ? { origin: work.origin } : {}) });
   try {
    const handle = this.deps.start(work, this.input(work));
    if (handle.invocationId !== work.id) { handle.cancel(); throw new Error("Executor invocation reservation mismatch"); }
@@ -223,10 +242,17 @@ export class Coordinator {
    this.pending.add(pending);
   } catch (error) { this.failWork(work.id, error); }
  }
+ private reconcileTrials(s: RunState) {
+  s.trialIds = startedTrials(this.deps.trainingDirectory ?? trainingDirectory(s.taskId), s.runId, s.works.filter(w => w.stage === "solve").map(w => w.id));
+  s.counters.trials = s.trialIds.length;
+ }
  private failWork(id: string, error: unknown) {
   const message = error instanceof Error ? error.message : "Stage dispatch failed";
-  this.commit("stage_dispatch_failed", { invocationId: id }, s => { const w = s.works.find(w => w.id === id)!; w.status = "terminal"; w.summary = { outcome: "failure", error: message.slice(0, 1000) }; this.notice(s, "stage_failure", w.summary, id); });
+  this.commit("stage_dispatch_failed", { invocationId: id }, s => { const w = s.works.find(w => w.id === id)!; w.status = "terminal"; if (w.stage === "solve") this.reconcileTrials(s); w.summary = { outcome: "failure", error: message.slice(0, 1000) }; this.notice(s, "stage_failure", w.summary, id); });
+  const work = this.state.works.find(w => w.id === id)!;
+  this.emit({ kind: "stage_finished", stage: work.stage, invocationId: id, outcome: "failure", valid: false, error: message.slice(0, 200) });
  }
+ private emit(event: ProgressEvent) { try { this.deps.progress?.(event); } catch { /* progress output is advisory */ } }
  private complete(id: string, result: StageInvocation) {
   if (result.invocationId !== id) throw new Error("Stage result identity mismatch");
   const directory = join(this.store.directory, "artifacts"); mkdirSync(directory, { recursive: true });
@@ -255,6 +281,7 @@ export class Coordinator {
     if (Number.isInteger(effective) && effective > this.remoteUsed + s.reservedUnknown) s.reservedUnknown = effective - this.remoteUsed;
    }
    const work = s.works.find(w => w.id === id)!; work.status = "terminal"; work.result = { ...result, artifacts: [], summary: undefined }; work.summary = summary;
+   if (result.stage === "solve") this.reconcileTrials(s);
    if (work.stage === "solve") for (const old of s.works.filter(w => w.stage === "solve" && w.status === "interrupted")) { if (old.summary) old.summary.trainingRecoveryRequired = false; }
    s.artifacts.push(...artifacts.filter(a => !s.artifacts.some(old => old.id === a.id)));
    if (result.stage === "submit" && submission?.attemptId) {
@@ -267,6 +294,12 @@ export class Coordinator {
    this.notice(s, "stage_terminal", summary, id);
    if (result.stage === "submit" && (submission?.state === "unknown" || submission?.state === "pending" || submission?.reservedUnknown > 0)) { s.status = "blocked"; s.reason = "Submission outcome is pending or unknown; reconcile the same durable invocation without another upload"; }
   });
+  const started = Date.parse(result.startedAt), finished = Date.parse(result.finishedAt);
+  this.emit({ kind: "stage_finished", stage: result.stage, invocationId: id, outcome: result.outcome, valid: result.validation?.valid === true,
+   ...(Number.isFinite(started) && Number.isFinite(finished) ? { durationMs: finished - started } : {}), ...(result.error ? { error: result.error.slice(0, 200) } : {}) });
+  // The budget-end refit reports its own hand-over line once the run's status is set.
+  if (result.stage === "refit" && result.outcome === "success" && result.validation?.valid === true && this.state.works.find(w => w.id === id)?.origin !== "budget_end")
+   this.emit({ kind: "hand_over", handedOver: true, reason: `terminal refit ${id} produced the hand-over files`, invocationId: id });
  }
  stageStatus(id: string) { const w = this.state.works.find(w => w.id === id); if (!w) throw new Error("Unknown invocation"); return { invocationId: id, stage: w.stage, status: w.status, summary: boundedSummary(w.summary ?? {}, this.state.limits.maxSummaryBytes - 1024), revision: this.state.revision }; }
  async feedback(request: Mutation & { invocationId: string; message: string; evidenceIds: string[] }) {
@@ -307,46 +340,25 @@ export class Coordinator {
   return { id, provenance: artifact.provenance, content: page.toString("utf8"), nextOffset: offset + page.length < bytes.length ? offset + page.length : null, truncated: page.length < bytes.length };
  }
  /**
-  * Block until there is input for the controller: a stage result, the time budget
-  * crossing 50% or 20% remaining, or the deadline. No periodic wake-ups: a waiting
-  * controller makes no model requests. `timeoutMs` is a test seam, not a tool argument.
+  * Block until there is input for the controller: a stage result (any terminal
+  * notification) or the run's deadline. No periodic or percentage wake-ups: a
+  * waiting controller makes no model requests. `timeoutMs` is a test seam, not a tool argument.
   */
  async wait(cursor: number, signal?: AbortSignal, timeoutMs?: number) {
   this.status(cursor); const s = this.state;
   if (timeoutMs !== undefined && (!Number.isInteger(timeoutMs) || timeoutMs < 0)) throw new Error("Invalid wait timeout");
   if (cursor > s.acknowledgedCursor) this.commit("notifications_acknowledged", { cursor }, next => { next.acknowledgedCursor = cursor; next.inbox = next.inbox.filter(n => n.cursor > cursor); });
   const limit = timeoutMs === undefined ? s.deadline : Math.min(Date.now() + timeoutMs, s.deadline);
-  for (;;) {
-   this.timeNotices();
-   const end = Math.min(limit, this.nextTimeNotice() ?? limit);
-   if (!(this.state.cursor <= cursor && this.state.works.some(w => !terminal(w)) && Date.now() < limit)) break;
+  while (this.state.cursor <= cursor && this.state.works.some(w => !terminal(w)) && Date.now() < limit) {
    signal?.throwIfAborted();
    await new Promise<void>((resolve, reject) => {
     const done = () => { clearTimeout(timer); this.waiters.delete(done); signal?.removeEventListener("abort", abort); resolve(); };
     const abort = () => { done(); reject(new Error("Wait cancelled")); };
-    const timer = setTimeout(done, Math.max(0, end - Date.now())); this.waiters.add(done); signal?.addEventListener("abort", abort, { once: true });
+    const timer = setTimeout(done, Math.max(0, limit - Date.now())); this.waiters.add(done); signal?.addEventListener("abort", abort, { once: true });
    });
   }
-  this.timeNotices();
   if (this.failure) throw new Error("Coordinator durability failed during stage work");
   return this.status(cursor);
- }
- /** Remaining-time thresholds that wake a waiting controller, once each. */
- private static readonly TIME_NOTICES = [50, 20];
- private timeNoticeAt(percent: number) { const s = this.state; return s.startedAt + Math.round(s.limits.maxWallMs * (100 - percent) / 100); }
- private sentTimeNotices() { return new Set(this.state.journal.filter(e => e.kind === "time_budget_notice").map(e => e.payload.remainingPercent as number)); }
- private nextTimeNotice(): number | undefined {
-  const sent = this.sentTimeNotices();
-  return Coordinator.TIME_NOTICES.filter(p => !sent.has(p)).map(p => this.timeNoticeAt(p)).sort((a, b) => a - b)[0];
- }
- private timeNotices() {
-  if (this.state.status !== "running") return;
-  const sent = this.sentTimeNotices();
-  for (const percent of Coordinator.TIME_NOTICES) {
-   if (sent.has(percent) || Date.now() < this.timeNoticeAt(percent)) continue;
-   const note = this.deps.budgetNote?.(percent);
-   this.commit("time_budget_notice", { remainingPercent: percent }, s => { this.notice(s, "time_budget", { remainingPercent: percent, ...(note ? { note } : {}) }); });
-  }
  }
  finish(request: Mutation & { outcome: "finished" | "blocked" }) {
   const prior = this.inspectMutation(request, "pipeline_finish"); if (prior) return prior.receipt;
@@ -356,13 +368,14 @@ export class Coordinator {
   this.commit("pipeline_finished", { ...request }, s => { s.actions.push(this.action(request, "pipeline_finish", receipt)); s.status = request.outcome; s.reason = request.rationale; }); return receipt;
  }
  async recover() {
+  this.commit("trials_reconciled", {}, s => { this.reconcileTrials(s); });
   if (this.state.status === "blocked" && (this.state.reason?.startsWith("Task-global submission accounting") || this.state.works.some(w => unresolvedSubmission(w) || w.status === "uncertain"))) this.commit("explicit_reconciliation_resume", {}, s => { s.status = "running"; s.reason = undefined; });
   await this.refreshOfficial();
   for (const work of this.state.works.filter(w => !terminal(w) || unresolvedSubmission(w))) {
    if (["research", "solve", "evaluate"].includes(work.stage)) {
     // Lost Pi session cannot be reattached. Live training is recovered by the next
     // solver's existing harness root ownership path; no worker is duplicated here.
-    this.commit("agent_invocation_interrupted", { invocationId: work.id }, s => { const w = s.works.find(w => w.id === work.id)!; w.status = "interrupted"; w.summary = { outcome: "interrupted", trainingRecoveryRequired: w.stage === "solve", reason: "Host restarted; in-memory agent session lost. Existing training requires harness reconciliation before the next fit." }; this.notice(s, "stage_interrupted", w.summary, w.id); });
+    this.commit("agent_invocation_interrupted", { invocationId: work.id }, s => { const w = s.works.find(w => w.id === work.id)!; w.status = "interrupted"; if (w.stage === "solve") this.reconcileTrials(s); w.summary = { outcome: "interrupted", trainingRecoveryRequired: w.stage === "solve", reason: "Host restarted; in-memory agent session lost. Existing training requires harness reconciliation before the next fit." }; this.notice(s, "stage_interrupted", w.summary, w.id); });
    } else {
     this.commit("recovery_uncertain", { invocationId: work.id }, s => { s.works.find(w => w.id === work.id)!.status = "uncertain"; });
     const result = await this.deps.recover?.(work, this.input(work, true));
@@ -372,6 +385,81 @@ export class Coordinator {
   }
   // A feedback acceptance without a durable delivery receipt cannot be replayed.
   for (const a of this.state.actions.filter(a => a.kind === "stage_feedback" && a.receipt.state === "pending")) this.commit("feedback_interrupted", { actionId: a.id }, s => { s.actions.find(n => n.id === a.id)!.receipt = { ...a.receipt, state: "interrupted", reason: "Host restarted before delivery receipt" }; });
+ }
+ /** The decision-loop counter that is spent, if any; a spent counter ends the loop instead of a retry. */
+ exhausted(): Counter | undefined {
+  const s = this.state;
+  return (["sessions", "modelRequests", "toolCalls"] as const).find(counter => s.counters[counter] >= s.limits[`max${counter[0].toUpperCase()}${counter.slice(1)}` as keyof RunState["limits"]]);
+ }
+ /** The last catalogued champion, including interrupted solves. */
+ champion(): RunState["artifacts"][number] | undefined {
+  return this.state.artifacts.filter(a => a.kind === "training_selected_result").at(-1);
+ }
+ private earlierChampion = false;
+ private async refreshChampion() {
+  this.earlierChampion = false;
+  const s = this.state;
+  const trial = await (this.deps.promotedChampion ?? promotedChampion)(s.taskId);
+  if (!trial) return undefined;
+  const evidence = trial.artifacts.find(a => a.kind === "training_trial_result");
+  if (!evidence) return undefined;
+  const metadata = JSON.parse(readFileSync(join(trial.directory, "recovery.json"), "utf8"));
+  if (metadata.originPipelineRunId !== s.runId) { this.earlierChampion = true; return undefined; }
+  const producer = s.works.find(w => w.id === metadata.originStageInvocationId && w.stage === "solve");
+  if (!producer) return undefined;
+  const bytes = readFileSync(evidence.path), sha256 = hash(bytes);
+  if (sha256 !== evidence.sha256) throw new Error("Champion evidence hash mismatch");
+  const id = `${producer.id}:training_selected_result:${sha256}`;
+  const directory = join(this.store.directory, "artifacts"); mkdirSync(directory, { recursive: true });
+  const snapshotPath = join(directory, sha256);
+  if (!statExists(snapshotPath)) writeFileSync(snapshotPath, bytes, { flag: "wx", flush: true });
+  const artifact = { ...evidence, kind: "training_selected_result", id, producer: producer.id, snapshotPath,
+   provenance: { artifactId: id, taskId: s.taskId, pipelineRunId: s.runId, invocationId: producer.id, sha256 } };
+  if (!s.artifacts.some(a => a.id === id)) this.commit("champion_evidence_reconciled", { experimentId: trial.experimentId, invocationId: producer.id }, next => { next.artifacts.push(artifact); });
+  return artifact;
+ }
+ /**
+  * The decision loop ended without a hand-over (deadline, spent counters, or the
+  * decision agent stopped without finishing). Settle owned work, then refit the
+  * champion through the same stage path if it was not refit yet. The refit runs
+  * to its end even past the deadline; nothing is uploaded, also online.
+  * `cancelLive` cancels running stages first (the deadline); otherwise they finish.
+  */
+ async handOverAtBudgetEnd(why: string, options: { cancelLive: boolean }): Promise<{ handedOver: boolean; reason: string; invocationId?: string }> {
+  if (options.cancelLive) for (const h of this.handles.values()) h.cancel();
+  await Promise.allSettled([...this.pending]);
+  if (this.failure) throw this.failure;
+  const end = (status: RunState["status"], reason: string, handedOver: boolean, invocationId?: string) => {
+   this.commit("budget_end", { why, status, reason, handedOver, ...(invocationId ? { invocationId } : {}) }, s => { s.status = status; s.reason = reason; });
+   this.emit({ kind: "hand_over", handedOver, reason, ...(invocationId ? { invocationId } : {}) });
+   return { handedOver, reason, ...(invocationId ? { invocationId } : {}) };
+  };
+  if (this.state.status !== "running") return { handedOver: false, reason: this.state.reason ?? this.state.status };
+  if (this.state.works.some(w => !terminal(w))) return end("blocked", `Budget end (${why}): owned work has an uncertain outcome; reconcile it before a hand-over`, false);
+  // Nobody reads the inbox any more; acknowledge it so the refit's notice always fits.
+  if (this.state.cursor > this.state.acknowledgedCursor) this.commit("notifications_acknowledged", { cursor: this.state.cursor, reason: "budget_end" }, s => { s.acknowledgedCursor = s.cursor; s.inbox = []; });
+  const champion = await this.refreshChampion();
+  if (!champion && this.earlierChampion) return end("cancelled", `Budget end (${why}): nothing from this run to hand over; an earlier run's champion exists`, false);
+  if (!champion) return end("cancelled", `Budget end (${why}): nothing to hand over; no solve produced a validated champion`, false);
+  const s = this.state, refits = s.works.filter(w => w.stage === "refit" && w.result?.outcome === "success");
+  const done = s.policy.authorized ? refits.find(w => w.upstream.includes(champion.id)) : refits[0];
+  if (done) return end("finished", `Budget end (${why}): the champion was already handed over by refit ${done.id}`, true, done.id);
+  const producer = s.works.find(w => w.id === champion.producer)!;
+  const review = s.artifacts.filter(a => a.kind === "evaluation_report" && s.works.findIndex(w => w.id === a.producer) > s.works.indexOf(producer)
+   && s.works.find(w => w.id === a.producer)?.result?.outcome === "success").at(-1);
+  const id = randomUUID(), actionId = `budget-end-refit:${id}`;
+  const work: Work = { id, stage: "refit", actionId, objective: `Hand over the champion at budget end (${why})`, upstream: [champion.id, ...(review ? [review.id] : [])], status: "reserved", taskConfiguration: producer.taskConfiguration ?? s.taskConfiguration?.configuration, origin: "budget_end" };
+  const receipt = { invocationId: id, accepted: true, origin: "budget_end" };
+  this.commit("budget_end_refit_accepted", { why, invocationId: id, champion: champion.id, review: review?.id ?? null }, next => {
+   next.actions.push({ id: actionId, kind: "budget_end_refit", requestHash: hash({ kind: "budget_end_refit", id }), revision: next.revision + 1, receipt }); next.works.push(work);
+  });
+  this.launch(work);
+  await Promise.allSettled([...this.pending]);
+  if (this.failure) throw this.failure;
+  const finished = this.state.works.find(w => w.id === id)!;
+  const valid = finished.result?.outcome === "success" && (finished.summary?.validation as { valid?: boolean } | undefined)?.valid === true;
+  return valid ? end("finished", `Handed over at budget end (${why}): terminal refit ${id} of champion ${champion.id}`, true, id)
+   : end("cancelled", `Budget end (${why}): the hand-over refit ${id} failed: ${String(finished.summary?.error ?? finished.result?.error ?? "no valid refit result").slice(0, 300)}`, false, id);
  }
  async stop(reason: string) {
   for (const h of this.handles.values()) h.cancel();
@@ -385,11 +473,9 @@ function unresolvedSubmission(work: Work): boolean {
  const content = (work.summary?.measurements as any)?.content;
  return work.stage === "submit" && (work.status === "uncertain" || ["pending", "unknown"].includes(content?.state) || content?.reservedUnknown > 0);
 }
-function timeBudget(s: RunState, note?: (remainingPercent: number) => string | undefined) {
+function timeBudget(s: RunState) {
  const now = Date.now(), remainingMs = Math.max(0, s.deadline - now);
- const remainingPercent = Math.round(100 * remainingMs / s.limits.maxWallMs);
- const text = note?.(remainingPercent);
- return { elapsedMinutes: Math.round((now - s.startedAt) / 60000), remainingMinutes: Math.round(remainingMs / 60000), remainingPercent, ...(text ? { note: text } : {}) };
+ return { elapsedMinutes: Math.round((now - s.startedAt) / 60000), remainingMinutes: Math.round(remainingMs / 60000), remainingPercent: Math.round(100 * remainingMs / s.limits.maxWallMs) };
 }
 function requiredArtifact(kind: string) { return ["research_document", "stage_report", "training_selected_result", "holdout_confirmation", "evaluation_report", "terminal_refit_result", "submission_receipt"].includes(kind); }
 function statExists(path: string) { try { statSync(path); return true; } catch { return false; } }

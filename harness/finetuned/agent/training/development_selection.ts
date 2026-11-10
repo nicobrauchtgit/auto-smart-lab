@@ -26,6 +26,15 @@ export function recordedRepository(trial: TrainingTrialResult | undefined): stri
  * tag records and its artifacts join the collection.
  */
 export async function championSelection(collection: TrainingCollection, repository: string | undefined, taskId: string): Promise<TrainingCollection> {
+ return selectTaggedChampion(collection, repository, taskId, false);
+}
+
+/** Reconcile a hand-over without reopening a frozen champion for development. */
+export async function handoverChampion(repository: string, taskId: string): Promise<TrainingTrialResult | undefined> {
+ return (await selectTaggedChampion({ trials: [], valid: false, errors: [], artifacts: [] }, repository, taskId, true)).selected;
+}
+
+async function selectTaggedChampion(collection: TrainingCollection, repository: string | undefined, taskId: string, allowTerminal: boolean): Promise<TrainingCollection> {
  const { selected: _, ...rest } = collection;
  // Surface corrupt terminal markers of any open-looking trial, not just the champion's.
  if (repository) for (const trial of collection.trials) {
@@ -49,7 +58,7 @@ export async function championSelection(collection: TrainingCollection, reposito
  const source = champion.invocation?.source as { commit?: string } | undefined;
  if (source?.commit !== tag.commit || resolve(recordedRepository(champion) ?? "") !== resolve(repository))
   return fail(`Champion ${experimentId} evidence does not match the champion tag`);
- if (isTerminalCandidate(repository, taskId, tag.commit, champion.request.pipeline))
+ if (isTerminalCandidate(repository, taskId, tag.commit, champion.request.pipeline) && !allowTerminal)
   return fail("No independently validated candidate remains open for development; frozen evidence is historical only");
  return { ...rest, selected: champion, valid: true,
   artifacts: local ? collection.artifacts : [...collection.artifacts, ...champion.artifacts] };

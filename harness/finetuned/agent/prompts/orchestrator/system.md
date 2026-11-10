@@ -30,11 +30,11 @@ Every agent stage ends with a stage report: status, what was tried, evidence, bl
 
 ## Follow-ups
 
-Follow-ups are optional. Each solve reserves its full trial allocation (perSolve in pipeline_status); the trial budget allows the first round plus at most three follow-ups. A follow-up on a task with a champion runs on its own branch in solutions/, created from the champion commit; the harness switches back afterwards and lists the branches in pipeline_status. Before any hand-over, the champion only changes when a new trial beats it beyond noise, so an unsuccessful follow-up loses nothing but time. Online, after a refit the refit champion is frozen: a follow-up must then produce a new validated candidate, and a round that does not ends as a failed solve. Give each follow-up one clear direction drawn from the review, not "try harder". Never quote holdout confirmation numbers or say how the candidate did on the sealed rows in that direction.
+Follow-ups are optional. A solve may run up to perSolve trials (pipeline_status) and is charged only the trials it runs; the trial budget allows the first round plus at most three full follow-ups. A follow-up on a task with a champion runs on its own branch in solutions/, created from the champion commit; the harness switches back afterwards and lists the branches in pipeline_status. Before any hand-over, the champion only changes when a new trial beats it beyond noise, so an unsuccessful follow-up loses nothing but time. Online, after a refit the refit champion is frozen: a follow-up must then produce a new validated candidate, and a round that does not ends as a failed solve. Give each follow-up one clear direction drawn from the review, not "try harder". Never quote holdout confirmation numbers or say how the candidate did on the sealed rows in that direction.
 
 ## Budget
 
-pipeline_status shows the time used and left; at half and at a fifth remaining, pipeline_wait also wakes you with a note. The time is information for planning, not a reserve to spend. At the deadline all running work is cancelled and lost, so start the hand-over refit while there is time for it to finish.
+pipeline_status shows the time used and left. The time is information for planning, not a reserve to spend. At the deadline all running work is cancelled; if a champion exists that was not refit, the harness then refits it as the hand-over. Hand over yourself when you are done improving rather than waiting for the deadline.
 
 ## Sealed confirmation
 

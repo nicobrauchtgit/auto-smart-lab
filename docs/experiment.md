@@ -10,8 +10,18 @@ Both arms live on this branch. Choose one with a flag; no branch switch.
 ./dev bun run experiment -- --arm minimal --only spam1,spam2,spam3
 ./dev bun run experiment -- --arm finetuned --check-setup spam1
 ./dev bun run experiment -- --arm finetuned spam1
+./dev bun run experiment -- --arm finetuned spam1 --detach                    # survives the terminal
+./dev bun run experiment -- --arm finetuned spam1 --detach --resume <run-id>  # continue a run
 ./dev bun run experiment -- --arm finetuned --reset        # shows what it would delete; add --yes
 ```
+
+`--detach` starts the finetuned run in its own session, writes its output to
+`runs/finetuned/<task>/logs/<stamp>.log`, prints the log path and how to follow,
+stop (`kill -INT <pid>`) and resume it, and returns. Every finetuned run prints one
+progress line per event: run started (with its run ID), stage started (stage and the
+objective's first words), stage finished (outcome, valid or not, duration),
+hand-over, and run end with its outcome. `--resume <run-id>` continues a run with
+its remaining budget.
 
 Arguments after the flag go to the arm's own entry point:
 `harness/finetuned/agent/pipeline_cli.ts` for the finetuned arm,
