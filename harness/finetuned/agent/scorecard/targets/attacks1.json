@@ -1,0 +1,41 @@
+{
+  "task": "attacks1",
+  "source": "Targets pending task reference measurements",
+  "metric": {
+    "name": "selectionScore",
+    "trialKey": "selectionScore"
+  },
+  "reference": {},
+  "simpleModel": {
+    "minCvScore": null,
+    "maxFitSeconds": null
+  },
+  "finish": {
+    "maxHandOverMinutes": 45,
+    "aimHandOverMinutes": 30,
+    "maxFollowUpRounds": 1,
+    "maxTrials": 8
+  },
+  "verify": {
+    "minPromotionTrials": 1,
+    "requireSealedCheck": false,
+    "requireValidationChecks": true
+  },
+  "measurements": {
+    "handOverRows": null
+  },
+  "reuse": {
+    "maxLoaderImplementations": 1,
+    "maxAgentPythonLinesOutsideSolutions": 0,
+    "requireModuleIndex": true
+  },
+  "cost": {
+    "maxMinutesToFirstTrial": 10,
+    "maxOrchestratorRequestsWhileWaiting": 0,
+    "maxScriptPeakGb": 2
+  },
+  "memory": {
+    "requireFewerModelRequests": true,
+    "requireLoaderReuse": true
+  }
+}

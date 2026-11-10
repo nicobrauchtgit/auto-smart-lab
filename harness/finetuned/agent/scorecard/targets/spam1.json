@@ -1,23 +1,49 @@
 {
   "task": "spam1",
   "source": "docs/redesign-plan.md, section \"What a good spam1 run looks like\"",
-  "metric": { "name": "balanced_accuracy", "trialKey": "balancedAccuracy" },
+  "metric": {
+    "name": "balanced_accuracy",
+    "trialKey": "balancedAccuracy"
+  },
   "reference": {
     "pipeline": "binary TF-IDF on word unigrams with a linear SVM, 5-fold stratified CV, about 30 lines (docs/redesign-spam1-reference.py)",
-    "cvScore": [0.9944, 0.9954],
+    "cvScore": [
+      0.9944,
+      0.9954
+    ],
     "computeSecondsForThreeCandidates": 42,
     "peakMemoryGb": 0.5
   },
   "simpleModel": {
     "minCvScore": 0.994,
-    "featurePatterns": ["TfidfVectorizer", "TfidfTransformer", "HashingVectorizer", "CountVectorizer"],
-    "linearEstimators": ["LinearSVC", "LogisticRegression", "SGDClassifier", "RidgeClassifier", "PassiveAggressiveClassifier", "Perceptron", "ComplementNB", "MultinomialNB"],
-    "nonLinearEstimators": ["RandomForest", "ExtraTrees", "GradientBoosting", "HistGradientBoosting", "XGB", "LGBM", "CatBoost", "MLPClassifier", "KNeighbors", "torch"]
+    "maxFitSeconds": 42
   },
-  "finish": { "maxHandOverMinutes": 45, "aimHandOverMinutes": 30, "maxFollowUpRounds": 1, "maxTrials": 8 },
-  "verify": { "minPromotionTrials": 1, "requireSealedCheck": true, "requireValidationChecks": true },
-  "measurements": { "handOverRows": 15051 },
-  "reuse": { "maxLoaderImplementations": 1, "maxAgentPythonLinesOutsideSolutions": 0, "requireModuleIndex": true },
-  "cost": { "maxMinutesToFirstTrial": 10, "maxOrchestratorRequestsWhileWaiting": 0, "maxScriptPeakGb": 2 },
-  "memory": { "requireFewerModelRequests": true, "requireLoaderReuse": true }
+  "finish": {
+    "maxHandOverMinutes": 45,
+    "aimHandOverMinutes": 30,
+    "maxFollowUpRounds": 1,
+    "maxTrials": 8
+  },
+  "verify": {
+    "minPromotionTrials": 1,
+    "requireSealedCheck": true,
+    "requireValidationChecks": true
+  },
+  "measurements": {
+    "handOverRows": 15051
+  },
+  "reuse": {
+    "maxLoaderImplementations": 1,
+    "maxAgentPythonLinesOutsideSolutions": 0,
+    "requireModuleIndex": true
+  },
+  "cost": {
+    "maxMinutesToFirstTrial": 10,
+    "maxOrchestratorRequestsWhileWaiting": 0,
+    "maxScriptPeakGb": 2
+  },
+  "memory": {
+    "requireFewerModelRequests": true,
+    "requireLoaderReuse": true
+  }
 }
