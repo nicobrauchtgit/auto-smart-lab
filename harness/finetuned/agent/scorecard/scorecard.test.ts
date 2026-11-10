@@ -4,6 +4,8 @@ import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { dataReads } from "./code.js";
+import { judge, loadTargets } from "./indicators.js";
 import { parseArguments } from "../scorecard_cli.js";
 import { formatScorecard } from "./format.js";
 import { scorecard, toJson, type Indicator } from "./index.js";
@@ -60,11 +62,11 @@ function writeTrial(runs: string, invocation: string, id: string, options: { kin
  write(join(directory, "events.jsonl"), `${JSON.stringify({ timestamp: options.at / 1000, type: "action_completed" })}\n`);
  write(join(directory, "worker-runtime.json"), { seconds: 42 });
  write(join(directory, "worker-exit.json"), { exitCode: options.score === undefined ? -15 : 0, ...(options.peak ? { peakRssBytes: options.peak } : {}) });
- if (options.score !== undefined) write(join(directory, "trial-result.json"), { status: "completed", metrics: { balancedAccuracy: options.score } });
+ if (options.score !== undefined) write(join(directory, "trial-result.json"), { status: "completed", metrics: { balancedAccuracy: options.score }, diagnostics: { fitSeconds: 12 } });
  return directory;
 }
 
-const LOADER = "import zipfile\n\ndef load(path):\n    with zipfile.ZipFile(path) as archive:\n        return archive.namelist()\n";
+const LOADER = "import zipfile\n\ndef load(path):\n    with zipfile.ZipFile('spam1-train.zip') as archive:\n        return archive.namelist()\n";
 const LINEAR = "from sklearn.feature_extraction.text import TfidfVectorizer\nfrom sklearn.svm import LinearSVC\nfrom sklearn.pipeline import make_pipeline\nfrom data.loader import load\n\ndef build_pipeline():\n    return make_pipeline(TfidfVectorizer(binary=True), LinearSVC())\n";
 
 /** A run that meets every target: 25 minutes, one loader in solutions/, a linear champion, sealed check, hand-over. */
@@ -83,6 +85,14 @@ function goodRun(): { runs: string; targets: string } {
  write(join(solutions, "INDEX.md"), "- data/loader.py: reads archives\n- tasks/spam1.py: entrypoint\n", start + 9 * MIN);
  git(solutions, ["init", "-q"], start); git(solutions, ["add", "-A"], start + 13 * MIN); git(solutions, ["commit", "-qm", "champion"], start + 13 * MIN);
  git(solutions, ["tag", "-a", "-m", JSON.stringify({ experimentId: "promo-1", trainingRoot: dirname(promotion), pipeline: { module: "solutions/tasks/spam1.py" } }), "champion/spam1"], start + 14 * MIN);
+ // Preserve selected and validation artifacts as real runs do.
+ const statePath = join(runs, "spam1", "pipeline", "run-good", "state.json");
+ const state = JSON.parse(readFileSync(statePath, "utf8")).state;
+ const evaluation = join(promotion, "evaluation", review, "review.json");
+ write(evaluation, { taskId: "spam1", metrics: {}, sourceArtifacts: [], validation: { valid: true, errors: [] }, review: { readinessScore: 4, status: "reviewed", readinessRationale: "checked", assessment: "reviewed evidence", concerns: [], limitations: ["synthetic fixture"], recommendations: [] } });
+ state.artifacts.push({ kind: "training_selected_result", path: join(promotion, "trial-result.json") }, { kind: "evaluation_report", path: evaluation });
+ write(join(promotion, "invocation.json"), { source: { commit: git(solutions, ["rev-parse", "HEAD"], start) } });
+ write(statePath, { state, sha256: hash(state) });
  // Sealed check, hand-over, reports, knowledge, observed scripts.
  const record = join(runs, "spam1", "confirmation", "c1", "result.json");
  write(record, { status: "completed", metrics: { balancedAccuracy: 0.9948 }, gap: 0.0004, interval: { lower: 0.991, upper: 0.997 } }, start + 21 * MIN);
@@ -90,7 +100,7 @@ function goodRun(): { runs: string; targets: string } {
  write(join(runs, "deliveries", "spam1", "abc", "output.csv"), "a;1\nb;0\nc;1\n");
  write(join(runs, "deliveries", "spam1", "abc", "manifest.json"), { deliveredAt: new Date(start + 22 * MIN).toISOString() });
  for (const id of [research, solve, review]) write(join(runs, "spam1", "reports", `x-${id}.md`), "# report\n");
- write(join(runs, "knowledge", "index.json"), { notes: [{ origin: { pipelineRunId: "run-good" }, revisions: [{}] }, { origin: { pipelineRunId: "other" }, revisions: [{}] }] });
+ write(join(runs, "knowledge", "index.json"), { notes: [{ origin: { pipelineRunId: "run-good" }, revisions: [{ author: { pipelineRunId: "run-good" } }] }, { origin: { pipelineRunId: "other" }, revisions: [{}] }] });
  write(join(runs, "spam1", "workspace", ".harness", "processes.jsonl"), `${JSON.stringify({ pipelineRunId: "run-good", command: "python probe.py", durationSeconds: 3, peakRssBytes: 300 * 1024 ** 2 })}\n`);
  const targets = join(runs, "targets.json");
  const spam1 = JSON.parse(readFileSync(join(import.meta.dir, "targets", "spam1.json"), "utf8"));
@@ -212,8 +222,8 @@ describe("scorecard indicators", () => {
   write(join(runs, "deliveries", "spam1", "abc", "output.csv"), "a;1\n");
   write(join(runs, "spam1", "workspace", ".harness", "processes.jsonl"), `${JSON.stringify({ pipelineRunId: "run-good", command: "python big.py", peakRssBytes: 3 * 1024 ** 3 })}\n`);
   const [run] = scorecard({ task: "spam1", runsDir: runs, targetsPath: targets }).runs;
-  expect(verdicts(run.indicators)).toMatchObject({ 1: "fail", 2: "pass", 3: "fail", 4: "fail", 5: "fail", 6: "fail" });
-  expect(byId(run.indicators, 1).checks[0].actual).toContain("RandomForest");
+  expect(verdicts(run.indicators)).toMatchObject({ 1: "pass", 2: "pass", 3: "fail", 4: "fail", 5: "fail", 6: "fail" });
+  expect(byId(run.indicators, 1).checks[0].actual).toBe("0.9952");
   expect(byId(run.indicators, 5).checks.find(item => item.name.startsWith("module index"))!.actual).toContain("extra.py");
   expect(byId(run.indicators, 6).checks.find(item => item.name.startsWith("no script"))!.actual).toBe("peak 3.00 GB");
  });
@@ -282,8 +292,108 @@ describe("scorecard command", () => {
   const cli = join(import.meta.dir, "..", "scorecard_cli.ts");
   const text = spawnSync(process.execPath, [cli, "spam1", "--runs", runs, "--targets", targets], { encoding: "utf8" });
   expect(text.status).toBe(0);
-  expect(text.stdout).toContain("1. It realises a simple model is enough: PASS");
+  expect(text.stdout).toContain("1. It meets the task score and compute targets: PASS");
   const json = spawnSync(process.execPath, [cli, "spam1", "--runs", runs, "--targets", targets, "--json"], { encoding: "utf8" });
   expect(JSON.parse(json.stdout).runs[0].indicators).toHaveLength(7);
  });
+});
+
+function changeState(runs: string, runId: string, mutate: (state: any) => void) {
+ const path = join(runs, "spam1", "pipeline", runId, "state.json");
+ const state = JSON.parse(readFileSync(path, "utf8")).state;
+ mutate(state); write(path, { state, sha256: hash(state) });
+}
+function scored(runs: string, targets: string, runId = "run-good") {
+ return scorecard({ task: "spam1", runsDir: runs, targetsPath: targets, runIds: [runId] }).runs[0];
+}
+function named(run: ReturnType<typeof scored>, name: string) { return run.indicators.flatMap(i => i.checks).find(c => c.name === name)!; }
+
+describe("review regressions", () => {
+ test("1: referenced champion trials do not count as executed trials or promotions", () => {
+  const { runs, targets } = goodRun();
+  const old = join(runs, "spam1", "solve", "training", "11111111-aaaa", "promo-1", "trial-result.json");
+  writeRun(runs, { runId: "reuse", start: T0 + 60 * MIN, end: T0 + 80 * MIN, stages: [["solve", "new-solve", 1, 12, "success"]], artifacts: [{ kind: "training_selected_result", path: old }] });
+  writeTrial(runs, "new-solve", "new-pilot", { kind: "pilot", at: T0 + 70 * MIN, score: .99 });
+  const run = scored(runs, targets, "reuse");
+  expect(run.facts.trials).toHaveLength(1); expect(run.facts.referencedTrials).toHaveLength(1);
+  expect(run.facts.minutesToFirstTrial).toBe(9);
+  expect(named(run, "completed promotion trials").actual).toBe("0");
+ });
+ test("2: immutable selection and confirmation survive replacement of mutable pointers", () => {
+  const { runs, targets } = goodRun();
+  const record = join(runs, "spam1", "confirmation", "c1", "result.json");
+  changeState(runs, "run-good", s => s.artifacts.push({ kind: "holdout_confirmation", path: record }));
+  git(join(runs, "solutions"), ["tag", "-f", "-a", "-m", JSON.stringify({ experimentId: "later" }), "champion/spam1"], T0 + 100 * MIN);
+  write(join(runs, "spam1", "confirmation", "latest.json"), { path: "/missing/later" });
+  let run = scored(runs, targets);
+  expect(run.facts.champion?.experimentId).toBe("promo-1"); expect(run.facts.sealed?.inRun).toBe(true);
+  changeState(runs, "run-good", s => s.artifacts = s.artifacts.filter((a: any) => a.kind !== "training_selected_result"));
+  rmSync(record); run = scored(runs, targets);
+  expect(named(run, "a champion exists").verdict).toBe("not_measurable");
+  expect(named(run, "sealed check ran").verdict).toBe("not_measurable");
+ });
+ test("3: memory requires script and trial coverage but an excessive observed peak fails", () => {
+  const { runs, targets } = goodRun();
+  rmSync(join(runs, "spam1", "workspace", ".harness", "processes.jsonl"));
+  let run = scored(runs, targets);
+  expect(named(run, "peak memory recorded").verdict).toBe("not_measurable");
+  expect(named(run, "no script above the memory limit").verdict).toBe("not_measurable");
+  write(join(runs, "spam1", "solve", "training", "11111111-aaaa", "promo-1", "worker-exit.json"), { peakRssBytes: 3 * 1024 ** 3 });
+  expect(named(scored(runs, targets), "no script above the memory limit").verdict).toBe("fail");
+  const facts = run.facts; facts.memory.scripts = [{ command: "x", source: "fixture", peakMemoryBytes: 1 }]; facts.memory.trialsWithMemory = 1;
+  expect(judge(facts, loadTargets("spam1"))[3].checks.at(-1)?.verdict).toBe("not_measurable");
+ });
+ test("4: comments, unused imports and task model families never determine verdicts", () => {
+  const { runs, targets } = goodRun(); const run = scored(runs, targets); const t = loadTargets("spam1");
+  for (const source of ["DummyClassifier() # TfidfVectorizer LinearSVC", "import RandomForestClassifier\nLinearSVC()", "KMeans()", "ImageAnomalyDetector()"] ) {
+   run.facts.champion!.source = source;
+   expect(judge(run.facts, t)[0].verdict).toBe("pass");
+  }
+  run.facts.champion!.fitSeconds = 43; expect(judge(run.facts, t)[0].verdict).toBe("fail");
+  run.facts.champion!.fitSeconds = undefined; expect(judge(run.facts, t)[0].verdict).toBe("not_measurable");
+  run.facts.champion!.score = .1; expect(judge(run.facts, t)[0].verdict).toBe("fail");
+ });
+ test("5: only read operations count; configured and unknown paths remain uncertain", () => {
+  expect(dataReads("import zipfile; from data.loader import load", ["train.zip"])).toEqual({ confirmed: false, uncertain: false });
+  expect(dataReads("# ZipFile('train.zip')\nname = 'train.zip'", ["train.zip"]).confirmed).toBe(false);
+  for (const source of ["zipfile.ZipFile('train.zip')", "pd.read_csv('train.csv')", "Image.open('train.png')", "open('train.bin', 'rb')", "np.fromfile('train.bin')", "np.load('train.npy')", "tarfile.open('train.tar')"]) {
+   expect(dataReads(source, ["train.zip", "train.csv", "train.png", "train.bin", "train.npy", "train.tar"]).confirmed).toBe(true);
+  }
+  expect(dataReads("pd.read_csv(config.samples.train)", ["train.csv"]).uncertain).toBe(true);
+  const { runs, targets } = goodRun(); write(join(runs, "solutions", "dynamic.py"), "pd.read_csv(config.samples.train)", T0 + 10 * MIN);
+  expect(named(scored(runs, targets), "data loading implemented once, in solutions/").verdict).toBe("not_measurable");
+ });
+ test("6: a successful evaluate work needs a readable structured report", () => {
+  const { runs, targets } = goodRun(); const report = scored(runs, targets).facts.reports.validationReports[0];
+  for (const value of ["invalid JSON", {}, { validation: { valid: true } }]) {
+   write(report, value); expect(named(scored(runs, targets), "validation checks recorded").verdict).toBe("not_measurable");
+  }
+  rmSync(report); expect(named(scored(runs, targets), "validation checks recorded").verdict).toBe("not_measurable");
+ });
+ test("7: revisions use their author, never the note creator or legacy origin", () => {
+  const { runs, targets } = goodRun();
+  write(join(runs, "knowledge", "index.json"), { notes: [{ origin: { pipelineRunId: "A" }, revisions: [{ author: { pipelineRunId: "A" } }, { author: { pipelineRunId: "B" } }, { origin: { pipelineRunId: "A" } }] }] });
+  for (const id of ["A", "B"]) {
+   writeRun(runs, { runId: id, start: T0, end: T0 + MIN, stages: [] });
+   expect(scored(runs, targets, id).facts.reports).toMatchObject({ knowledgeRevisions: 1, unknownRevisionAuthors: 1 });
+  }
+ });
+ test("8: recovery retries are separate from follow-ups after completed rounds", () => {
+  const { runs, targets } = goodRun();
+  writeRun(runs, { runId: "rounds", start: T0, end: T0 + 20 * MIN, stages: [["solve", "a", 1, 2, "interrupted"], ["solve", "b", 3, 4, "failure"], ["solve", "c", 5, 6, "success"], ["solve", "d", 7, 8, "success"]] });
+  expect(named(scored(runs, targets, "rounds"), "follow-up rounds")).toMatchObject({ verdict: "pass", actual: "1 (2 retries; 4 modelling stage runs)" });
+ });
+ test("9: clustering and label-free anomaly targets have no implicit score goal", () => {
+  const { runs, targets } = goodRun(); const run = scored(runs, targets);
+  for (const task of ["code2", "attacks1"]) {
+   const t = loadTargets(task); expect(t.simpleModel.minCvScore).toBeNull();
+   const checks = judge(run.facts, t)[0].checks;
+   expect(checks.every(c => c.verdict === "not_measurable" && c.target === "no target set")).toBe(true);
+  }
+ });
+});
+
+test("10: README documents task targets, uncertain evidence and historical attribution", () => {
+ const readme = readFileSync(join(import.meta.dir, "README.md"), "utf8");
+ for (const contract of ["no target set", "diagnostics.fitSeconds", "revision.author.pipelineRunId", "uncertain candidates", "recovery retries", "training_selected_result", "evaluation_report", "script coverage"]) expect(readme).toContain(contract);
 });
