@@ -9,8 +9,8 @@ plans without competing with this queue.
 ## Experiment and current runtime
 
 The experiment compares a minimal autonomous agent with a task-adapted harness.
-Both arms are proposed on `review/two-arm-experiment`, based on the reviewed
-`merge-arms` integration. They are selected through `experiment/`, with independent
+Both arms live in this reviewed integration, based on `merge-arms`. They are
+selected through `experiment/`, with independent
 code/configuration and `runs/minimal/` / `runs/finetuned/` state. See
 [the experiment contract](experiment.md).
 
@@ -29,10 +29,10 @@ and official scores separate.
 | Package | State | Required next action |
 | --- | --- | --- |
 | P1: observed scripts and shared memory pool | Deferred from this merge by the user; not integrated | Future strict-protection implementation; see [counterexamples and scope decision](p1-memory-pool-blocker.md) |
-| P3: waits, accounting, recovery, hand-over and detached runs | Included in the PR; final whole-branch validation passed | PR review/merge, then live shakedown (F1) |
+| P3: waits, accounting, recovery, hand-over and detached runs | Integrated; final whole-branch validation passed | Live shakedown (F1) |
 | P4: scorecard | Integrated in `d57b703` | Use on the next live shakedown |
 | P5: expert-team design and draft prompts | Integrated in `6901a54` | Keep labelled as design |
-| Reviewer documentation and source inventory | Included in the PR; independent review, source refresh and navigation checks complete | PR review/merge; keep inventory and status current |
+| Reviewer documentation and source inventory | Integrated; independent review, source refresh and navigation checks complete | Keep inventory and status current |
 
 P3 passed type checking and 61 focused tests after its final review fixes:
 terminal champion recovery, charging only launched workers, and recovered
@@ -48,10 +48,9 @@ documents and six Mermaid blocks passed structural checks. See
 [the full merge evidence](merge-readiness.md) for the earlier timeout failure,
 its bounded correction, validation scope and remaining limits.
 
-The earlier direct merge into `main` was reverted at the user's request so this
-integration can be reviewed as a PR. It is not currently on `main`. P1 remains
+The integration is tracked in [PR #1](https://github.com/nicobrauchtgit/auto-smart-lab/pull/1). P1 remains
 explicitly deferred; neither its implementation nor its production guard is
-included. Use the [review guide](review-guide.md) to inspect the proposed result.
+included. Use the [review guide](review-guide.md) to inspect the result.
 Live experimental results remain follow-ups below.
 
 ## Follow-ups and readiness limits

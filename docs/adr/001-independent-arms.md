@@ -4,7 +4,7 @@
 
 ## Status
 
-Accepted; implemented in the proposed `review/two-arm-experiment` PR.
+Accepted; implemented in this reviewed integration.
 
 ## Context
 

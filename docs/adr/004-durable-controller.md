@@ -5,7 +5,7 @@
 ## Status
 
 Accepted; durable controller and P3 run mechanics are implemented in
-the proposed PR (P3 integration fd96ccd, carried by the reviewed `merge-arms` branch). Source metrics identify their exact input
+this integration (P3 fd96ccd, carried by the reviewed `merge-arms` branch). Source metrics identify their exact input
 bytes in the [generated inventory](../code-inventory.md).
 
 ## Context

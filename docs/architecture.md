@@ -2,7 +2,7 @@
 
 [Review entry](review-guide.md) · [Decisions](adr/README.md) · [Source inventory](code-inventory.md)
 
-All **CURRENT** diagrams describe the runtime proposed in this PR, including
+All **CURRENT** diagrams describe the runtime in this reviewed integration, including
 P3 at fd96ccd. P1 is deferred from this merge by the user's decision; the expert
 team remains a design. The [generated inventory](code-inventory.md) identifies
 the measured source bytes, and [merge evidence](merge-readiness.md) records

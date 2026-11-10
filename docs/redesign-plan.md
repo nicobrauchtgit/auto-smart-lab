@@ -6,7 +6,7 @@ work queue and distinguishes merge preparation from later implementation.
 
 ## Implementation status (2026-11-10)
 
-| Package | State proposed in the reviewed PR | Remaining gate |
+| Package | State in the reviewed integration | Remaining gate |
 | --- | --- | --- |
 | P1: observed scripts and memory pool | Deferred from this merge by the user; not integrated | [Strict victim ordering remains unimplemented](p1-memory-pool-blocker.md); future implementation/review |
 | P3: run mechanics | Integrated in `fd96ccd`, including three recovery/accounting review fixes; whole-branch validation passed | Live spam1 shakedown before wave 2; P1 remains deferred |

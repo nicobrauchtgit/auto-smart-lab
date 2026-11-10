@@ -1,8 +1,9 @@
 # Merge scope and validation evidence
 
-Updated 2026-11-10. **Proposed in `review/two-arm-experiment`, awaiting PR merge
-into `main`, with P1 explicitly deferred.** The earlier direct merge was reverted
-without rewriting published history. This branch restores the reviewed source;
+Updated 2026-11-10. **Reviewed integration for `main`, with P1 explicitly
+deferred.** See [PR #1](https://github.com/nicobrauchtgit/auto-smart-lab/pull/1)
+for merge status. The earlier direct merge was reverted without rewriting
+published history. This integration restores the reviewed source;
 only documentation status changed from the previously validated integration.
 Final local whole-branch verification passed. This is code/documentation
 readiness, not a claim of successful live experimental runs.

@@ -1,7 +1,7 @@
 # Review guide
 
-This is the entry point for the proposed `review/two-arm-experiment` PR into
-`main`, based on the reviewed `merge-arms` integration. P3 run mechanics, P4
+This is the entry point for the reviewed two-arm experiment integration.
+P3 run mechanics, P4
 scorecard and P5 expert-team design are integrated. **P1 is deferred from this
 merge by the user's decision.** Four-expert execution is design only.
 [Merge evidence](merge-readiness.md) records validation and limitations; the
