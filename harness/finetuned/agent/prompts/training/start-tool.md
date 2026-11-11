@@ -63,10 +63,9 @@ selection, search and fixed confirmation use that score, requiring both explicit
 classes per fold; the champion is rerun on the challenger's snapshot and folds.
 Evidence remains scoring-only and never enters estimator fitting. Diagnostic hooks must not fit or mutate models.
 
-Start a new idea with `scope.kind: "pilot"` and deliberately reduced work, such
-as `maxRows` or `maxFolds`. A pilot validates assumptions and estimates cost but
-cannot promote a model. Use `scope.kind: "promotion"` only when the preceding
-evidence justifies complete validation.
+A pilot is optional: scope.kind "pilot" with maxRows or maxFolds estimates cost.
+Use scope.kind "promotion" for a full measured trial. State the hypothesis in
+one or two sentences; longer text is truncated rather than rejected.
 
 A built-in CV request supports stratified_kfold, kfold, or group_kfold (whole
 families/groups held out, when supplied by the task). A factory CV request points to

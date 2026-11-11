@@ -55,7 +55,7 @@ export function createHarnessTrainingTools(
 			// problems come back together in one documented shape.
 			parameters: Type.Object({
 				schemaVersion: Type.Union([Type.Literal(1), Type.Literal(2)]),
-				hypothesis: Type.String({ minLength: 1, maxLength: 2_000 }),
+				hypothesis: Type.String({ minLength: 1, maxLength: 20_000 }),
 				commit: Type.Optional(Type.String({ maxLength: 200 })),
 				pipeline: Type.Intersect([moduleReference(), Type.Object({
 					parameters: Type.Optional(json),

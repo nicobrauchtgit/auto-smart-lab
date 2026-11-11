@@ -658,7 +658,8 @@ export function validateExperimentRequest(raw: unknown): { request?: ExperimentR
 		}
 	}
 	rejectUnknown(value, version === 2 ? V2_KEYS : [...V1_KEYS, "commit", "search"], "", issues);
-	const hypothesis = requiredString(value.hypothesis, "hypothesis", issues, "State what this experiment tests and why.");
+	const suppliedHypothesis = requiredString(value.hypothesis, "hypothesis", issues, "State what this experiment tests and why.");
+	const hypothesis = suppliedHypothesis?.trim().split(/(?<=[.!?])\s+/).slice(0, 2).join(" ").slice(0, 500);
 	let commit: string | undefined;
 	if (version === 2 && value.commit !== undefined) {
 		commit = requiredString(value.commit, "commit", issues, "Use HEAD, a branch name, or a commit hash from the solutions repository.");
