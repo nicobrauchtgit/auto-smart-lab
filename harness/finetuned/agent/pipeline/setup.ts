@@ -11,14 +11,12 @@ import { inspectTaskData, projectPython, type TaskConfiguration } from "./task_c
 import { processIdentity } from "../experiments/ownership.js";
 import { HARNESS_CONFIG } from "../harness/config.js";
 import type { PromptSnapshot } from "../prompts/loader.js";
-import { KnowledgeStore } from "../knowledge/store.js";
-import { selectedKnowledge } from "../knowledge/service.js";
 import { submissionSetupChecks, submissionRecoverySetupChecks } from "../submission/setup.js";
 import type { Telemetry } from "../telemetry/runtime.js";
 import { ARM_ROOT, statePath } from "../paths.js";
 import { readCourseResources } from "../research/resources.js";
 
-export type SetupRequirement = "observability" | "model" | "python" | "task" | "training" | "evaluation" | "refit" | "web-search" | "knowledge" | "knowledge-history" | "submission" | "submission-recovery" | "orchestrator" | "solve-isolation" | "confirmation" | "data-profile" | "course-resources";
+export type SetupRequirement = "observability" | "model" | "python" | "task" | "training" | "refit" | "web-search" | "submission" | "submission-recovery" | "solve-isolation" | "confirmation" | "data-profile" | "course-resources";
 export interface SetupCheck {
  id: string;
  phase: "local" | "remote";
@@ -94,15 +92,12 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
  taskId: string;
  /** The resolved harness parts: declared, or from pipeline.config.json. */
  taskConfiguration?: TaskConfiguration;
- /** The orchestrator declares the configuration later; its tool validates the data then. */
- taskConfigurationDeclaredLater?: boolean;
  model?: string; configPath?: string; prompts: PromptSnapshot;
  /** Test seam; production reads experiment.config.json at the repository root. */
  experimentConfigPath?: string;
  /** Executable overrides for regression tests; production resolves them from the environment. */
  executables?: { python?: string; git?: string; bwrap?: string };
  candidateProducedUpstream?: boolean; refitTrainingRoot?: string;
- knowledgeRoot?: string;
  submissionPolicy?: import("./types.js").StageInput["submissionPolicy"];
 }): SetupCheck[] {
  const checks: SetupCheck[] = [];
@@ -123,42 +118,14 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
   options.prompts.render("solve.isolation", { workspace: "preflight" });
   options.prompts.render("solve.python-environment-tool", {});
  });
- if (needs.has("orchestrator")) add("orchestrator-prompts", "local", "Restore the registered orchestrator system, opening and control-tool templates, and use the project Bun runtime with kernel file locking.", () => {
-  options.prompts.render("orchestrator.system", {}); options.prompts.render("orchestrator.start", { task: options.taskId, context: "{}" }); options.prompts.render("orchestrator.tool", {});
-  if (!processIdentity(process.pid)) throw new Error("Process identities unavailable");
-  readable(join(ARM_ROOT, "agent/orchestrator/coordinator.ts"));
- });
  if (needs.has("submission")) checks.push(...submissionSetupChecks({ taskId: options.taskId, taskConfiguration: options.taskConfiguration, policy: options.submissionPolicy, candidateProducedUpstream: options.candidateProducedUpstream }));
  if (needs.has("submission-recovery")) checks.push(...submissionRecoverySetupChecks({ taskId: options.taskId, policy: options.submissionPolicy }));
- if (needs.has("knowledge-history")) add("knowledge-history-git", "local", "Install git through the execution machine's system setup; experiment comparisons read frozen solutions revisions without fitting or changing them.", () => {
-  const result = spawnSync(options.executables?.git ?? "git", ["--version"], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });
-  if (result.error || result.status !== 0) throw new Error("History source comparison requires git");
- });
- if (needs.has("knowledge")) {
-  add("knowledge-skills", "local", "Restore the registered agent/prompts/knowledge skills and tool template; runtime selection requires the validated prompt snapshot.", () => {
-   selectedKnowledge(options.prompts);
-   for (const id of ["knowledge.tool", "knowledge.history-tool", "knowledge.compare-tool", "knowledge.compare-notes-tool"] as const) options.prompts.render(id, {});
-   readable(join(ARM_ROOT, "agent/knowledge/experiments.ts"));
-   readable(join(ARM_ROOT, "agent/knowledge/service.ts"));
-   readable(join(ARM_ROOT, "agent/knowledge/verify_evidence.py"));
-  });
-  add("knowledge-store", "local", "Make the project knowledge/ directory (or its existing parent) readable/writable. Restore a corrupt index; inspect interrupted writers before removing .write-lock. Do not silently reset notes.", () => {
-   new KnowledgeStore(options.knowledgeRoot ?? statePath(PROJECT_ROOT, "knowledge")).preflight();
-  });
-  add("knowledge-evidence-runtime", "local", "Run ./dev setup to sync the project Python environment; knowledge evidence checks require numpy, sklearn and smartlab_eval without fitting.", () => {
-   const result = spawnSync(readPythonEnvironment().executable, ["-I", "-c", "import numpy, sklearn, smartlab_eval"], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });
-   if (result.error || result.status !== 0) throw new Error("Knowledge evidence imports failed");
-  });
- }
- if (needs.has("task")) add(`task:${options.taskId}`, "local", "Fetch the selected unit again; its metadata and prompt must be readable. The task configuration must name readable train/test archives with unique, disjoint sample IDs and a targets file covering exactly the training samples; add it as pipeline.tasks.<task> in pipeline.config.json, or let the orchestrator declare it.", () => {
+ if (needs.has("task")) add(`task:${options.taskId}`, "local", "Fetch the selected unit again; its metadata and prompt must be readable. The task configuration must name readable train/test archives with unique, disjoint sample IDs and a targets file covering exactly the training samples; add it as pipeline.tasks.<task> in pipeline.config.json.", () => {
   const task = resolveTask({ taskId: options.taskId });
   readable(join(task.taskDir, "meta.json"));
   readable(join(task.taskDir, "prompt.md"));
   const configuration = options.taskConfiguration;
-  if (!configuration) {
-   if (options.taskConfigurationDeclaredLater) return;
-   throw new Error("No task configuration");
-  }
+  if (!configuration) throw new Error("No task configuration");
   inspectTaskData(options.taskId, configuration, options.executables?.python ?? projectPython());
  });
  if (needs.has("data-profile")) add("data-profile", "local", "Restore agent/research/python/data_profile.py and agent/training/python/task_samples.py; research profiles the declared data with them before the agent starts.", () => {
@@ -171,22 +138,12 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
   const result = spawnSync(options.executables?.python ?? projectPython(), ["-c", "import dpkt"], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });
   if (result.error || result.status !== 0) throw new Error("PCAP sample dependency unavailable");
  });
- if (needs.has("confirmation") || ((needs.has("evaluation") || needs.has("refit")) && options.taskConfiguration?.kind === "binary_classification")) add("holdout-confirmation-runtime", "local", "Restore confirm.py, confirmation service/receipt modules and shared metric/canary helpers; run ./dev setup for numpy/pandas/sklearn. Confirmation requires git worktrees and verified process-group ownership.", () => {
-  for (const file of ["training/python/confirm.py", "training/python/runner.py", "confirmation/service.ts", "confirmation/receipt.ts", "training/python/smartlab_trial/id_leakage.py"]) readable(join(ARM_ROOT, "agent", file));
+ if (needs.has("confirmation") || (needs.has("refit") && options.taskConfiguration?.kind === "binary_classification")) add("holdout-confirmation-runtime", "local", "Restore confirm.py, confirmation service/receipt modules and shared metric helpers; run ./dev setup for numpy/pandas/sklearn. Confirmation requires git worktrees and verified process-group ownership.", () => {
+  for (const file of ["training/python/confirm.py", "training/python/runner.py", "confirmation/service.ts", "confirmation/receipt.ts"]) readable(join(ARM_ROOT, "agent", file));
   const result = spawnSync(options.executables?.python ?? projectPython(), ["-c", "import numpy,pandas,sklearn,fcntl"], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });
   if (result.error || result.status !== 0 || !processIdentity(process.pid)) throw new Error("Confirmation runtime unavailable");
  });
  if (needs.has("python")) add("python-environment", "local", "Run ./dev setup; declarations, lockfile and installed packages must agree.", () => { readPythonEnvironment(); });
- if (needs.has("evaluation")) {
-  if (options.taskConfiguration?.kind === "anomaly_detection" && options.taskConfiguration.selection) add("evaluation-anomaly-prompt", "local", "Restore the registered agent/prompts/review/guide-anomaly.md template before starting the requested stage chain.", () => {
-   options.prompts.render("review.guide-anomaly", {});
-  });
-  add("evaluation-diagnostics", "local", "Restore agent/evaluation/diagnostics.py and run ./dev setup; sklearn and smartlab_eval must import successfully.", () => {
-   readable(join(ARM_ROOT, "agent/evaluation/diagnostics.py"));
-   const result = spawnSync(readPythonEnvironment().executable, ["-c", "from sklearn.metrics import roc_curve, precision_recall_curve, precision_recall_fscore_support; from smartlab_eval import load_labels"], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });
-   if (result.error || result.status !== 0) throw new Error("Evaluation imports failed");
-  });
- }
  if (needs.has("training")) {
   if (options.taskConfiguration?.selection) add(`training-selection:${options.taskId}`, "local", "Restore the evidence-selection prompt and make runs/<task>/solve/agent/evidence.json writable. The agent creates evidence; missing evidence labels are checked at trial acceptance, not at setup.", () => {
    options.prompts.render("solve.evidence-selection", { evidencePath: statePath(PROJECT_ROOT, options.taskId, "solve", "agent", "evidence.json"), metric: options.taskConfiguration!.selection!.metric });
@@ -232,8 +189,6 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
   add(`refit-data:${options.taskId}`, "local", "Restore complete original training labels/train archive and the unlabelled test archive. IDs must be unique, exact, disjoint and test IDs neutral; archives must pass CRC validation.", async () => {
    const { refitInputs, originalRefitData } = await import("./stages/refit.js");
    const configuration = options.taskConfiguration;
-   // An orchestrator declares the configuration later; refit checks it again at invocation.
-   if (!configuration && options.taskConfigurationDeclaredLater) return;
    if (!configuration) throw new Error("No task configuration");
    const inputs = refitInputs(options.taskId, configuration);
    const result = spawnSync(options.executables?.python ?? inputs.pythonExecutable, [join(ARM_ROOT, "agent/refit/worker.py"), "--inspect-json", JSON.stringify(originalRefitData(inputs))], { env: inputs.env, timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });

@@ -6,7 +6,8 @@ These records explain choices taken with the user and distinguish decisions
 from delivered code. "Accepted" does not mean implementation or live
 validation is complete. On 2026-11-11 the user accepted v2 (ADR 007): one lead
 agent with blocking scouts replaces the four-expert design and the LLM
-orchestrator. It is not implemented yet.
+orchestrator. It is not implemented yet; the old orchestrator, research and
+evaluate stages and knowledge store were removed on 2026-11-11.
 
 | ADR | Decision | Current status |
 | --- | --- | --- |

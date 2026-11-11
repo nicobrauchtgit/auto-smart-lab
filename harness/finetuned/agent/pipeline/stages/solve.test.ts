@@ -10,8 +10,6 @@ import type { TrainingTrialResult } from "../../training/results.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const RESEARCH = join(mkdtempSync(join(tmpdir(), "solve-stage-research-")), "research.md");
-writeFileSync(RESEARCH, "# Research\n");
 
 describe("solve stage options", () => {
 	test("applies defaults", () => {
@@ -47,9 +45,9 @@ describe("solve stage options", () => {
 		expect(() => solveStage.parseOptions("auto")).toThrow(/must be an object/);
 	});
 
-	test("is wired into the chain after research", () => {
+	test("is followed by refit", () => {
 		expect(solveStage.name).toBe("solve");
-		expect(solveStage.next).toBe("evaluate");
+		expect(solveStage.next).toBe("refit");
 	});
 });
 
@@ -61,22 +59,10 @@ describe("solve stage input contract", () => {
 		expect(() => solveStage.checkInput({ taskId: "does-not-exist", upstream: [] })).toThrow();
 	});
 
-	test.skipIf(!hasSpamData)(`rejects a run with no research document upstream (${fetchReason})`, () => {
-		expect(() => solveStage.checkInput({ taskId: "spam1", taskConfiguration: spamConfiguration(), upstream: [] }))
-			.toThrow(/no research document upstream/);
-	});
-
-	test.skipIf(!hasSpamData)(`rejects an upstream research document that is not on disk (${fetchReason})`, () => {
+	test.skipIf(!hasSpamData)(`accepts a task with data and no upstream research (${fetchReason})`, () => {
 		expect(() => solveStage.checkInput({
 			taskId: "spam1", taskConfiguration: spamConfiguration(),
-			upstream: [{ kind: "research_document", path: "/nonexistent/research.md" }],
-		})).toThrow(/no research document upstream/);
-	});
-
-	test.skipIf(!hasSpamData)(`accepts a task with data and a real research document (${fetchReason})`, () => {
-		expect(() => solveStage.checkInput({
-			taskId: "spam1", taskConfiguration: spamConfiguration(),
-			upstream: [{ kind: "research_document", path: RESEARCH }],
+			upstream: [],
 		})).not.toThrow();
 	});
 });

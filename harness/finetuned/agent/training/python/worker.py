@@ -25,7 +25,7 @@ from smartlab_trial.artifacts import EventWriter, _atomic_json, _write_oof, appe
 from smartlab_trial.folds import ConcreteFold, _manifest, _materialize_folds, _pilot_indices
 from smartlab_trial.invocation import SCHEMA_VERSION, InvocationError, Invocation, parse_invocation
 from smartlab_trial.metrics import _measure, _scores, score_observation
-from smartlab_trial import diagnostics, id_leakage
+from smartlab_trial import diagnostics
 from smartlab_trial.measurement import kind as measurement_kind, load_samples, selection_receipt
 from smartlab_trial.extra_measurements import run as extra_measurements, proxy_score
 from smartlab_trial.seeds import _derive_seed
@@ -129,7 +129,6 @@ def _run_fold(invocation: Invocation, pipeline_factory: Any, fold: ConcreteFold,
         signals = diagnostics.anomaly(scores, predictions, direction=spec["scoreDirection"], anomaly_label=spec["anomalyLabel"])
         signals["scoreProvenance"] = {"kind": "anomaly", "method": spec["scoreMethod"], "direction": spec["scoreDirection"]}
         measurement = {}
-    leakage = id_leakage.check(estimator, validation_frame, predictions, scores) if task_kind == "classification" else None
     extra, diagnostic_fit_seconds = extra_measurements(invocation, estimator, fold, train_frame, validation_frame,
                                                        predictions, validation_y, scores, evidence_metadata, estimator_seed,
                                                        train_y, signals.get("scoreProvenance"))
@@ -158,8 +157,6 @@ def _run_fold(invocation: Invocation, pipeline_factory: Any, fold: ConcreteFold,
         "fitRows": len(validation_frame) if batch else len(train_frame),
         "convergence": summarise_convergence(estimator, raised),
     }
-    if leakage:
-        result["idLeakage"] = leakage
     if selection:
         result["selection"] = selection
     if config_id is not None:
@@ -220,12 +217,6 @@ def _summarise(invocation: Invocation, folds: Sequence[ConcreteFold], completed:
         "diagnostics": diagnostics.summary(task_kind, completed, oof_rows,
                                             (invocation.measurement or {}).get("scoreDirection", "higher_is_anomalous")),
     }
-    leaking_folds = [result["idLeakage"] for result in completed if result.get("idLeakage")]
-    if leaking_folds:
-        summary["idLeakage"] = {"rows": sum(result["rows"] for result in leaking_folds),
-                                "mismatches": sum(result["mismatches"] for result in leaking_folds)}
-        summary["promotionEligible"] = False
-        summary["promotionIneligibleReason"] = "id_leakage"
     if invocation.source:
         # Commit, tree, branch, and subject: a score traces back to exact code.
         summary["source"] = {key: invocation.source[key] for key in ("commit", "tree", "branch", "subject")
@@ -344,10 +335,6 @@ def execute(document: dict[str, Any]) -> dict[str, Any]:
             champion = rerun(document, invocation, Path(__file__).resolve(), events)
             summary["championComparison"] = compare(completed, oof_rows, champion, dict(zip(ids, y)) if y is not None else {}, output_dir,
                                                     task_kind=task_kind)
-            if summary["championComparison"].get("idLeakage"):
-                summary["idLeakage"] = {**summary["championComparison"]["idLeakage"], "role": "champion"}
-                summary["promotionEligible"] = False
-                summary["promotionIneligibleReason"] = "id_leakage"
     with events.stage("artifacts"):
         write_summary(output_dir, summary)
     events.emit("trial_finished", status=summary["status"], promotionEligible=summary["promotionEligible"],

@@ -35,9 +35,9 @@ function settings(stageOptions: unknown = {}) {
 	return resolvePipelineSettings({
 		pipeline: {
 			version: 1,
-			entryStage: "research",
+			entryStage: "solve",
 			scheduling: "configured",
-			stages: { research: { enabled: true }, solve: { enabled: true, options: stageOptions } },
+			stages: { solve: { enabled: true, options: stageOptions } },
 			tasks: { spam1: spamConfiguration() },
 		},
 		agent: { cwd: ".", agentDir: ".pi/agent", initialPrompt: "hi" },
@@ -196,7 +196,7 @@ describe("invokeStage", () => {
 		const runsDir = workspace();
 		const trace = await createPipelineTrace({ telemetry: testTelemetry(), taskId: "spam1", pipelineRunId: crypto.randomUUID(), runsDir });
 		const config = resolvePipelineSettings({
-			pipeline: { entryStage: "research", stages: { research: { enabled: true }, solve: { enabled: false } } },
+			pipeline: { entryStage: "refit", stages: { refit: { enabled: true }, solve: { enabled: false } } },
 			agent: { cwd: ".", agentDir: ".pi/agent", initialPrompt: "hi" },
 			defaultModel: "saia/test-model",
 			providers: {},

@@ -21,7 +21,7 @@ export function confirmedCandidate(projectRoot: string, taskId: string, candidat
   || canonical(record.source) !== canonical(candidate.source) || canonical(record.pipeline) !== canonical(candidate.pipeline)) {
   throw new Error("Chosen champion differs from held-back confirmation; confirm the frozen champion before refit");
  }
- if (!["completed", "skipped"].includes(record.status) || record.idLeakage) throw new Error("Holdout confirmation did not produce valid evidence");
+ if (!["completed", "skipped"].includes(record.status)) throw new Error("Holdout confirmation did not produce valid evidence");
  const ledgerPath = statePath(projectRoot, taskId, "holdout-ledger.json");
  const ledger = existsSync(ledgerPath) ? JSON.parse(readFileSync(ledgerPath, "utf8")) : undefined;
  if (record.status === "completed" && (ledger?.schemaVersion !== 1 || ledger.taskId !== taskId

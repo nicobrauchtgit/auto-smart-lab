@@ -13,14 +13,11 @@ import type { SuppliedInput } from "../pipeline/types.js";
 import type { PromptSnapshot, RenderedPrompt } from "../prompts/loader.js";
 import { createPipelineResourceLoader } from "../run/session_resources.js";
 import type { ChildIdentity, ChildSessionFactory } from "./types.js";
-import { TaskKnowledge, createKnowledgeTools, selectedKnowledge, knowledgeInput, type KnowledgeOptions } from "../knowledge/service.js";
 
 export const CHILD_TOOL_NAMES = ["read", "grep", "find", "ls", "bash", "write", "edit"] as const;
 export type ChildToolName = typeof CHILD_TOOL_NAMES[number];
 
 export interface PiChildOptions {
-	/** Explicit inherited scope for diagnostics; tools are recreated per logical child. */
-	knowledge?: KnowledgeOptions;
 	cwd: string;
 	agentDir: string;
 	model: NonNullable<CreateAgentSessionOptions["model"]>;
@@ -67,12 +64,7 @@ export async function loadChildResources(options: {
 export function createPiChildFactory(options: PiChildOptions): ChildSessionFactory {
 	const env = Object.freeze({ ...options.env });
 	const inputs = structuredClone(options.inputs);
-	const knowledgeOptions = options.knowledge ? Object.freeze({ ...options.knowledge,
-		origin: Object.freeze({ ...options.knowledge.origin }), trainingRoots: Object.freeze([...(options.knowledge.trainingRoots ?? [])]),
-	}) : undefined;
-	const skills = knowledgeOptions ? selectedKnowledge(options.prompts) : [];
-	if (knowledgeOptions) new TaskKnowledge(knowledgeOptions).store.preflight();
-	const instructions = [...options.sharedInstructions, ...skills, options.prompts.render("subagents.child", {})]
+	const instructions = [...options.sharedInstructions, options.prompts.render("subagents.child", {})]
 		.map(prompt => Object.freeze({ text: prompt.text, reference: Object.freeze({ ...prompt.reference }) }));
 	const toolNames = [...new Set(options.tools ?? CHILD_TOOL_NAMES)];
 	for (const name of toolNames) if (!CHILD_TOOL_NAMES.includes(name)) throw new Error(`Unsupported child tool: ${name}`);
@@ -85,12 +77,6 @@ export function createPiChildFactory(options: PiChildOptions): ChildSessionFacto
 
 	return async (child: ChildIdentity, signal: AbortSignal) => {
 		signal.throwIfAborted();
-		let knowledgeRecord: ((type: string, payload: Record<string, unknown>) => void) | undefined;
-		const knowledge = knowledgeOptions ? new TaskKnowledge({ ...knowledgeOptions,
-			origin: { ...knowledgeOptions.origin, logicalAgentId: child.logicalAgentId },
-			record: (type, payload) => { knowledgeOptions.record?.(type, payload); knowledgeRecord?.(type, payload); },
-		}) : undefined;
-		const knowledgeTools = knowledge ? createKnowledgeTools(knowledge, options.prompts) : [];
 		const childEnv = {
 			...env, PIPELINE_PYTHON_SESSION_ID: child.logicalAgentId,
 			PIPELINE_LOGICAL_AGENT_ID: child.logicalAgentId,
@@ -112,17 +98,12 @@ export function createPiChildFactory(options: PiChildOptions): ChildSessionFacto
 				];
 				const { session } = await createAgentSession({
 					cwd, agentDir, model, modelRuntime, thinkingLevel, settingsManager, resourceLoader,
-					sessionManager: SessionManager.inMemory(cwd), tools: [...toolNames, ...knowledgeTools.map(tool => tool.name)],
-					customTools: [...availableTools.filter(tool => toolNames.includes(tool.name as ChildToolName)), ...knowledgeTools],
+					sessionManager: SessionManager.inMemory(cwd), tools: [...toolNames],
+					customTools: availableTools.filter(tool => toolNames.includes(tool.name as ChildToolName)),
 				});
 				let observer: Awaited<ReturnType<typeof observeAgentSession>>;
 				try { observer = await observeAgentSession({ session, model: `${model.provider}/${model.id}`, ...observe, parentAgentRunId: child.parentAgentRunId }); }
 				catch (error) { session.dispose(); throw error; }
-				knowledgeRecord = observer.record;
-				knowledge?.bindAgent(observer.agentRunId);
-				observer.record("skill_snapshot", { ...child, skills: skills.map(skill => skill.reference),
-					tool_prompts: knowledge ? [options.prompts.render("knowledge.tool", {}).reference] : [] });
-				if (knowledgeOptions) observer.record("runtime_input", { type: "runtime_input", input: knowledgeInput(knowledgeOptions) });
 				observer.record("subagent_link", { ...child });
 				observer.record("runtime_input", { type: "runtime_input", version: 1,
 					inputs, cwd, tools: toolNames, turnTimeoutMs: timeoutMs });

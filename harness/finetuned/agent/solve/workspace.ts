@@ -11,13 +11,12 @@
  * split cannot be scored locally.
  */
 
-import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { basename, join, relative } from "node:path";
 
 import { PROJECT_ROOT, resolveTask } from "../pipeline/resolve_task.js";
 import { projectPython, resolveTaskConfiguration, TASK_SAMPLES_SCRIPT, taskDataPaths, type TaskConfiguration } from "../pipeline/task_configuration.js";
-import type { StageArtifact } from "../pipeline/types.js";
 import type { MeasurementConfig } from "../training/types.js";
 import { createHash } from "node:crypto";
 import { createSeedPlan, type SeedPlan } from "../training/seeds.js";
@@ -31,7 +30,6 @@ export interface SolveWorkspace {
 	solutionsRoot: string;
 	entrypointPath: string;
 	taskPath: string;
-	researchDir: string;
 	configuration: TaskConfiguration;
 	/** The development manifest the training harness measures: descriptors and targets, no sealed rows. */
 	sampleManifestPath: string;
@@ -52,15 +50,12 @@ export interface SolveWorkspace {
 	targets: string;
 	/** Class balance, family counts, or the absence of targets. */
 	targetSummary: string;
-	researchState: string;
-	researchDocumentSha256?: string;
 }
 
 export interface PrepareOptions {
 	configuration?: TaskConfiguration;
 	holdoutPolicy?: HoldoutPolicy;
 	seed?: number;
-	upstream?: StageArtifact[];
 	projectRoot?: string;
 	/** Reads archive member lists; defaults to the project environment. */
 	pythonExecutable?: string;
@@ -134,8 +129,7 @@ export function prepareSolveWorkspace(taskId: string, options: PrepareOptions = 
 
 	const root = statePath(projectRoot, taskId, "solve");
 	const dataOut = join(root, "data");
-	const researchDir = join(root, "research");
-	for (const directory of [root, dataOut, researchDir, ...(configuration.selection ? [join(root, "agent")] : [])]) mkdirSync(directory, { recursive: true });
+	for (const directory of [root, dataOut, ...(configuration.selection ? [join(root, "agent")] : [])]) mkdirSync(directory, { recursive: true });
 	const { solutionsRoot, entrypointPath } = prepareSolutionsWorkspace(projectRoot, taskId);
 	const taskPath = join(root, "task.md");
 	const prompt = readFileSync(join(taskDir, "prompt.md"), "utf8");
@@ -144,7 +138,6 @@ export function prepareSolveWorkspace(taskId: string, options: PrepareOptions = 
 	const sealedPath = join(dataOut, "sealed_ids.txt");
 	writeFileSync(sealedPath, split.sealedIds.length ? `${split.sealedIds.join("\n")}\n` : "");
     writeFileSync(join(dataOut, "holdout.json"), JSON.stringify({ ...split, devIds: undefined, holdoutSeedPlan }) + "\n");
-	const researchState = copyResearch(researchDir, taskId, options.upstream ?? [], projectRoot);
 	const devZip = configuration.samples.source === "zip_members"
         ? writeDevelopmentZip(paths.trainZip, dataOut, split.devIds)
         : join(dataOut, `development-${basename(paths.trainZip)}`);
@@ -164,7 +157,7 @@ export function prepareSolveWorkspace(taskId: string, options: PrepareOptions = 
 	const described = describeTargets(configuration, split.devIds, targets, relative(projectRoot, sampleManifestPath), split.sealedGroups);
 	const groups = configuration.targets.kind === "families" ? new Set(split.devIds.map(id => targets.get(id))).size : undefined;
 	return {
-		root, solutionsRoot, entrypointPath, taskPath, researchDir, configuration,
+		root, solutionsRoot, entrypointPath, taskPath, configuration,
         originalTargetsPath: paths.targetsPath, holdoutSeedPlan,
 		sampleManifestPath, measurement,
 		devZip, sealedPath, trainZip: paths.trainZip, testZip: paths.testZip,
@@ -179,8 +172,6 @@ export function prepareSolveWorkspace(taskId: string, options: PrepareOptions = 
 		rowCount: split.devIds.length,
 		targets: described.targets,
 		targetSummary: described.summary,
-		researchState,
-		researchDocumentSha256: options.upstream?.find((artifact) => artifact.kind === "research_document")?.sha256,
 	};
 }
 
@@ -202,48 +193,4 @@ function writeDevelopmentZip(trainZip: string, dataOut: string, devIds: readonly
 		{ input: `${devIds.join("\n")}\n`, maxBuffer: 64 * 1024 * 1024 });
 	rmSync(listing, { force: true });
 	return target;
-}
-
-/**
- * Copy the research document and the analysis the research agent produced.
- * Those scripts are reusable evidence, not decoration: the solve agent can rerun
- * them rather than re-measuring the dataset from scratch.
- */
-/** Copy the selected brief, its analysis artifacts and the cited data profile into the solve workspace. */
-export function copyResearch(researchDir: string, taskId: string, upstream: StageArtifact[], projectRoot: string): string {
-	const document = upstream.find((artifact) => artifact.kind === "research_document")?.path
-		?? statePath(projectRoot, taskId, "research", "research.md");
-	const lines: string[] = [];
-	if (existsSync(document)) {
-		const target = join(researchDir, "research.md");
-		copyFileSync(document, target);
-		lines.push(`- Research document: ${target}`);
-		const statusPath = statePath(projectRoot, taskId, "research", ".harness", "status.json");
-		try {
-			const status = JSON.parse(readFileSync(statusPath, "utf8")) as { valid?: boolean; errors?: string[] };
-			if (status.valid === false) lines.push(`- The brief is partial: ${status.errors?.length ?? 0} checks failed (for example: ${(status.errors ?? []).slice(0, 3).join("; ")}). Treat its unchecked parts with extra care.`);
-		} catch { /* no status recorded: an older or standalone brief */ }
-	} else {
-		lines.push("- No research document is available for this task.");
-	}
-	const analysis = statePath(projectRoot, taskId, "research", "analysis");
-	if (existsSync(analysis)) {
-		cpSync(analysis, join(researchDir, "analysis"), { recursive: true });
-		lines.push(`- Research analysis scripts and artifacts: ${join(researchDir, "analysis")} (rerunnable)`);
-	}
-	// Keep supplied course citations resolvable alongside the brief handed to solve.
-	const resources = statePath(projectRoot, taskId, "research", "resources");
-	rmSync(join(researchDir, "resources"), { recursive: true, force: true });
-	if (existsSync(resources)) {
-		cpSync(resources, join(researchDir, "resources"), { recursive: true });
-		lines.push(`- Course resources cited by the brief: ${join(researchDir, "resources")}`);
-	}
-	// The brief cites `[profile:<key>]` records; keep them resolvable next to it.
-	const profile = statePath(projectRoot, taskId, "research", "profile", "profile.json");
-	if (existsSync(profile)) {
-		mkdirSync(join(researchDir, "profile"), { recursive: true });
-		copyFileSync(profile, join(researchDir, "profile", "profile.json"));
-		lines.push(`- Harness data profile cited by the brief: ${join(researchDir, "profile", "profile.json")}`);
-	}
-	return lines.join("\n");
 }

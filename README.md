@@ -24,7 +24,6 @@ Run from the repository root. [dev](dev) and [mise.toml](mise.toml) keep the pin
 | `./dev bun run experiment -- --arm finetuned spam1` | Actual finetuned model run |
 | `./dev bun run experiment -- --arm minimal --only spam1` | Actual minimal run in a fresh run directory |
 | `./dev bun run experiment -- --arm finetuned --reset` | Preview state deletion; `--yes` performs it, preserving deliveries |
-| `./dev bun run scorecard -- spam1 --run <id>` | Inspect recorded finished-run evidence |
 
 Shared [experiment.config.json](experiment.config.json) sets `online: false`: no uploads or fetching. Configured chains stop before submit; evaluation does not authorize it.
 

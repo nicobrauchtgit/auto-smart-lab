@@ -6,18 +6,14 @@
   "scripts": {
     "fetch-unit": "bun harness/finetuned/agent/setup/fetch_unit_cli.ts",
     "pipeline": "bun harness/finetuned/agent/pipeline_cli.ts",
-    "research": "bun harness/finetuned/agent/research_cli.ts",
-    "test:py": "\"${VENV_DIR:-$PWD/harness/finetuned/.venv}/bin/python\" -m unittest discover -s harness/finetuned/agent/setup/tests && \"${VENV_DIR:-$PWD/harness/finetuned/.venv}/bin/python\" -m unittest discover -s harness/finetuned/agent/training/python -p 'test_*.py' && \"${VENV_DIR:-$PWD/harness/finetuned/.venv}/bin/python\" -m unittest discover -s harness/finetuned/agent/evaluation -p 'test_*.py' && \"${VENV_DIR:-$PWD/harness/finetuned/.venv}/bin/python\" -m unittest discover -s harness/finetuned/agent/research/python -p 'test_*.py'",
+    "test:py": "\"${VENV_DIR:-$PWD/harness/finetuned/.venv}/bin/python\" -m unittest discover -s harness/finetuned/agent/setup/tests && \"${VENV_DIR:-$PWD/harness/finetuned/.venv}/bin/python\" -m unittest discover -s harness/finetuned/agent/training/python -p 'test_*.py' && \"${VENV_DIR:-$PWD/harness/finetuned/.venv}/bin/python\" -m unittest discover -s harness/finetuned/agent/research/python -p 'test_*.py'",
     "pi:hi": "bun harness/finetuned/agent/pi_sdk.ts",
     "telemetry:smoke": "bun harness/finetuned/agent/telemetry/smoke.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
-    "evaluate-stage": "bun harness/finetuned/agent/evaluate_cli.ts",
     "solve-stage": "bun harness/finetuned/agent/solve_cli.ts",
     "refit-stage": "bun harness/finetuned/agent/refit_cli.ts",
-    "orchestrate": "bun harness/finetuned/agent/orchestrate_cli.ts",
-    "experiment": "bun experiment/cli.ts",
-    "scorecard": "bun harness/finetuned/agent/scorecard_cli.ts"
+    "experiment": "bun experiment/cli.ts"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "0.84.1",

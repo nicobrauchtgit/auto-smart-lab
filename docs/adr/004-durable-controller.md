@@ -9,7 +9,7 @@ this integration (P3 fd96ccd, carried by the reviewed `merge-arms` branch). Sour
 bytes in the [generated inventory](../code-inventory.md).
 
 **Amended 2026-11-11 by [ADR 007](007-lead-and-scouts.md).** The LLM
-controller (orchestrator decision session) is retired in v2 P7b; the lead
+controller (orchestrator decision session) was removed on 2026-11-11; the lead
 agent decides what to do next. Durable state, action receipts, event-driven
 waits, charging trials when they start and the deterministic budget-end
 hand-over stay, now serving the lead
@@ -34,7 +34,7 @@ Atomic local state and locks provide cooperative durability, not distributed con
 
 ## Code and contracts
 
-[Coordinator](../../harness/finetuned/agent/orchestrator/coordinator.ts), [state](../../harness/finetuned/agent/orchestrator/state.ts), [run loop](../../harness/finetuned/agent/orchestrator/run.ts), [controller contract](../../harness/finetuned/agent/orchestrator/README.md).
+The orchestrator code (`agent/orchestrator/`: Coordinator, state, run loop) was removed on 2026-11-11; it remains in git history at commit 0b3768a.
 
 ## Revisit triggers
 

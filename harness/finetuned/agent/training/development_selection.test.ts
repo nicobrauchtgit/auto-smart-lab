@@ -7,9 +7,6 @@ import { tagMessage } from "./git.js";
 import { candidateIdentity, terminalPath } from "./terminal.js";
 import { championSelection } from "./development_selection.js";
 import { collectTrainingResults } from "./results.js";
-import { initialState, StateStore } from "../orchestrator/state.js";
-import { Coordinator } from "../orchestrator/coordinator.js";
-import { resolvePipelineSettings } from "../pipeline/config.js";
 import { loadPromptSnapshot } from "../prompts/loader.js";
 
 test("a terminal champion stays frozen while a changed candidate earns fresh standalone validation and selection", async () => {
@@ -27,11 +24,6 @@ test("a terminal champion stays frozen while a changed candidate earns fresh sta
   // refit and recovery remain covered by the local refit integration suite.
   const marker = JSON.stringify({ schemaVersion: 1, taskId: "fixture", identity, source: { commit: project.head }, pipeline: request.pipeline }); writeFileSync(path, marker);
   await expect(training.service.start(request)).rejects.toThrow("terminal");
-  const prompts = loadPromptSnapshot();
-  const config = resolvePipelineSettings({ defaultModel: "fixture/model", providers: {}, agent: { cwd: project.root, agentDir: project.root, initialPrompt: "" }, pipeline: { entryStage: "research", stages: { research: { enabled: true } } } } as any);
-  const controllerStore = new StateStore(join(project.root, "controller"), initialState({ taskId: "fixture", taskFingerprint: "a".repeat(64), config, promptTemplates: prompts.serialize(), promptFingerprint: prompts.fingerprint, authorized: false }));
-  controllerStore.transaction("official-prior", {}, state => { state.official = [{ attemptId: "official-1", score: 0.91, status: "scored", candidateId: identity, artifactId: "prior-receipt" }]; state.bestOfficial = state.official[0]; });
-  const coordinator = new Coordinator(controllerStore, { start() { throw new Error("No model/stage dispatch in this fixture"); } });
   const pilot = await training.service.start({ ...request, hypothesis: "pilot cannot replace a terminal champion", pipeline: { ...request.pipeline, parameters: { c: 0.3 } }, scope: { kind: "pilot", maxFolds: 1 } });
   expect(await until(() => training.supervisor.status(pilot.id).status !== "running")).toBe(true); await training.service.finalize(pilot.id);
   expect(JSON.parse(tagMessage(project.solutionsRoot, "champion/fixture")!.message).experimentId).toBe(baseline.id);
@@ -44,7 +36,6 @@ test("a terminal champion stays frozen while a changed candidate earns fresh sta
   const result = JSON.parse(readFileSync(join(next.directory, "trial-result.json"), "utf8")); expect(result.promotionEligible).toBe(true); expect(result.championComparison).toBeUndefined();
   expect(JSON.parse(tagMessage(project.solutionsRoot, "champion/fixture")!.message).experimentId).toBe(next.id);
   const selected = await championSelection(await collectTrainingResults(root), project.solutionsRoot, "fixture"); expect(selected.selected?.experimentId).toBe(next.id); expect(selected.trials.length).toBe(3);
-  expect(coordinator.state.bestOfficial).toMatchObject({ score: 0.91, candidateId: identity, artifactId: "prior-receipt" }); coordinator.close();
   expect(readFileSync(path, "utf8")).toBe(marker); expect(events.some(e => e.type === "training_terminal_champion_retained_as_history")).toBe(true);
   writeFileSync(path, "{}");
   await expect(championSelection(selected, project.solutionsRoot, "fixture")).rejects.toThrow("Corrupt terminal");

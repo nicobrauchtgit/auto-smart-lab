@@ -10,7 +10,7 @@ import { canonical, digest, selectionClaimAsync } from "../training/terminal.js"
 import { deriveTrialSeed, deriveBootstrapSeed, parseSeedPlan } from "../training/seeds.js";
 import { inspectRefitCandidate, assertNoWorkers, type RefitOptions } from "../refit/service.js";
 import { sanitizeTrainingEnvironment } from "../training/environment.js";
-import { artifact } from "../evaluation/evidence.js";
+import { artifact } from "../pipeline/artifact.js";
 import { confirmationRoot, confirmationHash } from "./receipt.js";
 import type { SolveWorkspace } from "../solve/workspace.js";
 import type { StageArtifact } from "../pipeline/types.js";
@@ -79,7 +79,7 @@ export async function runConfirmation(options: ConfirmationOptions): Promise<Con
    const freezePath = join(directory, "freeze.json");
    const trialPath = join(chosen.trainingRoot, prepared.chosenExperimentId);
    const plan = parseSeedPlan(readFileSync(join(trialPath, "seed-plan.json"), "utf8"));
-   const framework = digest([WORKER, ...["agent_code.py", "id_leakage.py", "metrics.py", "measurement.py"].map(name => join(PYTHON_ROOT, "smartlab_trial", name))].map(confirmationHash));
+   const framework = digest([WORKER, ...["agent_code.py", "metrics.py", "measurement.py"].map(name => join(PYTHON_ROOT, "smartlab_trial", name))].map(confirmationHash));
    if (!existsSync(freezePath)) {
     if (ledger.populations[population]?.reads?.some((read: any) => read.identity === identity)) throw new Error("Confirmation read was already reserved; refusing a duplicate sealed read");
     options.signal?.throwIfAborted();
@@ -160,7 +160,6 @@ export async function runConfirmation(options: ConfirmationOptions): Promise<Con
   if (result.identity !== identity) throw new Error("Confirmation identity check failed");
   const output = artifact("holdout_confirmation", resultPath);
   atomicJson(join(root, "latest.json"), { path: resultPath, sha256: output.sha256 });
-  if (result.idLeakage) throw new Error("Confirmation ID leakage check failed");
   const summary = { status: result.status, precision: result.holdout.precision ?? "none", balancedAccuracy: result.metrics?.balancedAccuracy,
    gap: result.gap, interval: result.interval, likelySelectionOverfit: result.likelySelectionOverfit, readCount: result.readCount,
    populationReadCount: count(), reason: result.reason, experimentId: result.experimentId };

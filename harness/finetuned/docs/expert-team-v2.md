@@ -10,8 +10,9 @@ workspace checks, trial snapshots, the findings journal and P7c) are kept in
 [expert-team.md](expert-team.md), now the contract appendix to this document,
 and are referenced here instead of being repeated.
 
-The current code still runs the old research → solve → evaluate chain under the
-LLM orchestrator until P6 and P7 land. The work queue is
+The old orchestrator, research and evaluate stages, knowledge store and leakage
+canary were removed on 2026-11-11 (package "Clean slate", section 11); what
+remains runs solve and then refit as a configured chain until P7 replaces it. The work queue is
 [docs/cleanup-plan.md](../../../docs/cleanup-plan.md).
 
 Paths are relative to `harness/finetuned/` unless prefixed by `runs/` or `docs/`.
@@ -199,6 +200,20 @@ for it. P7a measures this before the integration gate: run each scout alone on
 spam1–3 and `code2` with 10 and with 20 calls, and compare calls used and
 what it surfaced.
 
+**Dry run (2026-11-11, one data scout on spam1, budget 10).** Script and
+prompts: `agent/dryrun/scout_dry_run.ts` and `agent/dryrun/scouts/{data,ideas}.md`;
+output under `runs/finetuned/scout-dry-run/2026-11-11T11-00-09-spam1-data-10/`.
+It used 10 of 10 calls in 298 s and returned 14 sourced bullets (5.3k
+characters), no blocked calls after the budget. Findings were useful: training
+is Enron-style mail while the test set looks like a different spam corpus,
+text is pre-normalized (URL artifacts), spam is padded, the test set has a long
+tail, everything is lowercase. Two defects: it still called the label suffix a
+leak, prompted by the profile's `name_leakage` record (removed since), and it
+wrote its scripts to `/tmp`; the data scout prompt now gives it a `research/`
+folder for all scripts and outputs. The task text and unit intro reached it
+(`task.md`); the spam unit intro does not mention file endings, which the task
+texts now state. The ideas scout has not been dry-run yet.
+
 **Repeat calls.** The lead passes a focused question and optional references
 (trial IDs, error summaries). A repeat call sees earlier bullets from the
 journal and is told not to repeat them.
@@ -347,14 +362,15 @@ no trial. This is verification; it puts no limit on what the pipeline is.
 
 ## 8. Changes to the current harness
 
-From the audit of 2026-11-11 (prompts, `harness.config.json`, training code):
+From the audit of 2026-11-11 (prompts, `harness.config.json`, training code).
+Items marked *(done)* were removed in the clean slate of 2026-11-11.
 
 **Remove (prescribes how to build)**
 - "Implement the brief's recommended pipeline first … one atomic change at a
-  time" (`prompts/solve/start.md`).
+  time" (`prompts/solve/start.md`). *(done)*
 - Research's required concrete pipeline, CV scheme and atomic improvements,
   the brief format and `check_brief` number matching (`prompts/research/system.md`,
-  `research/validate.ts`); replaced by scout bullets.
+  `research/validate.ts`); replaced by scout bullets. *(done)*
 - "scikit-learn pipelines" wording; the interface is any object with
   `fit`/`predict` (or `fit_predict` for batch clustering).
 
@@ -370,7 +386,7 @@ From the audit of 2026-11-11 (prompts, `harness.config.json`, training code):
   sentences and truncate if longer.
 - Remove the stage gates that failed in spam1: "no research document
   upstream" (`pipeline/stages/solve.ts:120-123`) and the evaluate evidence
-  gate (`evaluation/evidence.ts:35`), together with the stages.
+  gate (`evaluation/evidence.ts:35`), together with the stages. *(done)*
 
 **Keep (needed for trustworthy feedback)**
 - Harness-owned seeds, folds, fits and predictions; withheld rows; noise rule;
@@ -401,19 +417,16 @@ material and `fetch_units.py` rewrites `prompt.md`, so a refetch must re-add
 the note. The note replaces today's rule "never use … a label-bearing file
 extension as a feature" in `prompts/solve/task-binary_classification.md`.
 
-The filename-leakage canary (`agent/solve/canary.py`) is dropped by the same
-decision; the
-current code still runs it until P6 removes it. The data profile's
-`training.name_leakage` record (`agent/research/python/data_profile.py`)
-reports "suffix" purity, which a scout dry run on 2026-11-11 read as a leak
-despite its prompt. P6 removes that measurement or relabels it "label from
-file name" with the task fact above.
+The filename-leakage canary is dropped by the same decision and was removed on
+2026-11-11, from trials, champion comparison and confirmation. So was the data
+profile's `training.name_leakage` record, whose "suffix" purity a scout dry run
+on 2026-11-11 read as a leak despite its prompt.
 
 **Task text.** Every agent gets the task text *and* the unit introduction:
 the course always had a unit intro that applies to all tasks of the unit.
 Today the minimal agent gets both (`read_challenge` returns `unit_intro`),
-but in the finetuned arm only the orchestrator sees the unit intro
-(`orchestrator/run.ts:116`); research and solve see only `prompt.md`. Local
+but in the finetuned arm only the removed orchestrator saw the unit intro; solve
+sees only `prompt.md`, so P7a must supply it to the lead and the scouts. Local
 state: `units/01-spam/unit-intro.md` and `units/clustering-of-malicious-code/unit-intro.md`
 exist (short versions); `detection-of-unknown-attacks` has none locally, only
 in `units/_vm-archive/units/detection-of-unknown-attacks/unit-intro.md`.
@@ -447,14 +460,24 @@ The sentence about labels in file names in
 - The draft prompts in [expert-team/prompts/](expert-team/prompts/) are seeds;
   rewriting them as lead and scout prompts is P7a work.
 
-### P6 — foundations (first, alone)
+### Clean slate — done 2026-11-11
+- Removed the LLM orchestrator, the research and evaluate stages with their
+  CLIs, prompts and gates, the knowledge store and lesson step with its
+  prompts (including `lessons/sealed.md`), the scorecard, the old
+  `agent/instructions/`, the filename-leakage canary and the profile's
+  `name_leakage` record, and the solve prompt's brief-first instructions.
+  The chain is solve → refit; typecheck and tests pass.
+
+### P6 — foundations
+
+P6, P7a and P7b are implemented as three parallel streams plus a lead stream;
+see [docs/v2-kickoff.md](../../../docs/v2-kickoff.md) for the split, file ownership
+and one prompt per stream.
 - Task data; shared tree; `workspace_check`; trial snapshots.
 - Linux process sampler (section 6); global `supervision` block applied to
   every agent shell call and trial; machine-protection stop with its own
   largest-process choice; output cap with spill file.
 - `trial_smoke`; parallel folds; per-session environment.
-- Remove the filename-leakage canary; remove or relabel the profile's
-  `name_leakage` suffix measurement (section 9).
 - Checks: spam1 split unchanged; a stuck, a stale and
   a flooding script each produce exactly one report and no kill; a script that
   pushes available RAM below the reserve is stopped, its owner is told it was
@@ -477,16 +500,11 @@ The sentence about labels in file names in
   lead's context contains the bullets but none of the scout's tool output;
   prompts exclude fixture `AGENTS.md`.
 
-### P7b — harness services (parallel with P7a after P6)
+### P7b — harness services
 - Trial feedback (folds, noise verdict, Ladder holdout check), wake-on-news,
   the lead's tool-call budget counter, `hand_over` with validation scout, budget-end
-  hand-over, `PROGRESS.json`; retire the LLM orchestrator, the stage chain and
-  their gates.
-- Retire the knowledge store with the stages: the lesson step, its prompts
-  (`agent/prompts/lessons/`, including `sealed.md`, whose "research and solve
-  never see sealed results" no longer matches the Ladder) and the lesson
-  notes in `runs/finetuned/knowledge/`. Trial history stays as harness trial
-  records behind the trial feedback.
+  hand-over, `PROGRESS.json`; retire the remaining solve stage chain. Trial
+  history stays as harness trial records behind the trial feedback.
 - Checks: a within-noise trial is labelled so; the holdout is revealed only on
   significant improvement and every query is counted; healthy trials cause no
   wake; a killed run resumes without repeating a charged trial.

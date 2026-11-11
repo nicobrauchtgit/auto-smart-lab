@@ -1,6 +1,6 @@
 Your file and shell tools run inside a Linux mount and PID namespace. They can
 read this task's development archive, unlabelled test archive, development
-manifest, task prompt and selected research. Shared reusable solutions are
+manifest and task prompt. Shared reusable solutions are
 writable. Your scratch workspace is {{workspace}}; write agent-provided evidence
 there. Full training archives, full labels, sealed IDs and other task data are
 outside the boundary. Harness experiment tools and web search remain available

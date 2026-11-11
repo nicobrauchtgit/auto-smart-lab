@@ -12,8 +12,7 @@ Group and label-free tasks explicitly skip this binary confirmation measurement.
 
 After the solve agent closes and its workers stop, the harness checks the champion
 tag and freezes its exact commit, tree, factory and fixed parameters. It fits on
-all development rows, predicts exactly the sealed IDs and runs the ID canary
-(dropped by decision of 2026-11-11; P6 removes it).
+all development rows, predicts exactly the sealed IDs (the ID canary was removed on 2026-11-11).
 The model process sees development inputs and a sealed-only validation archive;
 the original full archive and labels remain outside its filesystem boundary.
 As in CV, model and scorer share a Python process; this is not protection against

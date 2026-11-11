@@ -44,8 +44,7 @@ Pipeline, orchestration and standalone stage commands print a Cloud trace link
 `stageInvocationId`, `attempt`, `agentRunId` and `piSessionId` metadata to find work.
 
 Each process execution has a root trace. Durable `pipelineRunId` is the Langfuse
-session ID. Orchestrator resumes persist the new trace ID in the coordinator
-journal and attach `previousTraceId`; physical context replacements remain
+session ID. Physical context replacements remain
 separate agent observations within the same attempt and trace.
 
 The hierarchy is execution → stage → attempt → physical Pi session → generations

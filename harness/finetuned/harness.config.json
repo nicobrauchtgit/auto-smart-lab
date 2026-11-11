@@ -10,30 +10,15 @@
   "session": {
     "maxWallMs": 28800000,
     "stallMs": 600000,
-    "stallRetries": 2,
-    "lessonMaxMs": 1800000
+    "stallRetries": 2
   },
   "context": {
     "handoffTokens": 100000,
     "maxHandoffBytes": 65536
   },
   "research": {
-    "injectStartupContext": true,
-    "maxAttempts": 2,
-    "webSearchCalls": 3,
-    "webSearchResults": 4,
-    "maxReportBytes": 16384,
-    "maxAnalysisArtifactBytes": 65536,
-    "maxFacts": 8,
-    "maxAlternates": 2,
-    "maxImprovements": 3,
     "profileTimeoutMs": 300000,
-    "profileTextMinPercent": 90,
-    "maxToolCalls": 40,
-    "finalizeToolCalls": 8,
-    "focusAtRemainingPercent": 50,
-    "wrapUpAtRemainingPercent": 20,
-    "bashTimeoutSeconds": 600
+    "profileTextMinPercent": 90
   },
   "solve": {
     "maxIterations": 6,
@@ -98,17 +83,5 @@
       "maxMessageBytes": 32768,
       "maxResultBytes": 8192
     }
-  },
-  "orchestrator": {
-    "maxSessions": 128,
-    "maxModelRequests": 4000,
-    "maxToolCalls": 8000,
-    "maxStages": 24,
-    "maxTrials": 24,
-    "maxRetries": 3,
-    "maxWallMs": 43200000,
-    "maxSummaryBytes": 16384,
-    "maxDetailBytes": 8192,
-    "maxNotifications": 64
   }
 }

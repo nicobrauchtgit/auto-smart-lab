@@ -4,9 +4,9 @@
 
 ## Status
 
-Accepted by the user on 2026-11-11. Not implemented; the current code still
-runs the orchestrator and the research → solve → evaluate chain until P6/P7
-land. Supersedes [ADR 006](006-shared-expert-workspace.md) and the scheduling
+Accepted by the user on 2026-11-11. Not implemented yet. The orchestrator, the
+research and evaluate stages and the knowledge store were removed on
+2026-11-11; the remaining code runs solve, then refit, until P7 lands. Supersedes [ADR 006](006-shared-expert-workspace.md) and the scheduling
 part of [ADR 003](003-finite-ram-observation.md); amends
 [ADR 004](004-durable-controller.md) and [ADR 005](005-isolation-confirmation-provenance.md).
 
@@ -64,7 +64,7 @@ The run has no fixed phase order, so comparisons rely on harness records and
 tool-call counts rather than stage boundaries. The lead's context holds scout
 bullets but not their transcripts. Tool calls do not bound compute; global
 supervision (v2 section 6) reports time-wasting calls instead. Starting budgets
-and the knowledge store's role are open until measured or decided. The case
+are open until measured; the knowledge store was dropped. The case
 against a fixed relay rests on one peer-reviewed controlled study, a
 peer-reviewed failure taxonomy, preprints and one run per arm.
 

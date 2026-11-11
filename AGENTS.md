@@ -19,16 +19,23 @@ open decisions and the prioritized packages. The finetuned design is
 [expert-team-v2.md](harness/finetuned/docs/expert-team-v2.md), accepted
 2026-11-11; its contract appendix is
 [expert-team.md](harness/finetuned/docs/expert-team.md). Run project commands
-through `./dev` (see that file).
+through `./dev` (see that file). [docs/v2-kickoff.md](docs/v2-kickoff.md) splits
+the implementation into parallel work streams with one prompt each.
+
+Design decisions cite research papers only, marked peer-reviewed or preprint.
+Blog posts, vendor docs and opinion pieces are not evidence. Our own measured
+runs count as evidence for this repository but not as general findings.
 
 # Harness development
 
-The current code still runs the old design until P6 and P7 land: an LLM
-orchestrator calling registered research, solve, evaluate, refit and submit
-stages through `agent/pipeline/executor.ts`. Keep it working while it runs, and
-follow [the pipeline integration contract](harness/finetuned/docs/pipeline-integration.md)
-when changing it. Configured chains stop before submit; only an explicit
-controller submission policy authorizes uploads.
+The LLM orchestrator, the research and evaluate stages, the knowledge store and
+the filename-leakage canary were removed on 2026-11-11 to clear the ground for
+v2. What remains runs as a configured chain through
+`agent/pipeline/executor.ts`: solve (one agent session with harness-owned
+trials), then refit; submit stays registered but runs only under an explicit
+controller submission policy. Follow
+[the pipeline integration contract](harness/finetuned/docs/pipeline-integration.md)
+when changing it.
 
 New work follows expert-team-v2.md: one lead agent drives the run and calls
 blocking scouts (data, ideas, validation); there is no LLM orchestrator and no
@@ -138,8 +145,5 @@ and variables. Keep prompts in version control alongside their callers.
   representative inputs. Evaluate consequential instruction changes against
   fixed tasks.
 
-Module runners now use `agent/prompts/`; see its README for loading, trace
-metadata, and compatibility details. The old `agent/instructions/` files are
-retained unchanged for pre-migration processes and must not be edited as a
-second source of truth. Remove them only after those processes finish and
-remaining external references have been checked.
+Module runners use `agent/prompts/`; see its README for loading and trace
+metadata. The old `agent/instructions/` files were removed on 2026-11-11.

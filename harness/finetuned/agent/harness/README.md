@@ -2,12 +2,11 @@
 
 Edit `harness/finetuned/harness.config.json` for active harness tuning
 (`agent/harness/config.ts` imports it from there; it is not at the repository
-root): research limits, solve defaults, fold recommendations, session/context
+root): data-profile limits, solve defaults, fold recommendations, session/context
 limits, experiment notification and sampling intervals, and subagent limits.
 Values are validated, copied, and frozen when the process starts. Restart the
 runner after changing them; an active run continues using its original
-settings. v2 replaces the `research`, `solve` and `orchestrator` budget keys
-with one `team` block and adds a `supervision` block
+settings. v2 replaces the `research` and `solve` keys with one `team` block and adds a `supervision` block
 ([expert-team-v2.md section 5](../../docs/expert-team-v2.md#5-budget-and-hand-over)),
 when P6/P7 land.
 
@@ -33,8 +32,7 @@ agent on news only.
 Agent-designed estimator hyperparameters and CV choices remain per-trial inputs
 in `request.json`, `invocation.json`, and the measured fold manifest. They are not
 prescribed globally by the harness. Chosen model context/output limits are
-captured with session configuration. Legacy pre-migration solve/evaluation
-policies and protocol constants are outside this active harness configuration.
+captured with session configuration.
 
 Observability goes to Langfuse Cloud ([telemetry](../../docs/telemetry.md)).
 Prompt snapshots contain full rendered system and opening prompts as well as

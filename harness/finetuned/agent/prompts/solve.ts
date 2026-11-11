@@ -14,7 +14,6 @@ export interface SolveStartInput {
 	rowCount: number;
 	targetSummary: string;
 	foldRecommendation: string;
-	researchState: string;
 	maxIterations: number;
 }
 
@@ -47,7 +46,6 @@ export function prepareSolvePrompts(prompts: PromptSnapshot, input: SolveStartIn
 		rowCount: String(input.rowCount),
 		targetSummary: input.targetSummary,
 		foldRecommendation: input.foldRecommendation,
-		researchState: input.researchState,
 		maxIterations: String(input.maxIterations),
 		taskContract: contract.map(part => part.text).join("\n\n"),
 	});

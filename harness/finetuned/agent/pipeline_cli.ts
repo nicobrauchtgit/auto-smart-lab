@@ -8,8 +8,8 @@ import { readFileSync } from "node:fs";
  *   npm run pipeline -- --unit 1 --task 1 --model saia/mistral-medium-3.5-128b
  *   npm run pipeline -- spam1
  *
- * With only the research stage enabled, the run resolves the task, runs research
- * with observability attached, and stops once research.md passes validation.
+ * Runs the configured chain (solve, then refit) for one task with observability
+ * attached. The v2 lead agent replaces this chain (expert-team-v2.md).
  */
 
 import { runPipeline } from "./pipeline/executor.js";
@@ -30,7 +30,6 @@ Selecting a task:
 Options:
   --guidance <json-file>      typed { guidance, evidenceCatalog } run inputs
   --model <provider/model>   override the configured model
-  --no-startup-context       do not inject the training-label profile
   --stage <name>             start at this stage instead of the configured entry
   --stop-after <name>        stop after this stage
   --no-fetch                 do not download a missing unit
@@ -38,7 +37,6 @@ Options:
   --allow-telemetry-fallback  allow emergency tracing during an initial Cloud outage
   --echo-events              print every recorded trace event
   --check-setup              verify setup (including live API access), then exit
-  --resume <run-id>          continue an orchestrator run with its remaining budget
   --dry-run                  resolve the task and print the plan only
   --list                     list locally available units and tasks`);
 	process.exit(1);
@@ -80,7 +78,6 @@ async function main(): Promise<void> {
 		return;
 	}
 
-	const injectStartupContext = !takeFlag("--no-startup-context");
 	const autoFetch = !takeFlag("--no-fetch");
 	const secureTls = takeFlag("--secure-tls");
 	const echoEvents = takeFlag("--echo-events");
@@ -93,7 +90,6 @@ async function main(): Promise<void> {
  const model = takeOption("--model");
 	const entryStage = takeOption("--stage") as StageName | undefined;
 	const stopAfter = takeOption("--stop-after") as StageName | undefined;
-	const resumeRunId = takeOption("--resume");
 
 	let unit = takeOption("--unit");
 	let task = takeOption("--task");
@@ -170,10 +166,8 @@ async function main(): Promise<void> {
 		model,
 		entryStage,
 		stopAfter,
-		resumeRunId,
 		signal: controller.signal,
 		echoEvents,
-		optionOverrides: injectStartupContext ? undefined : { research: { injectStartupContext: false } },
 		invokedBy: { kind: "cli", command: "pipeline", selector },
 	});
 

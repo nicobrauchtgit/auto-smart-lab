@@ -1,19 +1,12 @@
 {
   "pipeline": {
     "version": 1,
-    "entryStage": "research",
-    "scheduling": "agent",
+    "entryStage": "solve",
+    "scheduling": "configured",
     "stages": {
-      "research": {
-        "enabled": true,
-        "options": {}
-      },
       "solve": {
         "enabled": true,
         "options": {}
-      },
-      "evaluate": {
-        "enabled": true
       },
       "submit": {
         "enabled": true

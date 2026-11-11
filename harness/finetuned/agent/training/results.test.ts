@@ -10,8 +10,6 @@ import type { ExperimentRequest } from "./types.js";
 import { ensureSolutionsRepository, git, tagCommit } from "./git.js";
 import { championSelection, handoverChampion } from "./development_selection.js";
 import { candidateIdentity, terminalPath } from "./terminal.js";
-import { initialState, StateStore } from "../orchestrator/state.js";
-import { Coordinator } from "../orchestrator/coordinator.js";
 import { loadPromptSnapshot } from "../prompts/loader.js";
 import { resolvePipelineSettings } from "../pipeline/config.js";
 
@@ -268,62 +266,4 @@ describe("collectTrainingResults", () => {
 			artifacts: [],
 		});
 	});
-});
-
-
-test("a frozen champion reconciles an existing hand-over while remaining closed to development", async () => {
- const root = await mkdtemp(join(tmpdir(), "terminal-handover-")), repository = join(root, "solutions");
- let coordinator: Coordinator | undefined;
- try {
-  ensureSolutionsRepository(repository);
-  await writeFile(join(repository, "pipeline.py"), "# selected source\n");
-  git(repository, ["add", "-A"]);
-  git(repository, ["-c", "commit.gpgsign=false", "commit", "-qm", "fixture"]);
-  const commit = git(repository, ["rev-parse", "HEAD"]).stdout.trim();
-  const directory = await writeTrial(root, "winner"), invocationPath = join(directory, "invocation.json");
-  const invocation = JSON.parse(await readFile(invocationPath, "utf8"));
-  invocation.source = { repository, commit };
-  await writeFile(invocationPath, JSON.stringify(invocation));
-  tagCommit(repository, "champion/task", commit, JSON.stringify({ experimentId: "winner", trainingRoot: root }), true);
-  const identity = candidateIdentity("task", commit, invocation.request.pipeline);
-  await mkdir(join(repository, ".git", "smartlab-terminal"), { recursive: true });
-  await writeFile(terminalPath(repository, identity), JSON.stringify({ schemaVersion: 1, identity, taskId: "task", source: { commit }, pipeline: invocation.request.pipeline }));
-  expect((await championSelection(await collectTrainingResults(root), repository, "task")).selected).toBeUndefined();
-  expect((await handoverChampion(repository, "task"))?.experimentId).toBe("winner");
-
-  const prompts = loadPromptSnapshot();
-  const config = resolvePipelineSettings({ defaultModel: "fixture/model", providers: {}, agent: { cwd: root, agentDir: root, initialPrompt: "" }, pipeline: { entryStage: "research", stages: { research: { enabled: true } } } } as any);
-  const store = new StateStore(join(root, "controller"), initialState({ taskId: "task", taskFingerprint: "a".repeat(64), config, promptTemplates: prompts.serialize(), promptFingerprint: prompts.fingerprint, authorized: false }));
-  await writeFile(join(directory, "recovery.json"), JSON.stringify({ originPipelineRunId: store.state.runId, originStageInvocationId: "solve" }));
-  store.transaction("completed-refit-before-final-transaction", {}, state => {
-   for (const id of ["solve", "refit"]) state.actions.push({ id, kind: "stage_start", requestHash: "fixture", revision: state.revision + 1, receipt: {} });
-   state.works.push({ id: "solve", actionId: "solve", stage: "solve", status: "terminal", objective: "fixture", upstream: [] });
-   state.works.push({ id: "refit", actionId: "refit", stage: "refit", status: "terminal", origin: "budget_end", objective: "fixture", upstream: [],
-    result: { stage: "refit", invocationId: "refit", stageVersion: 1, options: {}, startedAt: "now", finishedAt: "now", outcome: "success", artifacts: [], validation: { valid: true, errors: [] }, attempts: 0 } });
-  });
-  coordinator = new Coordinator(store, { trainingDirectory: join(root, "absent"), promotedChampion: () => handoverChampion(repository, "task"), start() { throw new Error("Completed hand-over must not launch a second refit"); } });
-  expect(await coordinator.handOverAtBudgetEnd("resume after crash", { cancelLive: false })).toMatchObject({ handedOver: true, invocationId: "refit" });
-  expect(coordinator.state.status).toBe("finished");
-  expect(coordinator.state.works.filter(work => work.stage === "refit")).toHaveLength(1);
-  expect((await championSelection(await collectTrainingResults(root), repository, "task")).selected).toBeUndefined();
- } finally { coordinator?.close(); await rm(root, { recursive: true, force: true }); }
-});
-
-test("eligible claims are rejected when either summary or fold records ID leakage", async () => {
- for (const location of ["summary", "fold"]) {
-  const root = await mkdtemp(join(tmpdir(), "leakage-result-"));
-  const directory = await writeTrial(root, "leaky");
-  if (location === "summary") {
-   for (const name of ["trial-result.json", "metrics.json"]) {
-    const path = join(directory, name), document = JSON.parse(await readFile(path, "utf8"));
-    document.idLeakage = { rows: 2, mismatches: 1 }; await writeFile(path, JSON.stringify(document));
-   }
-  } else {
-   const path = join(directory, "fold-results.jsonl"), rows = (await readFile(path, "utf8")).trim().split("\n").map(line => JSON.parse(line));
-   rows[0].idLeakage = { rows: 1, mismatches: 1 }; await writeFile(path, rows.map(row => JSON.stringify(row)).join("\n") + "\n");
-  }
-  const collection = await collectTrainingResults(root);
-  expect(collection.trials[0].eligible).toBe(false);
-  expect(collection.errors.some(error => error.message.includes("ID leakage"))).toBe(true);
- }
 });

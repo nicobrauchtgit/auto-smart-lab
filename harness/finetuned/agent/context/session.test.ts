@@ -31,11 +31,11 @@ async function fixture(thresholdTokens = CONTEXT_HANDOFF_TOKENS) {
 	const sessions: Awaited<ReturnType<typeof createAgentSession>>["session"][] = [];
 	const logical = new SmartContextSession({ prompts, thresholdTokens, create: async () => {
 		created++;
-		const resources = await loadChildResources({ cwd: root, agentDir, instructions: [prompts.render("research.system", {})] });
+		const resources = await loadChildResources({ cwd: root, agentDir, instructions: [prompts.render("solve.system", { taskId: "fixture" })] });
 		const { session } = await createAgentSession({ cwd: root, agentDir, ...resources,
 			model: provider.getModel(), modelRuntime: runtime, tools: ["read"], sessionManager: SessionManager.inMemory(root) });
 		sessions.push(session);
-		assert.match(session.systemPrompt, /research/i);
+		assert.match(session.systemPrompt, /solutions/);
 		assert.doesNotMatch(session.systemPrompt, /DEVELOPMENT_CONTEXT_EXCLUDED/);
 		const observer = await observeAgentSession({ session, model: "context-test/faux", ...observe });
 		scope.bindParent(observer.agentRunId);
@@ -226,17 +226,14 @@ test("feedback queued during final response never starts a new turn and remains 
 });
 
 test("module guidance appears in assembled openings and every replacement while AGENTS marker stays excluded", async () => {
- const { guidanceHash, guidanceBlock } = await import("../pipeline/guidance.js");
- const { prepareResearchPrompts } = await import("../prompts/research.js");
+ const { guidanceHash } = await import("../pipeline/guidance.js");
  const { prepareSolvePrompts } = await import("../prompts/solve.js");
- for (const stage of ["research", "solve", "evaluate"] as const) {
+ for (const stage of ["solve"] as const) {
   const f = await fixture(5000);
   try {
    const body = { id: "immutable", version: 1, stage, taskId: "fixture", content: "INVOCATION_GUIDANCE {{literal}}", evidence: [] };
    const guidance = { ...body, contentSha256: guidanceHash(body) };
-   const opening = stage === "research" ? prepareResearchPrompts(prompts, { taskId: "fixture", contextHash: "context", guidance }).prompt :
-    stage === "solve" ? prepareSolvePrompts(prompts, { taskId: "fixture", workspace: "/tmp", datasetPaths: [], configuration: spamConfiguration(), targets: "/tmp/labels", rowCount: 10, targetSummary: "balanced", foldRecommendation: "two", researchState: "prior", maxIterations: 1, guidance }).prompt :
-    [prompts.render("review.start", { taskId: "fixture", experimentId: "candidate", code: "{}", evidence: "{}" }).text, guidanceBlock(prompts, guidance)!.text].join("\n\n");
+   const opening = prepareSolvePrompts(prompts, { taskId: "fixture", workspace: "/tmp", datasetPaths: [], configuration: spamConfiguration(), targets: "/tmp/labels", rowCount: 10, targetSummary: "balanced", foldRecommendation: "two", maxIterations: 1, guidance }).prompt;
    f.provider.setResponses([
     context => { assert.match(JSON.stringify(context.messages), /INVOCATION_GUIDANCE/); f.sessions[0].getContextUsage = () => ({ tokens: 6000, contextWindow: 200000, percent: 3 }); return fauxAssistantMessage("Progress"); },
     fauxAssistantMessage("Read the current artifact"),

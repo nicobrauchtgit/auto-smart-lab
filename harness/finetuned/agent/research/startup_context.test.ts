@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
 
-import { buildResearchLaunchPrompt, renderStartupContext, summarizeTrainingLabels } from "./startup_context.js";
+import { summarizeTrainingLabels } from "./startup_context.js";
 
 test("counts all unique training labels and distinguishes ordinary accuracy from BACC", () => {
 	const content = Buffer.from("\uFEFFa;0\r\nb;0\r\nc;0\r\nd;1\r\n\r\n");
@@ -15,10 +15,6 @@ test("counts all unique training labels and distinguishes ordinary accuracy from
 		constant_prediction_balanced_accuracy: 0.5,
 	});
 	assert.equal(profile.source?.sha256, createHash("sha256").update(content).digest("hex"));
-	const text = renderStartupContext(profile);
-	assert.match(text, /Class 0: 3 \(75.00%\)/);
-	assert.match(text, /0.5 balanced accuracy/);
-	assert.match(text, /data profile in profile\/profile\.json covers the inputs/);
 });
 
 test("does not publish partial counts for malformed or duplicate records", () => {
@@ -38,24 +34,5 @@ test("rejects invalid UTF-8 rather than counting replacement characters as paths
 test("does not report a two-class baseline when only one class is present", () => {
 	const profile = summarizeTrainingLabels(Buffer.from("a;1\nb;1"), "labels", "balanced_accuracy");
 	assert.equal(profile.training_labels?.constant_prediction_balanced_accuracy, null);
-	assert.match(renderStartupContext(profile), /Only one class is present/);
-	assert.doesNotMatch(renderStartupContext(profile), /gives 0.5/);
 });
 
-test("does not infer a metric when the task metric is unknown", () => {
-	const profile = summarizeTrainingLabels(Buffer.from("a;0\nb;1"), "labels", null);
-	assert.match(renderStartupContext(profile), /Task metric: not identified/);
-	assert.doesNotMatch(renderStartupContext(profile), /Task metric: balanced_accuracy|gives 0.5 balanced accuracy/);
-});
-
-test("injects a bounded summary before the research request and supports no injection", () => {
-	const content = Buffer.from(Array.from({ length: 200000 }, (_, i) => `private-document-${i};${i % 2}`).join("\n"));
-	const profile = summarizeTrainingLabels(content, "labels", "balanced_accuracy");
-	const request = "Research the task and verify claims.";
-	const prompt = buildResearchLaunchPrompt(request, "spam1", "hash", profile);
-	assert.ok(prompt.indexOf("Training label records: 200000") < prompt.indexOf(request));
-	assert.doesNotMatch(prompt, /private-document-/);
-	assert.ok(Buffer.byteLength(prompt) < 1800);
-	assert.equal(buildResearchLaunchPrompt(request, "spam1", "hash"), `${request}\n\nTask ID: spam1. Context SHA-256: hash.`);
-	assert.deepEqual(JSON.parse(JSON.stringify(profile)), profile);
-});

@@ -136,7 +136,7 @@ class EvidenceSelection(unittest.TestCase):
         with self.assertRaisesRegex(InvocationError, 'supply predictions'):
             self.execute(doc)
 
-    def test_refit_and_evaluation_recompute_frozen_evidence_and_detect_corrupt_scores(self):
+    def test_refit_recomputes_frozen_evidence_and_detects_corrupt_scores(self):
         doc = self.document()
         # Terminal evidence validators require a source identity, but never import it.
         doc['schemaVersion'] = 2
@@ -147,21 +147,14 @@ class EvidenceSelection(unittest.TestCase):
         result = self.execute(doc)
         directory = self.fixture.root / 'generic'
         (directory / 'invocation.json').write_text(json.dumps(doc))
-        for name, path in [('refit_evidence_test', Path(__file__).resolve().parents[2] / 'refit/evidence.py'),
-                           ('evaluation_evidence_test', Path(__file__).resolve().parents[2] / 'evaluation/diagnostics.py')]:
-            spec = importlib.util.spec_from_file_location(name, path)
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            if name.startswith('refit'):
-                module.validate(directory)
-            else:
-                review = module.diagnose(directory)
-                self.assertEqual(review['summary']['selectionScore'], 1)
-                self.assertEqual(review['summary']['labelledRows'], 40)
+        spec = importlib.util.spec_from_file_location('refit_evidence_test', Path(__file__).resolve().parents[2] / 'refit/evidence.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module.validate(directory)
         fold_path = directory / 'fold-results.jsonl'
         folds = [json.loads(line) for line in fold_path.read_text().splitlines()]
         folds[0]['metrics']['selectionScore'] = .25
         fold_path.write_text(''.join(json.dumps(fold) + '\n' for fold in folds))
-        with self.assertRaisesRegex(ValueError, 'differs'):
-            module.diagnose(directory)
+        with self.assertRaisesRegex(AssertionError, 'Fold measurements differ'):
+            module.validate(directory)
 

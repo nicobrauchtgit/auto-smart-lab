@@ -1,9 +1,9 @@
 # Pipeline integration and observability
 
-> Superseded by [expert-team-v2.md](expert-team-v2.md) sections 2 and 8 when P6/P7 land (the stage chain and orchestrator are retired in P7b). Accurate for the current code until then.
+> Superseded by [expert-team-v2.md](expert-team-v2.md) when P7 lands. The orchestrator, the research and evaluate stages, the knowledge store and the leakage canary were removed on 2026-11-11; this page describes the remaining solve → refit chain.
 
-Updated 2026-10-09. Research, solve, advisory evaluation, terminal refit and
-policy-controlled submission are registered. Langfuse Cloud replaces the custom
+Updated 2026-11-11. Solve, terminal refit and policy-controlled submission are
+registered. Langfuse Cloud replaces the custom
 trace stack; JSONL is an emergency fallback. See [telemetry.md](telemetry.md).
 
 ## Running the pipeline
@@ -15,9 +15,8 @@ npm run pipeline -- --list
 ```
 
 The run resolves the task from unit metadata, starts at the configured entry
-stage, and follows each stage's successor while it stays enabled. With only
-research enabled it stops as soon as `research.md` passes validation, and exits
-non-zero when it does not.
+stage, and follows each stage's successor while it stays enabled: solve, then
+refit. It stops before submit.
 
 ## Code layout
 
@@ -28,15 +27,12 @@ non-zero when it does not.
 | `agent/pipeline/registry.ts` | Implemented stages |
 | `agent/pipeline/config.ts` | Validates the `pipeline` block; snapshot and fingerprint |
 | `agent/pipeline/trace.ts` | Pipeline and stage reporters over shared Langfuse telemetry |
-| `agent/pipeline/stages/research.ts` | Research stage definition and artifacts |
 | `agent/pipeline/stages/solve.ts` | Solve stage definition and artifacts |
-| `agent/pipeline/run_research.ts` | Research-only entry used by standalone commands |
-| `agent/pipeline/run_solve.ts` | Research-through-solve entry for standalone commands |
+| `agent/pipeline/run_solve.ts` | Solve-only entry for standalone commands |
 | `agent/solve/folds.ts` | Fold recommendation and the sealed confirmation split |
 | `agent/solve/workspace.ts` | Run workspace preparation and dev/sealed label split |
 | `agent/solve/results.ts` | Typed access to one iteration's measurements |
 | `agent/solve/iteration.py` | Recomputes every reported number and emits the signal |
-| `agent/solve/canary.py` | Filename-leakage canary; dropped 2026-11-11, removal in P6 |
 | `agent/solve/champion.py` | Champion re-run under the challenger's folds |
 | `agent/libs/smartlab-eval/` | Corpus loader and measurement library, installed into the venv |
 | `agent/observability.ts` | Pi event and final-request observer |
@@ -44,19 +40,12 @@ non-zero when it does not.
 ## Current entry points
 
 - `agent/pipeline_cli.ts` is the pipeline entry point.
-- `agent/research_cli.ts` and `orchestrate.ts --research[-only]` run research
-  through `runResearchStage`, which calls the same executor.
 - `agent/run/session_runner.ts` attaches the shared observer whenever the caller
-  passes `observe`, which the stage reporter supplies per attempt. Research keeps
-  its local `runs.jsonl` as a workspace record; it is not the trace.
+  passes `observe`, which the stage reporter supplies per attempt.
 - `pipeline.config.json` carries a `pipeline` block with the entry stage,
   scheduling mode, and per-stage enablement and options.
 - `agent/pi_sdk.ts` remains a standalone experiment for the observability stack.
-- Legacy evaluation and submission still run through `orchestrate.ts` outside the
-  executor. The new `evaluate` stage uses the review contract documented below;
-  submission is registered and requires an explicit controller policy. The
-  legacy `runSolverSession` path there is unchanged and separate from the
-  registered `solve` stage.
+- Submission is registered and requires an explicit controller policy.
 
 ## Execution contract
 
@@ -67,8 +56,7 @@ options, and outputs, including references to produced artifacts.
 Configuration identifies enabled stages, the initial stage, and stage options,
 validated at load time against the implemented stage registry. Availability and
 automatic execution are separate: enabling a stage does not imply that every
-run must execute it. Initially enable research as the first stage; enable later
-stages as they meet this contract.
+run must execute it. Enable a stage once it meets this contract.
 
 The effective configuration is recorded after defaults and overrides are
 resolved: `pipeline_run_start` carries a versioned snapshot and its fingerprint,
@@ -110,8 +98,7 @@ success. Every repair session retains an attempt within the same invocation.
 ## Typed metadata
 
 Module prompts now live in `agent/prompts/`. The executor captures one immutable
-template snapshot per run, shared across stages and research attempts. Research
-uses a stable opening request and appends factual validation feedback on retry.
+template snapshot per run, shared across stages.
 Agent traces record prompt IDs, template and rendered hashes, authored and
 effective system prompts, and the opening message in `prompt_snapshot` events.
 See [prompt management](../agent/prompts/README.md) for the retained legacy files
@@ -121,7 +108,7 @@ Store versioned metadata, not labels inferred from prompt text:
 
 - Identity: task, stage, model, pipeline run, invocation, and attempt.
 - Effective parameters: typed values such as
-  `research.injectStartupContext: true`.
+  `solve.maxIterations: 6`.
 - Supplied inputs: an extensible discriminated union keyed by `kind`, with
   input version, delivery method, availability status, artifact reference,
   content fingerprint, and dataset fingerprint where applicable.
@@ -151,29 +138,7 @@ A module is a full pipeline participant when:
 - Relevant integration tests cover successful execution, setup or execution
   failure, and repair/cancellation paths where supported.
 
-Research meets these criteria today. Its trace reads as one invocation:
-
-```
-pipeline_run_start          config snapshot and fingerprint
-  stage_started             research, effective options, upstream artifacts
-  stage_input               task prompt, research context, startup profile
-  research_context_prepared dataset and context fingerprints
-  artifact_validation       state of research.md before any attempt
-  agent_attempt_start       attempt 1
-    agent_run_start ...     the agent session's own events, same identity
-  agent_attempt_end
-  artifact_validation       after the attempt; a failure triggers attempt 2
-  research_finished         attempts, final validity, whether the document changed
-  stage_summary             attempts, context and dataset fingerprints
-  stage_finished            outcome, artifacts, supplied inputs
-pipeline_run_end            outcome, stop reason, trace degradation
-```
-
-A document that fails validation is returned, not thrown: the stage reports the
-validation result and the executor decides the outcome, so a failed research run
-keeps its artifacts, fingerprints, and attempt count in the trace. Only a failed
-session is raised as an error.
-
+Solve and refit meet these criteria; the solve trace shape is below.
 ## The solve stage
 
 The training ownership contract is defined in
@@ -196,7 +161,7 @@ The agent writes its own scikit-learn pipeline under `solutions/`, organised
 however it likes. `solutions/tasks/<task_id>.py` is the one convention: an
 orchestration entrypoint declaring a factory that returns an unfitted estimator
 taking a frame with `id` and opaque `input` descriptors. That exists so the harness can
-re-run the agent's own pipeline for the canary and the paired comparison.
+re-run the agent's own pipeline for its own fits and the paired comparison.
 `solutions/` persists across tasks and runs, so it accumulates reusable code.
 
 The agent receives a development archive containing only its rows, the test
@@ -217,7 +182,7 @@ champion's commit and fixed parameters, fits development rows and predicts the
 sealed rows. A hashed `holdout_confirmation` artifact records class metrics,
 a 95% stratified bootstrap interval, the CV gap, precision and recorded reuse.
 Completed identities are reused; failed reads are consumed rather than silently
-retried. Evaluation remains advisory, and refit checks the confirmed identity
+retried. Refit checks the confirmed identity
 before including sealed rows in terminal training. See
 [Held-back confirmation](held-back-confirmation.md).
 
@@ -227,9 +192,7 @@ Compliance establishes that a score covers the development set and only it, so
 two iterations are comparable. Failing it makes the iteration unmeasurable: no
 score is recorded and nothing is promoted.
 
-It does not make the iteration silent. The canary reads the agent's entrypoint
-and its own sample of the corpus, so it depends on nothing the results files
-say and runs either way; fold scores are recomputed over whatever rows were
+It does not make the iteration silent: fold scores are recomputed over whatever rows were
 scorable and reported as explicitly partial, alongside how much of the
 development set they cover. A discrepancy check against the reported figure is
 skipped while coverage is partial, because the difference would be an artefact
@@ -262,27 +225,18 @@ it is re-run in a separate interpreter. Loading both in one process would hand
 the second import Python's cached copy of the first and silently compare the
 challenger with itself.
 
-### The leakage canary (dropped)
-
-Training member names end in their label; test members end in `.x`. By
-decision of 2026-11-11 this is a stated task fact, not a leak, and the
-filename-leakage canary is dropped ([v2 section 9](expert-team-v2.md#9-datasets-and-the-interface)).
-The current code still runs it (`agent/solve/canary.py`) until P6 removes it;
-
-
 ### Trace shape
 
 ```
-  stage_started             solve, effective options, upstream research artifact
-  stage_input               task prompt, research document, research analysis,
-                            dataset zips, sealed split, fold recommendation
+  stage_started             solve, effective options, upstream artifacts
+  stage_input               task prompt, dataset zips, sealed split,
+                            fold recommendation
   solve_workspace_prepared  development and sealed row counts, sealed fingerprint
     agent_attempt_start     iteration 1, rotated fold seed
       agent_run_start ...   the agent session's own events
     agent_attempt_end
   solve_iteration           recomputed measurements and coverage, discrepancies,
                             sealed gap, paired delta
-  leakage_canary            pass or fail, with a reason and a failure kind
   champion_promoted         only where a paired delta cleared its interval
   ...                       further iterations
   solve_finished            iterations, stop reason, champion, sealed gap trend
@@ -292,7 +246,7 @@ The current code still runs it (`agent/solve/canary.py`) until P6 removes it;
 
 The loop stops on `agent_declared`, `no_measurable_gain` (two consecutive
 iterations without a delta clearing its interval), `budget`, `cancelled`, or
-`never_measured`. Stage success requires a champion whose canary passed; a run
+`never_measured`. Stage success requires a measured champion; a run
 that never produced one returns its artifacts and a failed validation rather
 than throwing, so the iteration history stays in the trace.
 
@@ -314,14 +268,14 @@ future spawns. See [smart context sessions](../agent/context/README.md).
 ### Setup preflight
 
 Before any stage runs, the executor checks the prerequisites declared by every
-stage on the requested path, respecting `--stage` and `--stop-after`. Standalone
-research/solve commands use this same check. Run checks only with:
+stage on the requested path, respecting `--stage` and `--stop-after`. The standalone
+solve command uses this same check. Run checks only with:
 
 ```bash
 bun agent/pipeline_cli.ts unit 1 task 1 --stop-after solve --check-setup
 ```
 
-Checks cover selected model credentials and a tiny live completion, research's
+Checks cover selected model credentials and a tiny live completion, the
 Tavily credential and read-only usage endpoint, local unit metadata/prompt,
 labels and archive integrity, Python lock/environment health, training imports,
 and the `zip` executable. All local failures are collected before remote probes;
@@ -338,23 +292,11 @@ network/service outages need explicit controller fallback opt-in; invalid
 credentials block. Add prerequisite declarations and failure tests with
 new features; see AGENTS.md.
 
-## Short evaluation stage
+### Data profile
 
-`evaluate` is now registered and enabled after solve. It reviews the selected
-harness trial's OOF metrics and implementation, returning an advisory submission
-readiness score out of 5 with evidence-linked issues and limitations. It cannot
-submit or promote a model. `submit` requires explicit controller authorization. See
-[model evaluation](../agent/evaluation/README.md) for tools, artifacts, the
-scoring rubric, setup checks and standalone usage.
-
-### Research data profile and solution brief
-
-Before the research agent starts, the harness profiles the declared data
-(`profile/profile.json`, with a `data-profile` preflight check and a
-`data_profile` supplied input). The agent then writes a short solution brief:
-one recommended pipeline, a few alternates and atomic next improvements, with
-sources the validator resolves. See [research workflow](../agent/research/README.md)
-and [expert-team-v2.md](expert-team-v2.md).
+The harness data profile (`profile/profile.json`, with a `data-profile`
+preflight check) remains for v2's scouts; see
+[research inputs](../agent/research/README.md).
 
 ### Training restart recovery
 
@@ -372,7 +314,7 @@ provider credentials are added. See the [durable recovery contract](training-sea
 `agent/pipeline/stages/refit.ts` registers deterministic terminal training;
 `agent/pipeline/run_refit.ts` and `agent/refit_cli.ts` provide the standalone
 executor path (`npm run refit-stage -- <task-id> [--check-setup]`). The configured
-chain is research → solve → evaluate → refit. Configured chains stop before submission; uploads require an explicit controller policy. Refit has no successor or model session. Evaluation remains advisory.
+chain is solve → refit. Configured chains stop before submission; uploads require an explicit controller policy. Refit has no successor or model session.
 
 Refit resolves the chosen champion tag rather than the generic score-sorted
 selection artifact. It records typed freeze/evidence inputs, supervised process
@@ -385,8 +327,7 @@ See [terminal freeze, execution, artifacts and retry semantics](harness-owned-tr
 
 ## Invocation guidance and live feedback
 
-The module context interface is available without an orchestrator agent. Research,
-solve and evaluate accept optional `StageGuidance` run data. Refit and submission
+Solve accepts optional `StageGuidance` run data. Refit and submission
 refuse guidance and feedback. No providers or dependencies are added by this
 interface; stage-specific prerequisites and the entire configured chain still
 use shared setup before workers start. Local evidence and note validation run
@@ -406,7 +347,6 @@ const body = {
 const guidance = { ...body, contentSha256: guidanceHash(body) };
 await runPipeline({
   taskId: "spam1", stopAfter: "solve", guidance: { solve: guidance },
-  // An optional research note can be supplied separately in the same map.
   onInvocation(handle) {
     // Keep handles to send factual feedback or cancel; result is artifact validation.
     console.log(handle.invocationId, handle.state());
@@ -426,10 +366,8 @@ handle.cancel();
 const invocation = await handle.result;
 ```
 
-`invokeStage` remains the awaitable compatibility API. `runResearchStage`,
-`runSolveStage` and `runEvaluateStage` forward optional `guidance` maps and
-`evidenceCatalog` to `runPipeline`. Solve-through-research accepts separate notes
-for both stages. The pipeline CLI also accepts `--guidance notes.json`, with
+`invokeStage` remains the awaitable compatibility API. `runSolveStage` forwards
+optional `guidance` maps and `evidenceCatalog` to `runPipeline`. The pipeline CLI also accepts `--guidance notes.json`, with
 exact top-level keys `{ "guidance": { "solve": { ... } }, "evidenceCatalog": [] }`.
 `--stage` and `--stop-after` support standalone use of this same path. A note for
 an unrequested stage is rejected, as are unknown note fields and prompt variables.
@@ -451,7 +389,7 @@ references, 256-byte identity fields and 24 KiB total serialized content.
 Referenced files are hash-checked with a 64 MiB size bound. Guidance is deeply
 snapshotted before the invocation's first await; all planned notes are validated
 before any earlier worker starts. A later revision needs a new invocation.
-Research repair attempts and physical context replacements use the same note.
+Physical context replacements use the same note.
 Opening templates expose an optional `guidance` variable whose absent value is
 empty, preserving unguided rendered text. Base contracts remain authoritative.
 
@@ -482,12 +420,9 @@ calls, submission permission, promotion evidence, sealed-data access, or ability
 to change the frozen refit candidate. Factual feedback is caller-supplied data;
 workers must inspect evidence and the harness still validates their artifacts.
 
-## Dynamic agent scheduling and recovery
+## Submission policy and recovery
 
-`agent/orchestrator/run.ts` replaces scheduling policy while retaining this executor.
-Experiment runs use `scheduling: "agent"`. Uploads need `online: true` in
-`experiment.config.json`; offline, the generic API runs in no-submit mode and hands
-over one refit. Configured scheduling never uploads, even with submit enabled.
+Configured scheduling never uploads, even with submit enabled.
 All available enabled capabilities receive shared preflight before the first agent.
 Official recovery and already-complete goals can terminate before model prerequisites.
 
@@ -509,6 +444,3 @@ handler and never falls back to `run`. Unknown submission outcomes use read-only
 network reconciliation/receipt writes; absent intents refuse fresh uploads. Physical
 agent sessions cannot be reattached after host death. Guidance/feedback remain
 bounded typed inputs under the original controller/executor identities.
-
-See [orchestrator runtime](../agent/orchestrator/README.md) for state/journal APIs,
-notification acknowledgment, action deduplication, budgets and current limitations.

@@ -37,7 +37,7 @@ export class InvocationFeedback {
    return { ...prior.receipt };
   }
   if (this.receipts.size >= 64) throw new Error("Invocation feedback budget reached (64)");
-  const supported = ["research", "solve", "evaluate"].includes(this.options.stage);
+  const supported = ["solve"].includes(this.options.stage);
   if (this.finished || !supported) {
    const receipt: FeedbackReceipt = { id: raw?.id, status: "refused", reason: !supported ? "Feedback unsupported" : "Stage finished; use next invocation", nextInvocation: supported && this.finished };
    this.record(receipt);

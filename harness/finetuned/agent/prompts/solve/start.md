@@ -30,27 +30,14 @@ The harness supplies every seed, materializes and
 persists your requested folds, owns all fitting processes, and records the
 authoritative evidence.
 
-Prior work:
-{{researchState}}
-
-Start from the research brief. Implement its recommended pipeline as your
-first harness experiment, as a reduced pilot if that is cheaper, so it becomes
-the baseline. Then test its alternates and next improvements against that
-baseline with harness runs, one atomic change at a time, and keep what the
-harness evidence supports. The brief's recommendations are hypotheses; its
-dataset facts cite measurements on this exact dataset (`[profile:<key>]` records
-in the copied profile, `[analysis/...]` artifacts). Never use anything it marks
-as target leakage as a feature. If the brief is missing or unusable, design
-your own baseline and say so in the experiment hypothesis.
-
 The goal is performance on the test inputs, and validation on training data
 cannot reveal the cost of relying on something the test inputs lack or
-represent differently. If the brief reports a training-vs-test difference that
+represent differently. If you find a training-vs-test difference that
 matters to your approach, you may drop, replace or normalize what is affected,
 even at some validation cost; an ablation can show that cost. Apply the same
 transformations to training and test inputs and validate them on labeled
 training data. Test inputs carry no targets: never infer targets from them.
-You may rerun the research scripts or make small local checks while designing
+You may make small local checks while designing
 the pipeline, but local agent-run fits are only development clues and never
 promotion evidence.
 

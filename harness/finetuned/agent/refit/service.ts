@@ -84,7 +84,7 @@ export function runtimeDependencyHash(options: RefitOptions): string {
 }
 /** Fingerprint every local executable adapter used by terminal refit/recovery. */
 export const REFIT_FRAMEWORK_FILES = ["refit/worker.py", "training/python/runner.py", "refit/evidence.py", "training/python/task_samples.py", "training/python/pcap_samples.py",
- "training/python/confirm.py", "confirmation/receipt.ts", ...["metrics.py", "measurement.py", "id_leakage.py"].map(name => `training/python/smartlab_trial/${name}`)];
+ "training/python/confirm.py", "confirmation/receipt.ts", ...["metrics.py", "measurement.py"].map(name => `training/python/smartlab_trial/${name}`)];
 export function frameworkHash(root = FRAMEWORK_ROOT): string {
  return digest(REFIT_FRAMEWORK_FILES.map(path => hashFile(join(root, path))));
 }

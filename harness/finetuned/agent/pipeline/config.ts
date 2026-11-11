@@ -23,7 +23,7 @@ export interface StageSettings {
 export interface PipelineSettings {
 	version: 1;
 	entryStage: StageName;
-	scheduling: "configured" | "agent";
+	scheduling: "configured";
 	stages: Record<string, StageSettings>;
 }
 
@@ -43,9 +43,9 @@ export interface ResolvedPipelineConfig {
 
 const DEFAULT_SETTINGS: PipelineSettings = {
 	version: 1,
-	entryStage: "research",
+	entryStage: "solve",
 	scheduling: "configured",
-	stages: { research: { enabled: true, options: {} } },
+	stages: { solve: { enabled: true, options: {} } },
 };
 
 function canonical(value: unknown): unknown {
@@ -75,7 +75,7 @@ export function resolvePipelineSettings(config: PipelineConfig): ResolvedPipelin
 	const warnings: string[] = [];
 	const raw = (config as PipelineConfig & { pipeline?: unknown }).pipeline;
 	if (raw === undefined) {
-		warnings.push("pipeline.config.json has no `pipeline` block; using the research-only default");
+		warnings.push("pipeline.config.json has no `pipeline` block; using the solve-only default");
 	} else if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
 		throw new Error("`pipeline` must be an object in pipeline.config.json");
 	}
@@ -85,7 +85,7 @@ export function resolvePipelineSettings(config: PipelineConfig): ResolvedPipelin
 		throw new Error(`Unsupported pipeline config version: ${String(block.version)}`);
 	}
 	const scheduling = block.scheduling ?? "configured";
-	if (scheduling !== "configured" && scheduling !== "agent") {
+	if (scheduling !== "configured") {
 		throw new Error(`Unsupported pipeline scheduling mode: ${String(scheduling)}`);
 	}
 

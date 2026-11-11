@@ -1,9 +1,5 @@
 /**
  * Run the solve stage for one task through the shared executor.
- *
- * `--use-existing-research` enters at solve with the research document already on
- * disk, seeded as an upstream artifact. The trace then shows solve as the only
- * stage this run executed, rather than implying research ran again.
  */
 
 import { runSolveStage } from "./pipeline/run_solve.js";
@@ -11,8 +7,8 @@ import { positionalSelector, resolveTask } from "./pipeline/resolve_task.js";
 import { printTelemetry } from "./telemetry/cli.js";
 
 function usage(): never {
-	console.error("Usage: npm run solve-stage -- <task> [--use-existing-research] [--iterations N] [--model M] [--events] [--allow-telemetry-fallback]");
-	console.error("  npm run solve-stage -- spam1 --use-existing-research --iterations 3");
+	console.error("Usage: npm run solve-stage -- <task> [--iterations N] [--model M] [--events] [--allow-telemetry-fallback]");
+	console.error("  npm run solve-stage -- spam1 --iterations 3");
 	console.error("  npm run solve-stage -- unit 1 task 1");
 	process.exit(2);
 }
@@ -37,7 +33,6 @@ const result = await runSolveStage({
 	taskId: task.taskId,
 	model: value("--model"),
 	maxIterations: iterations === undefined ? undefined : Number(iterations),
-	useExistingResearch: flag("--use-existing-research"),
 	echoEvents: flag("--events"),
 	invokedBy: { kind: "cli", command: "solve-stage", argv },
 });

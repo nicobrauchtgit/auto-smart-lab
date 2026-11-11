@@ -13,7 +13,7 @@ import type { AgentObservation, TelemetryIdentity } from "../observability.js";
 import type { PromptSnapshot } from "../prompts/loader.js";
 import type { TaskConfiguration } from "./task_configuration.js";
 
-export type StageName = "research" | "solve" | "evaluate" | "refit" | "submit";
+export type StageName = "solve" | "refit" | "submit";
 
 export type StageOutcome = "success" | "failure" | "cancelled";
 

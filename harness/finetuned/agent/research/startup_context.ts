@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { loadPromptSnapshot, type PromptSnapshot, type RenderedPrompt } from "../prompts/loader.js";
 
 export interface StartupProfile {
 	schema_version: 1;
@@ -120,51 +119,3 @@ export function summarizeTrainingFamilies(content: Buffer, sourcePath: string, m
 	} };
 }
 
-export function renderStartupContextPrompt(profile: StartupProfile | undefined, prompts: PromptSnapshot): RenderedPrompt | undefined {
-	if (!profile) return undefined;
-	const lines: string[] = [];
-	if (profile.source) lines.push(`Source: ${profile.source.path}; sha256:${profile.source.sha256}.`);
-	if (profile.metric === "balanced_accuracy") {
-		lines.push("Task metric: balanced accuracy, as stated in task.md; each class recall has equal weight.");
-	} else if (profile.metric === "adjusted_rand_index") {
-		lines.push("Task metric: adjusted Rand index between clusters and families, as declared by the task configuration; cluster IDs are arbitrary.");
-	} else {
-		lines.push("Task metric: not identified by this profile.");
-	}
-	if (profile.status === "available" && profile.training_families) {
-		const families = profile.training_families;
-		lines.push(`Training target records: ${families.rows} in ${families.families} families; largest ${families.largest}, smallest ${families.smallest}, ${families.singletons} singleton families.`);
-	} else if (profile.status !== "available" || !profile.training_labels) {
-		lines.push(`Class counts unavailable: ${profile.reason ?? "No supported labels source."}`);
-	} else {
-		const labels = profile.training_labels;
-		lines.push(`Training label records: ${labels.rows}.`);
-		for (const item of labels.classes) {
-			lines.push(`Class ${item.label}: ${item.count} (${(item.fraction * 100).toFixed(2)}%).`);
-		}
-		lines.push(`Always predicting a majority class gives ${(labels.majority_class_accuracy * 100).toFixed(2)}% ordinary accuracy on these labels.`);
-		if (profile.metric === "balanced_accuracy" && labels.constant_prediction_balanced_accuracy !== null) {
-			lines.push("Always predicting either class gives 0.5 balanced accuracy on these labels.");
-		}
-		if (labels.constant_prediction_balanced_accuracy === null) {
-			lines.push("Only one class is present; a two-class balanced-accuracy baseline is unavailable.");
-		}
-	}
-	return prompts.render("research.startup-context", { facts: lines.join("\n") });
-}
-
-export function renderStartupContext(profile: StartupProfile | undefined, prompts = loadPromptSnapshot()): string {
-	return renderStartupContextPrompt(profile, prompts)?.text ?? "";
-}
-
-export function buildResearchLaunchPrompt(
-	request: string,
-	taskId: string,
-	contextHash: string,
-	profile?: StartupProfile,
-	prompts = loadPromptSnapshot(),
-): string {
-	return prompts.render("research.launch", {
-		request, taskId, contextHash, startupContext: renderStartupContext(profile, prompts),
-	}).text;
-}

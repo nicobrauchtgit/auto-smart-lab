@@ -26,17 +26,16 @@ function readPythonEnvironment(): PythonEnvironment {
 
 function fixture() {
  const project = temporaryProject("solve-sandbox-");
- const root = join(project.root, "runs/fixture/solve"), researchDir = join(root, "research");
- mkdirSync(researchDir, { recursive: true });
+ const root = join(project.root, "runs/fixture/solve");
+ mkdirSync(root, { recursive: true });
  const data = join(root, "data"); mkdirSync(data);
  const devZip = join(data, "dev.zip"), testZip = join(data, "test.zip");
  copyFileSync(project.zipPath, devZip); copyFileSync(project.zipPath, testZip);
  const manifest = writeSampleManifest(data, devZip, project.labelsPath);
  const taskPath = join(root, "task.md"); writeFileSync(taskPath, "task runtime instructions");
- writeFileSync(join(researchDir, "research.md"), "selected research");
  const hidden = [project.zipPath, project.labelsPath, join(data, "sealed_ids.txt"), join(project.root, "other-task.zip"), join(project.root, "AGENTS.md")];
  for (const path of hidden.slice(2)) writeFileSync(path, "HIDDEN_INTEGRITY_MARKER");
- const workspace = { root, solutionsRoot: project.solutionsRoot, devZip, testZip, taskPath, researchDir,
+ const workspace = { root, solutionsRoot: project.solutionsRoot, devZip, testZip, taskPath,
   sampleManifestPath: manifest.sampleManifestPath } as SolveWorkspace;
  const python = readPythonEnvironment(), policy = prepareSolveSandbox(workspace, python);
  return { project, workspace, manifest, hidden, python, policy };
@@ -52,7 +51,6 @@ test("all file/shell tools enforce mounts against absolute paths, symlinks and h
  const { project, workspace, hidden, policy } = fixture();
  const tools = isolatedSolveTools(policy);
  expect(content(await execute(tools, "read", { path: workspace.taskPath }))).toContain("runtime instructions");
- expect(content(await execute(tools, "read", { path: join(workspace.researchDir, "research.md") }))).toContain("selected research");
  for (const path of hidden) await expect(execute(tools, "read", { path })).rejects.toThrow();
  const alias = join(project.solutionsRoot, "escape"); symlinkSync(hidden[2]!, alias);
  await expect(execute(tools, "read", { path: alias })).rejects.toThrow();

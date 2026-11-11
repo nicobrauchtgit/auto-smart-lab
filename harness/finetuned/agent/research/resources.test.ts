@@ -4,8 +4,6 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readCourseResources, reportCourseResources, stageCourseResources } from "./resources.js";
-import { resolveSource, type Source } from "./validate.js";
-import type { ResearchContext } from "./context.js";
 import { courseResourcesSetupCheck, SetupSession, type SetupCheck } from "../pipeline/setup.js";
 import { invokeStage } from "../pipeline/executor.js";
 import { createPipelineTrace } from "../pipeline/trace.js";
@@ -67,20 +65,7 @@ test("manifest paths cannot expose unrelated files or escape the selected unit",
 	expect(() => readCourseResources("01-spam", f.root)).toThrow();
 });
 
-test("course citations require declared unchanged text and supply no dataset measurements", () => {
-	const f = fixture();
-	const inputs = readCourseResources("01-spam", f.root);
-	const workspace = join(f.root, "research");
-	stageCourseResources(workspace, inputs);
-	const context = { resources: inputs.map(input => input.resource), limits: { max_analysis_artifact_bytes: 65536 } } as ResearchContext;
-	const source: Source = { kind: "artifact", text: "resources/slides.txt", path: "resources/slides.txt" };
-	expect(resolveSource(source, workspace, context)).toEqual({ source, values: [] });
-	expect(resolveSource(source, workspace, { ...context, resources: [] }).error).toContain("declared in context.json");
-	writeFileSync(join(workspace, "resources/slides.txt"), "tampered");
-	expect(resolveSource(source, workspace, context).error).toContain("unchanged text resource");
-});
-
-test("missing or invalid declared course material blocks the research stage before it starts", async () => {
+test("missing or invalid declared course material blocks a stage that declares it before it starts", async () => {
 	const f = fixture();
 	const check = courseResourcesSetupCheck(() => "01-spam", f.root);
 	class ResourceSetup extends SetupSession {
@@ -89,22 +74,22 @@ test("missing or invalid declared course material blocks the research stage befo
 			return super.check([check], signal, record);
 		}
 	}
-	const original = STAGE_REGISTRY.research!;
+	const original = STAGE_REGISTRY.solve!;
 	let ran = false;
 	try {
-		STAGE_REGISTRY.research = { ...original, checkInput() {}, async run() { ran = true; return { artifacts: [] }; } };
-		const config = resolvePipelineSettings({ pipeline: { entryStage: "research", stages: { research: { enabled: true } } },
+		STAGE_REGISTRY.solve = { ...original, setupRequirements: ["course-resources"], checkInput() {}, async run() { ran = true; return { artifacts: [] }; } };
+		const config = resolvePipelineSettings({ pipeline: { entryStage: "solve", stages: { solve: { enabled: true } } },
 			agent: { cwd: ".", agentDir: ".", initialPrompt: "" }, providers: {}, defaultModel: "fixture/model" } as any);
 		for (const fault of ["changed", "missing"]) {
 			if (fault === "changed") writeFileSync(join(f.directory, "slides.txt"), "changed");
 			else rmSync(join(f.directory, "slides.txt"));
 			const trace = await createPipelineTrace({ telemetry: testTelemetry(), taskId: "fixture", pipelineRunId: crypto.randomUUID(), runsDir: f.root });
 			try {
-				const result = await invokeStage({ stage: "research", input: { taskId: "fixture", taskConfiguration: spamConfiguration(), upstream: [] }, config, trace, setupSession: new ResourceSetup() });
+				const result = await invokeStage({ stage: "solve", input: { taskId: "fixture", taskConfiguration: spamConfiguration(), upstream: [] }, config, trace, setupSession: new ResourceSetup() });
 				expect(result.outcome).toBe("failure");
 				expect(result.error).toContain("course-resources");
 				expect(ran).toBe(false);
 			} finally { await trace.close(); }
 		}
-	} finally { STAGE_REGISTRY.research = original; }
+	} finally { STAGE_REGISTRY.solve = original; }
 });

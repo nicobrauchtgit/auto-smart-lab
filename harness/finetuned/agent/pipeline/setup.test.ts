@@ -166,7 +166,7 @@ test("confirmation prerequisites are checked before solve execution and scoped t
  await expect(new SetupSession().check([confirmation], signal(), () => {}).then(() => { ran = true; })).rejects.toThrow("holdout-confirmation-runtime");
  expect(ran).toBe(false);
  expect(setupChecks([], { taskId: "fixture", prompts }).some(check => check.id === confirmation.id)).toBe(false);
- expect(setupChecks(["evaluation", "refit"], { taskId: "fixture", prompts, taskConfiguration: spamConfiguration() }).some(check => check.id === confirmation.id)).toBe(true);
+ expect(setupChecks(["refit"], { taskId: "fixture", prompts, taskConfiguration: spamConfiguration() }).some(check => check.id === confirmation.id)).toBe(true);
 });
 
 test("missing shared metric prerequisites block the solve stage before execution", async () => {
@@ -229,20 +229,3 @@ test("evidence setup checks a writable destination before execution and permits 
  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-
-test("anomaly evaluation guide is a scoped whole-chain prerequisite and missing template blocks execution", async () => {
- const configuration: TaskConfiguration = { schemaVersion: 1, kind: "anomaly_detection", samples: { source: "zip_members", train: "train.zip", test: "test.zip" }, targets: { kind: "none" },
-  execution: "inductive", holdout: "none", metric: "none", anomaly: { scoreMethod: "score_samples", scoreDirection: "higher_is_anomalous", anomalyLabel: -1 },
-  selection: { basis: "evidence", metric: "evidence_average_precision", direction: "maximize", population: "development" }, refit: "fit_training_predict_test", submission: { format: "id_semicolon_prediction", predictions: "binary" } };
- const prompts = loadPromptSnapshot();
- const planned = setupChecks(["training", "evaluation"], { taskId: "fixture", taskConfiguration: configuration, prompts });
- const guide = planned.find(check => check.id === "evaluation-anomaly-prompt")!;
- expect(guide.phase).toBe("local");
- await new SetupSession().check([guide], signal(), () => {});
- expect(setupChecks(["evaluation"], { taskId: "fixture", taskConfiguration: spamConfiguration(), prompts }).some(check => check.id === "evaluation-anomaly-prompt")).toBe(false);
- const missing = setupChecks(["training", "evaluation"], { taskId: "fixture", taskConfiguration: configuration,
-  prompts: { ...prompts, render(id: any, args: any) { if (id === "review.guide-anomaly") throw new Error("Missing guide template"); return prompts.render(id, args); } } as any });
- let started = false;
- await expect(new SetupSession().check(missing.filter(check => check.id === "evaluation-anomaly-prompt"), signal(), () => {}).then(() => { started = true; })).rejects.toThrow("guide-anomaly.md");
- expect(started).toBe(false);
-});

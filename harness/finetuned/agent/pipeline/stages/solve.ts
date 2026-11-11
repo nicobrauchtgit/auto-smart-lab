@@ -3,7 +3,7 @@
  *
  * The stage owns its artifact contract and nothing about the model. Its outcome
  * comes from what the predictions measured, never from a finished agent session:
- * a run whose canary failed or whose results could not be measured returns its
+ * a run whose results could not be measured returns its
  * artifacts and a failed validation rather than throwing.
  */
 
@@ -20,7 +20,6 @@ import type { StageArtifact, StageDefinition } from "../types.js";
 import { recordedRepository } from "../../training/development_selection.js";
 import { git } from "../../training/git.js";
 import type { TrainingTrialResult } from "../../training/results.js";
-import { stageReport } from "../../knowledge/lessons.js";
 
 /**
  * The selected trial's entrypoint, hashed for provenance. The path is the
@@ -73,10 +72,10 @@ function parseFoldPolicy(raw: unknown): SolveOptions["foldPolicy"] {
 
 export const solveStage: StageDefinition<SolveOptions> = {
 	name: "solve",
-	setupRequirements: ["observability", "knowledge", "knowledge-history", "model", "python", "task", "training", "web-search", "solve-isolation", "confirmation"],
+	setupRequirements: ["observability", "model", "python", "task", "training", "web-search", "solve-isolation", "confirmation"],
 	version: 1,
 	description: "Build and iteratively improve a model, judged on recomputed out-of-fold measurements",
-	next: "evaluate",
+	next: "refit",
 
 	parseOptions(raw) {
 		if (raw !== undefined && (typeof raw !== "object" || raw === null || Array.isArray(raw))) {
@@ -117,10 +116,6 @@ export const solveStage: StageDefinition<SolveOptions> = {
 		for (const path of [paths.trainZip, paths.targetsPath].filter((p): p is string => !!p)) {
 			if (!existsSync(path)) throw new Error(`Task ${task.taskId} lacks the declared file ${relative(paths.dataDir, path)}`);
 		}
-		const research = input.upstream.find((entry) => entry.kind === "research_document");
-		if (!research || !existsSync(research.path)) {
-			throw new Error(`Task ${task.taskId} has no research document upstream; run the research stage first`);
-		}
 	},
 
 	async run(context) {
@@ -149,8 +144,6 @@ export const solveStage: StageDefinition<SolveOptions> = {
 		const entrypoint = entrypointArtifact(result.collection.selected);
 		if (result.confirmation) artifacts.push(result.confirmation.artifact);
 		if (entrypoint && "kind" in entrypoint) artifacts.push(entrypoint);
-		const report = stageReport(result.reportPath);
-		if (report) artifacts.push(report.artifact);
 
 		return {
 			artifacts,
@@ -171,7 +164,6 @@ export const solveStage: StageDefinition<SolveOptions> = {
 				session_error: result.sessionError,
 				...(entrypoint && "mismatch" in entrypoint ? { entrypoint_mismatch: entrypoint.mismatch } : {}),
 				trial_validation_errors: result.collection.errors,
-				...(report ? { stage_report: report.excerpt } : {}),
 			},
 		};
 	},

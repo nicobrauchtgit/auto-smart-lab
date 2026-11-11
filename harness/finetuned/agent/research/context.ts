@@ -64,15 +64,6 @@ export interface ResearchContext {
 		research_inputs?: ResearchInputs;
 		snapshot_sha256: string;
 	};
-	limits: {
-		web_search_calls: number;
-		max_report_bytes: number;
-		max_analysis_artifact_bytes: number;
-		/** Route caps of the solution brief; bytes are only a safety limit. */
-		max_facts: number;
-		max_alternates: number;
-		max_improvements: number;
-	};
 }
 
 function localIsoDate(date: Date): string {
@@ -206,14 +197,6 @@ export function buildResearchContext(taskId: string, configuration?: TaskConfigu
 					...(labelPath ? { targets: relative(workspace, labelPath) } : {}),
 				} : undefined),
 				snapshot_sha256: sha256(snapshot),
-			},
-			limits: {
-				web_search_calls: HARNESS_CONFIG.research.webSearchCalls,
-				max_report_bytes: HARNESS_CONFIG.research.maxReportBytes,
-				max_analysis_artifact_bytes: HARNESS_CONFIG.research.maxAnalysisArtifactBytes,
-				max_facts: HARNESS_CONFIG.research.maxFacts,
-				max_alternates: HARNESS_CONFIG.research.maxAlternates,
-				max_improvements: HARNESS_CONFIG.research.maxImprovements,
 			},
 		},
 	};

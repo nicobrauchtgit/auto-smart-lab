@@ -27,8 +27,6 @@ import { preparePythonEnvironment, pythonChangeCursor, recordPythonEnvironmentEn
 import { SmartContextSession } from "../context/session.js";
 import type { Wakeable } from "../experiments/index.js";
 import type { SuppliedInput } from "../pipeline/types.js";
-import { TaskKnowledge, createKnowledgeTools, selectedKnowledge, knowledgeInput, type KnowledgeOptions } from "../knowledge/service.js";
-import { LESSON_TOOLS, runLessonStep, type LessonStep } from "../knowledge/lessons.js";
 
 /** How long one agent session may run. The cost signal is measured against it. */
 /** Safety limit only; slow progressing sessions are bounded by stall detection and stage budgets. */
@@ -37,10 +35,6 @@ export const SESSION_MAX_WALL_MS = HARNESS_CONFIG.session.maxWallMs;
 export interface RunSessionOptions {
 	/** Fresh controller state queued at every physical session construction. */
 	sessionContext?: () => string;
-	/** Explicit task/dataset scope. No ambient/global skill loading. */
-	knowledge?: KnowledgeOptions;
-	/** Stage report and lesson capture after the work, in the same session. Needs `knowledge`. */
-	lessons?: LessonStep;
 	prompts: PromptSnapshot;
  feedback?: InvocationFeedback;
 	reportInput?: (input: SuppliedInput) => void;
@@ -110,19 +104,7 @@ export function sessionToolAllowlist(
  */
 export async function runSession(options: RunSessionOptions): Promise<RunSessionResult> {
 	const { prompt, model: requestedModel } = options;
-	const skills = options.knowledge ? selectedKnowledge(options.prompts) : [];
-	let recordKnowledge: ((type: string, payload: Record<string, unknown>) => void) | undefined;
-	const knowledge = options.knowledge ? new TaskKnowledge({ ...options.knowledge,
-		record: (type, payload) => { options.knowledge?.record?.(type, payload); recordKnowledge?.(type, payload); },
-		reportInput: options.reportInput ?? options.knowledge.reportInput,
-	}) : undefined;
-	knowledge?.store.preflight();
-	const customTools = [...(options.customTools ?? []), ...(knowledge ? createKnowledgeTools(knowledge, options.prompts) : [])];
-	if (knowledge) options.reportInput?.(knowledgeInput(knowledge.options));
-	// During the lesson step only knowledge and experiment tools run.
-	let lessonActive = false;
-	const lessonGuard = { name: "lesson-step", factory(pi: any) { pi.on("tool_call", (event: { toolName: string }) => lessonActive && !LESSON_TOOLS.has(event.toolName)
-		? { block: true, reason: options.prompts.render("lessons.tool-blocked", {}).text } : undefined); } };
+	const customTools = [...(options.customTools ?? [])];
 	const changeCursor = pythonChangeCursor();
 	const pythonSessionId = randomUUID();
 	const initialEnvironment = readPythonEnvironment();
@@ -147,7 +129,7 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 	}
 
 	try {
-		const systemPrompt = [options.system.text, python.prompt.text, ...skills.map(skill => skill.text)].join("\n\n");
+		const systemPrompt = [options.system.text, python.prompt.text].join("\n\n");
 		const pipeline = await loadPipelineConfig();
 		const { cwd, agentDir } = pipeline;
 		const sessionCwd = options.cwd ? resolve(options.cwd) : cwd;
@@ -160,7 +142,7 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 			cwd: sessionCwd,
 			agentDir,
 			additionalExtensionPaths: options.extensions === false ? [] : extensionPaths,
-			extensionFactories: [lessonGuard, ...(options.extensionFactories ?? []), ...(options.observe?.executionGuard ? [{ name: "controller-budget", factory(pi: any) { pi.on("tool_call", () => { try { options.observe!.executionGuard!.beforeToolCall(); } catch { return { block: true, reason: "Controller tool budget exhausted" }; } }); } }] : [])],
+			extensionFactories: [...(options.extensionFactories ?? []), ...(options.observe?.executionGuard ? [{ name: "controller-budget", factory(pi: any) { pi.on("tool_call", () => { try { options.observe!.executionGuard!.beforeToolCall(); } catch { return { block: true, reason: "Controller tool budget exhausted" }; } }); } }] : [])],
 			systemPrompt,
 		});
 
@@ -200,15 +182,10 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 					observability = options.observe ? await observeAgentSession({
 						session, model: modelId, identity: options.observe.identity, telemetry: options.observe.telemetry,
 					}) : undefined;
-					recordKnowledge = observability?.record;
 					stallObservability = observability?.record;
-					knowledge?.bindAgent(observability?.agentRunId);
-					if (knowledge) observability?.record("runtime_input", { type: "runtime_input", input: knowledgeInput(knowledge.options) });
-					observability?.record("skill_snapshot", { skills: skills.map(skill => skill.reference),
-						tool_prompts: knowledge ? (["knowledge.tool", "knowledge.compare-notes-tool", ...(knowledge.options.trainingRoots?.length ? ["knowledge.history-tool", "knowledge.compare-tool"] as const : [])] as const).map(id => options.prompts.render(id, {}).reference) : [] });
 					observability?.record("prompt_snapshot", {
 						type: "prompt_snapshot",
-						prompts: [...options.promptReferences, python.prompt.reference, opening.reference, ...skills.map(skill => skill.reference)],
+						prompts: [...options.promptReferences, python.prompt.reference, opening.reference],
 						system_prompt: systemPrompt, initial_prompt: opening.text,
 						tool_prompts_sha256: TOOL_PROMPTS_SHA256,
 						effective_system_prompt: session.systemPrompt,
@@ -253,7 +230,7 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 				watch: stall, retries: stallRetries, stallMs, signal: options.signal,
 				record: (type, payload) => stallObservability?.(type, payload),
 			});
-			// The work runs under the session's safety limit; the lesson step after it has its own.
+			// The work runs under the session's safety limit.
 			const work = (async () => {
 				let output = await ask(options.prompts.render("context.task", { task: prompt }));
 				// A caller may keep an idle session open, e.g. while its experiments run.
@@ -271,30 +248,10 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 			cancelled.catch(() => {});
 			const wallLimit = new Error(`Session reached its safety limit of ${Math.round(maxWallMs / 60000)} minutes`);
 			let output = "";
-			let failure: unknown;
 			try {
 				output = await Promise.race([work, cancelled,
 					new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(wallLimit), maxWallMs); })]);
-			} catch (error) {
-				// Cancelled or still running at the safety limit: no report.
-				if (options.signal?.aborted || error === wallLimit || !options.lessons) throw error;
-				failure = error;
 			} finally { if (timeout) clearTimeout(timeout); }
-			if (options.lessons) {
-				// A failed stage reports too; the original error still ends the session afterwards.
-				const lessonLimit = new AbortController();
-				const lessonMs = HARNESS_CONFIG.session.lessonMaxMs;
-				const lessonTimer = setTimeout(() => {
-					stallObservability?.("lesson_step_timeout", { limit_ms: lessonMs });
-					lessonLimit.abort(); void physical?.abort();
-				}, lessonMs);
-				try {
-					await Promise.race([cancelled, runLessonStep({ lessons: options.lessons, knowledge, failure, prompts: options.prompts, ask,
-						signal: options.signal ? AbortSignal.any([options.signal, lessonLimit.signal]) : lessonLimit.signal,
-						setActive: active => { lessonActive = active; }, record: (type, payload) => stallObservability?.(type, payload) })]);
-				} finally { clearTimeout(lessonTimer); }
-			}
-			if (failure) throw failure;
 			return { output, ...(logical.agentRunId ? { agentRunId: logical.agentRunId } : {}) };
 		} catch (error) {
 			logical.recordError(error);

@@ -2,7 +2,7 @@
  * Choose the experiment arm. Each arm keeps its own entry point and arguments:
  *
  *   ./dev bun run experiment -- --arm finetuned spam1 [pipeline arguments]
- *   ./dev bun run experiment -- --arm finetuned spam1 --detach [--resume <run-id>]
+ *   ./dev bun run experiment -- --arm finetuned spam1 --detach
  *   ./dev bun run experiment -- --arm minimal --only spam1 [solve_units arguments]
  *   ./dev bun run experiment -- --arm minimal --check-setup
  *   ./dev bun run experiment -- --arm finetuned --reset --yes
@@ -45,7 +45,7 @@ export function harnessStatePaths(projectRoot: string): string[] {
 }
 
 /** Pipeline CLI options that take a value; everything else that is not a flag selects the task. */
-const VALUE_OPTIONS = new Set(["--guidance", "--model", "--stage", "--stop-after", "--unit", "--task", "--resume"]);
+const VALUE_OPTIONS = new Set(["--guidance", "--model", "--stage", "--stop-after", "--unit", "--task"]);
 /** The task selection in finetuned pipeline arguments, read the way pipeline_cli.ts reads it. */
 export function taskSelection(rest: readonly string[]): { taskId?: string; unit?: string; task?: string } {
 	const selection: { taskId?: string; unit?: string; task?: string } = {};
@@ -91,14 +91,11 @@ async function detachFinetuned(rest: string[]): Promise<number> {
 	const logPath = join(PROJECT_ROOT, "runs", "finetuned", taskId, "logs", `${stamp}.log`);
 	const run = launchDetached({ command: [process.execPath, join(PROJECT_ROOT, "harness", "finetuned", "agent", "pipeline_cli.ts"), ...rest], logPath, cwd: PROJECT_ROOT });
 	const shown = relative(PROJECT_ROOT, run.logPath);
-	const resumeIndex = rest.indexOf("--resume");
-	const base = resumeIndex >= 0 ? [...rest.slice(0, resumeIndex), ...rest.slice(resumeIndex + 2)] : rest;
 	console.log([
 		`[experiment] Detached finetuned run for ${taskId}, PID ${run.pid}.`,
 		`[experiment] Log:    ${shown}`,
 		`[experiment] Follow: tail -f ${shown}`,
 		`[experiment] Stop:   kill -INT ${run.pid}   (cancels the run: running stages settle, nothing is handed over)`,
-		`[experiment] Resume: ./dev bun run experiment -- --arm finetuned ${base.join(" ")} --detach --resume <run-id>   (the run ID is on the log's "run ... started" line)`,
 	].join("\n"));
 	return 0;
 }

@@ -1,0 +1,3 @@
+[test]
+# Run state (runs/) can hold snapshot copies of test files; never collect them.
+pathIgnorePatterns = ["runs/**"]

@@ -4,8 +4,8 @@ This task is binary classification. The required entrypoint is
 pandas frame with `id` and `input` columns. Each `input` is an object
 `{"archive": <absolute path of a zip archive>, "member": <member name>}`; your
 code reads the raw sample bytes from that archive member and decides how to
-represent them. The harness never decodes or parses samples for you. Never use
-the id, member name, ordering, or a label-bearing file extension as a feature.
+represent them. The harness never decodes or parses samples for you. Test member names carry
+no label, so the id, member name and ordering are no use as features.
 Reuse suitable code already under `solutions/` where useful.
 
 The harness fits on training folds with the binary targets and calls `predict`

@@ -125,10 +125,10 @@ test("configuration rejects missing keys and credential-bearing endpoints; child
 });
 
 test("final-flush failures reach the pipeline result while authoritative success is preserved", async () => {
- const root = directory(), configPath = join(root, "config.json"), previous = STAGE_REGISTRY.research;
+ const root = directory(), configPath = join(root, "config.json"), previous = STAGE_REGISTRY.solve;
  writeFileSync(configPath, JSON.stringify({ agent: { cwd: ".", agentDir: ".", initialPrompt: "" },
-  pipeline: { entryStage: "research", stages: { research: { enabled: true } }, tasks: { fixture: spamConfiguration() } } }));
- STAGE_REGISTRY.research = { name: "research", version: 1, description: "fixture", parseOptions: () => ({}), checkInput() {},
+  pipeline: { entryStage: "solve", stages: { solve: { enabled: true } }, tasks: { fixture: spamConfiguration() } } }));
+ STAGE_REGISTRY.solve = { name: "solve", version: 1, description: "fixture", parseOptions: () => ({}), checkInput() {},
   async run() { return { artifacts: [], validation: { valid: true, errors: [] } }; } };
  const options = testTelemetry(); options.exporter.failed = true;
  try {
@@ -136,7 +136,7 @@ test("final-flush failures reach the pipeline result while authoritative success
   expect(result.outcome).toBe("success"); expect(result.traceDegraded).toBe(true);
   expect(result.traceFailures).toContain("Langfuse observation export failed");
   expect(readFileSync(result.localTracePath!, "utf8")).toContain("pipeline-execution");
- } finally { STAGE_REGISTRY.research = previous; }
+ } finally { STAGE_REGISTRY.solve = previous; }
 });
 
 test("missing Langfuse keys fail local prerequisites before a stage starts", async () => {

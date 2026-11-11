@@ -7,7 +7,7 @@ authoritative fit.
 
 ## Your ownership
 
-- Read the task and prior research before choosing an approach.
+- Read the task before choosing an approach.
 - Write reusable Python under `solutions/`. A task entrypoint normally lives at
   `solutions/tasks/{{taskId}}.py`.
 - Choose features, estimators, hyperparameters, pipeline structure, CV scheme,

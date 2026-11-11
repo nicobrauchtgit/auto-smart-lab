@@ -7,9 +7,7 @@ import { test } from "node:test";
 import { expect } from "bun:test";
 import { loadPromptSnapshot } from "./loader.js";
 import { PROMPTS, type PromptId } from "./registry.js";
-import { prepareResearchPrompts } from "./research.js";
 import { prepareSolvePrompts } from "./solve.js";
-import { summarizeTrainingLabels } from "../research/startup_context.js";
 import { spamConfiguration } from "../pipeline/task_configuration.testing.js";
 import type { TaskConfiguration } from "../pipeline/task_configuration.js";
 
@@ -58,38 +56,12 @@ test("snapshots survive file edits and reject missing files or malformed declara
 	}
 });
 
-test("research uses the same opening task and adds factual feedback only after an attempt", () => {
-	const snapshot = loadPromptSnapshot();
-	const input = { taskId: "spam1", contextHash: "abc" };
-	const initial = prepareResearchPrompts(snapshot, input);
-	const retry = prepareResearchPrompts(snapshot, { ...input, failedChecks: ["missing sources"] });
-	assert.ok(retry.prompt.startsWith(initial.prompt));
-	assert.equal(initial.system.text, retry.system.text);
-	assert.match(initial.prompt, /Keep a sound existing brief/);
-	assert.doesNotMatch(initial.prompt, /Migrate|missing sources|currently fails/);
-	assert.match(retry.prompt, /missing sources/);
-	assert.equal(retry.promptReferences.at(-1)?.id, "research.validation-feedback");
-});
-
-test("profile injection changes rendered identity without changing the task template", () => {
-	const snapshot = loadPromptSnapshot();
-	const input = { taskId: "spam1", contextHash: "abc" };
-	const without = prepareResearchPrompts(snapshot, input);
-	const withProfile = prepareResearchPrompts(snapshot, { ...input,
-		profile: summarizeTrainingLabels(Buffer.from("a;0\nb;1"), "train.labels", "balanced_accuracy") });
-	const reference = (prepared: typeof without) => prepared.promptReferences.find(ref => ref.id === "research.start")!;
-	assert.equal(reference(without).template_sha256, reference(withProfile).template_sha256);
-	assert.notEqual(reference(without).rendered_sha256, reference(withProfile).rendered_sha256);
-	assert.ok(withProfile.promptReferences.some(ref => ref.id === "research.startup-context"));
-	assert.ok(!without.promptReferences.some(ref => ref.id === "research.startup-context"));
-});
-
 test("the solve opening carries the fit policy as its own identified template", () => {
 	const snapshot = loadPromptSnapshot();
 	const prepared = prepareSolvePrompts(snapshot, {
 		taskId: "spam1", configuration: spamConfiguration(), workspace: "/tmp/ws", datasetPaths: ["/tmp/train.zip"],
 		targets: "/tmp/train.labels", rowCount: 14995, targetSummary: "Class balance: 52/48.",
-		foldRecommendation: "5-fold stratified, 1 repeat(s)", researchState: "none", maxIterations: 6,
+		foldRecommendation: "5-fold stratified, 1 repeat(s)", maxIterations: 6,
 	});
 	// The policy is stable across tasks, so it stays a separate template rather
 	// than prose inside the run-specific opening.
@@ -109,7 +81,7 @@ test("the solve opening carries the fit policy as its own identified template", 
 test("the solve opening selects the task contract of the configured kind", () => {
 	const snapshot = loadPromptSnapshot();
 	const base = { taskId: "apk", workspace: "/tmp/ws", datasetPaths: ["/tmp/dev.zip"], targets: "families", rowCount: 90,
-		targetSummary: "Families: 9.", foldRecommendation: "5-fold group_kfold, 1 repeat(s)", researchState: "none", maxIterations: 3 };
+		targetSummary: "Families: 9.", foldRecommendation: "5-fold group_kfold, 1 repeat(s)", maxIterations: 3 };
 	const binary = prepareSolvePrompts(snapshot, { ...base, configuration: spamConfiguration() });
 	assert.match(binary.prompt, /Scored on balanced accuracy/);
 	assert.ok(binary.promptReferences.some(reference => reference.id === "solve.task-binary_classification"));
@@ -136,28 +108,4 @@ test("the solve opening selects the task contract of the configured kind", () =>
     assert.match(selected.prompt, /evidence_average_precision/);
     assert.ok(selected.promptReferences.some(reference => reference.id === "solve.evidence-selection"));
     assert.ok(!selected.promptReferences.some(reference => reference.id === "solve.label-free"));
-});
-
-test("research asks for a route-limited brief with checkable sources and the self-check tool", () => {
- const prompts = loadPromptSnapshot();
- const prepared = prepareResearchPrompts(prompts, { taskId: 'spam1', contextHash: 'fixed-fixture' });
- assert.ok(!prepared.promptReferences.some(ref => (ref.id as string) === 'research.test-distribution'));
- const system = prepared.system.text;
- assert.match(system, /one strong, state-of-the-art pipeline/);
- assert.match(system, /limits\.max_alternates/);
- assert.match(system, /\[profile:<record key>\]/);
- assert.match(system, /check_brief/);
- assert.match(system, /context\.json\.resources/);
- assert.match(system, /\[resources\/<name>\.txt\]/);
- assert.match(prepared.prompt, /listed course resources/);
- assert.match(prompts.render('research.check-brief-tool', {}).text, /same validator the controller uses/);
-});
-
-test("opening guidance is optional with explicit empty compatibility, rejects unknown/non-string variables and preserves literal braces", () => {
- const prompts = loadPromptSnapshot();
- const base = { taskId: "fixture", contextHash: "hash", startupContext: "" };
- expect(prompts.render("research.start", base).text).toBe(prompts.render("research.start", { ...base, guidance: "" }).text);
- expect(prompts.render("research.start", { ...base, guidance: "Literal {{unknown}}" }).text).toContain("Literal {{unknown}}");
- expect(() => prompts.render("research.start", { ...base, guidance: 1 } as any)).toThrow();
- expect(() => prompts.render("research.start", { ...base, unexpected: "x" } as any)).toThrow();
 });

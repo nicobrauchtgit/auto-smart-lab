@@ -4,7 +4,7 @@
  *   REPO_ROOT   the repository: shared task data (units/), node_modules, ./dev
  *   ARM_ROOT    harness/finetuned: this arm's code, configuration and Python project
  *   STATE_ROOT  runs/finetuned: everything a run writes (task runs, solutions/,
- *               knowledge/, deliveries/, submissions/), next to runs/minimal/
+ *               deliveries/, submissions/), next to runs/minimal/
  *
  * Functions that take a `projectRoot` (tests pass temporary ones) mean the repository
  * root and reach state through `statePath`.

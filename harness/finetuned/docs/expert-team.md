@@ -129,7 +129,7 @@ branches. Today switching back performs no merge
 **`workspace_check`** is a static pass, without importing agent code, bounded
 to 2 s: missing docstrings/index entries, nonexistent indexed paths and stray
 Python are errors; duplicate function bodies and files over 400 lines are
-warnings. Record shared imports and archive loaders for the scorecard. Record
+warnings. Record shared imports and archive loaders for the integration gate. Record
 every changed path of an agent (including files it commits); do not claim a
 filesystem write boundary.
 
@@ -215,7 +215,7 @@ not every claim in an entry. Later runs show those measurements with IDs;
 other entries remain attributed observations/ideas, with stale references
 visible. This definition is the memory contract; prompts must not call all
 established prose facts. Reuse the champion, index and shared modules; the
-scorecard measures fewer scout calls on repeated tasks.
+integration gate measures fewer scout calls on repeated tasks.
 
 ## 5. Shared types and exports
 
@@ -272,7 +272,9 @@ A repository search on 2026-11-10 of every deletion/rename planned in the
 first design found these consumers. Whoever makes the breaking change migrates
 them in the same package. Search again before deleting, including prompt
 registry paths and script strings; line numbers drift. This is a consumer list,
-not permission to change the minimal agent.
+not permission to change the minimal agent. The research, evaluate,
+research-copy and brief rows were carried out in the clean slate of 2026-11-11;
+the sandbox, solve and subagent rows still apply.
 
 | Removed/renamed API or file | Consumers |
 | --- | --- |
