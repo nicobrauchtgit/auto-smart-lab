@@ -38,7 +38,8 @@ export function finalBullets(text: string, fallback: string): string[] {
 }
 
 export function createScouts(options: ScoutsOptions) {
- // Serial calls also prevent cross-session process.env contamination in the legacy runner.
+ if (!options.task.trim() || !options.unitIntro.trim()) throw new Error("Scout requires task text and unit introduction");
+ // Keep the requested scout roles sequential and journal observations before continuing.
  let tail: Promise<unknown> = Promise.resolve();
  const execute = async (request: ScoutRequest, signal?: AbortSignal): Promise<string> => {
   const roles = [...new Set(Array.isArray(request.role) ? request.role : [request.role])];

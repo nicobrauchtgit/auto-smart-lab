@@ -26,7 +26,7 @@ import { createScouts } from "./scouts.js";
 import { createScoutRunner } from "./runner.js";
 import { createPipelineTrace } from "../pipeline/trace.js";
 const [taskId, role, budgetArg, bulletsFile] = process.argv.slice(2);
-if (!taskId || !["data", "ideas"].includes(role) || !Number.isInteger(Number(budgetArg))) {
+if (!taskId || !["data", "ideas"].includes(role) || (!Number.isSafeInteger(Number(budgetArg)) || Number(budgetArg) < 1)) {
 	console.error("usage: budget_probe.ts <taskId> <data|ideas> <budget> [dataBulletsFile]");
 	process.exit(2);
 }
@@ -81,7 +81,7 @@ try {
  console.log(`[scout] ${taskId} ${role} budget=${budget} workspace=${workspace}`);
  const output = await scope.scout({role: role as "data" | "ideas", question: prompts.render("team.probe-question", {}).text});
  writeFileSync(join(workspace, "bullets.md"), `${output.trim()}\n`);
- const summary = {taskId, role, budget, used, blockedAfterBudget: blocked, bullets: output.split("\n").length,
+ const summary = {taskId, role, budget, backend: "pi-child", used, blockedAfterBudget: blocked, bullets: output.split("\n").length,
   seconds: Math.round((Date.now() - started) / 1000), outputChars: output.length, workspace: basename(workspace)};
  writeFileSync(join(workspace, "summary.json"), JSON.stringify(summary, null, 2) + "\n");
  trace.event("pipeline_run_end", {outcome: "success", summary});

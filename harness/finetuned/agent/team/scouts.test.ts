@@ -104,3 +104,57 @@ test("missing scout prerequisite prevents session start; unused search needs no 
   expect(started).toBe(false); expect(events).toContain("setup_finished");
  } finally { if (original !== undefined) process.env.TAVILY_API_KEY = original; }
 });
+
+test("scout child factory installs scoped tools and budget without generic child prose", async () => {
+ const { fauxProvider, fauxAssistantMessage, fauxToolCall, InMemoryCredentialStore, Type } = await import("@earendil-works/pi-ai");
+ const { ModelRuntime, defineTool } = await import("@earendil-works/pi-coding-agent");
+ const { createPiChildFactory } = await import("../subagents/pi.js");
+ const root = mkdtempSync(join(tmpdir(), "scout-child-"));
+ writeFileSync(join(root, "AGENTS.md"), "SCOUT_FACTORY_EXCLUDED_MARKER");
+ const faux = fauxProvider({provider: "scout-child-fixture", tokensPerSecond: 1_000_000});
+ const runtime = await ModelRuntime.create({credentials: new InMemoryCredentialStore(), modelsPath: null, refreshOnCreate: false});
+ runtime.registerNativeProvider(faux.provider);
+ const budget = new ScoutBudget(1, prompts);
+ let executions = 0;
+ const fixture = defineTool({name: "fixture", label: "Fixture", description: "Fixture", parameters: Type.Object({}),
+  async execute() {executions++; return {content: [{type: "text" as const, text: "PRIVATE_SCOUT_CONTEXT"}], details: {}};}});
+ faux.setResponses([
+  () => fauxAssistantMessage(fauxToolCall("fixture", {}), {stopReason: "toolUse"}),
+  () => fauxAssistantMessage(fauxToolCall("fixture", {}), {stopReason: "toolUse"}),
+  () => fauxAssistantMessage("- observed fixture"),
+ ]);
+ const records: any[] = [];
+ const factory = createPiChildFactory({cwd: root, agentDir: root, model: faux.getModel(), modelRuntime: runtime, prompts,
+  sharedInstructions: [], childInstructions: prompts.render("team.ideas", {taskId: "fixture", budget: "1", webSearches: "3"}),
+  tools: ["fixture"], customTools: [fixture], extensionFactories: [budget.extension()], env: {}, inputs: [],
+  observe: {identity: {}, telemetry: {failures: [], record: event => records.push(event), async close() {}}}});
+ const child = await factory({logicalAgentId: "child", parentAgentRunId: "parent", spawnToolCallId: "call"}, new AbortController().signal);
+ try {
+  const result = await child.prompt(prompts.render("team.start", {task: "task", unitIntro: "intro", question: "q", refs: "[]", earlier: "[]"}));
+  expect(result).toBe("- observed fixture"); expect(executions).toBe(1); expect(budget.used).toBe(1);
+  const snapshot = records.find(row => row.eventType === "prompt_snapshot");
+  expect(snapshot.payload.system_prompt).not.toContain("SCOUT_FACTORY_EXCLUDED_MARKER");
+  expect(snapshot.payload.system_prompt).toContain("ideas scout");
+  expect(snapshot.payload.system_prompt).not.toContain("Work on the task assigned by the parent");
+ } finally {await child.close();}
+});
+
+test("search budgets and logs are session-local, cap network calls and sanitize failures", async () => {
+ const { scoutSearch } = await import("./search.js");
+ const original = globalThis.fetch;
+ let requests = 0;
+ globalThis.fetch = (async () => {requests++; return new Response(JSON.stringify({results: [{title: "paper", url: "https://example.org/paper", content: "evidence"}]}), {status: 200});}) as typeof fetch;
+ const root = mkdtempSync(join(tmpdir(), "scout-search-"));
+ const first = scoutSearch({apiKey: "FIXTURE_CREDENTIAL", limit: 3, log: join(root, "first.jsonl")});
+ const second = scoutSearch({apiKey: "FIXTURE_CREDENTIAL", limit: 3, log: join(root, "second.jsonl")});
+ const call = (tool: typeof first) => tool.execute("id", {query: "paper"}, undefined, undefined, undefined as never);
+ try {
+  for (let i = 0; i < 5; i++) await call(first);
+  await call(second); expect(requests).toBe(4);
+  const {readFileSync} = await import("node:fs");
+  expect(readFileSync(join(root, "first.jsonl"), "utf8").trim().split("\n").length).toBe(3);
+  expect(readFileSync(join(root, "first.jsonl"), "utf8")).not.toContain("FIXTURE_CREDENTIAL");
+  globalThis.fetch = (async () => {throw new Error("RAW_PROVIDER_ERROR_WITH_CREDENTIAL");}) as typeof fetch;
+  expect(JSON.stringify(await call(second))).not.toContain("RAW_PROVIDER_ERROR");
+ } finally {globalThis.fetch = original;}
+});

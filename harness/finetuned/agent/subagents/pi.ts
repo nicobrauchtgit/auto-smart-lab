@@ -6,7 +6,7 @@ import {
 	createAgentSession, createBashToolDefinition, createEditToolDefinition,
 	createFindToolDefinition, createGrepToolDefinition, createLsToolDefinition,
 	createReadToolDefinition, createWriteToolDefinition, defineTool, SessionManager, SettingsManager,
-	type CreateAgentSessionOptions,
+	type CreateAgentSessionOptions, type ToolDefinition, type InlineExtension,
 } from "@earendil-works/pi-coding-agent";
 import { observeAgentSession, type AgentObservation } from "../observability.js";
 import type { SuppliedInput } from "../pipeline/types.js";
@@ -31,7 +31,11 @@ export interface PiChildOptions {
 	inputs: readonly SuppliedInput[];
 	/** Obtain from context.report.observation(attempt). Caller retains sink ownership. */
 	observe: AgentObservation;
-	tools?: readonly ChildToolName[];
+	tools?: readonly string[];
+	/** Controller-supplied tools/guards; never model-selected capabilities. */
+	customTools?: readonly ToolDefinition[];
+	extensionFactories?: readonly InlineExtension[];
+	childInstructions?: RenderedPrompt;
 	turnTimeoutMs?: number;
 }
 
@@ -46,7 +50,7 @@ export function createChildBashTool(cwd: string, environment: Readonly<NodeJS.Pr
 
 /** No ambient project instructions, skills, extensions, or system-prompt additions. */
 export async function loadChildResources(options: {
-	cwd: string; agentDir: string; instructions: readonly RenderedPrompt[];
+	cwd: string; agentDir: string; instructions: readonly RenderedPrompt[]; extensionFactories?: readonly InlineExtension[];
 }) {
 	const settingsManager = SettingsManager.inMemory();
 	const systemPrompt = options.instructions.map(prompt => prompt.text).join("\n\n");
@@ -54,6 +58,7 @@ export async function loadChildResources(options: {
 		cwd: options.cwd, agentDir: options.agentDir, settingsManager,
 		systemPrompt, systemPromptOverride: () => systemPrompt,
 		appendSystemPromptOverride: () => [],
+		extensionFactories: [...(options.extensionFactories ?? [])],
 		noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true,
 	});
 	await resourceLoader.reload();
@@ -64,10 +69,10 @@ export async function loadChildResources(options: {
 export function createPiChildFactory(options: PiChildOptions): ChildSessionFactory {
 	const env = Object.freeze({ ...options.env });
 	const inputs = structuredClone(options.inputs);
-	const instructions = [...options.sharedInstructions, options.prompts.render("subagents.child", {})]
+	const instructions = [...options.sharedInstructions, (options.childInstructions ?? options.prompts.render("subagents.child", {}))]
 		.map(prompt => Object.freeze({ text: prompt.text, reference: Object.freeze({ ...prompt.reference }) }));
 	const toolNames = [...new Set(options.tools ?? CHILD_TOOL_NAMES)];
-	for (const name of toolNames) if (!CHILD_TOOL_NAMES.includes(name)) throw new Error(`Unsupported child tool: ${name}`);
+	for (const name of toolNames) if (!(CHILD_TOOL_NAMES as readonly string[]).includes(name) && !options.customTools?.some(tool => tool.name === name)) throw new Error(`Unsupported child tool: ${name}`);
 	const timeoutMs = options.turnTimeoutMs ?? HARNESS_CONFIG.subagents.turnTimeoutMs;
 	if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2_147_483_647) throw new Error("Invalid child turn timeout");
 	const identity = { ...options.observe.identity };
@@ -89,7 +94,7 @@ export function createPiChildFactory(options: PiChildOptions): ChildSessionFacto
 			prompts: options.prompts,
 			create: async () => {
 				signal.throwIfAborted();
-				const { settingsManager, resourceLoader, systemPrompt } = await loadChildResources({ cwd, agentDir, instructions });
+				const { settingsManager, resourceLoader, systemPrompt } = await loadChildResources({ cwd, agentDir, instructions, extensionFactories: options.extensionFactories });
 				signal.throwIfAborted();
 				const availableTools = [
 					defineTool(createReadToolDefinition(cwd)), defineTool(createGrepToolDefinition(cwd)), defineTool(createFindToolDefinition(cwd)),
@@ -99,7 +104,7 @@ export function createPiChildFactory(options: PiChildOptions): ChildSessionFacto
 				const { session } = await createAgentSession({
 					cwd, agentDir, model, modelRuntime, thinkingLevel, settingsManager, resourceLoader,
 					sessionManager: SessionManager.inMemory(cwd), tools: [...toolNames],
-					customTools: availableTools.filter(tool => toolNames.includes(tool.name as ChildToolName)),
+					customTools: [...new Map([...availableTools, ...(options.customTools ?? [])].map(tool => [tool.name, tool])).values()].filter(tool => toolNames.includes(tool.name)),
 				});
 				let observer: Awaited<ReturnType<typeof observeAgentSession>>;
 				try { observer = await observeAgentSession({ session, model: `${model.provider}/${model.id}`, ...observe, parentAgentRunId: child.parentAgentRunId }); }

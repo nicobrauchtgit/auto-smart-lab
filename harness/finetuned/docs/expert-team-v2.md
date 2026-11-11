@@ -200,8 +200,9 @@ for it. P7a measures this before the integration gate: run each scout alone on
 spam1–3 and `code2` with 10 and with 20 calls, and compare calls used and
 what it surfaced.
 
-**Dry run (2026-11-11, one data scout on spam1, budget 10).** Script and
-prompts: `agent/dryrun/scout_dry_run.ts` and `agent/dryrun/scouts/{data,ideas}.md`;
+**Dry run (2026-11-11, one data scout on spam1, budget 10).** Original script and
+prompts (since moved to `agent/team/budget_probe.ts` and
+`agent/prompts/team/{data,ideas}.md`):
 output under `runs/finetuned/scout-dry-run/2026-11-11T11-00-09-spam1-data-10/`.
 It used 10 of 10 calls in 298 s and returned 14 sourced bullets (5.3k
 characters), no blocked calls after the budget. Findings were useful: training
@@ -213,6 +214,15 @@ wrote its scripts to `/tmp`; the data scout prompt now gives it a `research/`
 folder for all scripts and outputs. The task text and unit intro reached it
 (`task.md`); the spam unit intro does not mention file endings, which the task
 texts now state. The ideas scout has not been dry-run yet.
+
+**Stream C implementation and budget matrix (2026-11-11).** Blocking scouts,
+role tools, continuous counters, journal append and prompt-exclusion regressions
+are implemented under `agent/team/`. The serial 10/20-call data/ideas matrix on
+spam1–3 and code2 is recorded in
+[the scout budget report](../agent/team/budget-results.md). Validation remains
+an explicit unavailable adapter until stream B supplies frozen snapshots and
+the check runner; its live budget matrix is deferred. Starting budgets are
+provisional until these measurements have been reviewed.
 
 **Repeat calls.** The lead passes a focused question and optional references
 (trial IDs, error summaries). A repeat call sees earlier bullets from the

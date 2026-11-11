@@ -6,7 +6,7 @@ backend has its own observed context; neither tool events nor intermediate
 assistant messages are forwarded. Repeats receive the journal, task text and
 unit introduction through the run's immutable prompt snapshot.
 
-`createScoutRunner` adapts the existing instrumented session runner and
+`createScoutRunner` adapts the existing observed subagent session factory and
 isolated filesystem tools. The controller supplies a sandbox containing only
 permitted development inputs, profile, course resources and the shared tree.
 Its cwd must have a dedicated `research/` folder (under the shared solutions
@@ -14,10 +14,8 @@ research area); only that folder is writable for the data scout. Ideas has
 read-only tools and the existing scoped search extension, limited to three
 searches. The runner uses the shared preflight before starting its session.
 Call `scoutRequirements(role)` when declaring the encompassing lead stage's
-whole-chain setup requirements. Role calls are serial because the legacy
-session runner/search extension still temporarily mutate process.env; stream B
-owns session environment integration. Do not run this runner concurrently
-with another legacy runSession in the same process.
+whole-chain setup requirements. Role calls are serial. Child environments and
+search counters/logs are session-local; no scout changes process.env.
 
 `ScoutBudget` counts admitted calls, including tool errors, appends a counter
 to each result, and blocks excess calls with finish-up feedback. The service
