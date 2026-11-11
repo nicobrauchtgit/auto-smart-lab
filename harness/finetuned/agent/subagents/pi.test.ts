@@ -39,14 +39,17 @@ test("child loader includes selected common and child guidance, excluding ambien
 test("concurrent bash tools receive separate immutable environments without process mutation", async () => {
 	const before = process.env.SUBAGENT_TEST_VALUE;
 	const firstEnv = { PATH: process.env.PATH, SUBAGENT_TEST_VALUE: "first" };
-	const first = createChildBashTool(process.cwd(), firstEnv);
-	const second = createChildBashTool(process.cwd(), { PATH: process.env.PATH, SUBAGENT_TEST_VALUE: "second" });
+	const logs = mkdtempSync(join(tmpdir(), "subagent-shell-"));
+	const first = createChildBashTool(process.cwd(), firstEnv, logs);
+	const second = createChildBashTool(process.cwd(), { PATH: process.env.PATH, SUBAGENT_TEST_VALUE: "second" }, logs);
 	firstEnv.SUBAGENT_TEST_VALUE = "mutated after construction";
 	const execute = (tool: typeof first) => tool.execute("test", { command: 'printf "%s" "$SUBAGENT_TEST_VALUE"' }, undefined, undefined, undefined as never);
 	const results = await Promise.all([execute(first), execute(second)]);
 	assert.equal(results[0].content[0].type, "text");
-	assert.deepEqual(results.map(result => result.content[0].type === "text" ? result.content[0].text : ""), ["first", "second"]);
+	// The supervised shell's result starts with the call's output, then its exit code and log.
+	assert.deepEqual(results.map(result => result.content[0].type === "text" ? result.content[0].text.split("\n")[0] : ""), ["first", "second"]);
 	assert.equal(process.env.SUBAGENT_TEST_VALUE, before);
+	rmSync(logs, { recursive: true, force: true });
 });
 
 test("real Pi children execute tools, preserve follow-up context, and keep transcripts out of parent replies", async () => {
@@ -78,7 +81,7 @@ test("real Pi children execute tools, preserve follow-up context, and keep trans
 	const pipelineRunId = randomUUID();
 	const stageInvocationId = randomUUID();
 	const parentAgentRunId = randomUUID();
-	const scope = createSubagents({ cwd: root, agentDir, model: faux.getModel(), modelRuntime: runtime,
+	const scope = createSubagents({ cwd: root, agentDir, model: faux.getModel(), modelRuntime: runtime, shellLogRoot: join(root, "shell-calls"),
 		prompts, sharedInstructions: [],
 		env: { PATH: process.env.PATH }, inputs: [], parentAgentRunId,
 		observe: { identity: { pipelineRunId, stageInvocationId, stage: "solve", attempt: 1 }, telemetry: sink } });
@@ -148,7 +151,7 @@ test("an observed Pi parent can spawn and collect a child through the optional t
 			return fauxAssistantMessage("Collected the implementation result.");
 		},
 	]);
-	const scope = createSubagents({ cwd: root, agentDir, model: childProvider.getModel(), modelRuntime: runtime,
+	const scope = createSubagents({ cwd: root, agentDir, model: childProvider.getModel(), modelRuntime: runtime, shellLogRoot: join(root, "shell-calls"),
 		prompts, sharedInstructions: [], env: { PATH: process.env.PATH }, inputs: [], observe });
 	let parent: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
 	let observer: Awaited<ReturnType<typeof observeAgentSession>> | undefined;
@@ -186,7 +189,7 @@ test("Pi child handoffs preserve logical identity and expose the replacement phy
 			assert.match(JSON.stringify(context.messages), /Continue from the existing implementation/);
 			return fauxAssistantMessage("Implementation verified.");
 		}]);
-	const scope = createSubagents({ cwd: root, agentDir, model: faux.getModel(), modelRuntime: runtime,
+	const scope = createSubagents({ cwd: root, agentDir, model: faux.getModel(), modelRuntime: runtime, shellLogRoot: join(root, "shell-calls"),
 		prompts, sharedInstructions: [], env: {}, inputs: [], parentAgentRunId: "parent",
 		observe: { identity: { stage: "solve", stageInvocationId: "invocation", attempt: 1 }, telemetry: sink } });
 	try {

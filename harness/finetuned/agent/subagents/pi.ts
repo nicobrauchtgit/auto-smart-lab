@@ -3,7 +3,7 @@ import { HARNESS_CONFIG } from "../harness/config.js";
 import { SmartContextSession } from "../context/session.js";
 import { createHash } from "node:crypto";
 import {
-	createAgentSession, createBashToolDefinition, createEditToolDefinition,
+	createAgentSession, createEditToolDefinition,
 	createFindToolDefinition, createGrepToolDefinition, createLsToolDefinition,
 	createReadToolDefinition, createWriteToolDefinition, defineTool, SessionManager, SettingsManager,
 	type CreateAgentSessionOptions,
@@ -13,6 +13,8 @@ import type { SuppliedInput } from "../pipeline/types.js";
 import type { PromptSnapshot, RenderedPrompt } from "../prompts/loader.js";
 import { createPipelineResourceLoader } from "../run/session_resources.js";
 import type { ChildIdentity, ChildSessionFactory } from "./types.js";
+import { agentBashTool, assertSupervisedBash, bindAgentShells, hostShell, HOST_SHELL_LOG_ROOT } from "../run/agent_shell.js";
+import { join } from "node:path";
 
 export const CHILD_TOOL_NAMES = ["read", "grep", "find", "ls", "bash", "write", "edit"] as const;
 export type ChildToolName = typeof CHILD_TOOL_NAMES[number];
@@ -33,15 +35,14 @@ export interface PiChildOptions {
 	observe: AgentObservation;
 	tools?: readonly ChildToolName[];
 	turnTimeoutMs?: number;
+	/** Where each child's shell calls keep their full output. Defaults to the run state's shell-calls folder. */
+	shellLogRoot?: string;
 }
 
-/** Uses Pi's cancellation, streaming, and output truncation with a session-local environment. */
-export function createChildBashTool(cwd: string, environment: Readonly<NodeJS.ProcessEnv>) {
+/** The child's supervised shell, with a session-local environment frozen at construction. */
+export function createChildBashTool(cwd: string, environment: Readonly<NodeJS.ProcessEnv>, logRoot = HOST_SHELL_LOG_ROOT) {
 	const env = Object.freeze({ ...environment });
-	return createBashToolDefinition(cwd, {
-		exposeSessionEnvironment: false,
-		spawnHook: context => ({ ...context, env: agentEnvironment(env) }),
-	});
+	return agentBashTool(hostShell(cwd, agentEnvironment(env), logRoot));
 }
 
 /** No ambient project instructions, skills, extensions, or system-prompt additions. */
@@ -93,17 +94,20 @@ export function createPiChildFactory(options: PiChildOptions): ChildSessionFacto
 				signal.throwIfAborted();
 				const availableTools = [
 					defineTool(createReadToolDefinition(cwd)), defineTool(createGrepToolDefinition(cwd)), defineTool(createFindToolDefinition(cwd)),
-					defineTool(createLsToolDefinition(cwd)), defineTool(createChildBashTool(cwd, childEnv)),
+					defineTool(createLsToolDefinition(cwd)), createChildBashTool(cwd, childEnv, join(options.shellLogRoot ?? HOST_SHELL_LOG_ROOT, child.logicalAgentId)),
 					defineTool(createWriteToolDefinition(cwd)), defineTool(createEditToolDefinition(cwd)),
 				];
+				const customTools = availableTools.filter(tool => toolNames.includes(tool.name as ChildToolName));
+				assertSupervisedBash(customTools);
 				const { session } = await createAgentSession({
 					cwd, agentDir, model, modelRuntime, thinkingLevel, settingsManager, resourceLoader,
-					sessionManager: SessionManager.inMemory(cwd), tools: [...toolNames],
-					customTools: availableTools.filter(tool => toolNames.includes(tool.name as ChildToolName)),
+					sessionManager: SessionManager.inMemory(cwd), tools: [...toolNames], customTools,
 				});
 				let observer: Awaited<ReturnType<typeof observeAgentSession>>;
 				try { observer = await observeAgentSession({ session, model: `${model.provider}/${model.id}`, ...observe, parentAgentRunId: child.parentAgentRunId }); }
 				catch (error) { session.dispose(); throw error; }
+				// The child's shell findings wake the child, under its own observability identity.
+				bindAgentShells(customTools, { session: logical, record: observer.record, prompts: options.prompts });
 				observer.record("subagent_link", { ...child });
 				observer.record("runtime_input", { type: "runtime_input", version: 1,
 					inputs, cwd, tools: toolNames, turnTimeoutMs: timeoutMs });

@@ -11,10 +11,10 @@ import type { InvocationFeedback } from "../pipeline/feedback.js";
 
 import { HARNESS_CONFIG } from "../harness/config.js";
 import { createHash, randomUUID } from "node:crypto";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 import {
-	createAgentSession, createBashToolDefinition, defineTool,
+	createAgentSession,
 	SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import type { AgentSession, InlineExtension, ToolDefinition } from "@earendil-works/pi-coding-agent";
@@ -28,6 +28,7 @@ import { TOOL_PROMPTS_SHA256 } from "../prompts/tools.js";
 import { preparePythonEnvironment, pythonChangeCursor, recordPythonEnvironmentEnd, readPythonEnvironment } from "./python_environment.js";
 import { SmartContextSession } from "../context/session.js";
 import type { Wakeable } from "../experiments/index.js";
+import { agentBashTool, assertSupervisedBash, bindAgentShells, hostShell, HOST_SHELL_LOG_ROOT } from "./agent_shell.js";
 import type { SuppliedInput } from "../pipeline/types.js";
 
 /** How long one agent session may run. The cost signal is measured against it. */
@@ -107,9 +108,10 @@ export function sessionToolAllowlist(
 	return [...new Set([...tools, ...(customTools ?? []).map((tool) => tool.name)])];
 }
 
-export function sessionBashTool(cwd: string, environment: Readonly<Record<string, string>>): ToolDefinition {
+/** The host shell of a scoped session: supervised, with the session-local environment frozen at construction. */
+export function sessionBashTool(cwd: string, environment: Readonly<Record<string, string>>, logRoot = HOST_SHELL_LOG_ROOT): ToolDefinition {
  const frozen = { ...environment };
- return defineTool(createBashToolDefinition(cwd, { spawnHook: context => ({ ...context, env: agentEnvironment(sessionEnvironment(context.env, frozen)) }) }));
+ return agentBashTool(hostShell(cwd, agentEnvironment(sessionEnvironment(process.env, frozen)), logRoot));
 }
 
 /**
@@ -118,6 +120,8 @@ export function sessionBashTool(cwd: string, environment: Readonly<Record<string
 export async function runSession(options: RunSessionOptions): Promise<RunSessionResult> {
 	const { prompt, model: requestedModel } = options;
 	const customTools = [...(options.customTools ?? [])];
+	// Every shell call of every session is supervised; a bash tool from anywhere else is refused.
+	assertSupervisedBash(customTools);
 	const changeCursor = pythonChangeCursor();
 	const pythonSessionId = options.pythonSessionId ?? randomUUID();
 	const initialEnvironment = readPythonEnvironment();
@@ -138,7 +142,7 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 		const { cwd, agentDir } = pipeline;
 		const sessionCwd = options.cwd ? resolve(options.cwd) : cwd;
   if ((options.tools === undefined || options.tools.includes("bash")) && !customTools.some(tool => tool.name === "bash")) {
-   customTools.push(sessionBashTool(sessionCwd, env));
+   customTools.push(sessionBashTool(sessionCwd, env, join(HOST_SHELL_LOG_ROOT, pythonSessionId)));
   }
 		const requestedExtensions = options.extensionPaths ?? [];
         const webPaths = requestedExtensions.filter(path => /(?:^|[/\\])web_search\.(?:ts|js)$/.test(path));
@@ -208,6 +212,8 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 					observability?.record("runtime_input", { type: "runtime_input", input: python.input });
 					observability?.record("harness_configuration", { version: 1, settings: HARNESS_CONFIG,
 						model: { id: modelId, contextWindow: model.contextWindow, maxTokens: model.maxTokens } });
+					// Shell findings go to this session, under its observability identity.
+					bindAgentShells(customTools, { session: logical, record: observability?.record, prompts: options.prompts });
 					await options.onSessionReady?.(logical, { agentRunId: observability?.agentRunId, piSessionId: session.sessionId });
 					if (options.sessionContext) await logical.steer(options.sessionContext());
 				} catch (error) {
