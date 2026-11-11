@@ -64,6 +64,21 @@ Resolve each before claiming its capability or experiment ready.
 | F5: beyond spam | Clustering sealed confirmation and label-free hand-over are incomplete; multiclass Tor is not runnable | P7c after the integration gate; verify withheld-family/execution-mode semantics on code2 and label-free behavior on attacks1 |
 | F8: hygiene and typecheck scope | Formatting/indexed-access checking are deferred; root semantic typecheck excludes the minimal arm; inherited trailing whitespace/blank EOFs in older training files | Assess coverage/formatting separately from behavior |
 
+### Non-blocking review findings (v2 streams, 2026-11-11)
+
+Recorded instead of fixed under the review bar: only findings that break a
+v2 check block a merge.
+
+| Stream | Follow-up |
+| --- | --- |
+| B | Ladder threshold is one paired standard error, as in Blum & Hardt's parameter-free Ladder; fold promotion keeps the 2-SE rule. Revisit if the lead sees too many "improvements". |
+| B | The old spam1 terminal refit freeze reports "framework drifted" (refit scripts changed); new runs freeze again. Not fixed. |
+| B | A killed fold is not resumed automatically; the agent resumes it with `experiment_resume`. |
+| C | The ideas scout's search counter resets when its session rolls over at the 100k-token handoff. |
+| C | No validation probe has run on a trial with a deliberately planted defect; detection of real defects is unmeasured. |
+| C | Probe call counts before round 1 are admitted calls, not proven executions. |
+| C | Data budget 15 sits between the measured 10 and 20; it is not an optimum. |
+
 Before malware-task runs, establish permitted parsing and network boundaries.
 The lab prohibits external detection services; filesystem isolation alone does
 not enforce network policy. Unit 4.1 needs verified pcap connection identity and

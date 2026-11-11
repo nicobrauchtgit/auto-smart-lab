@@ -106,8 +106,13 @@ test("single trial restart retains atomic completed fold predictions and refits 
   training = createHarnessTraining({ ...opts, prompts: loadPromptSnapshot() }); await training.ready();
   expect(await until(() => training!.supervisor.status(started.id).status !== "running")).toBe(true);
   const after = read(started.directory, "single-checkpoint.json");
-  expect(after.completed.slice(0, before.completed.length)).toEqual(before.completed);
-  expect(after.oof.slice(0, before.oof.length)).toEqual(before.oof);
+  // Parallel folds can complete in any order and the checkpoint keeps manifest
+  // order, so retained folds are matched by (repeat, fold), not by position.
+  const key = (row: any) => `${row.repeat}/${row.fold}`;
+  const retained = new Map(after.completed.map((fold: any) => [key(fold), fold]));
+  for (const fold of before.completed) expect(retained.get(key(fold))).toEqual(fold);
+  const rows = new Map(after.oof.map((row: any) => [`${key(row)}/${row.id}`, row]));
+  for (const row of before.oof) expect(rows.get(`${key(row)}/${row.id}`)).toEqual(row);
   expect(after.completed).toHaveLength(3);
  } finally { if (child.exitCode === null && child.signalCode === null) await crash(child); await training?.close(); await killWorker(started.directory); }
 }, 45000);
