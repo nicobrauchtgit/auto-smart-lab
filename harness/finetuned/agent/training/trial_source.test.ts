@@ -1,3 +1,4 @@
+import { trialSupervisionDirectory } from "../training/results.js";
 import { test, expect } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -13,7 +14,8 @@ test("snapshot resolution restores the measured commit after cleanup and rejects
   git(live, ["add", "-A"]); git(live, ["commit", "-qm", "measured"]);
   const measured = resolveCommit(live, "HEAD")!;
   mkdirSync(join(trials, "trial1"), { recursive: true });
-  writeFileSync(join(trials, "trial1", "recovery.json"), JSON.stringify({ solutionsRoot: live, trial: { id: "trial1", source: measured, worktrees: [source] } }));
+  mkdirSync(trialSupervisionDirectory(join(trials, "trial1")), {recursive: true});
+  writeFileSync(join(trialSupervisionDirectory(join(trials, "trial1")), "recovery.json"), JSON.stringify({ solutionsRoot: live, trial: { id: "trial1", source: measured, worktrees: [source] } }));
   addWorktree(live, source, measured.commit); removeWorktree(live, source);
   writeFileSync(join(live, "model.py"), "# live passes\n");
   git(live, ["add", "-A"]); git(live, ["commit", "-qm", "later fix"]);

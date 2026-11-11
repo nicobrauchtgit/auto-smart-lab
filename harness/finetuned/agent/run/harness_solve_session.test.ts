@@ -1,3 +1,4 @@
+import { trialSupervisionDirectory } from "../training/results.js";
 import { guidanceHash } from "../pipeline/guidance.js";
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -71,7 +72,8 @@ function reporter() {
 function pausedTrainingRoot(parent: string, id: string) {
 	const root = join(parent, id), directory = join(root, "paused-trial");
 	mkdirSync(directory, { recursive: true });
-	writeFileSync(join(directory, "recovery.json"), JSON.stringify({ lifecycle: "service_closed", trial: { startedAt: 1 } }));
+	mkdirSync(trialSupervisionDirectory(directory), {recursive: true});
+	writeFileSync(join(trialSupervisionDirectory(directory), "recovery.json"), JSON.stringify({ lifecycle: "service_closed", trial: { startedAt: 1 } }));
 	writeFileSync(join(directory, "trial-result.json"), JSON.stringify({ status: "interrupted" }));
 	writeFileSync(join(directory, "search-report.json"), JSON.stringify({ stopReason: "acknowledgement_required" }));
 	return { root, directory };
@@ -93,7 +95,8 @@ describe("solve recovery root ownership", () => {
 	test("successful upstream evidence cannot hide an active recovery candidate", () => {
 		const parent = mkdtempSync(join(tmpdir(), "solve-root-active-"));
 		const prior = pausedTrainingRoot(parent, "prior");
-		writeFileSync(join(prior.directory, "recovery.json"), JSON.stringify({ lifecycle: "active" }));
+		mkdirSync(trialSupervisionDirectory(prior.directory), {recursive: true});
+		writeFileSync(join(trialSupervisionDirectory(prior.directory), "recovery.json"), JSON.stringify({ lifecycle: "active" }));
 		writeFileSync(join(prior.directory, "search-report.json"), "{}");
 		expect(recoveryTrainingRoot(parent, "followup", [prior.root])).toBe(prior.root);
 	});

@@ -66,9 +66,10 @@ export function scoutToolset(role: ScoutRole, options: {
   const mounts = [...readOnly.filter(mount => !inside(real(mount.source), live)),
    {source: join(live, "checks")}, {source: checks, writable: true}, {source: logs}];
   const sandbox = policy(mounts, join(source, "solutions"));
-  // Shell output goes beside this trial's check logs: gitignored scratch the scout reads,
-  // never checks/<task>/ (its one writable mount), which trial commits would pick up.
-  return {sandbox, tools: isolatedSolveTools(sandbox, join(logs, "shell-calls")), extensions: [], extensionTools: [], checkSandbox: policy(mounts, live)};
+  // The scout reads a copy of each shell call's output beside this trial's check logs: gitignored
+  // scratch, never checks/<task>/ (its one writable mount), which trial commits would pick up.
+  // The logs themselves stay harness-owned, outside every mount; the copy is never read back.
+  return {sandbox, tools: isolatedSolveTools(sandbox, {spill: {base: live, directory: join(logs, "shell-calls")}}), extensions: [], extensionTools: [], checkSandbox: policy(mounts, live)};
  }
  const research = join(options.sandbox.cwd, "research");
  if (!existsSync(research)) throw new Error("Scout workspace must have its own research/ folder");
@@ -82,8 +83,8 @@ export function scoutToolset(role: ScoutRole, options: {
  return {sandbox, tools, extensions: [{name: "scout-web-search", factory: search}], extensionTools: ["web_search"]};
 }
 
-/** Last part of a check's output, enough to show a traceback or assertion. */
-const tail = (path: string, chars = 1_500) => { try { const text = readFileSync(path, "utf8"); return text.length > chars ? `…${text.slice(-chars)}` : text; } catch { return ""; } };
+/** Last part of a check's output, enough to show a traceback or assertion: from the pipes the harness read, never the log file. */
+const tail = (text: string, chars = 1_500) => text.length > chars ? `…${text.slice(-chars)}` : text;
 
 /**
  * `run_checks` for the validation scout: stream B's runTrialChecks against the
@@ -110,10 +111,10 @@ export function validationCheckTool(options: {
    const hashes = new Map(paths.map(path => [path, createHash("sha256").update(readFileSync(path)).digest("hex")]));
    try {
     const result = await runTrialChecks(options.trial, paths, options.sandbox, signal);
-    const checks = result.checks.map(check => ({path: relative(live, check.path).split(sep).join("/"), exitCode: check.exitCode, sha256: hashes.get(check.path)!, output: tail(check.outputPath)}));
+    const checks = result.checks.map(check => ({path: relative(live, check.path).split(sep).join("/"), exitCode: check.exitCode, sha256: hashes.get(check.path)!, output: tail(check.output)}));
     for (const check of checks) { const at = ran.findIndex(row => row.path === check.path); if (at >= 0) ran.splice(at, 1); ran.push({path: check.path, sha256: check.sha256}); }
     options.record?.("validation_checks", {experiment_id: options.trial.experimentId, commit: options.trial.commit, passed: result.passed,
-     checks: checks.map(({path, exitCode, sha256}) => ({path, exitCode, sha256}))});
+     checks: checks.map(({path, exitCode, sha256}, index) => ({path, exitCode, sha256, logPath: result.checks[index].logPath}))});
     return reply({experiment: options.trial.experimentId, passed: result.passed, checks: checks.map(({path, exitCode, output}) => ({path, exitCode, output}))});
    } catch (error) {
     signal?.throwIfAborted();

@@ -51,7 +51,8 @@ export interface SupervisedBashOptions extends SupervisorOptions {
  * the call's whole process tree and says so.
  *
  * The result is the end of the output (within the cap), the exit code and the
- * path of the full output. Findings raised while the call runs (stuck, stale,
+ * path of the full output: the agent's copy (`spill`) when the log itself is
+ * kept where the agent cannot reach it. Findings raised while the call runs (stuck, stale,
  * flooding, time-wasting, runaway memory, machine protection) are delivered
  * through `deliver`, which steers a running session: they reach the agent
  * right after the result. Options are read when used, so `root`, `prompts`
@@ -64,6 +65,7 @@ export function createSupervisedBashTool(cwd: string, options: SupervisedBashOpt
 		get root() { return options.root; },
 		get env() { return options.env; },
 		get prompts() { return options.prompts; },
+		get spill() { return options.spill; },
 		deliver: (text, update) => options.deliver(text, update),
 		record: (eventType, payload) => options.record?.(eventType, payload),
 		// Leftover processes of earlier calls keep their run open; they never block the next call.
@@ -100,6 +102,7 @@ export function createSupervisedBashTool(cwd: string, options: SupervisedBashOpt
 				while (!owner.commandExit(id).ended) {
 					if (cancelled || signal?.aborted) {
 						await owner.stop(id, "owning session cancelled");
+						owner.release(id);
 						signal?.throwIfAborted();
 						throw new Error("Shell call cancelled");
 					}
@@ -135,6 +138,8 @@ export function createSupervisedBashTool(cwd: string, options: SupervisedBashOpt
 			const reserve = Buffer.byteLength(`${notice(Number.MAX_SAFE_INTEGER)}\n\n${ending}`);
 			// The end of the output is kept: that is where a traceback or a result is.
 			const tail = owner.tail(id, Math.max(0, cap - reserve));
+			// The agent's copy of the full log is written now; the harness reads only its own descriptor.
+			owner.release(id);
 			const text = `${tail.omittedBytes > 0 ? `${notice(tail.omittedBytes)}\n` : ""}${tail.text}${tail.text.endsWith("\n") || !tail.text ? "" : "\n"}${ending}`;
 			return { content: [{ type: "text" as const, text }],
 				details: { ...view, exitCode: exit.exitCode, signal: exit.signal, timedOut, remainingPids: remaining,

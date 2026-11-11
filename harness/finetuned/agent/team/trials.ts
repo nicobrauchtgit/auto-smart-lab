@@ -1,7 +1,8 @@
+import { trialSupervisionDirectory } from "../training/results.js";
 /**
  * Experiment and commit-bound references, resolved through stream B's trial
  * source service. Every trial of a task lives under
- * `<state>/<task>/solve/training/<training root>/<experiment>/recovery.json`.
+ * `<state>/<task>/solve/training/<training root>/.supervision/<experiment>/recovery.json`.
  */
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -44,7 +45,7 @@ export function createTrialResolver(options: { roots: () => readonly string[]; s
  const cache = new Map<string, Promise<RefState>>();
  const locate = (experimentId: string) => {
   if (!EXPERIMENT_ID.test(experimentId)) throw new Error("Unsafe experiment ID");
-  const found = options.roots().filter(root => existsSync(join(root, experimentId, "recovery.json")));
+  const found = options.roots().filter(root => existsSync(join(trialSupervisionDirectory(join(root, experimentId)), "recovery.json")));
   if (found.length > 1) throw new Error(`Experiment ${experimentId} is recorded in more than one training root`);
   return found[0];
  };

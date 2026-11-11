@@ -2,10 +2,11 @@
 import { balancedLosses, ladderQuery } from "./ladder.js";
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { atomicJson, claimWorkspace, liveGroup, ownedProcessAlive } from "../experiments/ownership.js";
 import { ExperimentSupervisor } from "../experiments/supervisor.js";
+import { readRecord } from "../experiments/safe_files.js";
 import { addWorktree, resolveCommit, tagMessage, uncommittedFiles } from "../training/git.js";
 import { canonical, digest, selectionClaimAsync } from "../training/terminal.js";
 import { deriveTrialSeed, deriveBootstrapSeed, parseSeedPlan } from "../training/seeds.js";
@@ -20,7 +21,8 @@ import { repoRootOf, statePath } from "../paths.js";
 const PYTHON_ROOT = join(import.meta.dir, "../training/python");
 const WORKER = join(PYTHON_ROOT, "confirm.py");
 const RUNNER = join(PYTHON_ROOT, "runner.py");
-const json = (path: string) => JSON.parse(readFileSync(path, "utf8"));
+/** A JSON record, never read through a symlink: the confirmation directory is writable by the worker's sandbox. */
+const json = (path: string) => { const text = readRecord(path); if (text === undefined) throw new Error(`Unreadable record (missing or a symlink): ${path}`); return JSON.parse(text); };
 export interface ConfirmationOptions {
  workspace: SolveWorkspace; pythonExecutable: string; environmentFingerprint: string;
  env: Record<string, string>; report?: RefitOptions["report"]; signal?: AbortSignal;
@@ -38,7 +40,7 @@ function holdoutLosses(directory: string): { ids: string[]; losses: number[] } {
  // confirm.py --validate has already proven predictions.csv lists exactly these rows in this order.
  const samples: { id: string; target: number }[] = json(join(directory, "sealed-samples.json")).samples;
  // Columns are id, prediction, score; prediction and score never contain commas.
- const predicted = readFileSync(join(directory, "predictions.csv"), "utf8").trim().split(/\r?\n/).slice(1).map(line => Number(line.split(",").at(-2)));
+ const predicted = (readRecord(join(directory, "predictions.csv"), 1024 ** 3) ?? "").trim().split(/\r?\n/).slice(1).map(line => Number(line.split(",").at(-2)));
  if (predicted.length !== samples.length) throw new Error("Confirmation predictions do not cover the sealed rows");
  return { ids: samples.map(sample => sample.id), losses: balancedLosses(samples.map(sample => Number(sample.target)), predicted) };
 }
@@ -89,7 +91,7 @@ export async function runConfirmation(options: ConfirmationOptions): Promise<Con
   } else {
    const freezePath = join(directory, "freeze.json");
    const trialPath = join(chosen.trainingRoot, prepared.chosenExperimentId);
-   const plan = parseSeedPlan(readFileSync(join(trialPath, "seed-plan.json"), "utf8"));
+   const plan = parseSeedPlan(readRecord(join(trialPath, "seed-plan.json")) ?? "");
    const framework = digest([WORKER, ...["agent_code.py", "metrics.py", "measurement.py"].map(name => join(PYTHON_ROOT, "smartlab_trial", name))].map(confirmationHash));
    if (!existsSync(freezePath)) {
     if (ledger.populations[population]?.reads?.some((read: any) => read.identity === identity)) throw new Error("Confirmation read was already reserved; refusing a duplicate sealed read");
@@ -127,7 +129,8 @@ export async function runConfirmation(options: ConfirmationOptions): Promise<Con
    const source = resolveCommit(join(frozen.sourceRoot, "solutions"), "HEAD");
    if (source?.commit !== prepared.source.commit || source.tree !== prepared.source.tree || uncommittedFiles(join(frozen.sourceRoot, "solutions")).length) throw new Error("Frozen confirmation source drifted");
    if (!existsSync(resultPath)) {
-    const workerDirectory = join(directory, "worker");
+    // The supervisor's records and the runner's receipts stay outside `directory`, which the worker's sandbox mounts writable.
+    const workerDirectory = join(root, ".supervision", identity);
     supervisor = new ExperimentSupervisor({ root: workerDirectory, env: sanitizeTrainingEnvironment(options.env),
      deliver() {},
      record: (type, payload) => options.report?.event(type, payload), pipelineRunId: options.report?.agentIdentity(1).pipelineRunId ?? undefined,

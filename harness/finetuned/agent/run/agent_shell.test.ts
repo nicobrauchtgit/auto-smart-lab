@@ -4,13 +4,13 @@
  * kill, and the wiring that leaves no unsupervised bash tool.
  */
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import { createAgentSession, createBashToolDefinition, defineTool, ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
 
-import { agentBashTool, assertSupervisedBash, bindAgentShells, hostShell, isAgentShellTool, type AgentShell } from "./agent_shell.js";
+import { agentBashTool, assertSupervisedBash, bindAgentShells, closeAgentShells, hostShell, isAgentShellTool, sandboxShell, type AgentShell } from "./agent_shell.js";
 import { findBubblewrap, isolatedSolveTools, sandboxPolicy } from "./solve_sandbox.js";
 import { runSession, sessionBashTool } from "./session_runner.js";
 import { createChildBashTool, loadChildResources } from "../subagents/pi.js";
@@ -210,18 +210,91 @@ test("every agent bash tool is supervised, and an unsupervised one is refused", 
 let bubblewrap = false;
 try { findBubblewrap(); bubblewrap = true; } catch { bubblewrap = false; }
 
+const SANDBOX_PATH = ["/run/current-system/sw/bin", "/usr/bin", "/bin"].join(":");
+
 test.skipIf(!bubblewrap)("a sandboxed session's bash is supervised with the sandbox as its process", async () => {
-	const root = workspace("sandboxed-shell-");
-	const policy = sandboxPolicy({ mounts: [{ source: root, writable: true }], cwd: root,
-		env: { PATH: ["/run/current-system/sw/bin", "/usr/bin", "/bin"].join(":") } });
-	const bash = isolatedSolveTools(policy).find((tool) => tool.name === "bash")!;
+	const root = workspace("sandboxed-shell-"), logs = workspace("sandboxed-shell-logs-");
+	const policy = sandboxPolicy({ mounts: [{ source: root, writable: true }], cwd: root, env: { PATH: SANDBOX_PATH } });
+	const bash = isolatedSolveTools(policy, { root: logs }).find((tool) => tool.name === "bash")!;
 	expect(isAgentShellTool(bash)).toBe(true);
-	const result = text(await bash.execute("sandboxed", { command: `test ! -e /home && echo "isolated $PYTHONUNBUFFERED"` }, undefined, undefined, undefined as never));
+	const result = text(await bash.execute("sandboxed", { command: `test ! -e /home && test ! -e ${logs} && echo "isolated $PYTHONUNBUFFERED"` }, undefined, undefined, undefined as never));
 	expect(result).toContain("isolated 1");
-	// The supervised process is the sandbox launcher, and its output is inside the agent's workspace.
-	const calls = join(root, ".shell-calls");
-	const [id] = readdirSync(calls);
-	const record = JSON.parse(readFileSync(join(calls, id, "experiment.json"), "utf8"));
+	// The supervised process is the sandbox launcher; its records stay with the harness, outside the sandbox.
+	const [id] = readdirSync(logs);
+	const record = JSON.parse(readFileSync(join(logs, id, "experiment.json"), "utf8"));
 	expect(record.argv[0]).toBe(policy.executable);
 	expect(record.argv).toContain("--unshare-all");
+	// The agent reads a copy of the full output in its workspace, named in the result.
+	const copy = join(root, ".shell-calls", `${id}.log`);
+	expect(readdirSync(join(root, ".shell-calls"))).toEqual([`${id}.log`]);
+	expect(readFileSync(copy, "utf8")).toBe("isolated 1\n");
+	expect(result).toContain(`full output: ${copy}`);
 }, 30_000);
+
+test.skipIf(!bubblewrap)("a sandboxed shell's log root may not overlap a writable mount", async () => {
+	const root = workspace("sandboxed-overlap-");
+	const policy = sandboxPolicy({ mounts: [{ source: root, writable: true }], cwd: root, env: { PATH: SANDBOX_PATH } });
+	for (const logs of [join(root, "logs"), dirname(root)]) {
+		const bash = isolatedSolveTools(policy, { root: logs }).find((tool) => tool.name === "bash")!;
+		await expect(bash.execute("overlap", { command: "true" }, undefined, undefined, undefined as never)).rejects.toThrow("harness-owned");
+	}
+});
+
+/**
+ * The attack: a sandboxed call replaces its own log (where the old layout kept
+ * it, in the agent's workspace), every copy it can see, and the copy folder
+ * itself with symlinks to a host file its sandbox does not mount. Neither the
+ * call's result, nor a later call's, nor any finding, nor a copy the harness
+ * writes may contain that file's content, and the file is never written.
+ */
+test.skipIf(!bubblewrap)("a sandboxed call that swaps its logs and copies for symlinks to a host-only file never sees that file", async () => {
+	const root = workspace("sandboxed-symlink-"), logs = workspace("sandboxed-symlink-logs-"), hidden = workspace("withheld-");
+	const marker = `WITHHELD_LABELS_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+	const secret = join(hidden, "labels.csv");
+	writeFileSync(secret, `id,label\n1,${marker}\n`);
+	const policy = sandboxPolicy({ mounts: [{ source: root, writable: true }], cwd: root, env: { PATH: SANDBOX_PATH } });
+	const { session, steered } = owner();
+	const records: { eventType: string; payload: Record<string, unknown> }[] = [];
+	const bash = agentBashTool({ ...sandboxShell(policy, { root: logs }), limits: { sampleIntervalMs: 25, stopGraceMs: 100, minStallMs: 250, importPreludeMs: 250 } });
+	bindAgentShells([bash], { session, prompts, record: (eventType, payload) => records.push({ eventType, payload }) });
+	closers.push(() => closeAgentShells([bash]));
+	const run = async (command: string) => text(await bash.execute("call", { command }, undefined, undefined, undefined as never));
+
+	const first = await run("echo first-call");
+	expect(first).toContain("first-call");
+	// Inside the sandbox the host file and the harness's logs do not exist.
+	expect(await run(`test ! -e ${secret} && test ! -e ${logs} && echo hidden`)).toContain("hidden");
+	// Replace the newest call folder's log (the old layout's own log), every copy, then the copy folder itself.
+	const swap = [
+		`d=$(ls -td .shell-calls/*/ 2>/dev/null | head -1); if [ -n "$d" ]; then rm -f "$d/output.log" "$d/command.json"; ln -s ${secret} "$d/output.log"; ln -s ${secret} "$d/command.json"; fi`,
+		`for f in .shell-calls/*.log; do rm -f "$f"; ln -s ${secret} "$f"; done`,
+		"echo swapped; sleep 0.6; echo after-swap",
+	].join("; ");
+	const second = await run(swap);
+	expect(second).toContain("swapped");
+	expect(second).toContain("after-swap");
+	const third = await run(`mv .shell-calls .shell-calls-moved && ln -s ${hidden} .shell-calls && sleep 0.4 && echo folder-swapped`);
+	expect(third).toContain("folder-swapped");
+	const fourth = await run("cat .shell-calls/*.log 2>&1; echo done");
+	expect(fourth).toContain("done");
+
+	for (const result of [first, second, third, fourth]) expect(result).not.toContain(marker);
+	// Every finding delivered to the session (the 0.6 s silence is reported as stalled).
+	expect(steered.join("\n")).not.toContain(marker);
+	// No copy the harness wrote holds the file, and the file was never written through a symlink.
+	const copies = readdirSync(join(root, ".shell-calls-moved"));
+	for (const name of copies) {
+		const path = join(root, ".shell-calls-moved", name);
+		if (lstatSync(path).isSymbolicLink()) continue; // the agent's own symlinks, which the harness never reads
+		expect(readFileSync(path, "utf8")).not.toContain(marker);
+	}
+	expect(readdirSync(hidden)).toEqual(["labels.csv"]);
+	expect(readFileSync(secret, "utf8")).toBe(`id,label\n1,${marker}\n`);
+	// The swapped call's copy is a regular file with its real output.
+	const swapped = copies.filter((name) => !lstatSync(join(root, ".shell-calls-moved", name)).isSymbolicLink());
+	expect(swapped.map((name) => readFileSync(join(root, ".shell-calls-moved", name), "utf8")).join("")).toContain("after-swap");
+	// With the copy folder a symlink, the copy is refused, not written into the host folder.
+	expect(records.some((record) => record.eventType === "experiment_spill_failed")).toBe(true);
+	// The harness's own logs are regular files outside the sandbox.
+	for (const id of readdirSync(logs)) expect(lstatSync(join(logs, id, "output.log")).isFile()).toBe(true);
+}, 60_000);

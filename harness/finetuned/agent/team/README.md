@@ -122,7 +122,7 @@ The runner builds the call's sandbox with `expertSandbox(..., "validation",
 trial)` (snapshot mounted read-only, `VALIDATION_SOURCE_ROOT` and
 `VALIDATION_EXPERIMENT_ID` set). The scout's view hides the live solutions tree
 except `checks/` (only `checks/<task>/` writable) and this trial's check logs;
-its cwd is the snapshot's `solutions/`. Its shell calls keep their output in
+its cwd is the snapshot's `solutions/`. Its shell calls retain authoritative logs outside the sandbox and publish copies in
 `scratch/validation/<experiment>/shell-calls/` (read-only to the scout,
 ignored by git), never in `checks/<task>/`, which trial commits would include. `run_checks` runs stream B's
 `runTrialChecks` on that snapshot (fresh interpreter, snapshot first on the
