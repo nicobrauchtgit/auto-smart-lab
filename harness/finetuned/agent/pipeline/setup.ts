@@ -1,5 +1,6 @@
 /** Fail-fast prerequisites shared by pipeline and standalone stage execution. */
 import { checkSupervision } from "../experiments/setup.js";
+import { checkReaper } from "../experiments/launcher.js";
 import { checkSolveSandbox } from "../run/solve_sandbox.js";
 import { accessSync, constants, statSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -108,6 +109,8 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
  const needs = new Set(requirements);
  if (["supervision", "model", "training", "refit"].some(requirement => needs.has(requirement as SetupRequirement))) {
   add("process-supervision", "local", "Enable readable own-user /proc stat, io, status and meminfo and a loadable libc (sysconf) on Linux, or libproc on Darwin. Process birth identities and memory sampling are required before agent or trial execution.", () => checkSupervision(options.supervisionProcRoot));
+  // Every trial and agent shell call runs under the child subreaper, so nothing it leaves behind escapes supervision.
+  add("supervision-launcher", "local", "Run ./dev setup so the project Python exists (the supervision launcher uses its standard library only), on a Linux kernel that allows prctl(PR_SET_CHILD_SUBREAPER); it needs no privileges.", () => checkReaper(options.executables?.python));
  }
  if (needs.has("observability")) {
   add("langfuse-configuration", "local", "Set LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY and the HTTPS LANGFUSE_BASE_URL in the project .env; run ./dev setup and make the emergency trace destination writable.", () => {

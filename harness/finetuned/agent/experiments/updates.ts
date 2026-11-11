@@ -48,7 +48,7 @@ export interface GateState {
 	reported: UpdateKind[];
 }
 
-const UPDATE_KINDS: ReadonlySet<string> = new Set<UpdateKind>(["progress", "stalled", "exited", "diagnostic", "memory", "stale", "time-wasting", "flooding", "machine-at-risk"]);
+const UPDATE_KINDS: ReadonlySet<string> = new Set<UpdateKind>(["progress", "stalled", "exited", "diagnostic", "memory", "stale", "time-wasting", "flooding", "machine-at-risk", "busy-silence"]);
 const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
 
 /** Output gaps needed before silence can be judged against the call's own rhythm. */
@@ -175,7 +175,7 @@ export class UpdateGate {
 			}
 		}
 		const busySilence = this.busySilence(input);
-		if (busySilence) return emit("stale", busySilence, "experiments.note-busy-silence");
+		if (busySilence) return emit("busy-silence", busySilence);
 		return null;
 	}
 
@@ -228,10 +228,11 @@ export class UpdateGate {
 	 * and then loops at full CPU would otherwise never be reported. A healthy
 	 * fold can be silent for minutes, so the limit is generous: the projected
 	 * overrun when comparable work was measured, otherwise the configured
-	 * ceiling. Reported once, as stale, and never on top of time-wasting.
+	 * ceiling. Information only, sent once under its own kind, worded neutrally:
+	 * a silent busy run may be healthy. Never on top of stale or time-wasting.
 	 */
 	private busySilence(input: GateInput): Record<string, string> | undefined {
-		if (input.exited || this.reported.has("stale") || this.reported.has("time-wasting")) return undefined;
+		if (input.exited || this.reported.has("busy-silence") || this.reported.has("stale") || this.reported.has("time-wasting")) return undefined;
 		const sample = input.sample;
 		const cpu = sample?.cpuPercent;
 		if (!sample || cpu === undefined || cpu < this.limits.idleCpuPercent) return undefined;
@@ -241,10 +242,7 @@ export class UpdateGate {
 			: this.limits.busySilenceCeilingMs;
 		const silence = this.silenceMs(input.now);
 		if (silence < limit) return undefined;
-		return {
-			silenceSeconds: seconds(silence), cpuPercent: cpu.toFixed(0), rssMb: mib(sample.rssBytes),
-			elapsedSeconds: seconds(input.now - this.startedAt), limitSeconds: seconds(limit),
-		};
+		return { silenceMinutes: String(Math.floor(silence / 60_000)), cpuPercent: cpu.toFixed(0), rssMb: mib(sample.rssBytes) };
 	}
 
 	/**

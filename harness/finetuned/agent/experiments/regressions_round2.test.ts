@@ -15,6 +15,7 @@ import { HARNESS_CONFIG, parseHarnessConfig } from "../harness/config.js";
 import { birthOf, confirmedTargets, ownedMembers, processIdentity, sameProcessAlive, type ProcessIdentity } from "./ownership.js";
 import { linuxProcesses, type MachineSample } from "./sampler.js";
 import type { ExperimentRecord, SupervisorLimits, Update } from "./types.js";
+import { COMMAND_STATUS_FILE, readCommandStatus } from "./launcher.js";
 
 const linux = process.platform === "linux";
 const roots: string[] = [];
@@ -43,7 +44,17 @@ function supervisor(root: string, options: { protection?: MachineProtection; lim
 	supervisors.push(created);
 	return { supervisor: created, updates };
 }
-const pidOf = (root: string, id: string) => JSON.parse(readFileSync(join(root, id, "experiment.json"), "utf8")).pid as number;
+/** The command's own PID, as the launcher records it (the run's group is led by the launcher). */
+const pidOf = (root: string, id: string) => {
+	const deadline = Date.now() + 5_000;
+	for (;;) {
+		const status = readCommandStatus(join(root, id, COMMAND_STATUS_FILE));
+		if (status) return status.pid;
+		if (Date.now() > deadline) throw new Error("the launcher recorded no command");
+		Bun.sleepSync(5);
+	}
+};
+const launcherOf = (root: string, id: string) => JSON.parse(readFileSync(join(root, id, "experiment.json"), "utf8")).pid as number;
 const alive = (pid: number) => { const identity = processIdentity(pid); return !!identity && !["Z", "X"].includes(identity.state); };
 const reading = (availableBytes: number): MachineSample => ({ availableBytes, totalBytes: 16e9, swapTotalBytes: 0, swapFreeBytes: 0 });
 const holding = (mib: number) => [process.execPath, "-e", `const memory = new Uint8Array(${mib} * 1024 * 1024).fill(1); console.log("holding"); await Bun.sleep(60_000); console.log(memory.length)`];
@@ -106,7 +117,7 @@ test.skipIf(!linux)("machine protection never stops the same victim twice; an un
 	const small = supervisor(join(root, "small"), { protection: guard });
 	const big = large.supervisor.start({ cwd: root, argv: holding(96), scope: "fixture", hypothesis: "large" });
 	const little = small.supervisor.start({ cwd: root, argv: holding(4), scope: "fixture", hypothesis: "small" });
-	strays.push(pidOf(join(root, "large"), big.id));
+	strays.push(pidOf(join(root, "large"), big.id), launcherOf(join(root, "large"), big.id));
 	await until(() => large.supervisor.output(big.id).text.includes("holding") && small.supervisor.output(little.id).text.includes("holding"));
 	await Bun.sleep(100);
 	pressure = true;
@@ -246,8 +257,9 @@ test.each([
 	expect(owner.status(view.id).status).toBe("running");
 	if (!reports) return;
 	const [update] = updates;
-	expect(update.kind).toBe("stale");
-	expect(update.note).toMatch(/^No output for [\d.]+ s while CPU stays busy at \d+% with \d+ MB resident, [\d.]+ s after the start\. Silence beyond 0\.6 s/);
+	expect(update.kind).toBe("busy-silence");
+	// Information only, worded neutrally: a silent busy run may be healthy.
+	expect(update.note).toMatch(/^For information only: no output for \d+ min at high CPU \(\d+%, \d+ MB resident\)\. If this is expected, ignore this note\.$/);
 	expect(Number(update.facts!.cpuPercent)).toBeGreaterThanOrEqual(HARNESS_CONFIG.supervision.idleCpuPercent);
 	expect(Number(update.facts!.rssMb)).toBeGreaterThan(0);
 }, 20_000);

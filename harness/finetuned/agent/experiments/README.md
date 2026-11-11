@@ -5,13 +5,36 @@ Darwin (libproc). `harness.config.json` has one validated `supervision` block.
 CPU is a percentage of one core and includes reaped children's time
 (`cutime`/`cstime`), so a loop of short subprocesses is not idle.
 
+On Linux every supervised command (harness trials, refit, confirmation and
+every agent shell call) runs under a launcher (`launcher.ts`, `reaper.py`):
+a small Python process from the project environment, standard library only,
+that marks itself a child subreaper (`prctl(PR_SET_CHILD_SUBREAPER)`, no
+privileges needed), runs the command and stays until no descendant remains.
+A process the command leaves behind (`setsid cmd &`, a daemon's double fork)
+re-parents to the launcher instead of to init, so it stays a descendant of
+the run's group leader and any later scan finds it, however soon its own
+parent exited: discovery does not depend on when a sample happens. The
+launcher leads the process group (`pgid` in `experiment.json` is its PID and
+`launcher` its argv) and records the command's own PID and exit in
+`command.json`. It ignores SIGTERM, SIGINT and SIGHUP; a stop kills the rest
+of the tree first, round after round (a process forked meanwhile re-parents to
+the launcher and the next round finds it), and the launcher then exits by
+itself, or is killed last. It resets SIGPIPE and SIGXFSZ, which Python
+ignores, before running the command. Darwin has no subreaper; there the
+process group is followed as before. The shared preflight checks the launcher
+(`supervision-launcher`) wherever it checks process supervision.
+
 On Linux every process of a run is tracked by birth identity (PID plus start
 time and boot ID): the process group while it is verifiably ours (spawned here,
 or its leader verified on reattach, and not seen empty since), descendants
 through their parent link, and every member seen earlier that is still the same
 process. A member stays tracked after the leader exits or after it left the
 group (`setsid`) and its parent died. RSS, CPU and I/O cover these members.
-Tracked members are persisted with the run (`supervisor-state.json`). One
+Tracked members are persisted with the run (`supervisor-state.json`). On
+reattach that state is validated field by field; a malformed state, gate or
+member list is treated as absent and recorded (`experiment_state_malformed`),
+never a crash. A tick that fails (the run's directory removed) is recorded
+(`experiment_tick_failed`) and never thrown out of the timer. One
 `/proc` scan per tick serves the sample, the protection refresh and the
 liveness check; I/O is read only for members. Sampling is free. Healthy
 progress never wakes an agent; completion and each kind of finding do.
@@ -25,9 +48,11 @@ Findings, each reported once per process lifetime:
   three output gaps spread over at least `minStallMs`) and then busy silence
   beyond `stallGapMultiple` times its longest gap. A trial fitting one fold
   silently, or a script that printed a start-up burst, is never stale.
-  Without a rhythm, busy silence beyond `busySilenceCeilingMs` (30 minutes;
-  the projected overrun when comparable work was measured) is reported once,
-  as stale, with CPU, memory and elapsed time. A run that prints once and then
+- **busy-silence** (information only): without a rhythm, busy silence beyond
+  `busySilenceCeilingMs` (30 minutes; the projected overrun when comparable
+  work was measured) is reported once under its own kind, worded neutrally:
+  "no output for 30 min at high CPU; if this is expected, ignore this note".
+  Never on top of stale or time-wasting. A run that prints once and then
   loops at full CPU is therefore never silent forever.
 - **time-wasting**: elapsed time beyond `overrunMultiple` times the projection
   for comparable work and beyond `overrunMinMs`. Shell calls are projected
@@ -78,17 +103,28 @@ blocks finishing but is not signalled.
 The log keeps all output. `output()` caps every read at 50 KiB by default and
 stops its cursor before a character the cap would cut, so no byte is lost. A
 cap below 4 bytes (one character's widest encoding) is refused, here and in the
-configuration. `createSupervisedBashTool(cwd, options)` provides a blocking
-SDK-compatible shell tool using the same supervisor; `options.argv` names the
-supervised process (a sandbox launcher). Its result is the answer: the end of
-the output within the cap (a traceback is at the end), a note with the omitted
-byte count, the exit code and the path of the full output. It delivers no exit
-or diagnostic update on top; only findings while the call runs reach the owner.
-The call returns when every tracked process is gone, so work it backgrounds
-keeps it open: background work belongs in harness trials. Its root must be writable and readable to the owning agent;
-pass sanitized session-local `env`, the owner's `deliver`, and the shared
-reporter `record` callback. Neither timeouts nor findings kill work; session
-cancellation and machine protection do.
+configuration. `createSupervisedBashTool(cwd, options)` provides an
+SDK-compatible shell tool with one supervisor per tool; `options.argv` names
+the supervised process (a sandbox launcher). A call returns when its own
+command (the shell process) ends, as a normal shell does, with the end of the
+output within the cap (a traceback is at the end), a note with the omitted
+byte count, the exit code and the path of the full output. Processes the
+command left running stay with the tool's supervisor: sampled, under machine
+protection, their findings delivered to the owner, their output continuing in
+the same file. The result says plainly how many are still running and that
+they are tracked, with their PIDs, and that `kill <PIDs>` stops them; they
+are stopped when the owning session ends (`closeAgentShells`, or the tool's
+`close()`). `timeout` (seconds) stops the call's whole process tree and the
+result says so. Findings raised while a call runs are delivered through the
+owner's `deliver` (`steer` on a running session), so they reach the agent
+right after the result; findings before a session is bound join its next
+turn. No exit or diagnostic update is added on top of a result. Its root must
+be writable and readable to the owning agent; pass sanitized session-local
+`env`, the owner's `deliver`, and the shared reporter `record` callback.
+Findings never kill work; `timeout`, session cancellation and machine
+protection do. In a sandbox nothing outlives the call: bubblewrap's PID 1
+ends the namespace when the command ends, and `--die-with-parent` ends it
+with the launcher.
 
 ## Integration hand-off
 
@@ -111,9 +147,18 @@ to `.shell-calls/` in the first writable mount (the agent's workspace), or to
 `runs/finetuned/shell-calls/` for host shells. A tool is made before its
 session exists; `runSession` and the subagent factory bind every tool they
 hand to a session (`bindAgentShells`, again for a replacement session), and
-refuse a `bash` tool from anywhere else (`assertSupervisedBash`). Findings
-before binding join the session's next turn. `agent/pi_sdk.ts` (an
-observability experiment, not the pipeline) keeps the raw SDK tool.
+refuse a `bash` tool from anywhere else (`assertSupervisedBash`). They
+validate and bind the **final** tool set of a session, after custom tools
+replaced built-ins by name (`replaceToolsByName`), never the originals.
+A supervised tool carries its binding under an enumerable, module-private
+symbol, so a wrapper made by object spread (`{ ...tool, execute }`) or by
+`wrapAgentTool(tool, wrap)` is still recognised, and binding the wrapper binds
+the supervisor the original reports through; the brand cannot be put on a
+raw shell. Findings before binding join the session's next turn. The sandbox
+worker (`run/solve_tool_worker.ts`) and `isolatedSolveTools` have no raw shell
+definition at all: `bash` there is always the supervised one.
+`agent/pi_sdk.ts`, the separate observability experiment and not the
+pipeline, keeps an unsupervised SDK bash.
 
 Cross-harness-process arbitration and Darwin swap-full sampling and member
 tracking (Darwin still follows the process group) remain limitations, not
@@ -124,8 +169,13 @@ verified capabilities.
 Run `./dev bun test harness/finetuned/agent/experiments
 harness/finetuned/agent/harness` (on one command line), then
 `./dev bun run typecheck`; `run/agent_shell.test.ts` covers the wiring. Real
-scripts verify stuck/stale once-only reports, the busy-silence ceiling, healthy
-silence, the shell tail/spill without extra updates, process-tree stops
+scripts verify stuck/stale once-only reports, the busy-silence note, healthy
+silence, a detached worker whose parent exits before the first sample (found
+and stopped), a process forked during a stop, default SIGPIPE, the launcher
+preflight, malformed persisted state (`regressions_round3.test.ts`), a shell
+call that backgrounds work, `timeout`, a finding reaching a real session, a
+wrapped bash replacing the child's built-in, a sandboxed call leaving nothing
+behind and a worker without a shell (`run/agent_shell_round3.test.ts`), the shell tail/spill without extra updates, process-tree stops
 including a `setsid` descendant whose parent exited and a group whose leader
 exited, a reattach that keeps reported kinds and calibration, and
 process-group cleanup. An injected snapshot verifies that a reused PID is never

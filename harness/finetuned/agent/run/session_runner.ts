@@ -28,7 +28,7 @@ import { TOOL_PROMPTS_SHA256 } from "../prompts/tools.js";
 import { preparePythonEnvironment, pythonChangeCursor, recordPythonEnvironmentEnd, readPythonEnvironment } from "./python_environment.js";
 import { SmartContextSession } from "../context/session.js";
 import type { Wakeable } from "../experiments/index.js";
-import { agentBashTool, assertSupervisedBash, bindAgentShells, hostShell, HOST_SHELL_LOG_ROOT } from "./agent_shell.js";
+import { agentBashTool, assertSupervisedBash, bindAgentShells, closeAgentShells, hostShell, HOST_SHELL_LOG_ROOT } from "./agent_shell.js";
 import type { SuppliedInput } from "../pipeline/types.js";
 
 /** How long one agent session may run. The cost signal is measured against it. */
@@ -144,6 +144,8 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
   if ((options.tools === undefined || options.tools.includes("bash")) && !customTools.some(tool => tool.name === "bash")) {
    customTools.push(sessionBashTool(sessionCwd, env, join(HOST_SHELL_LOG_ROOT, pythonSessionId)));
   }
+		// The final set the session gets (custom tools replace built-ins by name) is what is validated and bound.
+		assertSupervisedBash(customTools);
 		const requestedExtensions = options.extensionPaths ?? [];
         const webPaths = requestedExtensions.filter(path => /(?:^|[/\\])web_search\.(?:ts|js)$/.test(path));
         const extensionPaths = requestedExtensions.filter(path => !webPaths.includes(path));
@@ -279,7 +281,9 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 			stall.stop();
 			if (onAbort) options.signal?.removeEventListener("abort", onAbort);
 			options.feedback?.unbind(logical);
-			await logical.close();
+			try { await logical.close(); }
+			// Whatever the session's shell calls left running ends with the session.
+			finally { await closeAgentShells(customTools); }
 		}
 	}
 }

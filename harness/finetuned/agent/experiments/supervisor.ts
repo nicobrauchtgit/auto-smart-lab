@@ -15,7 +15,7 @@
 
 import { machineProtection, type MachineProtection, type ProtectedWork } from "./protection.js";
 import { randomUUID } from "node:crypto";
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
 import { join } from "node:path";
 
@@ -32,6 +32,7 @@ import {
 	type LinuxProcess, type MachineSample,
 } from "./sampler.js";
 import { decodePrefix, fileSize, readRange, readTail } from "./text.js";
+import { COMMAND_STATUS_FILE, commandEnded, launchArgv, readCommandStatus, type CommandStatus } from "./launcher.js";
 import {
 	DEFAULT_LIMITS, MIN_OUTPUT_BYTES,
 	type ExperimentRecord, type ExperimentSpec, type ExperimentStatus, type ExperimentView,
@@ -95,6 +96,36 @@ interface Scan { at: number; members: LinuxProcess[]; groupAlive: boolean }
 
 let processPrompts: PromptSnapshot | undefined;
 
+const isIdentity = (value: unknown): value is ProcessIdentity => {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+	const { pid, pgid, birth, state } = value as Record<string, unknown>;
+	return Number.isSafeInteger(pid) && (pid as number) > 0 && Number.isSafeInteger(pgid)
+		&& typeof birth === "string" && birth.length > 0 && typeof state === "string";
+};
+
+/**
+ * The parts of a persisted or supplied state a reattach uses, each validated.
+ * A malformed field is dropped (treated as absent) and named in `malformed`;
+ * a malformed member is dropped from an otherwise valid list.
+ */
+export function restoredState(value: unknown): { state: { gate?: Partial<GateState>; members?: ProcessIdentity[] }; malformed: string[] } {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return { state: {}, malformed: ["state"] };
+	const { gate, members } = value as Record<string, unknown>;
+	const state: { gate?: Partial<GateState>; members?: ProcessIdentity[] } = {};
+	const malformed: string[] = [];
+	if (gate !== undefined) {
+		if (gate && typeof gate === "object" && !Array.isArray(gate)) state.gate = gate as Partial<GateState>;
+		else malformed.push("gate");
+	}
+	if (members !== undefined) {
+		if (Array.isArray(members)) {
+			state.members = members.filter(isIdentity);
+			if (state.members.length !== members.length) malformed.push("members[]");
+		} else malformed.push("members");
+	}
+	return { state, malformed };
+}
+
 /** The note template for each kind of update. */
 const NOTE_PROMPTS: Partial<Record<UpdateKind, PromptId>> = {
 	exited: "experiments.note-exited",
@@ -104,6 +135,7 @@ const NOTE_PROMPTS: Partial<Record<UpdateKind, PromptId>> = {
 	stale: "experiments.note-stale",
 	flooding: "experiments.note-flooding",
 	"time-wasting": "experiments.note-time-wasting",
+	"busy-silence": "experiments.note-busy-silence",
 };
 
 interface Live {
@@ -139,7 +171,12 @@ interface Live {
 	members: Map<string, ProcessIdentity>;
 	/** The process group is ours: spawned or verified here, and not seen empty since. */
 	groupHeld: boolean;
+	/** The command's own end (not its tree's): from the launcher's status file, or the child's exit without one. */
+	command?: CommandStatus;
 }
+
+/** Where the command itself stands, apart from processes it left behind. */
+export interface CommandExit { ended: boolean; exitCode?: number; signal?: string }
 
 const memberKey = (identity: ProcessIdentity) => `${identity.pid}:${identity.birth}`;
 
@@ -188,9 +225,16 @@ export class ExperimentSupervisor {
 		const directory = retainedDirectory ?? join(this.options.root, id);
 		mkdirSync(directory, { recursive: true });
 		const logPath = join(directory, "output.log");
+		// A retained directory may hold the status of an earlier attempt.
+		const statusPath = join(directory, COMMAND_STATUS_FILE);
+		rmSync(statusPath, { force: true });
+		// Under the child subreaper every process the command leaves behind stays a
+		// descendant of the group leader, so any later scan finds it through parent
+		// links, however soon its own parent exited.
+		const launch = launchArgv(statusPath, spec.argv);
 		const logFd = openSync(logPath, "a", 0o600);
 
-		const child = spawn(spec.argv[0], spec.argv.slice(1), {
+		const child = spawn(launch.argv[0], launch.argv.slice(1), {
 			cwd: spec.cwd,
 			// Its own process group. `n_jobs > 1` means joblib workers, and killing
 			// only the parent orphans them to burn CPU into the next iteration.
@@ -208,6 +252,7 @@ export class ExperimentSupervisor {
 		const pgid = child.pid ?? 0;
 		const record: ExperimentRecord = {
 			...spec, id, pid: child.pid ?? 0, pgid,
+			...(launch.launcher ? { launcher: launch.argv.slice(0, launch.argv.length - spec.argv.length) } : {}),
 			startedAt: new Date().toISOString(), directory, logPath,
 			environmentFingerprint: this.options.environmentFingerprint,
 			pipelineRunId: this.options.pipelineRunId,
@@ -234,6 +279,14 @@ export class ExperimentSupervisor {
 			this.finish(entry);
 		});
 		child.on("exit", (code, signal) => {
+			if (record.launcher) {
+				// The launcher ends only after the whole tree; the command's own exit is in its status file.
+				const command = this.commandStatus(entry);
+				if (command?.exitCode !== undefined) code = command.exitCode;
+				else if (command?.signal) { code = null; signal = command.signal as NodeJS.Signals; }
+			} else {
+				entry.command = { pid: record.pid, ...(code !== null ? { exitCode: code } : {}), ...(signal ? { signal } : {}) };
+			}
 			entry.exitCode = code ?? undefined;
 			// Only explicit stop is intentional; an unexpected signal is interrupted.
 			if (entry.status === "running") entry.exitCode = code ?? (signal ? -1 : undefined);
@@ -241,7 +294,7 @@ export class ExperimentSupervisor {
 			// waits rather than declaring the trial over here.
 			setTimeout(() => this.finish(entry), 50);
 		});
-		entry.timer = setInterval(() => this.tick(entry), this.limits.sampleIntervalMs);
+		entry.timer = setInterval(() => this.safeTick(entry), this.limits.sampleIntervalMs);
 		entry.timer.unref?.();
 
 		this.options.record?.("experiment_started", {
@@ -309,8 +362,58 @@ export class ExperimentSupervisor {
 		const targets = this.stopTargets(entry);
 		this.signalTree(entry, targets, "SIGTERM");
 		if (await gone()) return;
+		if (entry.record.launcher) {
+			// The launcher ignores SIGTERM and is killed last: while it lives, a process
+			// forked during the stop re-parents to it and the next round finds it. It
+			// exits by itself once nothing of its tree remains.
+			const deadline = Date.now() + this.limits.stopGraceMs;
+			while (Date.now() < deadline) {
+				const rest = this.stopTargets(entry).filter((target) => !this.isLauncher(entry, target));
+				if (!rest.length) break;
+				this.signalTree(entry, rest, "SIGKILL", false);
+				await new Promise((settle) => setTimeout(settle, Math.min(25, this.limits.stopGraceMs)));
+			}
+			if (await gone()) return;
+		}
 		this.signalTree(entry, [...targets, ...this.stopTargets(entry)], "SIGKILL");
 		await gone();
+	}
+
+	private isLauncher(entry: Live, target: ProcessIdentity): boolean {
+		// The launcher leads the group it was spawned into, whichever PID a recovered record names.
+		return !!entry.record.launcher && target.pid === entry.record.pgid;
+	}
+
+	/** The launcher's record of the command, cached once the command ended. */
+	private commandStatus(entry: Live): CommandStatus | undefined {
+		if (commandEnded(entry.command) || !entry.record.launcher) return entry.command;
+		const status = readCommandStatus(join(entry.record.directory, COMMAND_STATUS_FILE));
+		if (status) entry.command = status;
+		return entry.command;
+	}
+
+	/**
+	 * Whether the command itself has ended, apart from processes it left behind.
+	 * A shell call returns then, as a shell does.
+	 */
+	commandExit(id: string): CommandExit {
+		const entry = this.require(id);
+		const status = this.commandStatus(entry);
+		const ended = commandEnded(status) || entry.finished === true || entry.status !== "running";
+		return { ended, ...(status?.exitCode !== undefined ? { exitCode: status.exitCode } : {}),
+			...(status?.signal ? { signal: status.signal } : {}) };
+	}
+
+	/**
+	 * PIDs of the run's live processes from a fresh scan, without the launcher:
+	 * what a command left running after it ended.
+	 */
+	remaining(id: string): number[] {
+		const entry = this.require(id);
+		if (entry.finished) return [];
+		const scan = this.scan(entry, 0);
+		if (scan) return scan.members.map((member) => member.pid).filter((pid) => !(entry.record.launcher && pid === entry.record.pgid));
+		return liveGroup(entry.record.pgid).map((member) => member.pid).filter((pid) => pid !== entry.record.pid);
 	}
 
 	/**
@@ -365,13 +468,25 @@ export class ExperimentSupervisor {
 		if (this.live.has(record.id)) return this.status(record.id);
 		const startedAt = Date.parse(record.startedAt);
 		// What the earlier supervisor learned: reported kinds, output calibration and tracked members.
-		let persisted: Partial<AttachState> | undefined;
-		try { persisted = JSON.parse(readFileSync(join(record.directory, "supervisor-state.json"), "utf8")); }
-		catch { persisted = undefined; }
+		// Malformed state is treated as absent and recorded; it never stops the reattach.
+		const statePath = join(record.directory, "supervisor-state.json");
+		const malformed: string[] = [];
+		let persisted: { gate?: Partial<GateState>; members?: ProcessIdentity[] } = {};
+		if (existsSync(statePath)) {
+			let value: unknown;
+			try { value = JSON.parse(readFileSync(statePath, "utf8")); } catch { malformed.push("supervisor-state.json"); }
+			if (value !== undefined) {
+				const restored = restoredState(value);
+				persisted = restored.state;
+				malformed.push(...restored.malformed.map((field) => `supervisor-state.json:${field}`));
+			}
+		}
+		const given = restoredState({ gate: state.gate, members: state.members });
+		malformed.push(...given.malformed.map((field) => `caller:${field}`));
+		if (malformed.length) this.options.record?.("experiment_state_malformed", { experiment_id: record.id, fields: malformed });
 		const gate = this.gate(startedAt, record.expectedGapMs);
-		gate.restore(state.gate ?? persisted?.gate);
-		const members = (state.members ?? persisted?.members ?? []).filter((member) =>
-			member && Number.isSafeInteger(member.pid) && member.pid > 0 && typeof member.birth === "string");
+		gate.restore(given.state.gate ?? persisted.gate);
+		const members = given.state.members ?? persisted.members ?? [];
 		const entry: Live = { record, identity: state.identity, startedAt, status: state.status ?? "running",
 			stopReason: state.stopReason, logBytes: state.cursor ?? 0, lines: state.lines ?? 0, pending: [], recent: [],
 			gate, lastLineAt: gate.lastOutputAt,
@@ -381,7 +496,7 @@ export class ExperimentSupervisor {
 		this.live.set(record.id, entry);
 		if (entry.status === "running") {
 			this.protect(entry);
-			entry.timer = setInterval(() => this.tick(entry), this.limits.sampleIntervalMs);
+			entry.timer = setInterval(() => this.safeTick(entry), this.limits.sampleIntervalMs);
 			entry.timer.unref?.();
 		} else {
 			entry.finished = true;
@@ -459,13 +574,13 @@ export class ExperimentSupervisor {
 		return scan ? confirmedTargets(scan.members) : [];
 	}
 
-	private signalTree(entry: Live, targets: ProcessIdentity[], signal: NodeJS.Signals): void {
+	private signalTree(entry: Live, targets: ProcessIdentity[], signal: NodeJS.Signals, group = true): void {
 		const kill = this.options.kill ?? ((pid: number, sig: NodeJS.Signals) => { process.kill(pid, sig); });
 		// The group as a whole, while a verified member still holds its ID: a group
 		// ID is not reused while any process carries it. This also reaches members
 		// born after the scan.
 		const pgid = entry.record.pgid;
-		const held = pgid > 0 && (ownedProcessAlive(entry.identity)
+		const held = group && pgid > 0 && (ownedProcessAlive(entry.identity)
 			|| targets.some((target) => target.pgid === pgid && ownedProcessAlive(target)));
 		if (held) {
 			try { kill(-pgid, signal); } catch { /* already gone */ }
@@ -614,6 +729,22 @@ export class ExperimentSupervisor {
 	}
 
 	/**
+	 * A tick from the timer. A failure (the run's directory removed, a disk
+	 * full) is recorded once and never thrown out of the timer, where it would
+	 * end the harness process; the next tick tries again.
+	 */
+	private readonly tickFailures = new WeakSet<Live>();
+	private safeTick(entry: Live): void {
+		try { this.tick(entry); }
+		catch (error) {
+			if (this.tickFailures.has(entry)) return;
+			this.tickFailures.add(entry);
+			this.options.record?.("experiment_tick_failed", { experiment_id: entry.record.id,
+				error: error instanceof Error ? error.message : String(error) });
+		}
+	}
+
+	/**
 	 * One tick: one `/proc` scan for liveness, the sample and the protection
 	 * refresh, and one machine reading for the warning and the protection check.
 	 * Warnings are evaluated before protection acts on the same reading.
@@ -676,6 +807,11 @@ export class ExperimentSupervisor {
 		if (entry.timer) {
 			clearInterval(entry.timer);
 			entry.timer = undefined;
+		}
+		// The tree can be gone before the launcher's exit event arrives; its status file already has the command's exit.
+		if (entry.exitCode === undefined && entry.status === "running" && entry.record.launcher) {
+			const command = this.commandStatus(entry);
+			entry.exitCode = command?.exitCode ?? (command?.signal ? -1 : undefined);
 		}
 		// A requested stop is complete only now that no process of the run remains.
 		if (entry.status === "running") entry.status = entry.stopReason ? "stopped" : "exited";

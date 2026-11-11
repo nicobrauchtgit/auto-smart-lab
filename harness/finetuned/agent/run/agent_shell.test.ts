@@ -118,9 +118,9 @@ test.skipIf(!linux)("P6: an agent shell call that pushes RAM below the reserve i
 	expect(contexts[1]).toContain("next-call-ran");
 	expect(contexts).toHaveLength(2);
 	// Nothing of the stopped call survives.
-	const records = readdirSync(join(root, "shell-calls")).flatMap((call) => readdirSync(join(root, "shell-calls", call))
-		.filter((id) => existsSync(join(root, "shell-calls", call, id, "experiment.json")))
-		.map((id) => JSON.parse(readFileSync(join(root, "shell-calls", call, id, "experiment.json"), "utf8"))));
+	const records = readdirSync(join(root, "shell-calls"))
+		.filter((id) => existsSync(join(root, "shell-calls", id, "experiment.json")))
+		.map((id) => JSON.parse(readFileSync(join(root, "shell-calls", id, "experiment.json"), "utf8")));
 	expect(records).toHaveLength(2);
 	for (const record of records) expect(processIdentity(record.pid)?.state ?? "gone").toMatch(/gone|Z/);
 }, 60_000);
@@ -220,9 +220,8 @@ test.skipIf(!bubblewrap)("a sandboxed session's bash is supervised with the sand
 	expect(result).toContain("isolated 1");
 	// The supervised process is the sandbox launcher, and its output is inside the agent's workspace.
 	const calls = join(root, ".shell-calls");
-	const [call] = readdirSync(calls);
-	const [id] = readdirSync(join(calls, call));
-	const record = JSON.parse(readFileSync(join(calls, call, id, "experiment.json"), "utf8"));
+	const [id] = readdirSync(calls);
+	const record = JSON.parse(readFileSync(join(calls, id, "experiment.json"), "utf8"));
 	expect(record.argv[0]).toBe(policy.executable);
 	expect(record.argv).toContain("--unshare-all");
 }, 30_000);

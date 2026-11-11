@@ -1,0 +1,1 @@
+{{count}} process(es) this command started are still running: PIDs {{pids}}. They stay tracked: machine protection covers them, findings about them are reported to you, and their output continues in the full output file. Stop them with `kill {{pids}}`; they are stopped when this session ends.

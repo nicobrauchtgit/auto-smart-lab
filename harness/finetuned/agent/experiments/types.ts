@@ -40,6 +40,11 @@ export interface ExperimentRecord extends ExperimentSpec {
 	id: string;
 	pid: number;
 	pgid: number;
+	/**
+	 * The child subreaper `argv` runs under (`launcher.ts`), when there is one.
+	 * It leads the process group, so `pgid` is its PID.
+	 */
+	launcher?: string[];
 	startedAt: string;
 	directory: string;
 	logPath: string;
@@ -86,7 +91,7 @@ export interface ExperimentView {
 }
 
 /** Why the supervisor woke the agent. Routine progress is coalesced; the rest jumps the queue. */
-export type UpdateKind = "progress" | "stalled" | "exited" | "diagnostic" | "memory" | "stale" | "time-wasting" | "flooding" | "machine-at-risk";
+export type UpdateKind = "progress" | "stalled" | "exited" | "diagnostic" | "memory" | "stale" | "time-wasting" | "flooding" | "machine-at-risk" | "busy-silence";
 
 export interface Update {
 	kind: UpdateKind;

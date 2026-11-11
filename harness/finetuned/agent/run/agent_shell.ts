@@ -10,9 +10,16 @@
  * launcher itself: the call runs inside the same boundary as before.
  *
  * A tool is made before its session exists, so its owner is bound later:
- * `runSession` and the subagent factory call `bindAgentShells` for every tool
- * they hand to a session, and `assertSupervisedBash` refuses a `bash` tool from
- * anywhere else. A future role that gets bash is supervised, or does not start.
+ * `runSession` and the subagent factory call `bindAgentShells` for the final
+ * tool set they hand to a session (after replacement by name), and
+ * `assertSupervisedBash` refuses a `bash` tool from anywhere else. A future
+ * role that gets bash is supervised, or does not start.
+ *
+ * A supervised tool carries its binding under an enumerable symbol, which
+ * object spread copies: a wrapper made with `{ ...tool, execute }` or
+ * `wrapAgentTool` is still recognised, and binding the wrapper binds the
+ * supervisor the original reports through. Only bindings made here count, so
+ * the brand cannot be forged onto a raw shell.
  */
 
 import { accessSync, constants } from "node:fs";
@@ -58,9 +65,18 @@ interface Binding {
 	owner?: ShellOwner;
 	/** Findings before a session was bound; they join its next turn. */
 	pending: { text: string; update: Update }[];
+	/** Stops what the tool's calls left running. */
+	close(): Promise<void>;
 }
 
-const bindings = new WeakMap<object, Binding>();
+/** Enumerable, so `{ ...tool }` copies it; module-private, so only this module brands. */
+const AGENT_SHELL: unique symbol = Symbol("agent-shell");
+const bindings = new WeakSet<Binding>();
+
+function bindingOf(tool: object): Binding | undefined {
+	const value = (tool as { [AGENT_SHELL]?: unknown })[AGENT_SHELL];
+	return value && typeof value === "object" && bindings.has(value as Binding) ? value as Binding : undefined;
+}
 
 function bashOn(path: string | undefined): string {
 	for (const directory of (path ?? "").split(delimiter).filter(Boolean)) {
@@ -106,7 +122,7 @@ export function sandboxShell(policy: SolveSandbox, logRoot?: string): AgentShell
 
 /** The `bash` tool every agent gets: blocking, supervised, reporting to its owner session. */
 export function agentBashTool(shell: AgentShell): ToolDefinition {
-	const binding: Binding = { pending: [] };
+	const binding: Binding = { pending: [], close: async () => undefined };
 	const options = {
 		// Read when each call starts, like the owner below.
 		get root() { return shell.logRoot; },
@@ -121,13 +137,44 @@ export function agentBashTool(shell: AgentShell): ToolDefinition {
 			if (binding.pending.length > 100) binding.pending.shift();
 		},
 	};
-	const tool = defineTool(createSupervisedBashTool(shell.cwd, options) as never) as ToolDefinition;
-	bindings.set(tool, binding);
+	const supervised = createSupervisedBashTool(shell.cwd, options);
+	binding.close = () => supervised.close();
+	const tool = defineTool(supervised as never) as ToolDefinition;
+	bindings.add(binding);
+	Object.defineProperty(tool, AGENT_SHELL, { value: binding, enumerable: true });
 	return tool;
 }
 
 export function isAgentShellTool(tool: object): boolean {
-	return bindings.has(tool);
+	return bindingOf(tool) !== undefined;
+}
+
+/**
+ * Wrap a tool's `execute` and keep everything else, the supervision brand
+ * included. `wrap` receives the original `execute` (bound to the original
+ * tool) and returns the replacement, which must delegate to it.
+ */
+export function wrapAgentTool<T extends ToolDefinition>(tool: T, wrap: (execute: T["execute"]) => T["execute"]): T {
+	const execute = tool.execute.bind(tool) as T["execute"];
+	const wrapped = { ...tool, execute: wrap(execute) } as T;
+	const binding = bindingOf(tool);
+	if (binding) Object.defineProperty(wrapped, AGENT_SHELL, { value: binding, enumerable: true });
+	return wrapped;
+}
+
+/**
+ * The tool set a session gets: `defaults`, each replaced by a tool of the same
+ * name from `replacements`, plus the remaining replacements. This is the set
+ * to validate and bind, never the originals.
+ */
+export function replaceToolsByName<T extends Pick<ToolDefinition, "name">>(defaults: readonly T[], replacements: readonly T[] = []): T[] {
+	return [...new Map([...defaults, ...replacements].map((tool) => [tool.name, tool])).values()];
+}
+
+/** Stop what the agent shell tools in `tools` left running. Called when their session ends. */
+export async function closeAgentShells(tools: readonly object[]): Promise<void> {
+	const unique = new Set(tools.map(bindingOf).filter((binding): binding is Binding => binding !== undefined));
+	await Promise.all([...unique].map((binding) => binding.close().catch(() => undefined)));
 }
 
 /**
@@ -137,7 +184,7 @@ export function isAgentShellTool(tool: object): boolean {
 export function bindAgentShells(tools: readonly object[], owner: ShellOwner): number {
 	let bound = 0;
 	for (const tool of tools) {
-		const binding = bindings.get(tool);
+		const binding = bindingOf(tool);
 		if (!binding) continue;
 		binding.owner = owner;
 		bound++;

@@ -139,7 +139,8 @@ export async function runConfirmation(options: ConfirmationOptions): Promise<Con
     const statePath = join(workerDirectory, "supervisor-state.json");
     const state = existsSync(statePath) ? json(statePath) : undefined;
     if (ownedProcessAlive(owner?.identity) || ownedProcessAlive(state?.identity)) {
-     if (ownedProcessAlive(owner?.identity) && ownedProcessAlive(state?.identity) && owner.identity.birth !== state.identity.birth) throw new Error("Conflicting live confirmation ownership receipts");
+     // The supervisor records the launcher that leads the worker's group; the worker's receipt is a process in that group.
+     if (ownedProcessAlive(owner?.identity) && ownedProcessAlive(state?.identity) && owner.identity.birth !== state.identity.birth && owner.identity.pgid !== state.identity.pgid) throw new Error("Conflicting live confirmation ownership receipts");
      if (ownedProcessAlive(owner?.identity)) atomicJson(join(workerDirectory, "launch-released.json"), { token: owner.token });
      const identity = ownedProcessAlive(owner?.identity) ? owner.identity : state.identity;
      supervisor.attach({ ...prior, id: "confirmation", pid: identity.pid, pgid: identity.pgid, directory: workerDirectory,

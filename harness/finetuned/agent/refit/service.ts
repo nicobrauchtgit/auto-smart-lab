@@ -262,7 +262,8 @@ export async function runRefit(options: RefitOptions): Promise<{ artifacts: Stag
    const ownerPath = join(workerDirectory, "worker-owner.json");
    const owner = existsSync(ownerPath) ? json(ownerPath) : undefined;
    if (ownedProcessAlive(state.identity) || ownedProcessAlive(owner?.identity)) {
-    if (ownedProcessAlive(state.identity) && ownedProcessAlive(owner?.identity) && state.identity.birth !== owner.identity.birth) throw new Error("Conflicting live refit ownership receipts; inspect recorded groups before retry");
+    // The supervisor records the launcher that leads the worker's group; the worker's receipt is a process in that group.
+    if (ownedProcessAlive(state.identity) && ownedProcessAlive(owner?.identity) && state.identity.birth !== owner.identity.birth && state.identity.pgid !== owner.identity.pgid) throw new Error("Conflicting live refit ownership receipts; inspect recorded groups before retry");
     const identity = ownedProcessAlive(owner?.identity) ? owner.identity : state.identity;
     if (ownedProcessAlive(owner?.identity)) atomicJson(join(workerDirectory, "launch-released.json"), { token: owner.token });
     supervisor.attach({ ...record, pid: identity.pid, pgid: identity.pgid }, { ...state, identity, status: "running" });

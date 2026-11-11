@@ -86,8 +86,9 @@ test("a pressure stop informs the owner, retains peak memory and allows the next
 });
 test("supervised bash keeps the end of a flooding output within the cap and adds no exit or diagnostic report", async () => {
  const root = mkdtempSync(join(tmpdir(), "bash-supervision-")); const updates: Update[] = [];
+ let tool: ReturnType<typeof createSupervisedBashTool> | undefined;
  try {
-  const tool = createSupervisedBashTool(root, { root, env: { PATH: process.env.PATH! }, deliver: (_, u) => { updates.push(u); }, limits: { sampleIntervalMs: 25, stopGraceMs: 25 } });
+  tool = createSupervisedBashTool(root, { root, env: { PATH: process.env.PATH! }, deliver: (_, u) => { updates.push(u); }, limits: { sampleIntervalMs: 25, stopGraceMs: 25 } });
   const result = await tool.execute("bash-fixture", { command: "head -c 100000 /dev/zero | tr '\\0' x; echo; echo 'Traceback (most recent call last):'; echo 'ValueError: the last line'; sleep 0.2" });
   const text = result.content[0].text;
   expect(Buffer.byteLength(text)).toBeLessThanOrEqual(DEFAULT_LIMITS.outputCapBytes);
@@ -107,20 +108,21 @@ test("supervised bash keeps the end of a flooding output within the cap and adds
   // at most once, and only while the call was still running.
   expect(updates.filter(update => update.kind !== "flooding")).toEqual([]);
   expect(updates.length).toBeLessThanOrEqual(1);
- } finally { rmSync(root, { recursive: true, force: true }); }
+ } finally { await tool?.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
 test("a short shell call after quick ones of a different kind is not time-wasting", async () => {
  const root = mkdtempSync(join(tmpdir(), "bash-projection-")); const updates: Update[] = [];
+ let tool: ReturnType<typeof createSupervisedBashTool> | undefined;
  try {
-  const tool = createSupervisedBashTool(root, { root, env: { PATH: process.env.PATH! }, deliver: (_, u) => { updates.push(u); }, limits: { sampleIntervalMs: 25, stopGraceMs: 25 } });
+  tool = createSupervisedBashTool(root, { root, env: { PATH: process.env.PATH! }, deliver: (_, u) => { updates.push(u); }, limits: { sampleIntervalMs: 25, stopGraceMs: 25 } });
   for (let i = 0; i < 3; i++) await tool.execute(`quick-${i}`, { command: "true" });
   expect(shellProjection(shellCommandKey(root, "true"))).toBeDefined();
   expect(shellProjection(shellCommandKey(root, "sleep 1.2"))).toBeUndefined();
   const slow = await tool.execute("slow", { command: "sleep 1.2" });
   expect(slow.details.status).toBe("exited");
   expect(updates).toEqual([]);
- } finally { rmSync(root, { recursive: true, force: true }); }
+ } finally { await tool?.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
 test.each([

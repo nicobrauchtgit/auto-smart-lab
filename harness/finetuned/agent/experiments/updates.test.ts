@@ -309,10 +309,8 @@ describe("busy silence far beyond anything plausible", () => {
 		gate.observeLine(START + 2_000);
 		expect(at(gate, 2_000 + 29 * 60_000)).toBeNull();
 		const update = at(gate, 2_000 + 30 * 60_000);
-		expect(update?.kind).toBe("stale");
-		expect(update?.notePrompt).toBe("experiments.note-busy-silence");
-		expect(update?.facts).toEqual({ silenceSeconds: "1800.0", cpuPercent: "100", rssMb: "2048",
-			elapsedSeconds: "1802.0", limitSeconds: "1800.0" });
+		expect(update?.kind).toBe("busy-silence");
+		expect(update?.facts).toEqual({ silenceMinutes: "30", cpuPercent: "100", rssMb: "2048" });
 		expect(at(gate, 4 * 3_600_000)).toBeNull();
 	});
 

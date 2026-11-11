@@ -40,15 +40,17 @@ test.skipIf(process.platform !== "linux")("a stop reaches a descendant that left
 	const owner = supervisor(root);
 	// The background child calls setsid() in place: its own session and group, parent still bash.
 	const view = owner.start({ argv: ["bash", "-c", "setsid sleep 60 & wait"], cwd: root, hypothesis: "tree", scope: "fixture" });
-	const pid = JSON.parse(readFileSync(join(root, view.id, "experiment.json"), "utf8")).pid as number;
+	// The group is led by the launcher; the command (bash) is its child.
+	const pgid = JSON.parse(readFileSync(join(root, view.id, "experiment.json"), "utf8")).pgid as number;
 	let escaped: ProcessIdentity | undefined;
 	await until(() => {
-		const child = linuxProcesses().find((p) => p.ppid === pid && p.pgid !== pid);
+		const bash = linuxProcesses().find((p) => p.ppid === pgid && p.pgid === pgid);
+		const child = bash && linuxProcesses().find((p) => p.ppid === bash.pid && p.pgid !== pgid);
 		escaped = child ? processIdentity(child.pid) : undefined;
 		return escaped !== undefined;
 	});
 	// Machine protection measures it as part of this owner's work...
-	expect(sampleLinuxGroup(pid, undefined, "/proc", 0)?.pids).toContain(escaped!.pid);
+	expect(sampleLinuxGroup(pgid, undefined, "/proc", 0)?.pids).toContain(escaped!.pid);
 	// ...so a stop must end it too, not only the group.
 	await owner.stop(view.id, "too big");
 	await until(() => !ownedProcessAlive(escaped));

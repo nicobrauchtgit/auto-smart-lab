@@ -1,6 +1,5 @@
 import { createBashToolDefinition } from "@earendil-works/pi-coding-agent";
-import { mkdtempSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { ExperimentSupervisor, type SupervisorOptions } from "./supervisor.js";
 
 /** Comparable shell calls needed before one can be called slow. */
@@ -41,53 +40,105 @@ export interface SupervisedBashOptions extends SupervisorOptions {
 	argv?: (command: string) => string[];
 }
 
-/** Blocking shell tool, with the same sampler/arbiter as harness trials.
- * Callers supply the owning session's delivery and reporter callbacks.
- * root must be writable and visible to that session's read tool.
+/**
+ * Shell tool with the same sampler, findings and machine protection as harness trials.
  *
- * The tool result is the answer: the end of the output (within the cap), the
- * exit code and the path of the full output. Only findings while the call runs
- * (stuck, stale, flooding, time-wasting, runaway memory, machine protection)
- * are delivered on top of it.
+ * A call returns when its own command (the shell) ends, as a shell does. What
+ * the command left running stays with the tool's supervisor: sampled, under
+ * machine protection, its findings delivered to the owner, and stopped when
+ * the tool is closed (the owning session ends). The result says how many are
+ * still running, their PIDs and how to stop them. `timeout` (seconds) stops
+ * the call's whole process tree and says so.
+ *
+ * The result is the end of the output (within the cap), the exit code and the
+ * path of the full output. Findings raised while the call runs (stuck, stale,
+ * flooding, time-wasting, runaway memory, machine protection) are delivered
+ * through `deliver`, which steers a running session: they reach the agent
+ * right after the result. Options are read when used, so `root`, `prompts`
+ * and the callbacks may be getters bound to an owner that exists later.
  */
 export function createSupervisedBashTool(cwd: string, options: SupervisedBashOptions) {
 	const definition = createBashToolDefinition(cwd);
+	let current: ExperimentSupervisor | undefined;
+	const supervisor = () => current ??= new ExperimentSupervisor({
+		get root() { return options.root; },
+		get env() { return options.env; },
+		get prompts() { return options.prompts; },
+		deliver: (text, update) => options.deliver(text, update),
+		record: (eventType, payload) => options.record?.(eventType, payload),
+		// Leftover processes of earlier calls keep their run open; they never block the next call.
+		limits: { ...options.limits, maxConcurrent: Number.MAX_SAFE_INTEGER },
+		...(options.protection ? { protection: options.protection } : {}),
+		...(options.kill ? { kill: options.kill } : {}),
+		...(options.memoryCeilingBytes !== undefined ? { memoryCeilingBytes: options.memoryCeilingBytes } : {}),
+		environmentFingerprint: options.environmentFingerprint,
+		pipelineRunId: options.pipelineRunId, stageInvocationId: options.stageInvocationId,
+		blocking: true,
+	});
 	return { ...definition,
-		async execute(id: string, args: { command: string; timeout?: number }, signal?: AbortSignal) {
+		/** Stop everything this tool's calls left running. A later call starts a fresh supervisor. */
+		async close(): Promise<void> {
+			const closing = current;
+			current = undefined;
+			await closing?.close();
+		},
+		async execute(toolCallId: string, args: { command: string; timeout?: number }, signal?: AbortSignal) {
 			signal?.throwIfAborted();
-			mkdirSync(options.root, { recursive: true });
+			const owner = supervisor();
 			const key = shellCommandKey(cwd, args.command);
-			const root = mkdtempSync(join(options.root, "bash-"));
-			const supervisor = new ExperimentSupervisor({ ...options, root, blocking: true });
-			const view = supervisor.start({ argv: options.argv?.(args.command) ?? ["bash", "-c", args.command], cwd,
-				hypothesis: "agent shell call", scope: "shell", projectedDurationMs: shellProjection(key) }, id);
-			const abort = () => { void supervisor.stop(view.id, "owning session cancelled"); };
+			const id = `bash-${randomUUID().slice(0, 8)}`;
+			const startedAt = Date.now();
+			owner.start({ argv: options.argv?.(args.command) ?? ["bash", "-c", args.command], cwd,
+				hypothesis: "agent shell call", scope: "shell", projectedDurationMs: shellProjection(key) }, toolCallId, id);
+			const prompts = owner.notes;
+			const timeoutMs = typeof args.timeout === "number" && args.timeout > 0 ? args.timeout * 1000 : undefined;
+			let cancelled = false;
+			const abort = () => { cancelled = true; };
 			signal?.addEventListener("abort", abort, { once: true });
+			let timedOut = false;
 			try {
-				while (supervisor.status(view.id).status === "running") {
-					signal?.throwIfAborted();
-					await new Promise(resolve => setTimeout(resolve, supervisor.limits.sampleIntervalMs));
+				while (!owner.commandExit(id).ended) {
+					if (cancelled || signal?.aborted) {
+						await owner.stop(id, "owning session cancelled");
+						signal?.throwIfAborted();
+						throw new Error("Shell call cancelled");
+					}
+					const left = timeoutMs === undefined ? Infinity : startedAt + timeoutMs - Date.now();
+					if (left <= 0) {
+						timedOut = true;
+						await owner.stop(id, prompts.render("experiments.shell-timeout", { seconds: String(args.timeout) }).text);
+						break;
+					}
+					await new Promise((resolve) => setTimeout(resolve, Math.max(1, Math.min(owner.limits.sampleIntervalMs, 25, left))));
 				}
-				const final = supervisor.status(view.id);
-				if (final.status === "exited") recordShellDuration(key, final.elapsedSeconds * 1000);
-				const prompts = supervisor.notes;
-				const ending = [
-					...(final.stopReason ? [prompts.render("experiments.shell-stopped", { reason: final.stopReason }).text] : []),
-					prompts.render("experiments.shell-result", { exitCode: String(final.exitCode ?? final.status), logPath: final.logPath }).text,
-				].join("\n");
-				const cap = supervisor.limits.outputCapBytes;
-				// Sized for the largest possible omission, so the whole response fits the cap.
-				const notice = (omitted: number) => prompts.render("experiments.shell-truncated", { omittedBytes: String(omitted), logPath: final.logPath }).text;
-				const reserve = Buffer.byteLength(`${notice(Number.MAX_SAFE_INTEGER)}\n\n${ending}`);
-				// The end of the output is kept: that is where a traceback or a result is.
-				const tail = supervisor.tail(view.id, Math.max(0, cap - reserve));
-				const text = `${tail.omittedBytes > 0 ? `${notice(tail.omittedBytes)}\n` : ""}${tail.text}${tail.text.endsWith("\n") || !tail.text ? "" : "\n"}${ending}`;
-				return { content: [{ type: "text" as const, text }],
-					details: { ...final, spillPath: final.logPath, omittedBytes: tail.omittedBytes } };
 			} finally {
 				signal?.removeEventListener("abort", abort);
-				await supervisor.close();
 			}
+			const exit = owner.commandExit(id);
+			const remaining = timedOut ? [] : owner.remaining(id);
+			// Nothing left: the launcher is ending; wait (briefly) so the result reports the finished run.
+			for (const deadline = Date.now() + 1_000; !remaining.length && owner.status(id).status === "running" && Date.now() < deadline;) {
+				await new Promise((resolve) => setTimeout(resolve, 10));
+			}
+			const view = owner.status(id);
+			if (!timedOut && !view.stopReason && exit.exitCode !== undefined) recordShellDuration(key, Date.now() - startedAt);
+			const ending = [
+				...(view.stopReason ? [prompts.render("experiments.shell-stopped", { reason: view.stopReason }).text] : []),
+				prompts.render("experiments.shell-result", { exitCode: exit.exitCode !== undefined ? String(exit.exitCode) : exit.signal ?? view.status, logPath: view.logPath }).text,
+				...(remaining.length ? [prompts.render("experiments.shell-background", { count: String(remaining.length), pids: remaining.join(" ") }).text] : []),
+			].join("\n");
+			options.record?.("shell_call_returned", { experiment_id: id, exit_code: exit.exitCode, signal: exit.signal,
+				timed_out: timedOut, stop_reason: view.stopReason, remaining_pids: remaining, elapsed_ms: Date.now() - startedAt });
+			const cap = owner.limits.outputCapBytes;
+			// Sized for the largest possible omission, so the whole response fits the cap.
+			const notice = (omitted: number) => prompts.render("experiments.shell-truncated", { omittedBytes: String(omitted), logPath: view.logPath }).text;
+			const reserve = Buffer.byteLength(`${notice(Number.MAX_SAFE_INTEGER)}\n\n${ending}`);
+			// The end of the output is kept: that is where a traceback or a result is.
+			const tail = owner.tail(id, Math.max(0, cap - reserve));
+			const text = `${tail.omittedBytes > 0 ? `${notice(tail.omittedBytes)}\n` : ""}${tail.text}${tail.text.endsWith("\n") || !tail.text ? "" : "\n"}${ending}`;
+			return { content: [{ type: "text" as const, text }],
+				details: { ...view, exitCode: exit.exitCode, signal: exit.signal, timedOut, remainingPids: remaining,
+					spillPath: view.logPath, omittedBytes: tail.omittedBytes } };
 		},
 	};
 }
