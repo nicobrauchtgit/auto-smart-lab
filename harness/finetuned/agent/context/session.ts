@@ -14,6 +14,8 @@ export interface ContextSessionHandle {
 	agentRunId?: string;
 	record(type: string, payload: unknown): void;
 	close(): Promise<void>;
+	/** Forced close: dispose the physical session first, then release its observer. Must not wait for the session to become idle. */
+	terminate?(): Promise<void>;
 }
 export interface ContextSessionOptions {
 	prompts: PromptSnapshot;
@@ -221,6 +223,21 @@ export class SmartContextSession implements Wakeable {
 		await this.abort();
 		await this.active?.catch(() => undefined);
 		await this.current?.close();
+	}
+	/**
+	 * Forced close for a session that may never settle, e.g. a provider that
+	 * never answers. Unlike close(), it waits neither for abort nor for the
+	 * active prompt: the current physical session is disposed (which aborts its
+	 * tools) and its observer released now. A handle that a creation still in
+	 * flight produces later is closed once the prompt settles.
+	 */
+	async terminate(): Promise<void> {
+		this.closed = true;
+		this.stopped = true;
+		const handle = this.current;
+		void this.active?.catch(() => undefined)
+			.then(() => this.current && this.current !== handle ? this.current.close() : undefined).catch(() => undefined);
+		if (handle) await (handle.terminate ? handle.terminate() : handle.close());
 	}
 }
 

@@ -11,7 +11,7 @@
 import { HARNESS_CONFIG } from "../harness/config.js";
 import { createHash } from "node:crypto";
 
-import type { TrainingLabelRow } from "../research/startup_context.js";
+import type { TrainingLabelRow } from "../team/contracts.js";
 
 export interface FoldRecommendation {
 	scheme: "stratified_kfold" | "group_kfold" | "kfold";

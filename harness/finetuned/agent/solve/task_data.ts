@@ -6,8 +6,7 @@ import { PROJECT_ROOT } from "../pipeline/resolve_task.js";
 import type { TaskConfiguration } from "../pipeline/task_configuration.js";
 import { statePath } from "../paths.js";
 import { prepareSolveWorkspace, type PrepareOptions, type SolveWorkspace } from "./workspace.js";
-
-export interface TaskData extends SolveWorkspace { materializedHashes: Record<string, string>; taskId: string; profilePath: string; datasetSha256: string; developmentArchive: string; developmentManifest: string; testArchive: string; originalTrainingPath: string }
+import type { TaskData } from "../team/contracts.js";
 export function prepareTaskData(taskId: string, configuration: TaskConfiguration, options: PrepareOptions & { signal?: AbortSignal } = {}): TaskData {
  options.signal?.throwIfAborted();
  return prepareSolveWorkspace(taskId, { ...options, configuration }) as TaskData;
