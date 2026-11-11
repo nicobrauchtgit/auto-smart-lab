@@ -181,3 +181,15 @@ test("expert roles share the same tree while ideas remains read-only and validat
  }
  expect(() => expertSandbox(data, "validation", f.python)).toThrow("snapshot");
 }, 30000);
+
+test("dependency manager attribution comes only from the explicit session identity", () => {
+ const python = readPythonEnvironment();
+ const previous = process.env.PIPELINE_PYTHON_SESSION_ID;
+ process.env.PIPELINE_PYTHON_SESSION_ID = "ambient-session";
+ try {
+  expect(pythonManagerEnvironment(python, "/tmp/manager", {}).PIPELINE_PYTHON_SESSION_ID).toBeUndefined();
+  expect(pythonManagerEnvironment(python, "/tmp/manager", { sessionId: "solve-session" }).PIPELINE_PYTHON_SESSION_ID).toBe("solve-session");
+ } finally {
+  if (previous === undefined) delete process.env.PIPELINE_PYTHON_SESSION_ID; else process.env.PIPELINE_PYTHON_SESSION_ID = previous;
+ }
+});

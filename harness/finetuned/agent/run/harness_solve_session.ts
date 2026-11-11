@@ -72,6 +72,7 @@ export interface HarnessSolveDependencies {
 	readPython: typeof readPythonEnvironment;
 	createTraining: typeof createHarnessTraining;
 	runAgentSession: typeof runSession;
+	environmentTool: typeof solvePythonEnvironmentTool;
 	collectResults: typeof collectTrainingResults;
 	prepareRepository: typeof ensureSolutionsRepository;
 	prepareSandbox: typeof prepareSolveSandbox;
@@ -83,6 +84,7 @@ const DEFAULT_DEPENDENCIES: HarnessSolveDependencies = {
 	readPython: readPythonEnvironment,
 	createTraining: createHarnessTraining,
 	runAgentSession: runSession,
+	environmentTool: solvePythonEnvironmentTool,
 	collectResults: collectTrainingResults,
 	prepareRepository: ensureSolutionsRepository,
 	prepareSandbox: prepareSolveSandbox,
@@ -216,8 +218,10 @@ export async function runHarnessSolveSession(
         tool_worker_sha256: sha256(readFileSync(join(ARM_ROOT, "agent/run/solve_tool_worker.ts"))) }));
 	const isolatedTools = isolatedSolveTools(sandbox);
 	const environmentToolPrompt = prompts.render("solve.python-environment-tool", {});
-	const environmentTool = solvePythonEnvironmentTool(python, environmentToolPrompt.text, PROJECT_ROOT, {
-        pipelineRunId: identity?.pipelineRunId ?? runId, stageInvocationId: identity?.stageInvocationId ?? runId, attempt: 1 });
+	// One ID attributes packages the tool adds to the session that uses it.
+	const pythonSessionId = crypto.randomUUID();
+	const environmentTool = dependencies.environmentTool(python, environmentToolPrompt.text, PROJECT_ROOT, {
+        pipelineRunId: identity?.pipelineRunId ?? runId, stageInvocationId: identity?.stageInvocationId ?? runId, attempt: 1, sessionId: pythonSessionId });
 	const isolationPrompt = prompts.render("solve.isolation", { workspace: sandbox.agentRoot });
 	const completedTrainingRoots = (options.upstream ?? [])
 		.filter(artifact => artifact.kind === "training_selected_result")
@@ -350,6 +354,7 @@ export async function runHarnessSolveSession(
 			model,
 			cwd: PROJECT_ROOT,
 			env: { SOLVE_WORKSPACE: sandbox.agentRoot },
+			pythonSessionId,
 			tools: [],
 			customTools: [...training.tools, ...isolatedTools, environmentTool],
 			onSessionReady: training.bindSession,

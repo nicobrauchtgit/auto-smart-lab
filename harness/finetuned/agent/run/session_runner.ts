@@ -79,6 +79,12 @@ export interface RunSessionOptions {
 	 * same conversation; returning undefined ends the session.
 	 */
 	continueWhenIdle?: (signal?: AbortSignal) => Promise<RenderedPrompt | undefined>;
+	/**
+	 * Identity of this session's Python dependency changes. Callers that hand
+	 * the session a python_environment tool pass the same ID to that tool so
+	 * packages it adds are attributed to this session. Defaults to a new ID.
+	 */
+	pythonSessionId?: string;
 	/** Test seams; production uses harness.config.json session settings. */
 	stallMs?: number;
 	stallRetries?: number;
@@ -113,7 +119,7 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 	const { prompt, model: requestedModel } = options;
 	const customTools = [...(options.customTools ?? [])];
 	const changeCursor = pythonChangeCursor();
-	const pythonSessionId = randomUUID();
+	const pythonSessionId = options.pythonSessionId ?? randomUUID();
 	const initialEnvironment = readPythonEnvironment();
 	const python = preparePythonEnvironment(options.prompts, initialEnvironment);
 	options.reportInput?.(python.input);
