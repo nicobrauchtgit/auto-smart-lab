@@ -94,6 +94,9 @@ export interface Update {
 	/** The last few lines, not the whole tail: the log keeps the full sequence. */
 	lines: string[];
 	view: ExperimentView;
+	/** Measured values behind the finding: the variables of its note prompt. */
+	facts?: Record<string, string>;
+	/** Rendered from `agent/prompts/experiments/` by the supervisor. */
 	note?: string;
 }
 
@@ -116,6 +119,10 @@ export interface SupervisorLimits {
 	outputCapBytes: number;
 	memoryReserveBytes: number;
 	swapFullSeconds: number;
+	/** Time-wasting: elapsed beyond this multiple of the projection for comparable work... */
+	overrunMultiple: number;
+	/** ...and beyond this much wall time. Short calls are never reported as time-wasting. */
+	overrunMinMs: number;
 }
 
 export const DEFAULT_LIMITS: Readonly<SupervisorLimits> = HARNESS_CONFIG.supervision;

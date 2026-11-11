@@ -98,6 +98,8 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
  experimentConfigPath?: string;
  /** Executable overrides for regression tests; production resolves them from the environment. */
  executables?: { python?: string; git?: string; bwrap?: string };
+ /** Test seam for the process-supervision check; production reads /proc. */
+ supervisionProcRoot?: string;
  candidateProducedUpstream?: boolean; refitTrainingRoot?: string;
  submissionPolicy?: import("./types.js").StageInput["submissionPolicy"];
 }): SetupCheck[] {
@@ -105,7 +107,7 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
  const add = (id: string, phase: SetupCheck["phase"], remedy: string, run: SetupCheck["run"]) => checks.push({ id, phase, remedy, run });
  const needs = new Set(requirements);
  if (["supervision", "model", "training", "refit"].some(requirement => needs.has(requirement as SetupRequirement))) {
-  add("process-supervision", "local", "Enable readable own-user /proc stat, io, status and meminfo on Linux, or libproc on Darwin. Process birth identities and memory sampling are required before agent or trial execution.", checkSupervision);
+  add("process-supervision", "local", "Enable readable own-user /proc stat, io, status and meminfo and a loadable libc (sysconf) on Linux, or libproc on Darwin. Process birth identities and memory sampling are required before agent or trial execution.", () => checkSupervision(options.supervisionProcRoot));
  }
  if (needs.has("observability")) {
   add("langfuse-configuration", "local", "Set LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY and the HTTPS LANGFUSE_BASE_URL in the project .env; run ./dev setup and make the emergency trace destination writable.", () => {

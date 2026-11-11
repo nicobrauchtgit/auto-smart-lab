@@ -1,39 +1,62 @@
 /** Sampling never wakes a model. Only completion and once-per-kind findings do.
  * Silence thresholds scale from observed output gaps or an earlier measured gap.
+ * The gate decides *whether* and *what kind*; the supervisor renders the note
+ * from `agent/prompts/experiments/` so every agent-facing word is a prompt.
  */
 
-import { HARNESS_CONFIG } from "../harness/config.js";
 import { DIAGNOSTIC_PATTERN, type ExperimentView, type ResourceSample, type SupervisorLimits, type Update, type UpdateKind } from "./types.js";
 
 export interface GateInput {
 	now: number;
 	view: ExperimentView;
 	sample?: ResourceSample;
-	/** Lines drained since the last update, oldest first. */
+	/** Lines drained since the last decision, oldest first. Matched for diagnostics. */
 	pending: string[];
+	/** The last few lines of the whole run, kept across decisions. Carried on reports. */
+	recent?: string[];
 	/** Set once the process group is gone. */
 	exited?: boolean;
 	outputBytes?: number;
+	/** Wall time comparable work took before. Absent when nothing comparable was measured. */
 	projectedDurationMs?: number;
-	memoryLimitBytes?: number;
+	/** Machine memory as the machine-protection arbiter reads it. */
+	machine?: { availableBytes: number; reserveBytes: number };
 }
+
+export interface GateOptions {
+	/** Longest silence an earlier pilot measured for a fit of this shape. */
+	expectedGapMs?: number;
+	/** Resident bytes worth interrupting for. Overrides the reserve-relative warning. */
+	memoryCeilingBytes?: number;
+	/**
+	 * The owner waits for this process inside one tool call. Its tool result is
+	 * the answer, so exit, diagnostics and flooding are not reported on top of
+	 * it; only findings during the call are.
+	 */
+	blocking?: boolean;
+}
+
+/** Output gaps needed before silence can be judged against the call's own rhythm. */
+export const RHYTHM_GAPS = 3;
+
+const seconds = (ms: number) => (ms / 1000).toFixed(1);
+const mib = (bytes: number) => (bytes / 1024 ** 2).toFixed(0);
 
 export class UpdateGate {
 	private observedMaxGap = 0;
+	private gaps = 0;
+	private firstLineAt: number | undefined;
 	private lastLineAt: number | undefined;
 	private readonly reported = new Set<UpdateKind>();
-	private stallReported = false;
-	private memoryReported = false;
-	private exitReported = false;
+	private readonly options: GateOptions;
 
 	constructor(
 		private readonly limits: SupervisorLimits,
 		private readonly startedAt: number,
-		/** Longest silence an earlier pilot measured for a fit of this shape. */
-		private readonly expectedGapMs?: number,
-		/** Resident bytes worth interrupting for. A grid search reached 5.8 GB. */
-		private readonly memoryCeilingBytes?: number,
-	) {}
+		options: GateOptions = {},
+	) {
+		this.options = options;
+	}
 
 	/**
 	 * Record that output arrived.
@@ -45,14 +68,15 @@ export class UpdateGate {
 	observeLine(at: number): void {
 		if (this.lastLineAt !== undefined) {
 			this.observedMaxGap = Math.max(this.observedMaxGap, at - this.lastLineAt);
+			this.gaps++;
 		}
+		this.firstLineAt ??= at;
 		this.lastLineAt = at;
-
 	}
 
 	/** Silence past this, at idle CPU, is a stall. Derived, never fixed. */
 	stallThresholdMs(): number {
-		const basis = this.expectedGapMs ?? this.observedMaxGap;
+		const basis = this.options.expectedGapMs ?? this.observedMaxGap;
 		return Math.max(this.limits.minStallMs, basis * this.limits.stallGapMultiple);
 	}
 
@@ -62,49 +86,83 @@ export class UpdateGate {
 
 	decide(input: GateInput): Update | null {
 		const { now, pending } = input;
-		const emit = (kind: UpdateKind, note?: string): Update => {
+		const emit = (kind: UpdateKind, facts: Record<string, string>): Update => {
 			this.reported.add(kind);
 			return {
-				kind, id: input.view.id, at: now, view: input.view,
-				lines: pending.slice(-this.limits.linesPerUpdate),
-				...(note ? { note } : {}),
+				kind, id: input.view.id, at: now, view: input.view, facts,
+				lines: (input.recent ?? pending).slice(-this.limits.linesPerUpdate),
 			};
 		};
+		const blocking = this.options.blocking === true;
+		// A blocking call's tool result reports the exit; nothing is added after it.
+		if (input.exited && blocking) return null;
 
 		// Exit, diagnostics, and stalls jump the queue: they are the cases where
 		// the agent's next decision changes.
-		if (input.exited && !this.exitReported) {
-			this.exitReported = true;
-			return emit("exited", `the process group is gone with exit code ${input.view.exitCode ?? "unknown"}`);
+		if (input.exited && !this.reported.has("exited")) {
+			return emit("exited", { exitCode: String(input.view.exitCode ?? input.view.status) });
 		}
 		const diagnostic = pending.find((line) => DIAGNOSTIC_PATTERN.test(line));
-		if (diagnostic && !this.reported.has("diagnostic")) return emit("diagnostic", "the trial's own output matched an error or warning pattern");
+		if (!blocking && diagnostic && !this.reported.has("diagnostic")) return emit("diagnostic", {});
 
-		const ceiling = this.memoryCeilingBytes ?? (input.memoryLimitBytes ? input.memoryLimitBytes * 0.8 : undefined);
-		if (ceiling && input.sample && !this.memoryReported
-			&& input.sample.rssBytes >= ceiling) {
-			this.memoryReported = true;
-			return emit("memory", `resident memory reached ${(input.sample.rssBytes / 1024 ** 3).toFixed(1)} GB across ${input.sample.processes} process(es)`);
-		}
+		const memory = this.memoryPressure(input);
+		if (memory) return emit("memory", memory);
 
 		if (this.isStalled(input)) {
-			this.stallReported = true;
-			return emit("stalled",
-				`no output for ${(this.silenceMs(now) / 1000).toFixed(1)} s at ${input.sample?.cpuPercent?.toFixed(0) ?? "unknown"}% CPU, `
-				+ `past the ${(this.stallThresholdMs() / 1000).toFixed(1)} s threshold derived for this trial`);
+			return emit("stalled", {
+				silenceSeconds: seconds(this.silenceMs(now)),
+				cpuPercent: input.sample?.cpuPercent?.toFixed(0) ?? "unknown",
+				thresholdSeconds: seconds(this.stallThresholdMs()),
+			});
 		}
+		if (this.isStale(input)) {
+			return emit("stale", {
+				silenceSeconds: seconds(this.silenceMs(now)),
+				cpuPercent: input.sample!.cpuPercent!.toFixed(0),
+				gapSeconds: seconds(this.observedMaxGap),
+				gaps: String(this.gaps),
+			});
+		}
+		if (!blocking && input.outputBytes !== undefined && input.outputBytes > this.limits.outputCapBytes
+			&& !this.reported.has("flooding")) {
+			return emit("flooding", { capKiB: String(Math.round(this.limits.outputCapBytes / 1024)) });
+		}
+		const projected = input.projectedDurationMs;
+		if (!input.exited && projected && projected > 0 && !this.reported.has("time-wasting")) {
+			const elapsed = now - this.startedAt;
+			if (elapsed >= Math.max(this.limits.overrunMinMs, projected * this.limits.overrunMultiple)) {
+				return emit("time-wasting", {
+					elapsedSeconds: seconds(elapsed), projectedSeconds: seconds(projected),
+					multiple: String(this.limits.overrunMultiple),
+				});
+			}
+		}
+		return null;
+	}
 
-        if (!input.exited && input.sample?.cpuPercent !== undefined
-            && input.sample.cpuPercent >= this.limits.idleCpuPercent
-            && now - this.startedAt >= this.limits.importPreludeMs
-            && this.silenceMs(now) >= this.stallThresholdMs() && !this.reported.has("stale")) {
-            return emit("stale", "output stopped growing while CPU remains busy");
-        }
-        if (input.outputBytes !== undefined && input.outputBytes > HARNESS_CONFIG.supervision.outputCapBytes
-            && !this.reported.has("flooding")) return emit("flooding", "output exceeded the agent cap; read the full log for the remainder");
-        if (input.projectedDurationMs && now - this.startedAt > input.projectedDurationMs * 2
-            && !this.reported.has("time-wasting")) return emit("time-wasting", `elapsed time exceeds twice the ${input.projectedDurationMs / 1000} s projection`);
-        return null;
+	/**
+	 * Runaway memory, warned before machine protection acts.
+	 *
+	 * The arbiter stops the largest process once available RAM falls below the
+	 * reserve. The warning fires while the headroom above that reserve is no
+	 * larger than what this process already holds: growing by its own size again
+	 * would trigger the stop. Since the headroom is still positive here, the
+	 * warning always comes first for memory that grows between samples.
+	 */
+	private memoryPressure(input: GateInput): Record<string, string> | undefined {
+		const sample = input.sample;
+		if (!sample || input.exited || this.reported.has("memory") || sample.rssBytes <= 0) return undefined;
+		const ceiling = this.options.memoryCeilingBytes;
+		const machine = input.machine;
+		const headroom = machine ? machine.availableBytes - machine.reserveBytes : undefined;
+		const pressing = ceiling !== undefined ? sample.rssBytes >= ceiling
+			: headroom !== undefined && headroom <= sample.rssBytes;
+		if (!pressing) return undefined;
+		return {
+			rssMb: mib(sample.rssBytes), processes: String(sample.processes),
+			headroomMb: headroom === undefined ? "unknown" : mib(Math.max(0, headroom)),
+			reserveMb: machine ? mib(machine.reserveBytes) : "unknown",
+		};
 	}
 
 	/**
@@ -117,11 +175,32 @@ export class UpdateGate {
 	 * exists to avoid.
 	 */
 	private isStalled(input: GateInput): boolean {
-		if (this.stallReported || input.exited) return false;
+		if (this.reported.has("stalled") || input.exited) return false;
 		if (input.now - this.startedAt < this.limits.importPreludeMs) return false;
 		if (this.silenceMs(input.now) < this.stallThresholdMs()) return false;
 		const cpu = input.sample?.cpuPercent;
 		return cpu !== undefined && cpu < this.limits.idleCpuPercent;
+	}
+
+	/**
+	 * Busy, silent, and off the rhythm this call set itself.
+	 *
+	 * Busy CPU with no output is what fitting looks like: a trial prints only
+	 * when a fold starts and ends, so a fold can be silent for minutes. Silence
+	 * alone is no evidence. It becomes evidence once the call has kept a rhythm
+	 * -- at least RHYTHM_GAPS output gaps spread over at least the minimum stall
+	 * time, an epoch or fold loop rather than a start-up burst -- and then stays
+	 * silent for the stall multiple of its own longest gap.
+	 */
+	private isStale(input: GateInput): boolean {
+		if (this.reported.has("stale") || input.exited) return false;
+		const cpu = input.sample?.cpuPercent;
+		if (cpu === undefined || cpu < this.limits.idleCpuPercent) return false;
+		if (input.now - this.startedAt < this.limits.importPreludeMs) return false;
+		if (this.gaps < RHYTHM_GAPS || this.firstLineAt === undefined || this.lastLineAt === undefined) return false;
+		if (this.lastLineAt - this.firstLineAt < this.limits.minStallMs) return false;
+		const silence = this.silenceMs(input.now);
+		return silence >= this.stallThresholdMs() && silence >= this.observedMaxGap * this.limits.stallGapMultiple;
 	}
 }
 

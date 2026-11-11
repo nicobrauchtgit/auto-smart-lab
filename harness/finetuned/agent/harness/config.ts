@@ -10,7 +10,7 @@ const fields = {
 	solve: ["maxIterations", "seed", "foldPolicy", "idleWakeMs"],
 	holdout: ["targetSmallestClassRows", "minSmallestClassRows", "maxFraction", "groupFraction"],
 	search: ["confirmAboveSeconds", "overrunFactor", "maxSeconds", "validationTimeoutSeconds"],
-	supervision: ["linesPerUpdate", "minStallMs", "stallGapMultiple", "importPreludeMs", "idleCpuPercent", "sampleIntervalMs", "maxConcurrent", "stopGraceMs", "outputCapBytes", "memoryReserveBytes", "swapFullSeconds"],
+	supervision: ["linesPerUpdate", "minStallMs", "stallGapMultiple", "importPreludeMs", "idleCpuPercent", "sampleIntervalMs", "maxConcurrent", "stopGraceMs", "outputCapBytes", "memoryReserveBytes", "swapFullSeconds", "overrunMultiple", "overrunMinMs"],
 	subagents: ["turnTimeoutMs", "waitTimeoutMs", "maxWaitTimeoutMs", "limits"],
 };
 function object(value: unknown, keys: readonly string[], name: string): Record<string, any> {

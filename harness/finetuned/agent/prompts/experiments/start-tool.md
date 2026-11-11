@@ -1,9 +1,10 @@
 Start a training run as a supervised experiment and get an ID back immediately.
 
 The process runs outside your tool call, so it keeps running across your turns
-and across compaction, and progress reaches you while it is still going. Running
-the same script with `bash` instead blocks until it finishes: you would see
-nothing until the end and could not stop it on what you saw.
+and across compaction, and news about it (exit, errors, stalls, memory) reaches
+you while it is still going. Running the same script with `bash` instead blocks
+until it finishes: you would see nothing until the end and could not stop it on
+what you saw.
 
 `argv` is an executable and its arguments, not a shell command line. Use the
 project Python and a script you wrote. `scope` states the deliberately reduced

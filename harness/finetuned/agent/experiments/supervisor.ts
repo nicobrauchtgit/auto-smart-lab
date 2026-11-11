@@ -13,22 +13,23 @@
  * already carries the shared identity.
  */
 
-import { HARNESS_CONFIG } from "../harness/config.js";
 import { machineProtection, type MachineProtection, type ProtectedWork } from "./protection.js";
-import { sampleMachine } from "./sampler.js";
 import { randomUUID } from "node:crypto";
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, writeFileSync } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
 import { join } from "node:path";
 
 import { atomicJson, processIdentity, ownedProcessAlive, liveGroup, type ProcessIdentity } from "./ownership.js";
+import { loadPromptSnapshot, type PromptReference, type PromptSnapshot } from "../prompts/loader.js";
+import type { PromptId } from "../prompts/registry.js";
 
 import { UpdateGate, renderUpdate } from "./updates.js";
-import { groupAlive, sampleAvailable, sampleGroup } from "./sampler.js";
+import { groupAlive, groupRunning, libproc, linuxSystem, processSnapshot, processTree, sampleGroup, type MachineSample } from "./sampler.js";
+import { decodePrefix, fileSize, readRange, readTail } from "./text.js";
 import {
 	DEFAULT_LIMITS,
 	type ExperimentRecord, type ExperimentSpec, type ExperimentStatus, type ExperimentView,
-	type ResourceSample, type SupervisorLimits, type Update,
+	type ResourceSample, type SupervisorLimits, type Update, type UpdateKind,
 } from "./types.js";
 
 export interface SupervisorOptions {
@@ -38,6 +39,12 @@ export interface SupervisorOptions {
 	env: Record<string, string>;
 	/** Delivers one coalesced update to the agent. Exactly one channel, never both. */
 	deliver: (text: string, update: Update) => void | Promise<void>;
+	/**
+	 * The run's prompt snapshot: every note an agent reads is rendered from it.
+	 * Owners without one (refit, confirmation) get the templates loaded once per
+	 * process; the rendered reference is recorded either way.
+	 */
+	prompts?: PromptSnapshot;
 	/** Lifecycle and decisions, mirrored under the shared pipeline identity. */
 	record?: (eventType: string, payload: Record<string, unknown>) => void;
 	limits?: Partial<SupervisorLimits>;
@@ -49,9 +56,28 @@ export interface SupervisorOptions {
 	stageInvocationId?: string;
 	/** Resident bytes worth interrupting for. */
 	memoryCeilingBytes?: number;
+	/**
+	 * The owner waits for each process inside one tool call (a shell call). The
+	 * tool result reports the exit and the output, so only findings while the
+	 * call runs are delivered: no exit, diagnostic or flooding update.
+	 */
+	blocking?: boolean;
 	/** Called once per experiment after its process group is gone, for harness bookkeeping. */
 	onFinished?: (id: string, view: ExperimentView) => void | Promise<void>;
 }
+
+let processPrompts: PromptSnapshot | undefined;
+
+/** The note template for each kind of update. */
+const NOTE_PROMPTS: Partial<Record<UpdateKind, PromptId>> = {
+	exited: "experiments.note-exited",
+	diagnostic: "experiments.note-diagnostic",
+	memory: "experiments.note-memory",
+	stalled: "experiments.note-stalled",
+	stale: "experiments.note-stale",
+	flooding: "experiments.note-flooding",
+	"time-wasting": "experiments.note-time-wasting",
+};
 
 interface Live {
 	record: ExperimentRecord;
@@ -61,8 +87,13 @@ interface Live {
 	gate: UpdateGate;
 	status: ExperimentStatus;
 	startedAt: number;
+	/** Set when the process group is gone: elapsed time stops here. */
+	endedAt?: number;
 	lines: number;
+	/** Lines since the last decision; matched for diagnostics, then cleared. */
 	pending: string[];
+	/** The last few lines of the run, never cleared: exit reports carry them. */
+	recent: string[];
 	lastLine?: string;
 	lastLineAt?: number;
 	sample?: ResourceSample;
@@ -83,7 +114,7 @@ export class ExperimentSupervisor {
 
 	constructor(private readonly options: SupervisorOptions) {
 		this.limits = { ...DEFAULT_LIMITS, ...options.limits };
-		options.record?.("supervisor_configuration", { limits: this.limits });
+		options.record?.("supervisor_configuration", { limits: this.limits, blocking: options.blocking === true });
 		mkdirSync(options.root, { recursive: true });
 	}
 
@@ -150,8 +181,8 @@ export class ExperimentSupervisor {
 
 		const startedAt = Date.now();
 		const entry: Live = {
-			record, child, identity: processIdentity(pgid), startedAt, status: "running", lines: 0, pending: [], logBytes: statSync(logPath).size,
-			gate: new UpdateGate(this.limits, startedAt, spec.expectedGapMs, this.options.memoryCeilingBytes),
+			record, child, identity: processIdentity(pgid), startedAt, status: "running", lines: 0, pending: [], recent: [],
+			logBytes: fileSize(logPath), gate: this.gate(startedAt, spec.expectedGapMs),
 		};
 		this.live.set(id, entry);
 		this.protect(entry);
@@ -178,19 +209,24 @@ export class ExperimentSupervisor {
 		this.options.record?.("experiment_started", {
 			experiment_id: id, pid: record.pid, pgid, scope: spec.scope, hypothesis: spec.hypothesis,
 			argv: spec.argv, cwd: spec.cwd, expected_gap_ms: spec.expectedGapMs,
+			projected_duration_ms: spec.projectedDurationMs,
 			environment_fingerprint: record.environmentFingerprint,
-			sampling: sampleAvailable() ? process.platform === "linux" ? "proc" : "libproc" : "unavailable",
+			sampling: process.platform === "linux" ? (linuxSystem() ? "proc" : "unavailable") : libproc() ? "libproc" : "unavailable",
 			directory,
 		});
 		return this.view(entry);
 	}
 
 	/**
-	 * Signal the whole process group, then confirm it is gone.
+	 * Signal the process tree, then confirm it is gone.
 	 *
-	 * `kill(-pgid)`, never `kill(pid)`. Repeating it is a no-op rather than an
-	 * error, because an agent that stopped a trial and asks again should be told
-	 * the same thing it was told the first time.
+	 * The tree is the process group plus descendants that left it (`setsid`)
+	 * while their parent lives: the same members the sampler measures and
+	 * machine protection chooses by. Each is captured with its birth identity
+	 * before the first signal, so a member that the SIGTERM orphans still gets
+	 * the SIGKILL, and a reused PID never does. Repeating a stop is a no-op
+	 * rather than an error, because an agent that stopped a trial and asks again
+	 * should be told the same thing it was told the first time.
 	 */
 	async stop(id: string, reason: string, observations: string[] = []): Promise<ExperimentView> {
 		const entry = this.require(id);
@@ -203,9 +239,13 @@ export class ExperimentSupervisor {
 			lines_emitted: entry.lines,
 		});
 		entry.stopping ??= (async () => {
-			this.signalGroup(entry, "SIGTERM");
+			const targets = this.stopTargets(entry);
+			this.signalTree(entry, targets, "SIGTERM");
 			await new Promise((settle) => setTimeout(settle, this.limits.stopGraceMs));
-			if (groupAlive(entry.record.pgid)) this.signalGroup(entry, "SIGKILL");
+			const remaining = [...targets, ...this.stopTargets(entry)];
+			if (groupAlive(entry.record.pgid) || remaining.some((target) => ownedProcessAlive(target))) {
+				this.signalTree(entry, remaining, "SIGKILL");
+			}
 		})();
 		await entry.stopping;
 		entry.status = "stopped";
@@ -218,26 +258,33 @@ export class ExperimentSupervisor {
 	 *
 	 * Reading forward from a cursor is what lets observation resume across a
 	 * model turn or a compaction without replaying the whole metric history into
-	 * the model's context.
+	 * the model's context. The cursor stops before a character the cap would cut,
+	 * so the next read starts on it and no byte is skipped.
 	 */
 	output(id: string, cursor = 0, maxBytes = 8_192): { text: string; cursor: number; remaining: number } {
 		const entry = this.require(id);
-		const size = existsSync(entry.record.logPath) ? statSync(entry.record.logPath).size : 0;
+		const size = fileSize(entry.record.logPath);
 		const from = Math.max(0, Math.min(cursor, size));
-		const length = Math.min(maxBytes, HARNESS_CONFIG.supervision.outputCapBytes, size - from);
+		const cap = Math.min(maxBytes, this.limits.outputCapBytes);
+		const length = Math.min(cap, size - from);
 		if (length <= 0) return { text: "", cursor: size, remaining: 0 };
-		const buffer = Buffer.alloc(length);
-		const handle = openSync(entry.record.logPath, "r");
-		try {
-			readSync(handle, buffer, 0, length, from);
-		} finally {
-			closeSync(handle);
+		let buffer: Buffer;
+		try { buffer = readRange(entry.record.logPath, from, length); }
+		catch { return { text: "", cursor: from, remaining: size - from }; }
+		let { text, bytes } = decodePrefix(buffer, cap);
+		// Only a character still being written may wait for its remaining bytes.
+		const finished = entry.status !== "running" || from + buffer.length < size;
+		if (bytes === 0 && finished) {
+			text = buffer.toString("utf8");
+			bytes = buffer.length;
 		}
-		const decoded = buffer.toString("utf8");
-        // Invalid/binary UTF-8 can expand to replacement characters on decode.
-        const text = Buffer.byteLength(decoded) <= length ? decoded
-            : Buffer.from(decoded).subarray(0, Math.max(0, length - 3)).toString("utf8");
-        return { text, cursor: from + length, remaining: size - (from + length) };
+		return { text, cursor: from + bytes, remaining: size - (from + bytes) };
+	}
+
+	/** The end of the log within `maxBytes`, for a blocking call's result. */
+	tail(id: string, maxBytes: number): { text: string; omittedBytes: number; logPath: string } {
+		const entry = this.require(id);
+		return { ...readTail(entry.record.logPath, Math.min(maxBytes, this.limits.outputCapBytes)), logPath: entry.record.logPath };
 	}
 
 	/** Stop everything still running. A detached process outliving the run is the failure mode. */
@@ -246,61 +293,122 @@ export class ExperimentSupervisor {
 		await Promise.all([...this.live.keys()].map((id) => this.stop(id, "supervisor closed").catch(() => undefined)));
 	}
 
-    /** Reattach logs, liveness polling and control without spawning anything. */
-    attach(record: ExperimentRecord, state: { identity?: ProcessIdentity; stopReason?: string; status?: ExperimentStatus; cursor?: number; lines?: number }): ExperimentView {
-        if (this.live.has(record.id)) return this.status(record.id);
-        const startedAt = Date.parse(record.startedAt);
-        const entry: Live = { record, identity: state.identity, startedAt, status: state.status ?? "running",
-            stopReason: state.stopReason, logBytes: state.cursor ?? 0, lines: state.lines ?? 0, pending: [],
-            gate: new UpdateGate(this.limits, startedAt, record.expectedGapMs, this.options.memoryCeilingBytes) };
-        this.live.set(record.id, entry);
-        if (entry.status === "running") this.protect(entry);
-        if (entry.status === "running") {
-            entry.timer = setInterval(() => this.tick(entry), this.limits.sampleIntervalMs);
-            entry.timer.unref?.();
-        } else entry.finished = true;
-        this.options.record?.("experiment_reattached", { experiment_id: record.id,
-            origin_pipeline_run_id: record.pipelineRunId, origin_stage_invocation_id: record.stageInvocationId,
-            cursor: entry.logBytes, status: entry.status });
-        return this.view(entry);
-    }
+	/** Reattach logs, liveness polling and control without spawning anything. */
+	attach(record: ExperimentRecord, state: { identity?: ProcessIdentity; stopReason?: string; status?: ExperimentStatus; cursor?: number; lines?: number }): ExperimentView {
+		if (this.live.has(record.id)) return this.status(record.id);
+		const startedAt = Date.parse(record.startedAt);
+		const entry: Live = { record, identity: state.identity, startedAt, status: state.status ?? "running",
+			stopReason: state.stopReason, logBytes: state.cursor ?? 0, lines: state.lines ?? 0, pending: [], recent: [],
+			gate: this.gate(startedAt, record.expectedGapMs) };
+		this.live.set(record.id, entry);
+		if (entry.status === "running") {
+			this.protect(entry);
+			entry.timer = setInterval(() => this.tick(entry), this.limits.sampleIntervalMs);
+			entry.timer.unref?.();
+		} else {
+			entry.finished = true;
+			entry.endedAt = startedAt;
+		}
+		this.options.record?.("experiment_reattached", { experiment_id: record.id,
+			origin_pipeline_run_id: record.pipelineRunId, origin_stage_invocation_id: record.stageInvocationId,
+			cursor: entry.logBytes, status: entry.status });
+		return this.view(entry);
+	}
 
-    notify(id: string, note: string): void {
-        const entry = this.live.get(id);
-        if (!entry) return;
-        const update: Update = { kind: "diagnostic", id, at: Date.now(), lines: [], view: this.view(entry), note };
-        void Promise.resolve(this.options.deliver(renderUpdate(update), update)).catch(() => undefined);
-    }
+	notify(id: string, note: string): void {
+		const entry = this.live.get(id);
+		if (!entry) return;
+		const update: Update = { kind: "diagnostic", id, at: Date.now(), lines: [], view: this.view(entry), note };
+		void Promise.resolve(this.options.deliver(renderUpdate(update), update)).catch(() => undefined);
+	}
 
-    private groupRunning(entry: Live): boolean {
-        return ["linux", "darwin"].includes(process.platform) ? liveGroup(entry.record.pgid).length > 0 : groupAlive(entry.record.pgid);
-    }
+	private gate(startedAt: number, expectedGapMs?: number): UpdateGate {
+		return new UpdateGate(this.limits, startedAt, {
+			expectedGapMs, memoryCeilingBytes: this.options.memoryCeilingBytes, blocking: this.options.blocking,
+		});
+	}
 
-    private persist(entry: Live): void {
-        atomicJson(join(entry.record.directory, "supervisor-state.json"), {
-            schemaVersion: 1, status: entry.status, stopReason: entry.stopReason, identity: entry.identity,
-            cursor: entry.logBytes, lines: entry.lines, exitCode: entry.exitCode,
-        });
-    }
+	/** The snapshot notes are rendered from. */
+	get notes(): PromptSnapshot {
+		return this.options.prompts ?? (processPrompts ??= loadPromptSnapshot());
+	}
 
-    private tail(entry: Live): void {
-        const size = existsSync(entry.record.logPath) ? statSync(entry.record.logPath).size : 0;
-        if (size <= entry.logBytes) return;
-        const handle = openSync(entry.record.logPath, "r");
-        const buffer = Buffer.alloc(Math.min(size - entry.logBytes, 65536));
-        let count: number;
-        try { count = readSync(handle, buffer, 0, buffer.length, entry.logBytes); }
-        finally { closeSync(handle); }
-        entry.logBytes += count;
-        const lines = buffer.subarray(0, count).toString("utf8").split("\n").filter(Boolean);
-        entry.lines += lines.length;
-        entry.pending.push(...lines.map(line => line.slice(0, 300)));
-        entry.pending = entry.pending.slice(-this.limits.linesPerUpdate);
-        if (lines.length) {
-            entry.lastLine = lines.at(-1); entry.lastLineAt = Date.now(); entry.gate.observeLine(entry.lastLineAt);
-        }
-        this.persist(entry);
-    }
+	private get protection(): MachineProtection {
+		return this.options.protection ?? machineProtection;
+	}
+
+	/** `maxAgeMs: 0` for decisions that must not act on a reading from before a signal. */
+	private groupRunning(entry: Live, maxAgeMs?: number): boolean {
+		if (process.platform === "darwin") return liveGroup(entry.record.pgid).length > 0;
+		return groupRunning(entry.record.pgid, maxAgeMs);
+	}
+
+	/** Every live member of the tree, with birth identities. Empty unless the leader is verifiably ours. */
+	private stopTargets(entry: Live): ProcessIdentity[] {
+		if (process.platform !== "linux" || !ownedProcessAlive(entry.identity)) return [];
+		try {
+			return processTree(entry.record.pgid, processSnapshot("/proc", 0).processes)
+				.map((member) => processIdentity(member.pid))
+				.filter((identity): identity is ProcessIdentity => identity !== undefined);
+		} catch {
+			return [];
+		}
+	}
+
+	private signalTree(entry: Live, targets: ProcessIdentity[], signal: NodeJS.Signals): void {
+		this.signalGroup(entry, signal);
+		for (const target of targets) {
+			// Checked again at the moment of signalling: never signal a reused PID.
+			if (!ownedProcessAlive(target)) continue;
+			try { process.kill(target.pid, signal); } catch { /* already gone */ }
+		}
+	}
+
+	private persist(entry: Live): void {
+		atomicJson(join(entry.record.directory, "supervisor-state.json"), {
+			schemaVersion: 1, status: entry.status, stopReason: entry.stopReason, identity: entry.identity,
+			cursor: entry.logBytes, lines: entry.lines, exitCode: entry.exitCode,
+		});
+	}
+
+	private remember(entry: Live, lines: string[]): void {
+		const clipped = lines.map((line) => line.slice(0, 300));
+		entry.pending.push(...clipped);
+		entry.pending = entry.pending.slice(-Math.max(this.limits.linesPerUpdate, 64));
+		entry.recent.push(...clipped);
+		entry.recent = entry.recent.slice(-this.limits.linesPerUpdate);
+	}
+
+	/**
+	 * Read new log lines. While running, one 64 KiB chunk a tick and whole lines
+	 * only: a line still being written is read on a later tick. The final pass
+	 * reads to the end, so an exit report carries the lines the run ended with.
+	 */
+	private tailLog(entry: Live, final = false): void {
+		do {
+			if (!this.readChunk(entry, final)) break;
+		} while (final);
+	}
+
+	private readChunk(entry: Live, final: boolean): boolean {
+		const size = fileSize(entry.record.logPath);
+		if (size <= entry.logBytes) return false;
+		let buffer: Buffer;
+		try { buffer = readRange(entry.record.logPath, entry.logBytes, Math.min(size - entry.logBytes, 65536)); }
+		catch { return false; }
+		const end = buffer.lastIndexOf(0x0a) + 1;
+		const consumed = end > 0 ? end : buffer.length >= 65536 || final ? buffer.length : 0;
+		if (consumed === 0) return false;
+		entry.logBytes += consumed;
+		const lines = buffer.subarray(0, consumed).toString("utf8").split("\n").filter(Boolean);
+		entry.lines += lines.length;
+		this.remember(entry, lines);
+		if (lines.length) {
+			entry.lastLine = lines.at(-1); entry.lastLineAt = Date.now(); entry.gate.observeLine(entry.lastLineAt);
+		}
+		this.persist(entry);
+		return true;
+	}
 
 	private signalGroup(entry: Live, signal: NodeJS.Signals): void {
 		try {
@@ -346,7 +454,7 @@ export class ExperimentSupervisor {
 		entry.lines++;
 		entry.lastLine = text;
 		entry.lastLineAt = at;
-		entry.pending.push(text);
+		this.remember(entry, [text]);
 		entry.gate.observeLine(at);
 		const encoded = `${text}\n`;
 		entry.logBytes += Buffer.byteLength(encoded);
@@ -358,48 +466,63 @@ export class ExperimentSupervisor {
 	}
 
 	private protect(entry: Live): void {
-        const work: ProtectedWork = { rssBytes: 0, peakBytes: 0, largestProcessBytes: 0,
-            refresh: () => {
-                const sample = sampleGroup(entry.record.pgid);
-                if (!sample) { work.rssBytes = 0; work.largestProcessBytes = 0; return; }
-                work.rssBytes = sample.rssBytes;
-                work.peakBytes = Math.max(work.peakBytes, work.rssBytes);
-                work.largestProcessBytes = sample.largestProcessBytes ?? sample.rssBytes;
-            },
-            stop: async peak => {
-                const note = `this experiment was too big for the machine; peak memory ${(peak / 1024 ** 2).toFixed(0)} MB`;
-                const update: Update = { kind: "machine-at-risk", id: entry.record.id, at: Date.now(), lines: [], view: this.view(entry), note };
-                this.options.record?.("experiment_machine_protection", { experiment_id: entry.record.id, peak_bytes: peak });
-                // Mark the durable stop before signalling so recovery will not restart it.
-                const stopped = this.stop(entry.record.id, note);
-                void Promise.resolve(this.options.deliver(renderUpdate(update), update)).catch(() => undefined);
-                await stopped;
-            } };
-        entry.protectedWork = work;
-        entry.unregister = (this.options.protection ?? machineProtection).register(work);
-    }
+		const work: ProtectedWork = { rssBytes: 0, peakBytes: 0, largestProcessBytes: 0,
+			refresh: () => {
+				const sample = sampleGroup(entry.record.pgid);
+				if (!sample) { work.rssBytes = 0; work.largestProcessBytes = 0; return; }
+				work.rssBytes = sample.rssBytes;
+				work.peakBytes = Math.max(work.peakBytes, work.rssBytes);
+				work.largestProcessBytes = sample.largestProcessBytes ?? sample.rssBytes;
+			},
+			stop: async (peak) => {
+				const rendered = this.notes.render("experiments.machine-at-risk", { peakMb: (peak / 1024 ** 2).toFixed(0) });
+				const note = rendered.text;
+				const update: Update = { kind: "machine-at-risk", id: entry.record.id, at: Date.now(), lines: [...entry.recent], view: this.view(entry), note };
+				this.options.record?.("experiment_machine_protection", { experiment_id: entry.record.id, peak_bytes: peak, prompt: rendered.reference });
+				// Mark the durable stop before signalling so recovery will not restart it.
+				const stopped = this.stop(entry.record.id, note);
+				void Promise.resolve(this.options.deliver(renderUpdate(update), update)).catch(() => undefined);
+				await stopped;
+			} };
+		entry.protectedWork = work;
+		entry.unregister = this.protection.register(work);
+	}
 
-    private tick(entry: Live): void {
-        this.tail(entry);
-        if (!entry.finished && !ownedProcessAlive(entry.identity) && !this.groupRunning(entry)) {
-            this.finish(entry);
-            return;
-        }
-		if (entry.status === "running") {
-			entry.sample = sampleGroup(entry.record.pgid, entry.sample) ?? entry.sample;
-            entry.protectedWork?.refresh?.();
-            void (this.options.protection ?? machineProtection).check().catch(() => undefined);
+	private tick(entry: Live): void {
+		this.tailLog(entry);
+		if (!entry.finished && !ownedProcessAlive(entry.identity) && !this.groupRunning(entry)) {
+			this.finish(entry);
+			return;
 		}
-		const exited = entry.status !== "running";
+		let machine: MachineSample | undefined;
+		if (entry.status === "running") {
+			// One /proc scan serves the sample, the protection refresh and the liveness check.
+			entry.sample = sampleGroup(entry.record.pgid, entry.sample) ?? entry.sample;
+			entry.protectedWork?.refresh?.();
+			try { machine = this.protection.machine(); } catch { machine = undefined; }
+			void this.protection.check().catch(() => undefined);
+		}
+		this.decide(entry, machine);
+	}
+
+	private decide(entry: Live, machine?: MachineSample): void {
 		const update = entry.gate.decide({
-			now: Date.now(), view: this.view(entry), sample: entry.sample, pending: entry.pending, exited,
-            projectedDurationMs: entry.record.projectedDurationMs, outputBytes: statSync(entry.record.logPath).size,
-            memoryLimitBytes: sampleMachine().totalBytes - HARNESS_CONFIG.supervision.memoryReserveBytes,
+			now: Date.now(), view: this.view(entry), sample: entry.sample,
+			pending: entry.pending, recent: entry.recent, exited: entry.status !== "running",
+			projectedDurationMs: entry.record.projectedDurationMs, outputBytes: fileSize(entry.record.logPath),
+			...(machine ? { machine: { availableBytes: machine.availableBytes, reserveBytes: this.protection.reserveBytes } } : {}),
 		});
 		entry.pending = [];
 		if (!update) return;
+		let prompt: PromptReference | undefined;
+		const promptId = NOTE_PROMPTS[update.kind];
+		if (promptId && update.facts) {
+			const rendered = this.notes.render(promptId, update.facts as never);
+			update.note = rendered.text;
+			prompt = rendered.reference;
+		}
 		this.options.record?.("experiment_update", {
-			experiment_id: entry.record.id, kind: update.kind, note: update.note,
+			experiment_id: entry.record.id, kind: update.kind, note: update.note, facts: update.facts, prompt,
 			elapsed_seconds: update.view.elapsedSeconds, cpu_percent: update.view.cpuPercent,
 			rss_mb: update.view.rssMb, lines_emitted: update.view.linesEmitted,
 			stall_threshold_ms: entry.gate.stallThresholdMs(),
@@ -408,24 +531,25 @@ export class ExperimentSupervisor {
 	}
 
 	private finish(entry: Live): void {
-        if (entry.finished) return;
-        if (this.groupRunning(entry)) return;
-        this.tail(entry);
-        entry.unregister?.();
+		if (entry.finished) return;
+		if (this.groupRunning(entry, 0)) return;
+		this.tailLog(entry, true);
+		entry.unregister?.();
 		if (entry.timer) {
 			clearInterval(entry.timer);
 			entry.timer = undefined;
 		}
 		if (entry.status === "running") entry.status = "exited";
+		entry.endedAt ??= Date.now();
 		// One last pass so the exit itself, and whatever it printed on the way
 		// out, still reach the agent.
 		entry.finished = true;
-        this.persist(entry);
-		this.tick(entry);
+		this.persist(entry);
+		this.decide(entry);
 		this.options.record?.("experiment_finished", {
 			experiment_id: entry.record.id, status: entry.status, exit_code: entry.exitCode,
 			stop_reason: entry.stopReason, lines_emitted: entry.lines,
-			elapsed_seconds: (Date.now() - entry.startedAt) / 1000,
+			elapsed_seconds: (entry.endedAt - entry.startedAt) / 1000,
 			group_alive: groupAlive(entry.record.pgid),
 		});
 		void Promise.resolve(this.options.onFinished?.(entry.record.id, this.view(entry))).catch(() => undefined);
@@ -438,7 +562,7 @@ export class ExperimentSupervisor {
 			status: entry.status,
 			scope: entry.record.scope,
 			hypothesis: entry.record.hypothesis,
-			elapsedSeconds: (now - entry.startedAt) / 1000,
+			elapsedSeconds: ((entry.endedAt ?? now) - entry.startedAt) / 1000,
 			linesEmitted: entry.lines,
 			cursor: entry.logBytes,
 			exitCode: entry.exitCode,

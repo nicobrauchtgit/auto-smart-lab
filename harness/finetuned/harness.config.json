@@ -71,7 +71,9 @@
     "stopGraceMs": 2000,
     "outputCapBytes": 51200,
     "memoryReserveBytes": 1073741824,
-    "swapFullSeconds": 15
+    "swapFullSeconds": 15,
+    "overrunMultiple": 3,
+    "overrunMinMs": 60000
   },
   "subagents": {
     "turnTimeoutMs": 1800000,

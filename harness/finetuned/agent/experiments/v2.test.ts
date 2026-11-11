@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ExperimentSupervisor } from "./supervisor.js";
@@ -9,8 +9,9 @@ import { checkSupervision } from "./setup.js";
 import { sampleGroup, linuxProcesses, sampleMachine } from "./sampler.js";
 import { UpdateGate } from "./updates.js";
 import { DEFAULT_LIMITS, type Update } from "./types.js";
-import { createSupervisedBashTool } from "./bash.js";
-import { SetupSession } from "../pipeline/setup.js";
+import { createSupervisedBashTool, shellCommandKey, shellProjection } from "./bash.js";
+import { SetupSession, setupChecks } from "../pipeline/setup.js";
+import { loadPromptSnapshot } from "../prompts/loader.js";
 
 const until = async (predicate: () => boolean) => {
  for (let i = 0; i < 200; i++) { if (predicate()) return; await Bun.sleep(25); }
@@ -30,17 +31,33 @@ test("Linux sampler reads live CPU, RSS, I/O and own children; setup is read-onl
 test("invalid supervision prevents configuration and preflight prevents execution", async () => {
  const config = structuredClone(HARNESS_CONFIG); config.supervision.outputCapBytes = 0;
  expect(() => parseHarnessConfig(config)).toThrow("supervision.outputCapBytes");
+});
+test("every agent or trial requirement runs the real process-supervision check, and its failure blocks execution", async () => {
+ const prompts = loadPromptSnapshot();
+ for (const requirement of ["supervision", "model", "training", "refit"] as const) {
+  expect(setupChecks([requirement], { taskId: "fixture", prompts }).map(check => check.id)).toContain("process-supervision");
+ }
+ expect(setupChecks(["submission-recovery"], { taskId: "fixture", prompts }).map(check => check.id)).not.toContain("process-supervision");
+ // The production check passes on this machine...
+ const [healthy] = setupChecks(["supervision"], { taskId: "fixture", prompts });
+ await new SetupSession().check([healthy], new AbortController().signal, () => {});
+ // ...and an unreadable /proc stops everything before any stage runs.
+ const missing = join(mkdtempSync(join(tmpdir(), "no-proc-")), "proc");
+ const checks = setupChecks(["training"], { taskId: "fixture", prompts, supervisionProcRoot: missing })
+  .filter(check => check.id === "process-supervision");
+ const results: Record<string, unknown>[] = [];
  let executed = false;
  await expect((async () => {
-  await new SetupSession().check([{ id: "process-supervision", phase: "local", remedy: "restore proc", run() { throw new Error("no sampler"); } }], new AbortController().signal, () => {});
+  await new SetupSession().check(checks, new AbortController().signal, (event, payload) => { if (event === "setup_check") results.push(payload); });
   executed = true;
- })()).rejects.toThrow("restore proc");
+ })()).rejects.toThrow(/process-supervision: .*\/proc/);
  expect(executed).toBe(false);
+ expect(results).toEqual([expect.objectContaining({ id: "process-supervision", status: "failed" })]);
 });
 test("time projection and flooding report once", () => {
  const gate = new UpdateGate(DEFAULT_LIMITS, 0);
  const view = { id: "fixture", status: "running" as const, scope: "trial", hypothesis: "test", elapsedSeconds: 30, linesEmitted: 0, cursor: 0, logPath: "/tmp/full.log" };
- const input = { now: 30000, pending: [], view, projectedDurationMs: 10000, outputBytes: 100000 };
+ const input = { now: 200_000, pending: [], view, projectedDurationMs: 10_000, outputBytes: 100_000 };
  expect(gate.decide(input)?.kind).toBe("flooding");
  expect(gate.decide(input)?.kind).toBe("time-wasting");
  expect(gate.decide(input)).toBeNull();
@@ -67,21 +84,47 @@ test("a pressure stop informs the owner, retains peak memory and allows the next
   expect(supervisor.output(next.id).text).toContain("next trial");
  } finally { await supervisor.close(); rmSync(root, { recursive: true, force: true }); }
 });
-test("supervised bash caps the response and keeps the spill, without killing flooding work", async () => {
+test("supervised bash keeps the end of a flooding output within the cap and reports nothing on top", async () => {
  const root = mkdtempSync(join(tmpdir(), "bash-supervision-")); const updates: Update[] = [];
  try {
   const tool = createSupervisedBashTool(root, { root, env: { PATH: process.env.PATH! }, deliver: (_, u) => { updates.push(u); }, limits: { sampleIntervalMs: 25, stopGraceMs: 25 } });
-  const result = await tool.execute("bash-fixture", { command: "head -c 100000 /dev/zero | tr '\\0' x; sleep 0.2" });
-  expect(Buffer.byteLength(result.content[0].text)).toBeLessThanOrEqual(51200);
-  expect(result.content[0].text).toContain("full output:");
+  const result = await tool.execute("bash-fixture", { command: "head -c 100000 /dev/zero | tr '\\0' x; echo; echo 'Traceback (most recent call last):'; echo 'ValueError: the last line'; sleep 0.2" });
+  const text = result.content[0].text;
+  expect(Buffer.byteLength(text)).toBeLessThanOrEqual(DEFAULT_LIMITS.outputCapBytes);
+  expect(text).toContain("ValueError: the last line");
+  expect(text).toMatch(/^\[\d+ earlier bytes omitted; the full output is in /);
+  expect(text).toContain(`full output: ${result.details.spillPath}`);
+  expect(text).toContain("exit code: 0");
   expect(result.details.status).toBe("exited");
-  expect(updates.filter(u => u.kind === "flooding")).toHaveLength(1);
+  expect(result.details.omittedBytes).toBeGreaterThan(0);
+  // The full output is in the spill file, and the shown tail is exactly its end.
+  const full = readFileSync(result.details.spillPath, "utf8");
+  expect(full.length).toBeGreaterThan(100_000);
+  const shown = text.slice(text.indexOf("\n") + 1, text.lastIndexOf("\nexit code:"));
+  expect(full.endsWith(`${shown}\n`)).toBe(true);
+  await Bun.sleep(100);
+  // No exit, diagnostic or flooding update on top of the tool result.
+  expect(updates).toEqual([]);
+ } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("a short shell call after quick ones of a different kind is not time-wasting", async () => {
+ const root = mkdtempSync(join(tmpdir(), "bash-projection-")); const updates: Update[] = [];
+ try {
+  const tool = createSupervisedBashTool(root, { root, env: { PATH: process.env.PATH! }, deliver: (_, u) => { updates.push(u); }, limits: { sampleIntervalMs: 25, stopGraceMs: 25 } });
+  for (let i = 0; i < 3; i++) await tool.execute(`quick-${i}`, { command: "true" });
+  expect(shellProjection(shellCommandKey(root, "true"))).toBeDefined();
+  expect(shellProjection(shellCommandKey(root, "sleep 1.2"))).toBeUndefined();
+  const slow = await tool.execute("slow", { command: "sleep 1.2" });
+  expect(slow.details.status).toBe("exited");
+  expect(updates).toEqual([]);
  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test.each([
  ["stalled", "await Bun.sleep(60000)"],
- ["stale", "while (true) { Math.sqrt(Math.random()); }"],
+ // A sustained output rhythm, then busy silence far beyond its longest gap.
+ ["stale", "for (let i = 0; i < 6; i++) { console.log(`epoch ${i}`); await Bun.sleep(80); } while (true) { Math.sqrt(Math.random()); }"],
 ] as const)("a %s script reports once and remains running", async (kind, script) => {
  const root = mkdtempSync(join(tmpdir(), "finding-"));
  const updates: Update[] = [];
