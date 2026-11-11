@@ -233,6 +233,13 @@ def _summarise(invocation: Invocation, folds: Sequence[ConcreteFold], completed:
     return summary
 
 
+def _observed_fold(invocation, factory, fold, frame, y, ids):
+    events = EventWriter(invocation.output_dir, invocation.experiment_id)
+    events.emit("fold_started", repeat=fold.repeat, fold=fold.fold, trainRows=len(fold.train), validationRows=len(fold.validation))
+    with events.stage("fit", repeat=fold.repeat, fold=fold.fold):
+        return _run_fold(invocation, factory, fold, frame, y, ids)
+
+
 def execute(document: dict[str, Any]) -> dict[str, Any]:
     global _stop_requested
     _stop_requested = False
@@ -312,12 +319,18 @@ def execute(document: dict[str, Any]) -> dict[str, Any]:
         _write_oof(output_dir / "oof_predictions.csv", oof_rows)
     elif (output_dir / "fold-results.jsonl").exists():
         raise InvocationError("Legacy single-trial fold results lack atomic prediction checkpoint; cannot safely resume; start a new trial")
-    for fold in folds[len(completed):]:
+    from joblib import Parallel, delayed, parallel_config
+    import os
+    pending = folds[len(completed):]
+    workers = min(len(pending) or 1, len(os.sched_getaffinity(0)) if hasattr(os, 'sched_getaffinity') else (os.cpu_count() or 1), 2)
+    # Ordered consumption preserves the atomic prefix checkpoint used for recovery.
+    # BLAS/OpenMP threads are bounded inside each child, avoiding nested oversubscription.
+    with parallel_config(backend="loky", inner_max_num_threads=1):
+      results = Parallel(n_jobs=workers, return_as="generator", pre_dispatch=workers)(
+          delayed(_observed_fold)(invocation, pipeline_factory, fold, frame, y, ids) for fold in pending)
+      for fold, (result, rows) in zip(pending, results):
         if _stop_requested:
             break
-        events.emit("fold_started", repeat=fold.repeat, fold=fold.fold, trainRows=len(fold.train), validationRows=len(fold.validation))
-        with events.stage("fit", repeat=fold.repeat, fold=fold.fold):
-            result, rows = _run_fold(invocation, pipeline_factory, fold, frame, y, ids)
         with events.stage("artifacts", repeat=fold.repeat, fold=fold.fold):
             completed.append(result)
             oof_rows.extend(rows)
