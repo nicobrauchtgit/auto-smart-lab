@@ -94,8 +94,9 @@ export function libproc(): Libproc | null {
 	return cached;
 }
 
-export function sampleAvailable(): boolean {
-	return process.platform === "linux" ? linuxProcesses().length > 0 : libproc() !== null;
+export function sampleAvailable(root = "/proc"): boolean {
+	if (process.platform !== "linux") return libproc() !== null;
+	try { return linuxProcesses(root).length > 0; } catch { return false; }
 }
 
 /**
@@ -138,51 +139,118 @@ export function groupAlive(pgid: number): boolean {
 
 
 export interface LinuxProcess {
- pid: number; ppid: number; pgid: number; rssBytes: number; cpuSeconds: number;
- readBytes: number; writeBytes: number;
+ pid: number; ppid: number; pgid: number; rssBytes: number;
+ /** Own CPU plus that of reaped children, so short-lived subprocesses count. */
+ cpuSeconds: number;
+ /** Clock ticks since boot; with the boot ID this is the process birth identity. */
+ startTicks: number;
 }
-// sysconf values are read once, without spawning a command on each sample.
-const linuxSystem = process.platform === "linux" ? dlopen("libc.so.6", {
- sysconf: { args: [FFIType.i32], returns: FFIType.i64 },
-}) : undefined;
-const clockTicks = linuxSystem ? Number(linuxSystem.symbols.sysconf(2)) : 100;
-const pageBytes = linuxSystem ? Number(linuxSystem.symbols.sysconf(30)) : 4096;
+export interface ProcessSnapshot { at: number; processes: LinuxProcess[] }
+
+interface LinuxSystem { clockTicks: number; pageBytes: number }
+let linuxSystemCache: LinuxSystem | null | undefined;
+/**
+ * sysconf values, read once and only when first needed. A failure (no glibc,
+ * no FFI) makes sampling unavailable, which the setup check reports before any
+ * agent starts, instead of throwing when this module is imported.
+ */
+export function linuxSystem(): LinuxSystem | null {
+ if (linuxSystemCache !== undefined) return linuxSystemCache;
+ linuxSystemCache = null;
+ if (process.platform !== "linux") return null;
+ for (const name of ["libc.so.6", "libc.so"]) {
+  try {
+   const libc = dlopen(name, { sysconf: { args: [FFIType.i32], returns: FFIType.i64 } });
+   const clockTicks = Number(libc.symbols.sysconf(2)), pageBytes = Number(libc.symbols.sysconf(30));
+   if (clockTicks > 0 && pageBytes > 0) return linuxSystemCache = { clockTicks, pageBytes };
+  } catch { /* try the next name */ }
+ }
+ return null;
+}
+
+/**
+ * Every live process, from one pass over `/proc`. Stat only: per-process I/O is
+ * read for the members of a sampled group, not for the whole machine.
+ */
 export function linuxProcesses(root = "/proc"): LinuxProcess[] {
+ const system = linuxSystem();
+ if (!system) throw new Error("sysconf is unavailable; process sampling needs libc");
  const result: LinuxProcess[] = [];
  for (const name of readdirSync(root)) {
   if (!/^\d+$/.test(name)) continue;
   try {
    const stat = readFileSync(`${root}/${name}/stat`, "utf8");
+   // Fields after the parenthesised command: f[0] is field 3 (state).
    const f = stat.slice(stat.lastIndexOf(")") + 2).trim().split(/\s+/);
    if (["Z", "X"].includes(f[0])) continue;
-   let io = "";
-   try { io = readFileSync(`${root}/${name}/io`, "utf8"); } catch { /* own-user /proc may restrict I/O */ }
-   const counter = (key: string) => Number(io.match(new RegExp(`^${key}: (\\d+)`, "m"))?.[1] ?? 0);
    result.push({ pid: Number(name), ppid: Number(f[1]), pgid: Number(f[2]),
-    cpuSeconds: (Number(f[11]) + Number(f[12])) / clockTicks,
-    rssBytes: Number(f[21]) * pageBytes, readBytes: counter("read_bytes"), writeBytes: counter("write_bytes") });
+    // utime, stime, cutime, cstime: a loop of short subprocesses is busy work.
+    cpuSeconds: (Number(f[11]) + Number(f[12]) + Number(f[13]) + Number(f[14])) / system.clockTicks,
+    startTicks: Number(f[19]), rssBytes: Number(f[21]) * system.pageBytes });
   } catch { /* Processes can exit between directory enumeration and reading. */ }
  }
  return result;
 }
-export function sampleLinuxGroup(pgid: number, previous?: ResourceSample, root = "/proc"): ResourceSample | null {
- const all = linuxProcesses(root);
- const pids = new Set(all.filter(p => p.pgid === pgid).map(p => p.pid));
- // Include descendants which made a new process group while their parent lives.
- let changed = true;
+
+/** Reuse window for one scan: every reader within one sampling tick shares it. */
+export const SNAPSHOT_REUSE_MS = 25;
+let lastSnapshot: { root: string; value: ProcessSnapshot } | undefined;
+let scanCount = 0;
+/** Number of full `/proc` scans so far. Test seam for the one-scan-per-tick rule. */
+export function processScans(): number { return scanCount; }
+/**
+ * One `/proc` scan shared by the group sample, the machine-protection refresh
+ * and the liveness check of the same tick. `maxAgeMs: 0` forces a fresh scan
+ * where a stale reading would delay a decision (stop, finish).
+ */
+export function processSnapshot(root = "/proc", maxAgeMs = SNAPSHOT_REUSE_MS): ProcessSnapshot {
+ const now = Date.now();
+ if (maxAgeMs > 0 && lastSnapshot && lastSnapshot.root === root && now - lastSnapshot.value.at <= maxAgeMs) return lastSnapshot.value;
+ scanCount++;
+ const value = { at: now, processes: linuxProcesses(root) };
+ lastSnapshot = { root, value };
+ return value;
+}
+
+/** The group plus descendants that left it (`setsid`) while their parent lives. */
+export function processTree(pgid: number, processes: readonly LinuxProcess[]): LinuxProcess[] {
+ const pids = new Set(processes.filter(p => p.pgid === pgid).map(p => p.pid));
+ let changed = pids.size > 0;
  while (changed) {
   changed = false;
-  for (const p of all) if (pids.has(p.ppid) && !pids.has(p.pid)) { pids.add(p.pid); changed = true; }
+  for (const p of processes) if (pids.has(p.ppid) && !pids.has(p.pid)) { pids.add(p.pid); changed = true; }
  }
- const members = all.filter(p => pids.has(p.pid));
+ return processes.filter(p => pids.has(p.pid));
+}
+
+function ioCounters(root: string, pid: number): { readBytes: number; writeBytes: number } {
+ let io = "";
+ try { io = readFileSync(`${root}/${pid}/io`, "utf8"); } catch { /* own-user /proc may restrict I/O */ }
+ const counter = (key: string) => Number(io.match(new RegExp(`^${key}: (\\d+)`, "m"))?.[1] ?? 0);
+ return { readBytes: counter("read_bytes"), writeBytes: counter("write_bytes") };
+}
+
+export function sampleLinuxGroup(pgid: number, previous?: ResourceSample, root = "/proc", maxAgeMs = SNAPSHOT_REUSE_MS): ResourceSample | null {
+ const snapshot = processSnapshot(root, maxAgeMs);
+ const members = processTree(pgid, snapshot.processes);
  if (!members.length) return null;
- const sample: ResourceSample = { at: Date.now(), processes: members.length, pids: [...pids],
+ const io = members.map(p => ioCounters(root, p.pid));
+ const sample: ResourceSample = { at: snapshot.at, processes: members.length, pids: members.map(p => p.pid),
   largestProcessBytes: Math.max(...members.map(p => p.rssBytes)),
   rssBytes: members.reduce((n, p) => n + p.rssBytes, 0), cpuSeconds: members.reduce((n, p) => n + p.cpuSeconds, 0),
-  readBytes: members.reduce((n, p) => n + p.readBytes, 0), writeBytes: members.reduce((n, p) => n + p.writeBytes, 0) };
+  readBytes: io.reduce((n, p) => n + p.readBytes, 0), writeBytes: io.reduce((n, p) => n + p.writeBytes, 0) };
  if (previous) sample.cpuPercent = Math.max(0, cpuPercent(previous, sample) ?? 0);
  return sample;
 }
+
+/** Whether any process of the group is alive, from the shared scan on Linux. */
+export function groupRunning(pgid: number, maxAgeMs = SNAPSHOT_REUSE_MS): boolean {
+ if (pgid <= 0) return false;
+ if (process.platform !== "linux") return groupAlive(pgid);
+ try { return processSnapshot("/proc", maxAgeMs).processes.some(p => p.pgid === pgid); }
+ catch { return groupAlive(pgid); }
+}
+
 export interface MachineSample { availableBytes: number; totalBytes: number; swapTotalBytes: number; swapFreeBytes: number }
 export function sampleMachine(path = "/proc/meminfo"): MachineSample {
  if (process.platform !== "linux") return { availableBytes: freemem(), totalBytes: totalmem(), swapTotalBytes: 0, swapFreeBytes: 0 };

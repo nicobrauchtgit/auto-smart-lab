@@ -10,18 +10,32 @@ export interface ProtectedWork {
  refresh?(): void;
  stop(peakBytes: number): Promise<unknown>;
 }
+
+/**
+ * The kernel keeps a few slots and pages back, so a swap device under pressure
+ * rarely reports exactly zero free. Below 1% of its size, at most 64 MiB, it is
+ * as full as it gets.
+ */
+export function swapFull(memory: MachineSample): boolean {
+ if (memory.swapTotalBytes <= 0) return false;
+ return memory.swapFreeBytes < Math.min(memory.swapTotalBytes * 0.01, 64 * 1024 ** 2);
+}
+
 export class MachineProtection {
  private readonly work = new Set<ProtectedWork>();
  private swapFullAt?: number;
  private stopping = false;
  constructor(private readonly limits = HARNESS_CONFIG.supervision,
   private readonly sample: () => MachineSample = sampleMachine) {}
+ /** Available RAM below this stops the largest process. Warnings are measured against it. */
+ get reserveBytes(): number { return this.limits.memoryReserveBytes; }
+ /** The reading the arbiter itself acts on, so a warning and a stop never disagree. */
+ machine(): MachineSample { return this.sample(); }
  register(work: ProtectedWork): () => void { this.work.add(work); return () => { this.work.delete(work); }; }
  async check(now = Date.now()): Promise<void> {
   if (this.stopping || !this.work.size) return;
   const memory = this.sample();
-  const swapFull = memory.swapTotalBytes > 0 && memory.swapFreeBytes === 0;
-  if (swapFull) this.swapFullAt ??= now;
+  if (swapFull(memory)) this.swapFullAt ??= now;
   else this.swapFullAt = undefined;
   const risk = memory.availableBytes < this.limits.memoryReserveBytes
    || (this.swapFullAt !== undefined && now - this.swapFullAt >= this.limits.swapFullSeconds * 1000);

@@ -5,13 +5,18 @@ import { dirname, join } from "node:path";
 import { libproc } from "./sampler.js";
 import { randomUUID } from "node:crypto";
 
-const libc = dlopen(process.platform === "darwin" ? "/usr/lib/libSystem.B.dylib" : "libc.so.6", {
-  flock: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
-});
+// Loaded on first claim, so importing this module never fails on a libc it cannot open.
+let libc: { symbols: { flock(fd: number, operation: number): number } } | undefined;
+function flock(fd: number, operation: number): number {
+  libc ??= dlopen(process.platform === "darwin" ? "/usr/lib/libSystem.B.dylib" : "libc.so.6", {
+    flock: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
+  });
+  return libc.symbols.flock(fd, operation);
+}
 export function claimWorkspace(directory: string): () => void {
   mkdirSync(directory, { recursive: true });
   const fd = openSync(join(directory, ".service.lock"), "a", 0o600);
-  if (libc.symbols.flock(fd, 2 | 4) !== 0) {
+  if (flock(fd, 2 | 4) !== 0) {
     closeSync(fd);
     throw new Error(`Training workspace is owned by another service: ${directory}. Close that service before retrying.`);
   }
@@ -36,8 +41,13 @@ export function processIdentity(pid: number): ProcessIdentity | undefined {
     const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
     const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
     return { pid, pgid: Number(fields[2]), state: fields[0],
-      birth: `${readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim()}:${fields[19]}` };
+      birth: `${bootId()}:${fields[19]}` };
   } catch { return undefined; }
+}
+let boot: string | undefined;
+/** Constant until reboot; read once rather than for every identity check. */
+function bootId(): string {
+  return boot ??= readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
 }
 export function ownedProcessAlive(identity?: ProcessIdentity): boolean {
   if (!identity) return false;
