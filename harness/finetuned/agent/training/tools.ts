@@ -34,6 +34,11 @@ export function createHarnessTrainingTools(
 	const id = Type.String({ minLength: 1, maxLength: 64 });
 	const result = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value) }], details: {} });
 	return [
+        defineTool({ name: "trial_smoke", label: "Smoke check pipeline",
+            description: prompts.render("training.smoke-tool", {}).text,
+            parameters: Type.Object({ request: json }),
+            async execute(_id, args, signal) { signal?.throwIfAborted(); return result(await service.smoke(args.request)); },
+        }),
         defineTool({
             name: "experiment_resume", label: "Resume interrupted training",
             description: prompts.render("training.resume-tool", {}).text,

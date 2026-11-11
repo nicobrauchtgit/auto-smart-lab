@@ -29,6 +29,7 @@ export const PROMPTS = {
 	"experiments.output-tool": { file: "experiments/output-tool.md", variables: [] },
 	"experiments.stop-tool": { file: "experiments/stop-tool.md", variables: [] },
 	"training.resume-tool": { file: "training/resume-tool.md", variables: [] },
+	"training.smoke-tool": { file: "training/smoke-tool.md", variables: [] },
 	"training.start-tool": { file: "training/start-tool.md", variables: [] },
 	"training.status-tool": { file: "training/status-tool.md", variables: [] },
 	"training.output-tool": { file: "training/output-tool.md", variables: [] },

@@ -18,6 +18,6 @@ export async function resolveTrialSnapshot(root: string, experimentId: string): 
   addWorktree(live, worktree, trial.source.commit);
  }
  const actual = resolveCommit(worktree, "HEAD");
- if (actual?.commit !== trial.source.commit || actual.tree !== trial.source.tree || uncommittedFiles(worktree).length) throw new Error("Trial snapshot identity mismatch");
+ if (!actual || actual.commit !== trial.source.commit || actual.tree !== trial.source.tree || uncommittedFiles(worktree).length) throw new Error("Trial snapshot identity mismatch");
  return { experimentId, commit: actual.commit, tree: actual.tree, sourceRoot };
 }

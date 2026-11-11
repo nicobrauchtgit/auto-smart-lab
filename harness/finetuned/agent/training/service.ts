@@ -603,6 +603,30 @@ export class TrainingService {
 		return { experimentId: message.experimentId, commit: tag.commit, pipeline: message.pipeline };
 	}
 
+    /** Cheap explicit execution; never reserves a trial or consumes its budget. */
+    async smoke(raw: unknown): Promise<{ passed: boolean; budgetConsumed: false; issues: unknown[] }> {
+        const parsed = validateExperimentRequest(raw);
+        if (!parsed.request) return { passed: false, budgetConsumed: false, issues: parsed.issues };
+        const checked = this.sourceIssues(parsed.request);
+        if (checked.issues.length || !checked.source || !this.options.solutionsRoot) return { passed: false, budgetConsumed: false, issues: checked.issues };
+        const { checkWorkspace } = await import("../solve/workspace_check.js");
+        const workspace = await checkWorkspace(this.options.solutionsRoot, this.options.taskId);
+        if (!workspace.valid) return { passed: false, budgetConsumed: false, issues: workspace.errors };
+        const directory = join(this.options.trainingRoot, `smoke-${randomUUID()}`);
+        const sourceRoot = join(directory, "source");
+        const worktree = join(sourceRoot, relative(this.options.projectRoot, this.options.solutionsRoot));
+        addWorktree(this.options.solutionsRoot, worktree, checked.source.commit);
+        try {
+            const scriptPath = join(PYTHON_ROOT, "smoke.py");
+            const issues = await runPipelineValidation({ pythonExecutable: this.options.pythonExecutable, scriptPath,
+                command: this.options.sandboxCommand?.([this.options.pythonExecutable, scriptPath], { directory, sourceRoots: [sourceRoot] }),
+                sourceRoot, request: parsed.request, measurement: this.checkMeasurement(), env: this.options.env,
+                cwd: this.options.projectRoot, timeoutMs: this.settings.validationTimeoutSeconds * 1000 });
+            this.options.record?.("training_smoke_completed", { passed: !issues.length, source: checked.source, budget_consumed: false });
+            return { passed: !issues.length, budgetConsumed: false, issues };
+        } finally { removeWorktree(this.options.solutionsRoot, worktree); await rm(directory, { recursive: true, force: true }); }
+    }
+
 	/** Persist identity and inputs before spawning the harness-owned worker. */
 	start(raw: unknown, requestedByToolCallId?: string): Promise<StartedTrainingExperiment> {
 		const work = this.starting.then(async () => { await this.ready(); if (this.closed) throw new Error("training service is closed"); const release = this.options.solutionsRoot ? await selectionClaimAsync(this.options.solutionsRoot) : undefined; try { return await this.startValidated(raw, requestedByToolCallId); } finally { release?.(); } });
