@@ -256,6 +256,39 @@ describe("collectTrainingResults", () => {
 			.not.toContainEqual(expect.objectContaining({ code: "missing_file", file: "oof_predictions.csv" }));
 	});
 
+	test("a missing or malformed search report is an artifact error that hides no healthy sibling", async () => {
+		const root = await mkdtemp(join(tmpdir(), "training-results-"));
+		await writeTrial(root, "healthy", { score: 0.84 });
+		/** A promotion-eligible search winner whose report the collector must reread. */
+		const searchTrial = async (id: string) => {
+			const directory = await writeTrial(root, id, { score: 0.9 });
+			const search = { space: { model__C: { type: "categorical", choices: [0.1, 1] } }, sampler: "random", maxConfigs: 2 };
+			for (const file of ["request.json", "invocation.json"]) {
+				const document = await Bun.file(join(directory, file)).json();
+				const request = file === "request.json" ? document : document.request;
+				Object.assign(request, { schemaVersion: 2, search });
+				await writeFile(join(directory, file), `${JSON.stringify(document)}\n`);
+			}
+			const result = await Bun.file(join(directory, "trial-result.json")).json();
+			result.winningPipeline = { module: "solutions/tasks/task.py", factory: "build_pipeline", parameters: { id } };
+			for (const file of ["trial-result.json", "metrics.json"]) await writeFile(join(directory, file), `${JSON.stringify(result)}\n`);
+			return directory;
+		};
+		await writeFile(join(await searchTrial("malformed-report"), "search-report.json"), "{not-json\n");
+		await searchTrial("missing-report");
+
+		const collection = await collectTrainingResults(root);
+
+		expect(collection.trials.map((trial) => trial.experimentId)).toEqual(["healthy", "malformed-report", "missing-report"]);
+		expect(collection.trials.filter((trial) => trial.eligible).map((trial) => trial.experimentId)).toEqual(["healthy"]);
+		expect(collection.valid).toBe(true);
+		const errors = (id: string) => collection.trials.find((trial) => trial.experimentId === id)!.errors;
+		expect(errors("malformed-report")).toContainEqual(expect.objectContaining({ code: "invalid_json", file: "search-report.json" }));
+		expect(errors("malformed-report")).toContainEqual(expect.objectContaining({ code: "invalid_search_winner", file: "search-report.json" }));
+		expect(errors("missing-report")).toContainEqual(expect.objectContaining({ code: "missing_file", file: "search-report.json" }));
+		expect(errors("missing-report")).toContainEqual(expect.objectContaining({ code: "invalid_search_winner", file: "search-report.json" }));
+	});
+
 	test("turns an unreadable root into a factual collection failure", async () => {
 		const root = join(tmpdir(), `absent-training-results-${crypto.randomUUID()}`);
 		const collection = await collectTrainingResults(root);

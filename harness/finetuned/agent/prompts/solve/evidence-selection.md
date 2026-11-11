@@ -13,7 +13,7 @@ harness does not verify label correctness. Generated samples or mutable asset
 references are not supported by this development-ID evidence contract.
 
 Search uses the declared score unless you explicitly choose an advisory proxy.
-A search winner needs a separate fixed confirmation before promotion. Promotion
+A completed search winner counts once measured on all shared folds. Promotion
 requires a complete comparison on identical challenger folds and evidence,
 with the paired lead exceeding noise. Report evidence class counts, coverage
 and limitations; these scores do not establish official task accuracy. Keep your

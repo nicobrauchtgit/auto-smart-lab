@@ -81,11 +81,16 @@ def run_child(spec_path: Path, prepare_data: Callable[[Invocation], tuple[Any, l
     return 0 if status == "completed" else 2
 
 
-def rerun(document: dict[str, Any], invocation: Invocation, worker_path: Path, events: EventWriter) -> dict[str, Any]:
-    """Run the champion in a child interpreter and return its folds and OOF rows."""
+def rerun(document: dict[str, Any], invocation: Invocation, worker_path: Path, events: EventWriter,
+          threads: int | None = None) -> dict[str, Any]:
+    """Run the champion in a child interpreter and return its folds and OOF rows.
+
+    ``threads`` is the challenger trial's recorded threads per fold process;
+    the child applies it so both sides fit with the same thread budget.
+    """
     champion = invocation.champion or {}
     output_dir = invocation.output_dir
-    _atomic_json(output_dir / SPEC_FILE, {"invocation": document})
+    _atomic_json(output_dir / SPEC_FILE, {"invocation": document, **({"threadsPerProcess": threads} if threads else {})})
     process = subprocess.run([sys.executable, str(worker_path), "--champion-rerun", str(output_dir / SPEC_FILE)],
                              stdout=sys.stdout, stderr=sys.stderr, check=False)
     folds: list[dict[str, Any]] = []

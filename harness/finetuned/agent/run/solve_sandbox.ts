@@ -178,7 +178,9 @@ export function pythonManagerEnvironment(python: PythonEnvironment, managerRoot:
  return { ...sanitizeTrainingEnvironment(process.env, identity), VENV_DIR: python.prefix,
   UV_CACHE_DIR: join(managerRoot, ".tools/uv/cache"), UV_PYTHON_INSTALL_DIR: join(managerRoot, ".tools/uv/python"),
   ...(identity.attempt === undefined ? {} : { PIPELINE_AGENT_ATTEMPT: String(identity.attempt) }),
-  ...((identity.sessionId ?? process.env.PIPELINE_PYTHON_SESSION_ID) ? { PIPELINE_PYTHON_SESSION_ID: identity.sessionId ?? process.env.PIPELINE_PYTHON_SESSION_ID! } : {}) };
+  // Attribution comes only from the explicit session identity; the process
+  // environment of the harness never carries a session ID.
+  ...(identity.sessionId ? { PIPELINE_PYTHON_SESSION_ID: identity.sessionId } : {}) };
 }
 export function solvePythonEnvironmentTool(python: PythonEnvironment, description: string, managerRoot = ROOT, identity: PythonManagerIdentity = {}): ToolDefinition {
  return defineTool({ name: "python_environment", label: "Shared Python environment", description,

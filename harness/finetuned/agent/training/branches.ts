@@ -10,12 +10,12 @@
  * records an open round, so a round cut short by a crash is closed by the next
  * solve before it starts.
  */
-import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { existsSync, readFileSync, rmSync, statSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { isAbsolute, join, dirname } from "node:path";
 import { git, HARNESS_IDENTITY, isRepositoryRoot, uncommittedFiles } from "./git.js";
 import { championTag } from "./development_selection.js";
 
-export interface FollowUpStart { branch: string; champion: string; previous: string; detached: boolean }
+export interface FollowUpStart { branch: string; champion: string; previous: string; detached: boolean; taskId?: string }
 
 const MAX_LISTED = 8;
 /** Untracked files above this size are left in place, never committed by the harness. */
@@ -40,22 +40,35 @@ function failure(result: { stderr: string }) { return result.stderr.trim().split
  * branch. Tracked changes and small untracked files are committed; large untracked
  * files (data, caches) stay in the working tree and out of the permanent history.
  */
-function checkpoint(root: string, reason: string): { committed: boolean; skipped: string[] } {
- if (uncommittedFiles(root).length === 0) return { committed: false, skipped: [] };
+export function checkpoint(root: string, reason: string): { committed: boolean; skipped: string[]; moved: { from: string; to: string }[] } {
+ const excludePath = git(root, ["rev-parse", "--git-path", "info/exclude"]).stdout.trim();
+ const exclude = isAbsolute(excludePath) ? excludePath : join(root, excludePath);
+ mkdirSync(dirname(exclude), { recursive: true });
+ const ignored = existsSync(exclude) ? readFileSync(exclude, "utf8") : "";
+ if (!ignored.split("\n").includes("/scratch/")) writeFileSync(exclude, `${ignored}\n/scratch/\n`);
+ if (uncommittedFiles(root).length === 0) return { committed: false, skipped: [], moved: [] };
  const untracked = git(root, ["ls-files", "--others", "--exclude-standard", "-z"]).stdout.split("\0").filter(Boolean);
  const small = untracked.filter(path => { try { return statSync(join(root, path)).size <= MAX_CHECKPOINT_FILE_BYTES; } catch { return false; } });
+ const moved: { from: string; to: string }[] = [];
  const skipped = untracked.filter(path => !small.includes(path));
+ for (const path of skipped) {
+  const destination = join(root, "scratch", "checkpoint", `${Date.now()}-${crypto.randomUUID()}`, path);
+  mkdirSync(dirname(destination), { recursive: true });
+  renameSync(join(root, path), destination);
+  moved.push({ from: path, to: destination });
+ }
+
  for (const step of [["add", "-u"], ...(small.length ? [["add", "--", ...small]] : [])]) {
   const added = git(root, step);
   if (added.status !== 0) throw new Error(`Could not save uncommitted work before switching branches: ${failure(added)}`);
  }
- if (git(root, ["diff", "--cached", "--quiet"]).status === 0) return { committed: false, skipped };
+ if (git(root, ["diff", "--cached", "--quiet"]).status === 0) return { committed: false, skipped, moved };
  const committed = git(root, [...HARNESS_IDENTITY, "commit", "--quiet", "--no-verify", "-m", reason]);
  if (committed.status !== 0) throw new Error(`Could not save uncommitted work before switching branches: ${failure(committed)}`);
- return { committed: true, skipped };
+ return { committed: true, skipped, moved };
 }
 
-function currentBranch(root: string): { previous: string; detached: boolean } {
+function currentBranch(root: string): { previous: string; detached: boolean; taskId?: string } {
  const current = git(root, ["symbolic-ref", "--short", "-q", "HEAD"]);
  return current.status === 0 ? { previous: current.stdout.trim(), detached: false } : { previous: git(root, ["rev-parse", "HEAD"]).stdout.trim(), detached: true };
 }
@@ -94,22 +107,30 @@ export function startFollowUp(root: string, taskId: string, label: string): Foll
  if (previous.startsWith(followUpPrefix(taskId))) throw new Error(`solutions/ is on follow-up branch ${previous} with no record of where it started; switch it back first`);
  // The same invocation reconciling after a crash reopens its own branch instead of failing.
  const exists = git(root, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`]).status === 0;
+ const start = { branch, champion, previous, detached, taskId };
+ writeFileSync(markerPath(root), JSON.stringify(start));
  const switched = git(root, exists ? ["switch", "--quiet", branch] : ["switch", "--quiet", "-c", branch, champion]);
  if (switched.status !== 0) throw new Error(`Could not check out follow-up branch ${branch}: ${failure(switched)}`);
- const start = { branch, champion, previous, detached };
- writeFileSync(markerPath(root), JSON.stringify(start));
  return start;
 }
 
 /** Switch back to where the round started, after committing leftover work on the round's branch. */
 export function finishFollowUp(root: string, start: FollowUpStart): { restored: boolean; checkpoint?: boolean; skipped?: string[]; error?: string } {
  let saved: ReturnType<typeof checkpoint>;
- try { saved = checkpoint(root, `Uncommitted work saved by the harness at the end of ${start.branch}`); }
+ try { saved = currentBranch(root).previous === start.branch ? checkpoint(root, `Uncommitted work saved by the harness at the end of ${start.branch}`) : { committed: false, skipped: [], moved: [] }; }
  catch (error) { return { restored: false, error: error instanceof Error ? error.message : String(error) }; }
  const extra = { ...(saved.committed ? { checkpoint: true } : {}), ...(saved.skipped.length ? { skipped: saved.skipped.slice(0, 20) } : {}) };
  const result = git(root, start.detached ? ["switch", "--quiet", "--detach", start.previous] : ["switch", "--quiet", start.previous]);
  // The record stays until the switch back succeeds, so the next solve can retry it.
  if (result.status !== 0) return { restored: false, ...extra, error: failure(result) };
+ const champion = start.taskId ? championCommit(root, start.taskId) : undefined;
+ if (champion && champion !== start.champion && git(root, ["merge-base", "--is-ancestor", champion, start.branch]).status === 0) {
+  const merged = git(root, [...HARNESS_IDENTITY, "merge", "--no-edit", start.branch]);
+  if (merged.status !== 0) {
+   git(root, ["merge", "--abort"]);
+   return { restored: false, ...extra, error: `Follow-up merge conflict; round retained: ${failure(merged)}` };
+  }
+ }
  rmSync(markerPath(root), { force: true });
  return { restored: true, ...extra };
 }

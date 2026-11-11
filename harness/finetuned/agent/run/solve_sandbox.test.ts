@@ -168,3 +168,28 @@ time.sleep(60)
  await expect(pending).rejects.toThrow("cancelled");
  expect(await until(() => liveGroup(group).length === 0)).toBe(true);
 }, 20_000);
+
+test("expert roles share the same tree while ideas remains read-only and validation requires a snapshot", async () => {
+ const { expertSandbox } = await import("./sandbox.js");
+ const f = fixture();
+ const data = { ...f.workspace, profilePath: f.workspace.taskPath } as import("../solve/task_data.js").TaskData;
+ for (const role of ["lead", "data", "ideas"] as const) {
+  const policy = expertSandbox(data, role, f.python);
+  const solution = policy.mounts.find(mount => mount.source === data.solutionsRoot)!;
+  expect(solution.writable).toBe(role !== "ideas");
+  expect(policy.mounts.some(mount => f.hidden.includes(mount.source))).toBe(false);
+ }
+ expect(() => expertSandbox(data, "validation", f.python)).toThrow("snapshot");
+}, 30000);
+
+test("dependency manager attribution comes only from the explicit session identity", () => {
+ const python = readPythonEnvironment();
+ const previous = process.env.PIPELINE_PYTHON_SESSION_ID;
+ process.env.PIPELINE_PYTHON_SESSION_ID = "ambient-session";
+ try {
+  expect(pythonManagerEnvironment(python, "/tmp/manager", {}).PIPELINE_PYTHON_SESSION_ID).toBeUndefined();
+  expect(pythonManagerEnvironment(python, "/tmp/manager", { sessionId: "solve-session" }).PIPELINE_PYTHON_SESSION_ID).toBe("solve-session");
+ } finally {
+  if (previous === undefined) delete process.env.PIPELINE_PYTHON_SESSION_ID; else process.env.PIPELINE_PYTHON_SESSION_ID = previous;
+ }
+});

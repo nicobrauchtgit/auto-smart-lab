@@ -84,11 +84,6 @@ test("growing evidence is snapshotted; search, paired champion, recovery, valida
   expect(advisory.result).toMatchObject({ status: "completed", promotionEligible: false });
   // New evidence changes neither old measurements nor their durable base identity.
   writeFileSync(liveEvidence, JSON.stringify({ schemaVersion: 1, labels }));
-  const search = await training.service.start({ ...request, pipeline: { module: request.pipeline.module, factory: request.pipeline.factory }, search: { space: { quality: { type: "categorical", choices: [0, 1] } }, sampler: "grid" } });
-  expect(await until(() => training.supervisor.status(search.id).status !== "running")).toBe(true);
-  const searchTrial = await collectTrainingTrial(search.directory);
-  expect(searchTrial.errors).toEqual([]);
-  expect(searchTrial.result).toMatchObject({ status: "completed", promotionEligible: false, metrics: { selectionScore: 1 } });
   const challenger = await training.service.start({ ...request, pipeline: { ...request.pipeline, estimatorParams: { quality: 1 } } });
   expect(await until(() => training.supervisor.status(challenger.id).status !== "running")).toBe(true);
   await training.service.finalize(challenger.id);
@@ -98,6 +93,16 @@ test("growing evidence is snapshotted; search, paired champion, recovery, valida
   expect(readFileSync(join(first.directory, "evidence.json"), "utf8")).toBe(firstBytes);
   expect(JSON.parse(tagMessage(project.solutionsRoot, "champion/fixture")!.message).selection.evidenceSha256).toBe((trial.invocation!.measurement as any).evidenceManifestSha256);
   championDirectory = challenger.directory;
+  // A complete search winner is promotion-eligible on the same evidence (v2
+  // section 8), but a tie with the champion it is paired against keeps that champion.
+  const search = await training.service.start({ ...request, pipeline: { module: request.pipeline.module, factory: request.pipeline.factory }, search: { space: { quality: { type: "categorical", choices: [0, 1] } }, sampler: "grid" } });
+  expect(await until(() => training.supervisor.status(search.id).status !== "running")).toBe(true);
+  await training.service.finalize(search.id);
+  const searchTrial = await collectTrainingTrial(search.directory);
+  expect(searchTrial.errors).toEqual([]);
+  expect(searchTrial.result).toMatchObject({ status: "completed", promotionEligible: true, metrics: { selectionScore: 1 }, winningPipeline: { estimatorParams: { quality: 1 } },
+   championComparison: { status: "completed", leadExceedsNoise: false, meanDifference: 0, metric: "selectionScore" } });
+  expect(JSON.parse(tagMessage(project.solutionsRoot, "champion/fixture")!.message).experimentId).toBe(challenger.id);
   expect(training.service.describe(challenger.id)?.selection).toMatchObject({ basis: "evidence", metric: "evidence_average_precision", value: 1, source: "agent_provided",
    coverage: { unit: "validation_observations", validationRows: 120, labelledRows: 120, positiveRows: 60, negativeRows: 60, labelCoverage: 1 } });
   expect(training.service.leaderboard().find(row => row.experimentId === challenger.id)?.selection).toMatchObject({ metric: "evidence_average_precision", value: 1, evidenceSha256: (trial.invocation!.measurement as any).evidenceManifestSha256 });
