@@ -15,13 +15,12 @@
  */
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import { loadPromptSnapshot } from "../prompts/loader.js";
-import type { TaskConfiguration } from "../pipeline/task_configuration.js";
 import { PROJECT_ROOT, resolveTask } from "../pipeline/resolve_task.js";
 import { readPythonEnvironment } from "../run/python_environment.js";
-import { ARM_ROOT, statePath } from "../paths.js";
+import { statePath } from "../paths.js";
 import { expertSandbox, scoutWorkspace } from "../run/sandbox.js";
 import { readCourseResources } from "../research/resources.js";
 import { prepareTaskData, readTaskData } from "../workspace/task_data.js";
@@ -33,6 +32,7 @@ import { createScouts, finalBullets, scoutOutcome } from "./scouts.js";
 import { createScoutRunner } from "./runner.js";
 import { scoutRequirements } from "./setup.js";
 import { stageScoutInputs } from "./workspace.js";
+import { probeConfiguration } from "./probe_tasks.js";
 import { createTrialResolver, taskTrialRoots } from "./trials.js";
 import type { ScoutRole } from "./contracts.js";
 
@@ -44,15 +44,7 @@ if (!taskId || !["data", "ideas", "validation"].includes(role) || !Number.isSafe
 const budget = Number(budgetArg);
 const scoutRole = role as ScoutRole;
 
-/** Code2 has a probe-only declaration from its supplied task text; pipeline.config.json is unchanged. */
-const CODE2_PROBE_CONFIGURATION = {
- schemaVersion: 1, kind: "clustering", samples: {source: "zip_members", train: "php-train.zip", test: "php-test.zip"},
- targets: {kind: "families", file: "php-train.labels"}, execution: "batch", holdout: "group", metric: "adjusted_rand_index",
- refit: "fit_predict_test_batch", submission: {format: "id_semicolon_prediction", predictions: "cluster_id"},
-} as const;
-const config = JSON.parse(readFileSync(resolve(ARM_ROOT, "pipeline.config.json"), "utf8"));
-const configuration = (config.pipeline.tasks[taskId] ?? (taskId === "code2" ? CODE2_PROBE_CONFIGURATION : undefined)) as TaskConfiguration | undefined;
-if (!configuration) throw new Error("Probe requires declared task configuration");
+const configuration = probeConfiguration(taskId);
 const task = resolveTask({taskId});
 const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
 const workspace = statePath(PROJECT_ROOT, "scout-dry-run", `${stamp}-${taskId}-${role}-${budget}`);

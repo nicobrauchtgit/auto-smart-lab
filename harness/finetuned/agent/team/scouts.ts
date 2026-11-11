@@ -67,7 +67,8 @@ export interface ScoutsOptions {
  budgets?: Partial<Record<ScoutRole, number>>;
 }
 
-const FILE_CITATION = /^([\w./-]+\.(?:py|txt|md|json|jsonl|csv|tsv|log|labels))(?::(\d+))?$/;
+/** `path`, `path:line` or `path:first-last` (linked to its first line). */
+const FILE_CITATION = /^([\w./-]+\.(?:py|txt|md|json|jsonl|csv|tsv|log|labels))(?::(\d+)(?:-\d+)?)?$/;
 /**
  * Structured links for a bullet's own citations. Produces only contract-valid
  * refs; anything else (line 0, paths outside the state root) stays text only.

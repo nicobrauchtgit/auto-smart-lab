@@ -126,7 +126,7 @@ test("each validation call resolves its own experiment; fix bullets journal as d
    expect(input.opening.text).toContain(`{"experiment":"${input.trial!.experimentId}"}: resolved`);
    return {text: [
     "- fix: the pipeline reads a leak flag (`tasks/model.py:1`), confirmed by `checks/fixture/test_leak.py`",
-    "- ok: output domain checked (`tasks/model.py:2`)", "- advice: pin the seed", "- an unlabelled remark"].join("\n"),
+    "- `ok:` output domain checked (`tasks/model.py:1-2`)", "- advice: pin the seed", "- an unlabelled remark"].join("\n"),
     root: join(input.trial!.sourceRoot, "solutions"), checks: [{path: "checks/fixture/test_leak.py", sha256: "a".repeat(64)}]};
   }});
  const first = await scope.scout({role: "validation", question: "check", refs: [{experiment: "exp-1"}]});
@@ -137,6 +137,8 @@ test("each validation call resolves its own experiment; fix bullets journal as d
  expect(entries.map(entry => entry.kind)).toEqual(["defect", "fact", "idea"]);
  expect(entries[0].refs).toEqual([{experiment: "exp-1"}, {file: "tasks/model.py", line: 1, commit: f.measured.commit},
   {check: "checks/fixture/test_leak.py", experiment: "exp-1", sha256: "a".repeat(64)}]);
+ // A quoted prefix still labels the bullet; a line range links its first line.
+ expect(entries[1].refs).toEqual([{experiment: "exp-1"}, {file: "tasks/model.py", line: 1, commit: f.measured.commit}]);
  // Unknown experiments fail the role; the scout never starts on live code.
  expect(await scope.scout({role: "validation", question: "check", refs: [{experiment: "exp-9"}]})).toContain("snapshot unavailable: No trial record for experiment exp-9");
  expect(seen.length).toBe(2);
