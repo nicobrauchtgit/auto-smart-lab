@@ -323,7 +323,7 @@ export async function runHarnessSolveSession(
 		if (recovered.recovered || recovered.error) report?.event("follow_up_branch_recovered", { branch: recovered.recovered?.branch, previous: recovered.recovered?.previous, ...(recovered.error ? { error: recovered.error } : {}) });
 		// Still in an open round: this one runs where the repository stands, without a new branch.
 		if (recovered.error) throw new Error(`Earlier follow-up round could not be closed: ${recovered.error}`); followUp = startFollowUp(workspace.solutionsRoot, taskId, runId.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 12)); }
-	catch (error) { report?.event("follow_up_branch_failed", { message: error instanceof Error ? error.message : String(error) }); }
+	catch (error) { report?.event("follow_up_branch_failed", { message: error instanceof Error ? error.message : String(error) }); await training.close(); throw error; }
 	if (followUp) {
 		const note = prompts.render("solve.follow-up", { branch: followUp.branch, champion: followUp.champion.slice(0, 12), previous: followUp.previous });
 		opening.prompt += `\n\n${note.text}`;

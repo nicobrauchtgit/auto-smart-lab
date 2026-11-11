@@ -181,3 +181,20 @@ describe("agent-driven harness solve session", () => {
 		expect(observed.events.some((event) => event.type === "agent_attempt_error")).toBe(true);
 	});
 });
+
+
+test("unrecoverable follow-up closes training and prevents agent execution", async () => {
+ const { ensureSolutionsRepository, git } = await import("../training/git.js");
+ const workspace = fixtureWorkspace();
+ ensureSolutionsRepository(workspace.solutionsRoot);
+ const directory = git(workspace.solutionsRoot, ["rev-parse", "--absolute-git-dir"]).stdout.trim();
+ writeFileSync(join(directory, "smartlab-follow-up.json"), "corrupt");
+ let called = false, closed = false;
+ await expect(runHarnessSolveSession("task", undefined, { runId: "failed-recovery", dependencies: {
+  prepareWorkspace: () => workspace, prepareSandbox: () => sandbox(workspace), readPython: python,
+  createTraining: () => ({ tools: [], toolPrompts: [], supervisor: {}, service: {}, bindSession() {}, close: async () => { closed = true; } } as never),
+  runAgentSession: async () => { called = true; throw new Error("must not execute"); },
+ } })).rejects.toThrow("could not be closed");
+ expect(called).toBe(false);
+ expect(closed).toBe(true);
+});

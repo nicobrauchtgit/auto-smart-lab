@@ -1,3 +1,5 @@
+import { sessionEnvironment } from "../training/environment.js";
+import { webSearchExtension } from "../tools/web_search.js";
 import { agentEnvironment } from "../telemetry/metadata.js";
 import type { InvocationFeedback } from "../pipeline/feedback.js";
 /**
@@ -43,7 +45,7 @@ export interface RunSessionOptions {
 	promptReferences: PromptReference[];
 	/** Initial user message to send */
 	prompt: string;
-	/** Optional env vars to inject into process.env for this session */
+	/** Session-local environment supplied to tool factories and child process hooks */
 	env?: Record<string, string>;
 	/** Optional provider/model reference from pipeline.config.json */
 	model?: string;
@@ -99,6 +101,11 @@ export function sessionToolAllowlist(
 	return [...new Set([...tools, ...(customTools ?? []).map((tool) => tool.name)])];
 }
 
+export function sessionBashTool(cwd: string, environment: Readonly<Record<string, string>>): ToolDefinition {
+ const frozen = { ...environment };
+ return defineTool(createBashToolDefinition(cwd, { spawnHook: context => ({ ...context, env: agentEnvironment(sessionEnvironment(context.env, frozen)) }) }));
+}
+
 /**
  * Run a PI agent session, wait for it to settle, and return the collected output.
  */
@@ -111,7 +118,7 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 	const python = preparePythonEnvironment(options.prompts, initialEnvironment);
 	options.reportInput?.(python.input);
 	const identity = options.observe?.identity;
-	const env = {
+	const env: Record<string, string> = {
 		...options.env, ...python.env,
 		PIPELINE_PYTHON_SESSION_ID: pythonSessionId,
 		...(identity?.pipelineRunId ? { PIPELINE_RUN_ID: identity.pipelineRunId } : {}),
@@ -119,30 +126,29 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 		...(identity?.attempt !== undefined && identity.attempt !== null ? { PIPELINE_AGENT_ATTEMPT: String(identity.attempt) } : {}),
 	};
 
-	// Inject env vars before session starts (tools read from process.env)
-	const envBackup: Record<string, string | undefined> = {};
-	if (env) {
-		for (const [key, value] of Object.entries(env)) {
-			envBackup[key] = process.env[key];
-			process.env[key] = value;
-		}
-	}
-
-	try {
+	{
 		const systemPrompt = [options.system.text, python.prompt.text].join("\n\n");
 		const pipeline = await loadPipelineConfig();
 		const { cwd, agentDir } = pipeline;
 		const sessionCwd = options.cwd ? resolve(options.cwd) : cwd;
   if ((options.tools === undefined || options.tools.includes("bash")) && !customTools.some(tool => tool.name === "bash")) {
-   customTools.push(defineTool(createBashToolDefinition(sessionCwd, { spawnHook: context => ({ ...context, env: agentEnvironment(context.env) }) })));
+   customTools.push(sessionBashTool(sessionCwd, env));
   }
-		const extensionPaths = options.extensionPaths ?? [];
+		const requestedExtensions = options.extensionPaths ?? [];
+        const webPaths = requestedExtensions.filter(path => /(?:^|[/\\])web_search\.(?:ts|js)$/.test(path));
+        const extensionPaths = requestedExtensions.filter(path => !webPaths.includes(path));
+        const searchFactories: InlineExtension[] = options.extensions === false || !webPaths.length ? [] : [{ name: "session-web-search", factory: webSearchExtension({
+            env: sessionEnvironment(process.env, env),
+            maxCalls: Number(env.WEB_SEARCH_MAX_CALLS ?? process.env.WEB_SEARCH_MAX_CALLS ?? Number.MAX_SAFE_INTEGER),
+            maxResults: Number(env.WEB_SEARCH_MAX_RESULTS ?? process.env.WEB_SEARCH_MAX_RESULTS ?? 5),
+            logPath: env.WEB_SEARCH_LOG,
+        }) }];
 
 		const resourceLoader = createPipelineResourceLoader({
 			cwd: sessionCwd,
 			agentDir,
 			additionalExtensionPaths: options.extensions === false ? [] : extensionPaths,
-			extensionFactories: [...(options.extensionFactories ?? []), ...(options.observe?.executionGuard ? [{ name: "controller-budget", factory(pi: any) { pi.on("tool_call", () => { try { options.observe!.executionGuard!.beforeToolCall(); } catch { return { block: true, reason: "Controller tool budget exhausted" }; } }); } }] : [])],
+			extensionFactories: [...(options.extensionFactories ?? []), ...searchFactories, ...(options.observe?.executionGuard ? [{ name: "controller-budget", factory(pi: any) { pi.on("tool_call", () => { try { options.observe!.executionGuard!.beforeToolCall(); } catch { return { block: true, reason: "Controller tool budget exhausted" }; } }); } }] : [])],
 			systemPrompt,
 		});
 
@@ -262,17 +268,6 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 			if (onAbort) options.signal?.removeEventListener("abort", onAbort);
 			options.feedback?.unbind(logical);
 			await logical.close();
-		}
-	} finally {
-		// Restore env vars
-		if (env) {
-			for (const [key, originalValue] of Object.entries(envBackup)) {
-				if (originalValue === undefined) {
-					delete process.env[key];
-				} else {
-					process.env[key] = originalValue;
-				}
-			}
 		}
 	}
 }
