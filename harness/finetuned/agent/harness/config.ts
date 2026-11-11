@@ -32,7 +32,10 @@ export type HarnessConfig = Omit<typeof document, "solve"> & {
 };
 export function parseHarnessConfig(raw: unknown): HarnessConfig {
 	const value = object(raw, ["version", ...Object.keys(fields), "foldRecommendations", "team"], "harness");
-	const team = object(value.team, ["lead", "scouts", "budgetCounter", "holdoutFeedback"], "team");
+	const team = object(value.team, ["lead", "scouts", "scoutGuard", "budgetCounter", "holdoutFeedback"], "team");
+	const guard = object(team.scoutGuard, ["stallMs", "wallMs"], "team.scoutGuard");
+	for (const key of ["stallMs", "wallMs"]) { positive(guard[key], `team.scoutGuard.${key}`); if (guard[key] > 2_147_483_647) throw new Error("Timeout exceeds timer range"); }
+	if (guard.stallMs > guard.wallMs) throw new Error("team.scoutGuard.stallMs exceeds wallMs");
 	positive(object(team.lead, ["maxToolCalls"], "team.lead").maxToolCalls, "team.lead.maxToolCalls");
 	const scouts = object(team.scouts, ["data", "ideas", "validation"], "team.scouts");
 	for (const role of ["data", "ideas", "validation"]) {

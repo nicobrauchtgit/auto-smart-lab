@@ -308,6 +308,7 @@ replacing today's `research`, `solve` and `orchestrator` budget keys:
     "ideas":      { "maxToolCalls": 10, "webSearches": 3 },
     "validation": { "maxToolCalls": 10 }
   },
+  "scoutGuard": { "stallMs": 900000, "wallMs": 5400000 },
   "budgetCounter": "every_call",
   "holdoutFeedback": "ladder"
 },
@@ -319,6 +320,12 @@ replacing today's `research`, `solve` and `orchestrator` budget keys:
   "swapFullSeconds": 15
 }
 ```
+
+`scoutGuard` only detects stuck scout sessions: no session event for
+`stallMs`, or still running after `wallMs`. It is not a work budget. Every
+tool call a scout emits counts against its budget, including calls Pi rejects
+(unknown tool, invalid arguments), and its model turns are bounded by the
+budget plus two.
 
 **Resumption.** The harness writes a small `PROGRESS.json` (champion, trials
 with their one-line hypotheses, holdout verdicts, budget left) and the

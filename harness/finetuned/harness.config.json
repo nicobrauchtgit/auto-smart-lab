@@ -79,6 +79,7 @@
       "ideas": { "maxToolCalls": 10, "webSearches": 3 },
       "validation": { "maxToolCalls": 10 }
     },
+    "scoutGuard": { "stallMs": 900000, "wallMs": 5400000 },
     "budgetCounter": "every_call",
     "holdoutFeedback": "ladder"
   },
