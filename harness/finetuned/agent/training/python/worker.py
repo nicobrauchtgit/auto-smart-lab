@@ -8,8 +8,13 @@ metrics, persistence, and lifecycle events.
 from __future__ import annotations
 
 import argparse
+import builtins
+import hashlib
 import json
+import os
+import shutil
 import signal
+import subprocess
 import sys
 import time
 import traceback
@@ -21,7 +26,7 @@ import numpy as np
 from smartlab_trial.agent_code import (
     _call_pipeline_factory, _factory, _inject_random_states, _load_module, expose_project,
 )
-from smartlab_trial.artifacts import EventWriter, _atomic_json, _write_oof, append_fold_result, write_summary
+from smartlab_trial.artifacts import EventWriter, _atomic_json, _atomic_write, _write_oof, write_summary
 from smartlab_trial.folds import ConcreteFold, _manifest, _materialize_folds, _pilot_indices
 from smartlab_trial.invocation import SCHEMA_VERSION, InvocationError, Invocation, parse_invocation
 from smartlab_trial.metrics import _measure, _scores, score_observation
@@ -233,13 +238,199 @@ def _summarise(invocation: Invocation, folds: Sequence[ConcreteFold], completed:
     return summary
 
 
-def _fold_worker_init(cores, workers):
-    import os
-    import multiprocessing
+# Fixed-trial folds run in at most this many processes (memory bound per fold).
+MAX_FOLD_PROCESSES = 2
+_THREAD_VARIABLES = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "BLIS_NUM_THREADS",
+                     "VECLIB_MAXIMUM_THREADS", "NUMEXPR_NUM_THREADS")
+
+
+def _fold_plan(total_folds: int, cores: Sequence[int]) -> tuple[int, int]:
+    """Fold processes and threads per fold for a fixed trial.
+
+    Depends only on the trial's fold count and the machine's cores, never on
+    how many folds remain, so a resumed trial fits every fold with the same
+    thread budget. Each process gets its share of the cores rather than one
+    thread, so multi-threaded estimators keep the machine's parallelism.
+    """
+    available = len(cores) or (os.cpu_count() or 1)
+    workers = max(1, min(total_folds, available, MAX_FOLD_PROCESSES))
+    return workers, max(1, available // workers)
+
+
+def _ids_digest(ids: Sequence[str]) -> str:
+    return hashlib.sha256(json.dumps(list(ids), separators=(",", ":")).encode()).hexdigest()
+
+
+class FoldWorkerError(RuntimeError):
+    """A fold process raised an exception type that cannot be rebuilt by name."""
+
+
+def _rebuild_error(payload: dict[str, Any]) -> BaseException:
+    message = str(payload.get("message", ""))
+    if payload.get("invocationError"):
+        return InvocationError(message)
+    builtin = getattr(builtins, str(payload.get("type")), None)
+    if isinstance(builtin, type) and issubclass(builtin, Exception):
+        try:
+            return builtin(message)
+        except Exception:
+            pass
+    return FoldWorkerError(f"{payload.get('type')}: {message}")
+
+
+def _describe_exit(code: int) -> str:
+    if code < 0:
+        try:
+            return f"killed by signal {signal.Signals(-code).name}"
+        except ValueError:
+            return f"killed by signal {-code}"
+    return f"exit code {code} without a result"
+
+
+def _die_with_parent() -> None:
+    """Fold processes never outlive the trial process (Linux)."""
+    if sys.platform != "linux":
+        return
+    try:
+        import ctypes
+        ctypes.CDLL(None, use_errno=True).prctl(1, signal.SIGKILL)  # PR_SET_PDEATHSIG
+    except Exception:
+        pass
+
+
+def _bound_threads(threads: int, cores: Sequence[int]) -> None:
+    """Apply this fold process's thread budget and core share to every thread."""
+    try:
+        from threadpoolctl import threadpool_limits
+        threadpool_limits(limits=threads)
+    except Exception:
+        pass
     if cores and hasattr(os, "sched_setaffinity"):
-        identity = multiprocessing.current_process()._identity
-        slot = (identity[-1] - 1) % workers
-        os.sched_setaffinity(0, cores[slot::workers])
+        try:
+            for thread in os.listdir("/proc/self/task"):
+                os.sched_setaffinity(int(thread), cores)
+        except OSError:
+            os.sched_setaffinity(0, cores)
+
+
+def _fold_child(spec_path: Path) -> int:
+    """Fit one fold in its own process; the parent owns stop and recording."""
+    # A requested stop is the parent's decision: it records completed folds
+    # and ends in-flight ones. The block mask is inherited from the parent.
+    for signum in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(signum, signal.SIG_IGN)
+    _die_with_parent()
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    _bound_threads(spec["threads"], spec["cores"])
+    try:
+        document = json.loads(Path(spec["invocation"]).read_text(encoding="utf-8"))
+        invocation = parse_invocation(document)
+        expose_project(invocation.code_root)
+        frame, y, ids = _prepare_data(invocation)
+        if _ids_digest(ids) != spec["idsSha256"]:
+            raise InvocationError("Fold process loaded different development rows than the trial")
+        saved = persisted_folds(invocation, ids)
+        if not saved:
+            raise InvocationError("Fold process found no fold manifest")
+        fold = saved[0][spec["position"]]
+        factory = _factory(_load_module(invocation.code_root, invocation.pipeline.module), invocation.pipeline.factory)
+        result, rows = _observed_fold(invocation, factory, fold, frame, y, ids)
+        _atomic_json(Path(spec["result"]), {"result": result, "rows": rows})
+        return 0
+    except BaseException as error:
+        traceback.print_exc(file=sys.stderr)
+        _atomic_json(Path(spec["error"]), {"type": type(error).__name__, "message": str(error),
+                                           "invocationError": isinstance(error, InvocationError)})
+        return 1
+
+
+def _launch_fold(work: Path, position: int, threads: int, cores: Sequence[int], ids_digest: str) -> subprocess.Popen:
+    spec_path = work / f"{position}.spec.json"
+    _atomic_json(spec_path, {"invocation": str(work / "invocation.json"), "position": position, "threads": threads,
+                             "cores": list(cores), "idsSha256": ids_digest,
+                             "result": str(work / f"{position}.result.json"), "error": str(work / f"{position}.error.json")})
+    env = {**os.environ, **{name: str(threads) for name in _THREAD_VARIABLES}}
+    # The supervisor stops the whole process group with SIGTERM. Fold
+    # processes start with it blocked so only this process decides what a
+    # stop means for them (no race before the child installs its handler).
+    previous = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT})
+    try:
+        return subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--fold", str(spec_path)], env=env)
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous)
+
+
+def _run_fold_processes(document: dict[str, Any], invocation: Invocation, folds: Sequence[ConcreteFold],
+                        positions: Sequence[int], ids: Sequence[str], workers: int, threads: int,
+                        cores: Sequence[int], record: Any) -> dict[str, Any] | None:
+    """Fit pending folds in separate processes; record each fold as it completes.
+
+    Returns None when every pending fold completed, or the interruption: a
+    requested stop, or a fold process that ended without a result (killed from
+    outside, for example by machine memory protection). A Python exception in
+    agent code is re-raised as before and fails the trial.
+    """
+    work = invocation.output_dir / "fold-work"
+    shutil.rmtree(work, ignore_errors=True)
+    work.mkdir(parents=True)
+    _atomic_json(work / "invocation.json", document)
+    digest = _ids_digest(ids)
+    queue = list(positions)
+    running: dict[int, tuple[subprocess.Popen, int]] = {}
+    interruption: dict[str, Any] | None = None
+
+    def collect() -> None:
+        nonlocal interruption
+        for slot, (process, position) in list(running.items()):
+            code = process.poll()
+            if code is None:
+                continue
+            del running[slot]
+            result_path, error_path = work / f"{position}.result.json", work / f"{position}.error.json"
+            if code == 0 and result_path.exists():
+                payload = json.loads(result_path.read_text(encoding="utf-8"))
+                record(position, payload["result"], payload["rows"])
+            elif error_path.exists():
+                raise _rebuild_error(json.loads(error_path.read_text(encoding="utf-8")))
+            elif interruption is None and not _stop_requested:
+                fold = folds[position]
+                interruption = {
+                    "reason": "fold_process_ended", "repeat": fold.repeat, "fold": fold.fold, "exitCode": code,
+                    "message": (f"The process fitting repeat {fold.repeat} fold {fold.fold} ended without a result "
+                                f"({_describe_exit(code)}). It was stopped from outside the trial, for example by "
+                                "machine memory protection. Completed folds are recorded; this trial is not "
+                                "promotion evidence. Reduce the pipeline's memory use before starting a new trial."),
+                }
+
+    try:
+        while queue or running:
+            collect()
+            if _stop_requested or interruption:
+                break
+            for slot in range(workers):
+                if slot not in running and queue:
+                    position = queue.pop(0)
+                    running[slot] = (_launch_fold(work, position, threads, cores[slot::workers] if cores else (), digest), position)
+            time.sleep(0.05)
+        collect()
+    finally:
+        for process, _ in running.values():
+            if process.poll() is None:
+                process.kill()
+        for process, _ in running.values():
+            process.wait()
+        shutil.rmtree(work, ignore_errors=True)
+    if _stop_requested and interruption is None:
+        interruption = {"reason": "stop_requested",
+                        "message": "Stopped on request; every completed fold is recorded and in-flight folds were ended."}
+    return interruption
+
+
+def _write_fold_results(path: Path, completed: Sequence[dict[str, Any]]) -> None:
+    def write(stream: Any) -> None:
+        for result in completed:
+            stream.write(json.dumps(result, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n")
+    _atomic_write(path, write)
 
 
 def _observed_fold(invocation, factory, fold, frame, y, ids):
@@ -335,30 +526,49 @@ def execute(document: dict[str, Any]) -> dict[str, Any]:
         _write_oof(output_dir / "oof_predictions.csv", oof_rows)
     elif (output_dir / "fold-results.jsonl").exists():
         raise InvocationError("Legacy single-trial fold results lack atomic prediction checkpoint; cannot safely resume; start a new trial")
-    from joblib import Parallel, delayed, parallel_config
-    import os
-    pending = folds[len(completed):]
-    cores = tuple(sorted(os.sched_getaffinity(0))) if hasattr(os, "sched_getaffinity") else ()
-    workers = min(len(pending) or 1, len(cores) or (os.cpu_count() or 1), 2)
-    # Ordered consumption preserves the atomic prefix checkpoint used for recovery.
-    # BLAS/OpenMP threads are bounded inside each child, avoiding nested oversubscription.
-    with parallel_config(backend="loky", inner_max_num_threads=1):
-      results = Parallel(n_jobs=workers, return_as="generator", pre_dispatch=workers, initializer=_fold_worker_init, initargs=(cores, workers))(
-          delayed(_observed_fold)(invocation, pipeline_factory, fold, frame, y, ids) for fold in pending)
-      for fold, (result, rows) in zip(pending, results):
-        if _stop_requested:
-            break
+    done = {(fold["repeat"], fold["fold"]) for fold in completed}
+    position_of = {(fold.repeat, fold.fold): index for index, fold in enumerate(folds)}
+    pending = [index for index, fold in enumerate(folds) if (fold.repeat, fold.fold) not in done]
+    rows_by_position = {position_of[(fold["repeat"], fold["fold"])]: [] for fold in completed}
+    for row in oof_rows:
+        rows_by_position[position_of[(row["repeat"], row["fold"])]].append(row)
+    results_by_position = {position_of[(fold["repeat"], fold["fold"])]: fold for fold in completed}
+
+    def record(position: int, result: dict[str, Any], rows: list[dict[str, Any]]) -> None:
+        """Persist one completed fold; folds are kept in manifest order even when they finish out of order."""
+        fold = folds[position]
         with events.stage("artifacts", repeat=fold.repeat, fold=fold.fold):
-            completed.append(result)
-            oof_rows.extend(rows)
+            results_by_position[position] = result
+            rows_by_position[position] = rows
+            completed[:] = [results_by_position[index] for index in sorted(results_by_position)]
+            oof_rows[:] = [row for index in sorted(rows_by_position) for row in rows_by_position[index]]
             save_checkpoint(checkpoint, {"experimentId": invocation.experiment_id, "manifestSha256": manifest["sha256"],
                                          "completed": completed, "oof": oof_rows})
-            append_fold_result(output_dir / "fold-results.jsonl", result)
+            _write_fold_results(output_dir / "fold-results.jsonl", completed)
             _write_oof(output_dir / "oof_predictions.csv", oof_rows)
         events.emit("fold_completed", repeat=fold.repeat, fold=fold.fold, metrics=result["metrics"], durationSeconds=result["durationSeconds"])
 
+    cores = tuple(sorted(os.sched_getaffinity(0))) if hasattr(os, "sched_getaffinity") else ()
+    workers, threads = _fold_plan(len(folds), cores)
+    interruption = None
+    if workers == 1:
+        for position in pending:
+            if _stop_requested:
+                break
+            result, rows = _observed_fold(invocation, pipeline_factory, folds[position], frame, y, ids)
+            record(position, result, rows)
+        if _stop_requested:
+            interruption = {"reason": "stop_requested", "message": "Stopped on request; every completed fold is recorded."}
+    elif pending:
+        events.emit("fold_processes", processes=min(workers, len(pending)), threadsPerFold=threads, pendingFolds=len(pending))
+        interruption = _run_fold_processes(document, invocation, folds, pending, ids, workers, threads, cores, record)
+    if interruption is None and _stop_requested:
+        interruption = {"reason": "stop_requested", "message": "Stopped on request after the last fold completed; every fold is recorded."}
+
     with events.stage("metrics"):
-        summary = _summarise(invocation, folds, completed, oof_rows, ids, y, manifest, started, _stop_requested)
+        summary = _summarise(invocation, folds, completed, oof_rows, ids, y, manifest, started, interruption is not None)
+        if interruption:
+            summary["interruption"] = interruption
     if invocation.champion and summary["status"] == "completed" and summary["promotionEligible"] and not _stop_requested:
         from smartlab_trial.champion import rerun, compare
         with events.stage("champion"):
@@ -400,7 +610,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--invocation", type=Path)
     mode.add_argument("--champion-rerun", type=Path)
+    mode.add_argument("--fold", type=Path)
     arguments = parser.parse_args(argv)
+    if arguments.fold:
+        return _fold_child(arguments.fold)
     signal.signal(signal.SIGTERM, _handle_stop)
     signal.signal(signal.SIGINT, _handle_stop)
     if arguments.champion_rerun:

@@ -26,9 +26,13 @@ run, merge, push or submission was performed.
 - `trial_smoke` performs static checks and a small execution without reserving
   an experiment. Prepared tasks supply their real test input descriptors;
   standalone fixture callers without TaskData use a development input sample.
-- Fixed-trial folds run in at most two processes, bounded by available cores;
-  Linux worker affinity partitions those cores and BLAS/OpenMP threading is
-  bounded. Ordered atomic checkpoints retain recovery semantics. Search
+- Fixed-trial folds run in at most two harness-owned fold processes, each
+  with its share of the cores as BLAS/OpenMP threads (cores // processes,
+  fixed per trial so resumes fit with the same budget) and its own core
+  affinity. A requested stop records every completed fold, ends in-flight
+  folds and ends the trial as interrupted; a fold process killed from outside
+  ends it the same way with a stated reason. Checkpoints hold any subset of
+  completed folds in manifest order. Search
   configurations/folds and champion reruns retain serial execution.
 - Training descriptions are selected by task kind. Pilots are optional;
   hypotheses are truncated to two sentences/500 characters. Full measured search

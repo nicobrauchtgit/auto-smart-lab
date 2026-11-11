@@ -4,7 +4,9 @@ import contextlib
 import io
 import json
 import os
+import signal
 import subprocess
+import time
 from dataclasses import FrozenInstanceError
 import sys
 import tempfile
@@ -51,6 +53,49 @@ def make_cv(context):
         (list(range(0, middle)), list(range(middle, n))),
     ]
 '''
+
+
+# The first fit to claim the token finishes at once and records its thread
+# budget; every other fit blocks, so exactly one fold completes.
+GATED = '''
+import json, os, time
+
+class Gated:
+    def __init__(self, token):
+        self.token = token
+
+    def fit(self, X, y=None):
+        try:
+            handle = os.open(self.token, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            time.sleep(300)
+        else:
+            os.write(handle, json.dumps({"omp": os.environ.get("OMP_NUM_THREADS"),
+                                         "cores": len(os.sched_getaffinity(0))}).encode())
+            os.close(handle)
+        return self
+
+    def predict(self, X):
+        return [0] * len(X)
+
+def build_pipeline(context):
+    return Gated(context["parameters"]["token"])
+'''
+
+
+def _fold_processes(parent: int) -> list[int]:
+    children = []
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            stat = Path(f"/proc/{entry}/stat").read_text()
+            cmdline = Path(f"/proc/{entry}/cmdline").read_bytes()
+        except OSError:
+            continue
+        if int(stat.rsplit(")", 1)[1].split()[1]) == parent and b"--fold" in cmdline:
+            children.append(int(entry))
+    return children
 
 
 class Worker(unittest.TestCase):
@@ -271,6 +316,115 @@ class Worker(unittest.TestCase):
             actions = [event["type"] for event in events if event.get("stage") == stage]
             self.assertEqual(actions, ["action_started", "action_completed"] * (2 if stage == "artifacts" else 1))
         self.assertEqual(events, [json.loads(line) for line in result.stdout.splitlines()])
+
+    def _gated_trial(self, name):
+        """Start a two-fold trial in its own process group, like the supervisor does."""
+        (self.root / "solutions" / "gated.py").write_text(GATED, encoding="utf-8")
+        document = self.invocation(name, cv={"kind": "builtin", "scheme": "stratified_kfold", "folds": 2, "repeats": 1})
+        token = self.root / f"{name}.token"
+        document["request"]["pipeline"] = {"module": "solutions/gated.py", "factory": "build_pipeline",
+                                           "parameters": {"token": str(token)}}
+        path = self.root / f"{name}.json"
+        path.write_text(json.dumps(document))
+        process = subprocess.Popen([sys.executable, str(Path(worker.__file__).resolve()), "--invocation", str(path)],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, start_new_session=True)
+        results = self.root / name / "fold-results.jsonl"
+        deadline = time.monotonic() + 60
+        while not (results.exists() and results.read_text().strip()):
+            self.assertIsNone(process.poll(), process.stderr.read().decode() if process.poll() is not None else "")
+            self.assertLess(time.monotonic(), deadline, "the gated fold never completed")
+            time.sleep(0.05)
+        return process, token
+
+    def _finish(self, process):
+        try:
+            process.wait(timeout=30)
+        finally:
+            if process.poll() is None:
+                os.killpg(process.pid, signal.SIGKILL)
+            process.stderr.close()
+        return process.returncode
+
+    @unittest.skipUnless(len(os.sched_getaffinity(0)) >= 2, "parallel folds need two cores")
+    def test_requested_stop_with_parallel_folds_ends_stopped_with_completed_folds(self):
+        process, token = self._gated_trial("stop-parallel")
+        children = _fold_processes(process.pid)
+        # experiment_stop signals the whole process group, fold processes included.
+        os.killpg(process.pid, signal.SIGTERM)
+        self.assertEqual(self._finish(process), 2)
+        result = self.read_json("stop-parallel", "trial-result.json")
+        self.assertEqual(result["status"], "interrupted")
+        self.assertEqual(result["interruption"]["reason"], "stop_requested")
+        self.assertEqual(result["completedFolds"], 1)
+        self.assertFalse(result["promotionEligible"])
+        self.assertEqual(len((self.root / "stop-parallel" / "fold-results.jsonl").read_text().splitlines()), 1)
+        self.assertEqual(len((self.root / "stop-parallel" / "oof_predictions.csv").read_text().splitlines()), 1 + len(self.ids) // 2)
+        self.assertFalse((self.root / "stop-parallel" / "fold-work").exists())
+        for child in children:
+            self.assertFalse(Path(f"/proc/{child}").exists() and "Z" not in Path(f"/proc/{child}/stat").read_text().split()[2])
+        # Each fold process received its share of the cores as threads.
+        budget = json.loads(token.read_text())
+        share = len(os.sched_getaffinity(0)) // 2
+        self.assertEqual(budget, {"omp": str(share), "cores": share})
+
+    @unittest.skipUnless(len(os.sched_getaffinity(0)) >= 2, "parallel folds need two cores")
+    def test_fold_process_killed_from_outside_ends_with_completed_folds_and_reason(self):
+        process, _ = self._gated_trial("killed-fold")
+        deadline = time.monotonic() + 30
+        while not (children := _fold_processes(process.pid)):
+            self.assertLess(time.monotonic(), deadline)
+            time.sleep(0.05)
+        # Machine protection stops the largest process: here a fold process.
+        os.kill(children[0], signal.SIGKILL)
+        self.assertEqual(self._finish(process), 2)
+        result = self.read_json("killed-fold", "trial-result.json")
+        self.assertEqual(result["status"], "interrupted")
+        self.assertEqual(result["interruption"]["reason"], "fold_process_ended")
+        self.assertIn("SIGKILL", result["interruption"]["message"])
+        self.assertIn("memory protection", result["interruption"]["message"])
+        self.assertEqual(result["completedFolds"], 1)
+        self.assertNotIn("error", result)
+        self.assertEqual(_fold_processes(process.pid), [])
+
+    def test_parallel_and_sequential_folds_give_identical_results(self):
+        original = worker._fold_plan
+        outputs = {}
+        try:
+            for name, plan in (("sequential", (1, 1)), ("parallel", (2, 1))):
+                worker._fold_plan = lambda total, cores, plan=plan: plan
+                with contextlib.redirect_stdout(io.StringIO()):
+                    worker.execute(self.invocation(name))
+                folds = [json.loads(line) for line in (self.root / name / "fold-results.jsonl").read_text().splitlines()]
+                outputs[name] = ([(f["repeat"], f["fold"], f["seed"], f["metrics"], f["seededParameters"]) for f in folds],
+                                 (self.root / name / "oof_predictions.csv").read_bytes(),
+                                 self.read_json(name, "trial-result.json")["metrics"])
+        finally:
+            worker._fold_plan = original
+        self.assertEqual(outputs["sequential"], outputs["parallel"])
+        self.assertEqual(len(outputs["parallel"][0]), 6)
+
+    def test_fold_plan_shares_cores_and_ignores_remaining_folds(self):
+        self.assertEqual(worker._fold_plan(6, range(6)), (2, 3))
+        self.assertEqual(worker._fold_plan(1, range(6)), (1, 6))
+        self.assertEqual(worker._fold_plan(15, range(1)), (1, 1))
+
+    def test_resume_accepts_folds_completed_out_of_order(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            worker.execute(self.invocation("order"))
+        checkpoint_path = self.root / "order" / "single-checkpoint.json"
+        from smartlab_trial.recovery import load_checkpoint, save_checkpoint
+        value = load_checkpoint(checkpoint_path)
+        # Keep folds 0 and 2 only, as if fold 1 was in flight when the trial stopped.
+        kept = [value["completed"][0], value["completed"][2]]
+        keys = {(fold["repeat"], fold["fold"]) for fold in kept}
+        save_checkpoint(checkpoint_path, {**value, "completed": kept,
+                                          "oof": [row for row in value["oof"] if (row["repeat"], row["fold"]) in keys]})
+        for name in ("trial-result.json", "metrics.json"):
+            (self.root / "order" / name).unlink()
+        with contextlib.redirect_stdout(io.StringIO()):
+            resumed = worker.execute(self.invocation("order"))
+        self.assertEqual(resumed["status"], "completed")
+        self.assertEqual(resumed["completedFolds"], 6)
 
     def test_failed_action_is_logged_without_promotion_artifacts(self):
         (self.root / "solutions/pipeline.py").write_text("raise RuntimeError('fixture failure')\n")

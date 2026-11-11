@@ -1013,6 +1013,7 @@ export class TrainingService {
 			diagnostics: compactDiagnostics(result),
 			promotionIneligibleReason: result.promotionIneligibleReason,
 			...(result.error ? { error: result.error } : {}),
+			...(result.interruption ? { interruption: result.interruption } : {}),
 			...(result.search ? { search: result.search } : {}),
 			...(result.runtimeGuard ? { runtimeGuard: result.runtimeGuard } : {}),
 			...(result.championComparison ? { championComparison: result.championComparison } : {}),

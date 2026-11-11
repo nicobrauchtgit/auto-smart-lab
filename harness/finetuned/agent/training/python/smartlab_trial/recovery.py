@@ -54,10 +54,17 @@ def validate_single(value, invocation, manifest, folds, ids):
     completed, rows = value['completed'], value['oof']
     if len(completed) > len(folds):
         raise InvocationError('Too many completed folds in checkpoint')
-    for measured, fold in zip(completed, folds):
-        if (measured['repeat'], measured['fold'], measured['seed']) != (fold.repeat, fold.fold, fold.seed):
+    # Parallel folds can finish out of order: any subset of folds, kept in manifest order.
+    position = {(fold.repeat, fold.fold): index for index, fold in enumerate(folds)}
+    positions = []
+    for measured in completed:
+        index = position.get((measured['repeat'], measured['fold']))
+        if index is None or measured['seed'] != folds[index].seed:
             raise InvocationError('Single-trial completed fold order/seed mismatch')
-    expected = [(ids[i], f.repeat, f.fold) for f in folds[:len(completed)] for i in f.validation]
+        positions.append(index)
+    if positions != sorted(set(positions)):
+        raise InvocationError('Single-trial completed fold order/seed mismatch')
+    expected = [(ids[i], folds[index].repeat, folds[index].fold) for index in positions for i in folds[index].validation]
     if [(r['id'], r['repeat'], r['fold']) for r in rows] != expected:
         raise InvocationError('Single-trial saved predictions do not match completed folds; restore checkpoint')
     return completed, rows
