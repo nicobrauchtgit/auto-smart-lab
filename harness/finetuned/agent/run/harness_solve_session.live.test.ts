@@ -2,17 +2,16 @@ import { expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
-import { PROJECT_ROOT } from "../pipeline/resolve_task.js";
 import type { PythonEnvironment } from "./python_environment.js";
 import { spamConfiguration } from "../pipeline/task_configuration.testing.js";
-import { writeSampleManifest } from "../training/testing.js";
+import { PYTHON, writeSampleManifest } from "../training/testing.js";
 import { runHarnessSolveSession, type HarnessSolveDependencies } from "./harness_solve_session.js";
 
 const pythonEnvironment = (): PythonEnvironment => ({
-	schema_version: 1, python_version: "3.13", executable: join(PROJECT_ROOT, ".venv/bin/python"),
-	prefix: join(PROJECT_ROOT, ".venv"), packages: [], declared_dependencies: [],
+	schema_version: 1, python_version: "3.13", executable: PYTHON,
+	prefix: dirname(dirname(PYTHON)), packages: [], declared_dependencies: [],
 	project_sha256: "a".repeat(64), lock_sha256: "b".repeat(64), fingerprint: "c".repeat(64),
 	healthy: true, lock_current: true, environment_matches_lock: true, dependency_errors: "",
 });
@@ -30,7 +29,7 @@ test("an agent-authored pipeline deliberately starts the harness-owned promotion
 		labels.push(`${id};${label}`);
 	}
 	const zipPath = join(root, "train.zip");
-	execFileSync(join(PROJECT_ROOT, ".venv/bin/python"), ["-c",
+	execFileSync(PYTHON, ["-c",
 		"import pathlib,sys,zipfile; r=pathlib.Path('data'); z=zipfile.ZipFile(sys.argv[1],'w'); [z.write(p,p.as_posix()) for p in r.rglob('*') if p.is_file()]; z.close()",
 		zipPath], { cwd: archiveRoot });
 	const labelsPath = join(root, "train.labels");
