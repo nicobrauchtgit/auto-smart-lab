@@ -279,6 +279,9 @@ def _recorded_fold_plan(output_dir: Path, total_folds: int, cores: Sequence[int]
         if type(processes) is not int or type(threads) is not int or processes < 1 or threads < 1:
             raise InvocationError(f"Corrupt {FOLD_PLAN_FILE}; restore the trial's recorded fold resource plan. No fit started.")
         return processes, threads
+    if any((output_dir / name).exists() for name in ("single-checkpoint.json", "fold-results.jsonl")):
+        raise InvocationError(f"Missing {FOLD_PLAN_FILE} for a trial with recorded fold progress; restore it rather than "
+                              "recompute it, so every fold of this trial keeps one thread budget. No fit started.")
     processes, threads = _fold_plan(1 if sequential else total_folds, cores)
     _atomic_json(path, {"processes": processes, "threadsPerProcess": threads})
     return processes, threads

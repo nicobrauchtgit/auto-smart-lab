@@ -49,10 +49,13 @@ export async function runTrialChecks(snapshot: TrialSnapshot, checkPaths: string
    const child = spawn(sandbox.executable, sandbox.args(command), { cwd: sandbox.cwd, env: sandbox.env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
    child.stdout.pipe(output, { end: false }); child.stderr.pipe(output, { end: false });
    const timers: ReturnType<typeof setTimeout>[] = [];
-   let settled = false;
+   let settled = false, cancelling = false;
    const settle = (error?: unknown, code?: number | null) => {
     if (settled) return;
     settled = true;
+    // A cancelled check's leader may exit while a descendant that ignores
+    // SIGTERM survives: kill the whole group before the escalation timer goes.
+    if (cancelling) group("SIGKILL");
     for (const timer of timers) clearTimeout(timer);
     signal?.removeEventListener("abort", cancel);
     output.end(() => error !== undefined ? reject(error) : signal?.aborted ? reject(signal.reason) : done(code ?? 1));
@@ -62,6 +65,7 @@ export async function runTrialChecks(snapshot: TrialSnapshot, checkPaths: string
    // escalate to SIGKILL on the whole group, then stop waiting for pipes a
    // process outside the group may still hold open.
    function cancel() {
+    cancelling = true;
     group("SIGTERM");
     timers.push(setTimeout(() => {
      group("SIGKILL");

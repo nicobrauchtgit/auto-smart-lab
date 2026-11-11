@@ -456,6 +456,15 @@ class Worker(unittest.TestCase):
             worker.execute(self.invocation("corrupt"))
         self.assertFalse((self.root / "corrupt" / "fold-results.jsonl").exists())
 
+    def test_missing_fold_plan_with_recorded_progress_refuses_resume(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            worker.execute(self.invocation("lost-plan"))
+        for artifact in ("fold-plan.json", "trial-result.json", "metrics.json"):
+            (self.root / "lost-plan" / artifact).unlink()
+        with self.assertRaisesRegex(worker.InvocationError, "Missing fold-plan.json"):
+            worker.execute(self.invocation("lost-plan"))
+        self.assertFalse((self.root / "lost-plan" / "fold-plan.json").exists())
+
     def test_champion_rerun_spec_carries_the_recorded_thread_budget(self):
         from smartlab_trial import champion
         output = self.root / "champion-spec"
