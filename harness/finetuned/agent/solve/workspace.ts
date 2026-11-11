@@ -118,6 +118,20 @@ function describeTargets(configuration: TaskConfiguration, devIds: string[], tar
 		summary: `Families: ${counts.size}; largest ${sizes[0]} rows, smallest ${sizes.at(-1)} rows, ${sizes.filter(size => size === 1).length} singleton families. ${sealedGroups ?? 0} further families are sealed.` };
 }
 
+const LEGACY_DEVELOPMENT_ROOT = "solve/data";
+
+/**
+ * The fields that define the split. Only holdout, targets, seed and archive
+ * identity (bytes, membership and how rows are read) may force a reset;
+ * metric, selection or measurement edits reuse the stored split.
+ */
+export function splitDeclaration(taskId: string, configuration: TaskConfiguration, originalDatasetHash: string, ids: readonly string[], options: PrepareOptions) {
+ return { taskId, originalDatasetHash,
+  archiveMembership: createHash("sha256").update(JSON.stringify([...ids].sort())).digest("hex"),
+  samples: configuration.samples.source, holdout: configuration.holdout, targets: configuration.targets,
+  rootSeed: options.seed ?? HARNESS_CONFIG.solve.seed, policy: options.holdoutPolicy ?? HARNESS_CONFIG.holdout };
+}
+
 function hashFile(path: string): ReturnType<typeof createHash> {
  const hash = createHash("sha256"), fd = openSync(path, "r"), buffer = Buffer.alloc(1024 * 1024);
  try { let count; while ((count = readSync(fd, buffer, 0, buffer.length, null))) hash.update(buffer.subarray(0, count)); }
@@ -143,8 +157,11 @@ export function prepareSolveWorkspace(taskId: string, options: PrepareOptions = 
     const release = claimWorkspace(sealedRoot);
     try {
     const declarationPath = join(sealedRoot, "split.json");
-    const declaration = { taskId, originalDatasetHash, configuration, rootSeed: options.seed ?? HARNESS_CONFIG.solve.seed, policy: options.holdoutPolicy ?? HARNESS_CONFIG.holdout };
+    const declaration = splitDeclaration(taskId, configuration, originalDatasetHash, train.ids, options);
     let split: ReturnType<typeof seal>;
+    // Where agent-visible development data live, relative to the task state.
+    let developmentRoot = "data";
+    let freshSplit = false;
     if (existsSync(declarationPath)) {
         let stored;
         try { stored = JSON.parse(readFileSync(declarationPath, "utf8")); } catch { throw new Error("Corrupt task split; repair task state, never redraw it"); }
@@ -153,6 +170,7 @@ export function prepareSolveWorkspace(taskId: string, options: PrepareOptions = 
         const differences = Object.keys(declaration).filter(key => canonical(stored.declaration[key]) !== canonical(declaration[key as keyof typeof declaration]));
         if (differences.length) throw new Error(`Task split declaration changed: ${differences.join(", ")}; previously exposed rows must not become sealed. Explicit task-state reset required.`);
         split = stored.split;
+        developmentRoot = stored.developmentRoot ?? developmentRoot;
     } else {
         const disk = statfsSync(dataRoot);
         if (disk.bavail * disk.bsize < 1.2 * statSync(paths.trainZip).size + 1_000_000_000) throw new Error("Task preparation requires 1.2 times the archive plus 1 GB free disk space");
@@ -165,8 +183,13 @@ export function prepareSolveWorkspace(taskId: string, options: PrepareOptions = 
                 || legacy.holdoutSeedPlan?.rootSeed !== holdoutSeedPlan.rootSeed
                 || canonical(legacy.sealedIds) !== canonical(split.sealedIds) || legacy.sha256 !== split.sha256)
                 throw new Error("Legacy exposed task data conflicts with this split declaration; explicit task-state migration required");
+            // Trials, champions and confirmations recorded the legacy development
+            // archive and manifest by absolute path and byte hash. Keep serving
+            // them from there so refit and recovery reread identical bytes.
+            if (existsSync(join(dirname(legacyPath), "development-samples.json"))) developmentRoot = LEGACY_DEVELOPMENT_ROOT;
         }
-        atomicJson(declarationPath, { declaration, split, sha256: createHash("sha256").update(JSON.stringify(split)).digest("hex") });
+        freshSplit = developmentRoot === "data";
+        atomicJson(declarationPath, { declaration, split, developmentRoot, sha256: createHash("sha256").update(JSON.stringify(split)).digest("hex") });
     }
 
     const retainedPath = join(sealedRoot, "task-data.json");
@@ -178,7 +201,8 @@ export function prepareSolveWorkspace(taskId: string, options: PrepareOptions = 
         }
     }
 	const root = statePath(projectRoot, taskId, "solve");
-	const dataOut = dataRoot;
+	if (![LEGACY_DEVELOPMENT_ROOT, "data"].includes(developmentRoot)) throw new Error("Corrupt development data location in task split; repair task state");
+	const dataOut = statePath(projectRoot, taskId, ...developmentRoot.split("/"));
 	for (const directory of [root, dataOut, ...(configuration.selection ? [join(root, "agent")] : [])]) mkdirSync(directory, { recursive: true });
 	const { solutionsRoot, entrypointPath } = prepareSolutionsWorkspace(projectRoot, taskId);
 	const taskPath = join(root, "task.md");
@@ -190,16 +214,24 @@ export function prepareSolveWorkspace(taskId: string, options: PrepareOptions = 
 	writeFileSync(sealedPath, split.sealedIds.length ? `${split.sealedIds.join("\n")}\n` : "");
     writeFileSync(join(sealedRoot, "holdout.json"), JSON.stringify({ ...split, devIds: undefined, holdoutSeedPlan }) + "\n");
 	const devZip = configuration.samples.source === "zip_members"
-        ? writeDevelopmentZip(paths.trainZip, dataOut, split.devIds)
+        ? writeDevelopmentZip(python, paths.trainZip, dataOut, split.devIds)
         : join(dataOut, `development-${basename(paths.trainZip)}`);
     if (configuration.samples.source === "pcap_tcp_connections") copyFileSync(paths.trainZip, devZip);
     const descriptors = new Map(train.samples.map(sample => [sample.id, sample.input]));
 
 	// Opaque descriptors: the agent's code opens the archive member itself.
 	const sampleManifestPath = join(dataOut, "development-samples.json");
-	writeFileSync(sampleManifestPath, `${JSON.stringify({ schemaVersion: 1, samples: split.devIds.map(id => ({
+	const manifestBytes = `${JSON.stringify({ schemaVersion: 1, samples: split.devIds.map(id => ({
 		id, input: configuration.samples.source === "zip_members" ? { archive: devZip, member: id } : { ...descriptors.get(id), pcap: devZip }, ...(targets.size ? { target: targets.get(id)! } : {}),
-	})) })}\n`);
+	})) })}\n`;
+	// Measured trials hash these bytes; never rewrite a manifest they may have
+	// read. Only a newly declared split (after an explicit reset) replaces one.
+	if (!existsSync(sampleManifestPath) || (freshSplit && readFileSync(sampleManifestPath, "utf8") !== manifestBytes)) {
+		const temporary = `${sampleManifestPath}.${process.pid}.tmp`;
+		writeFileSync(temporary, manifestBytes);
+		renameSync(temporary, sampleManifestPath);
+	}
+	else if (readFileSync(sampleManifestPath, "utf8") !== manifestBytes) throw new Error(`Development manifest ${sampleManifestPath} differs from the stored split; restore it or reset task state explicitly`);
 	const measurement: MeasurementConfig = configuration.kind === "binary_classification"
 		? { kind: "classification", execution: "inductive", sampleManifestPath }
 		: configuration.kind === "clustering"
@@ -242,19 +274,36 @@ export function prepareSolveWorkspace(taskId: string, options: PrepareOptions = 
  * `members - labels`, and each id's extension states its label. The split is only
  * genuinely held out if its rows are absent from what the agent can read.
  */
-function writeDevelopmentZip(trainZip: string, dataOut: string, devIds: readonly string[]): string {
+function writeDevelopmentZip(python: string, trainZip: string, dataOut: string, devIds: readonly string[]): string {
 	const target = join(dataOut, basename(trainZip).replace(/\.zip$/, "-dev.zip"));
 	const listing = join(dataOut, "development_members.txt");
 	writeFileSync(listing, `${devIds.join("\n")}\n`);
-	if (existsSync(target)) return target;
+	if (existsSync(target)) {
+		// A reset with a new seed or policy can leave an archive holding rows
+		// that are now sealed; their file names state their labels. Reuse only
+		// an archive whose members are exactly the current development rows.
+		if (sameMembers(archiveMembers(python, target), devIds)) { rmSync(listing, { force: true }); return target; }
+		rmSync(target);
+	}
 	const temporary = `${target}.tmp.zip`;
 	rmSync(temporary, { force: true });
 	// `zip --copy` transfers members between archives without inflating them.
 	execFileSync("zip", ["--quiet", "--copy", trainZip, "--out", temporary, "--names-stdin"],
 		{ input: `${devIds.join("\n")}\n`, maxBuffer: 64 * 1024 * 1024 });
+	if (!sameMembers(archiveMembers(python, temporary), devIds)) { rmSync(temporary, { force: true }); throw new Error("Development archive membership differs from the development rows; refusing to expose it"); }
 	renameSync(temporary, target);
 	rmSync(listing, { force: true });
 	return target;
+}
+
+/** File members of a ZIP archive, read from its central directory only. */
+export function archiveMembers(python: string, zip: string): string[] {
+	return JSON.parse(execFileSync(python, ["-I", "-c", "import json,sys,zipfile; print(json.dumps([i.filename for i in zipfile.ZipFile(sys.argv[1]).infolist() if not i.is_dir()]))", zip],
+		{ encoding: "utf8", timeout: HARNESS_CONFIG.setup.timeoutMs * 4, maxBuffer: 256 * 1024 * 1024 }));
+}
+
+function sameMembers(members: readonly string[], devIds: readonly string[]): boolean {
+	return members.length === devIds.length && canonical([...members].sort()) === canonical([...devIds].sort());
 }
 
 export { prepareModellingWorkspace } from "./task_data.js";
