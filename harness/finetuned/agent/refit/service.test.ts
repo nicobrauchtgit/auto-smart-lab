@@ -31,14 +31,15 @@ async function fixture(delay = 0, search = false, barrier = false) {
   rootSeed: 13, zipPath: project.zipPath, measurement: project.measurement, prompts: loadPromptSnapshot(), workerPath: WORKER,
   environmentFingerprint: "fixture-environment", limits: { sampleIntervalMs: 25, stopGraceMs: 100 } });
  let request = { schemaVersion: 2, hypothesis: "winning fixed confirmation", pipeline: { module: "solutions/tasks/fixture.py", factory: "build_pipeline", parameters: { delay }, estimatorParams: { model__C: 0.75 } }, cv: { kind: "builtin", scheme: "stratified_kfold", folds: 2, repeats: 1 }, scope: { kind: "promotion" } };
+ let started: Awaited<ReturnType<typeof harness.service.start>>;
  if (search) {
   const searched = await harness.service.start({ ...request, pipeline: { ...request.pipeline, estimatorParams: {} }, search: { space: { model__C: { type: "categorical", choices: [0.25, 0.75] } }, sampler: "grid" } });
   expect(await until(() => harness.supervisor.status(searched.id).status !== "running")).toBe(true);
   await harness.service.finalize(searched.id);
-  expect(tagMessage(project.solutionsRoot, "champion/fixture")).toBeUndefined();
+  expect(tagMessage(project.solutionsRoot, "champion/fixture")).toBeDefined();
+  started = searched;
   request = JSON.parse(readFileSync(join(searched.directory, "search-report.json"), "utf8")).nextStep.confirmationRequest;
- }
- const started = await harness.service.start(request);
+ } else started = await harness.service.start(request);
  expect(await until(() => harness.supervisor.status(started.id).status !== "running")).toBe(true);
  await harness.service.finalize(started.id);
  await harness.close();
@@ -128,7 +129,7 @@ test("opaque terminal fit cancellation retains freeze, retries same identity, an
 }, 90_000);
 
 
-test("search winner reaches terminal refit only through its exact fixed measured confirmation", async () => {
+test("search winner reaches terminal refit directly with its measured winning parameters", async () => {
  const f = await fixture(0, true);
  const frozen = await prepareRefit(f.options);
  expect(frozen.pipeline).toEqual(f.request.pipeline);
