@@ -8,7 +8,7 @@ export type FindingRecord = FindingEntry | FindingResolution;
 const libc = dlopen(process.platform === "darwin" ? "/usr/lib/libSystem.B.dylib" : "libc.so.6", {
  flock: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
 });
-function validRef(ref: unknown): boolean {
+export function validRef(ref: unknown): boolean {
  if (!ref || typeof ref !== "object" || Array.isArray(ref)) return false;
  const value = ref as Record<string, unknown>;
  const shapes = [ ["experiment"], ["file", "line", "commit"], ["check", "experiment", "sha256"], ["url"], ["profile"], ["entry"] ];
@@ -16,11 +16,28 @@ function validRef(ref: unknown): boolean {
   (keys[0] === "file" ? typeof value.file === "string" && Number.isSafeInteger(value.line) && Number(value.line) > 0 && (value.commit === undefined || typeof value.commit === "string") :
    keys[0] === "check" ? typeof value.check === "string" && typeof value.sha256 === "string" && (value.experiment === undefined || typeof value.experiment === "string") : typeof value[keys[0]] === "string"));
 }
+/** The first reason a complete record breaks the contract, or undefined. */
+export function findingProblem(entry: FindingEntry): string | undefined {
+ if (typeof entry.id !== "string" || !entry.id) return "missing id";
+ if (!["fact", "idea", "result", "defect", "decision"].includes(entry.kind)) return "unknown kind";
+ if (typeof entry.title !== "string" || !entry.title || entry.title.length > 100) return "title must be 1-100 characters";
+ if (typeof entry.text !== "string" || !entry.text || entry.text.length > 800) return "text must be 1-800 characters";
+ if (!Array.isArray(entry.refs)) return "refs must be a list";
+ const bad = entry.refs.findIndex(ref => !validRef(ref));
+ if (bad >= 0) return `refs[${bad}] is not a valid reference`;
+ if (typeof entry.datasetSha256 !== "string" || !entry.datasetSha256) return "missing dataset fingerprint";
+ if (typeof entry.author?.runId !== "string" || !entry.author.runId || typeof entry.author.invocationId !== "string" || !entry.author.invocationId ||
+  !["lead", "data", "ideas", "validation"].includes(entry.author.role)) return "malformed author";
+}
 export function validateFinding(entry: FindingEntry): void {
- if (typeof entry.id !== "string" || !entry.id || !["fact", "idea", "result", "defect", "decision"].includes(entry.kind) ||
-  typeof entry.title !== "string" || !entry.title || entry.title.length > 100 || typeof entry.text !== "string" || !entry.text || entry.text.length > 800 ||
-  !Array.isArray(entry.refs) || !entry.refs.every(validRef) || typeof entry.datasetSha256 !== "string" || !entry.datasetSha256 || typeof entry.author?.runId !== "string" || !entry.author.runId || typeof entry.author.invocationId !== "string" || !entry.author.invocationId ||
-  !["lead", "data", "ideas", "validation"].includes(entry.author.role)) throw new Error("Malformed complete finding record");
+ if (findingProblem(entry)) throw new Error("Malformed complete finding record");
+}
+/** Contract and evidence rules for a new agent-authored entry. */
+function appendProblem(input: Omit<FindingEntry, "id" | "cursor">): string | undefined {
+ const problem = findingProblem({...input, id: "pending", cursor: 0});
+ if (problem) return problem;
+ if (input.kind === "result") return "results require a harness record adapter; agent text is not measurement evidence";
+ if (input.kind === "defect" && (input.author.role !== "validation" || !input.refs.some(ref => "experiment" in ref || "check" in ref))) return "defect requires snapshot/check evidence";
 }
 export async function readFindings(path: string) {
  let bytes: Buffer;
@@ -62,14 +79,25 @@ async function appendRecords(path: string, build: (view: Awaited<ReturnType<type
   return records;
  } finally {await lock.close();}
 }
+/** All or nothing: any invalid input rejects the whole batch. */
 export async function appendFindings(path: string, inputs: Omit<FindingEntry, "id" | "cursor">[], signal?: AbortSignal): Promise<FindingEntry[]> {
- return await appendRecords(path, () => inputs.map(input => {
-  const entry = {...input, id: randomUUID(), cursor: 0};
-  validateFinding(entry);
-  if (input.kind === "result") throw new Error("Results require a harness record adapter; agent text is not measurement evidence");
-  if (input.kind === "defect" && (input.author.role !== "validation" || !input.refs.some(ref => "experiment" in ref || "check" in ref))) throw new Error("Defect requires snapshot/check evidence");
-  return entry;
- }), signal) as FindingEntry[];
+ for (const input of inputs) {
+  const problem = appendProblem(input);
+  if (problem) throw new Error(`Finding rejected: ${problem}`);
+ }
+ return await appendRecords(path, () => inputs.map(input => ({...input, id: randomUUID(), cursor: 0})), signal) as FindingEntry[];
+}
+/** Appends every valid input and reports the others; one bad record never discards the rest. */
+export async function appendValidFindings(path: string, inputs: Omit<FindingEntry, "id" | "cursor">[], signal?: AbortSignal):
+ Promise<{ appended: FindingEntry[]; rejected: { index: number; title: string; reason: string }[] }> {
+ const rejected: { index: number; title: string; reason: string }[] = [];
+ const valid = inputs.filter((input, index) => {
+  const reason = appendProblem(input);
+  if (reason) rejected.push({index, title: String(input.title ?? "").slice(0, 100), reason});
+  return !reason;
+ });
+ const appended = valid.length ? await appendFindings(path, valid, signal) : [];
+ return {appended, rejected};
 }
 export async function resolveFinding(path: string, event: Omit<FindingResolution, "cursor">, actor: FindingEntry["author"]["role"], signal?: AbortSignal): Promise<FindingResolution> {
  const records = await appendRecords(path, view => {

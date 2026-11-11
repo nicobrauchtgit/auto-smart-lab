@@ -99,18 +99,25 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
  executables?: { python?: string; git?: string; bwrap?: string };
  candidateProducedUpstream?: boolean; refitTrainingRoot?: string;
  submissionPolicy?: import("./types.js").StageInput["submissionPolicy"];
+ /** Scout journal and unit introduction; default to the task's findings journal and its unit's unit-intro.md. */
+ scoutPaths?: { journal: string; unitIntro: string };
 }): SetupCheck[] {
  const checks: SetupCheck[] = [];
  const add = (id: string, phase: SetupCheck["phase"], remedy: string, run: SetupCheck["run"]) => checks.push({ id, phase, remedy, run });
  const needs = new Set(requirements);
  if (needs.has("scouts")) add("scout-prompts", "local", "Restore agent/prompts/team and a non-empty unit-intro.md, and make the task findings destination writable; every scout requires task text, the unit introduction and a durable findings journal.", () => {
-  const task = resolveTask({taskId: options.taskId});
-  checkEvidenceDestination(statePath(PROJECT_ROOT, options.taskId, "findings", "journal.jsonl"));
-  readable(join(dirname(task.taskDir), "unit-intro.md"));
+  const paths = options.scoutPaths ?? { journal: statePath(PROJECT_ROOT, options.taskId, "findings", "journal.jsonl"), unitIntro: join(dirname(resolveTask({taskId: options.taskId}).taskDir), "unit-intro.md") };
+  checkEvidenceDestination(paths.journal);
+  readable(paths.unitIntro);
+  for (const id of ["team.shared", "team.empty", "team.finish", "team.scout-tool"] as const) options.prompts.render(id, {});
+  options.prompts.render("team.counter", {used: "0", budget: "1"});
+  options.prompts.render("team.stopped", {reason: "preflight"});
+  options.prompts.render("team.failed", {role: "data", reason: "preflight"});
+  options.prompts.render("team.rejected", {count: "0", reasons: "preflight"});
   options.prompts.render("team.data", {taskId: options.taskId, budget: "1", dataPaths: "preflight"});
   options.prompts.render("team.ideas", {taskId: options.taskId, budget: "1", webSearches: "3"});
   options.prompts.render("team.validation", {taskId: options.taskId, budget: "1"});
-  options.prompts.render("team.start", {task: "preflight", unitIntro: "preflight", question: "preflight", refs: "[]", earlier: "[]"});
+  options.prompts.render("team.start", {task: "preflight", unitIntro: "preflight", question: "preflight", refs: "[]", shown: "0", omitted: "0", earlier: "none"});
  });
  if (needs.has("observability")) {
   add("langfuse-configuration", "local", "Set LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY and the HTTPS LANGFUSE_BASE_URL in the project .env; run ./dev setup and make the emergency trace destination writable.", () => {

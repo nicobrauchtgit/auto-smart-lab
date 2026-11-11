@@ -15,9 +15,6 @@ Your workspace:
   nowhere else (not `/tmp`), and cite them by this path in your bullets.
 - Data archives (read-only): {{dataPaths}}
 
-Task fact: training member names end in their label, matching the `.labels`
-file; test members end in `.x`. Use it to read labels; it is not a feature.
-
 Budget: {{budget}} tool calls. After every call you see how many are left.
 Spend them however you think is most useful. When they are used up you get
 one last turn to write your answer.

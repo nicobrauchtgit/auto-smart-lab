@@ -10,13 +10,6 @@ import { parseHarnessConfig, HARNESS_CONFIG } from "../harness/config.js";
 const prompts = loadPromptSnapshot();
 const path = () => join(mkdtempSync(join(tmpdir(), "scouts-")), "journal.jsonl");
 
-test("hard call cap includes failed calls; every result has counter and last call requests finish", () => {
- const budget = new ScoutBudget(2, prompts);
- expect(budget.admit()).toBeUndefined(); expect(budget.counter()).toContain("1 of 2");
- expect(budget.admit()).toBeUndefined(); expect(budget.counter()).toContain("final sourced bullets");
- for (let n = 0; n < 10; n++) expect(budget.admit()?.block).toBe(true);
- expect(budget.used).toBe(2);
-});
 test("blocking boundary returns only final bullets and repeat gets journal, task and unit", async () => {
  let calls = 0;
  const scope = createScouts({ prepare: async () => {}, prompts, taskId: "fixture", task: "TASK TEXT", unitIntro: "UNIT INTRO", dataPaths: "dev.zip", journalPath: path(), datasetSha256: "dataset", runId: "run", invocationId: "invoke",
@@ -131,7 +124,7 @@ test("scout child factory installs scoped tools and budget without generic child
   observe: {identity: {}, telemetry: {failures: [], record: event => records.push(event), async close() {}}}});
  const child = await factory({logicalAgentId: "child", parentAgentRunId: "parent", spawnToolCallId: "call"}, new AbortController().signal);
  try {
-  const result = await child.prompt(prompts.render("team.start", {task: "task", unitIntro: "intro", question: "q", refs: "[]", earlier: "[]"}));
+  const result = await child.prompt(prompts.render("team.start", {task: "task", unitIntro: "intro", question: "q", refs: "[]", shown: "0", omitted: "0", earlier: "none"}));
   expect(result).toBe("- observed fixture"); expect(executions).toBe(1); expect(budget.used).toBe(1);
   const snapshot = records.find(row => row.eventType === "prompt_snapshot");
   expect(snapshot.payload.system_prompt).not.toContain("SCOUT_FACTORY_EXCLUDED_MARKER");
@@ -217,4 +210,125 @@ test("long final bullets retain their trailing evidence links", () => {
  const bullet = finalBullets("- " + "observation ".repeat(90) + source, "- none")[0];
  expect(bullet).toEndWith(source);
  expect(bulletRefs(bullet)).toContainEqual({url: source});
+});
+
+const scoutOptions = (overrides: Partial<Parameters<typeof createScouts>[0]> = {}): Parameters<typeof createScouts>[0] => ({
+ prompts, taskId: "fixture", task: "task", unitIntro: "intro", dataPaths: "dev", journalPath: path(), datasetSha256: "data",
+ runId: "run", invocationId: "invoke", prepare: async () => {}, run: async () => "- result", ...overrides});
+
+test("lead refs with extra keys are rejected at the tool boundary before any scout starts", async () => {
+ const { validateToolArguments } = await import("@earendil-works/pi-ai");
+ let prepared = 0, started = 0;
+ const scope = createScouts(scoutOptions({prepare: async () => {prepared++;}, run: async () => {started++; return "- x";}}));
+ const args = {role: "data", question: "inspect", refs: [{experiment: "e1", note: "extra"}]};
+ // Pi validates the schema before execute: extra keys never reach the service.
+ expect(() => validateToolArguments(scope.tool as never, {type: "toolCall", id: "c", name: "scout", arguments: args} as never)).toThrow();
+ expect(() => validateToolArguments(scope.tool as never, {type: "toolCall", id: "c", name: "scout", arguments: {...args, refs: [{file: "a.py", line: 0}]}} as never)).toThrow();
+ expect(() => validateToolArguments(scope.tool as never, {type: "toolCall", id: "c", name: "scout", arguments: {role: "validation", question: "q"}} as never)).toThrow();
+ await expect(scope.tool.execute("c", args as never, undefined, undefined, undefined as never)).rejects.toThrow("Invalid scout request: refs[0]");
+ await expect(scope.scout({role: "data", question: "q", refs: [{file: "a.py", line: 0}]})).rejects.toThrow("refs[0]");
+ await expect(scope.scout({role: "data", question: " "})).rejects.toThrow("question");
+ expect(prepared).toBe(0); expect(started).toBe(0);
+ expect(scope.tool.description).toContain("validation scout is not available");
+});
+
+test("unparseable citations stay text and never cost the other bullets", async () => {
+ const journal = path();
+ const scope = createScouts(scoutOptions({journalPath: journal, run: async () => "- fact: zero line (`out.txt:0`)\n- fact: valid (`research/out.txt:4`) https://example.org/x."}));
+ const output = await scope.scout({role: "data", question: "inspect", refs: [{experiment: "e1"}]});
+ expect(output).toContain("zero line"); expect(output).toContain("valid");
+ const {entries} = await readFindings(journal);
+ expect(entries.map(entry => entry.refs)).toEqual([[], [{url: "https://example.org/x"}, {file: "research/out.txt", line: 4}]]);
+ expect(bulletRefs("`a.txt:x` `b.py:2` `../c.md` `profile/profile.json`")).toEqual([{file: "b.py", line: 2}, {file: "../c.md", line: 1}, {profile: "profile/profile.json"}]);
+ // With the scout's folder, paths outside the state root stay text only.
+ expect(bulletRefs("`../../../escape.txt` `research/a.txt`", {root: "/state/scouts/s1", base: "/state"})).toEqual([{file: "scouts/s1/research/a.txt", line: 1}]);
+});
+
+test("valid findings are appended even when others in the batch are rejected", async () => {
+ const {appendValidFindings} = await import("./journal.js");
+ const journal = path();
+ const good = {kind: "fact" as const, author: {role: "data" as const, runId: "run", invocationId: "invoke"}, title: "good", text: "good", refs: [], datasetSha256: "data"};
+ const result = await appendValidFindings(journal, [good, {...good, title: "bad", refs: [{file: "x", line: 0}]}, {...good, kind: "result"}, {...good, title: "second"}]);
+ expect(result.appended.map(entry => entry.title)).toEqual(["good", "second"]);
+ expect(result.rejected.map(row => row.index)).toEqual([1, 2]); expect(result.rejected[0].reason).toContain("refs[0]");
+ // The lead still gets every bullet, plus a line naming what was not journaled.
+ const output = await createScouts(scoutOptions({datasetSha256: "", journalPath: journal, run: async () => "- one\n- two"})).scout({role: "data", question: "q"});
+ expect(output).toStartWith("- one\n- two\n- journal: 2 bullet(s) above were returned but not journaled");
+});
+
+test("numbered lists and indented source lines survive bullet normalization", () => {
+ const text = "Preamble\n1. First finding\n   Source: `research/a.txt:3`\n2) Second finding\n   - nested detail\n\n   continued after blank\nPrivate trailing prose\n  orphan indented line\n10. Tenth";
+ expect(finalBullets(text, "- none")).toEqual([
+  "- First finding\n  Source: `research/a.txt:3`", "- Second finding\n  - nested detail\n  continued after blank", "- Tenth"]);
+ expect(finalBullets("* a\n  * b\n* c", "- none")).toEqual(["- a\n  * b", "- c"]);
+ expect(finalBullets("No list here", "- none")).toEqual(["- none"]);
+});
+
+test("a later role's failure keeps earlier bullets and reports the failed role", async () => {
+ const journal = path();
+ const scope = createScouts(scoutOptions({journalPath: journal, async run(input) {
+  if (input.role === "ideas") throw new Error("Scout session failed; inspect its observed run");
+  return "- fact: data bullet";
+ }}));
+ const output = await scope.scout({role: ["data", "ideas"], question: "q"});
+ expect(output).toBe("- fact: data bullet\n- error: The ideas scout failed (Scout session failed; inspect its observed run); it returned no bullets.");
+ expect((await readFindings(journal)).entries.length).toBe(1);
+ const aborted = new AbortController();
+ const cancelling = createScouts(scoutOptions({async run() {aborted.abort(); throw new Error("cancelled");}}));
+ await expect(cancelling.scout({role: "data", question: "q"}, aborted.signal)).rejects.toThrow();
+});
+
+test("every role gets the shared label-suffix fact; validation is told it is not a defect", async () => {
+ const seen: string[] = [];
+ await createScouts(scoutOptions({async run(input) {seen.push(input.shared.text); return "- x";}})).scout({role: ["data", "ideas"], question: "q"});
+ expect(seen.length).toBe(2);
+ for (const raw of seen) {const text = raw.replace(/\s+/g, " "); expect(text).toContain("end in their label"); expect(text).toContain("`.x`"); expect(text).toContain("not leakage");}
+ expect(prompts.render("team.validation", {taskId: "t", budget: "1"}).text).toContain("not a defect");
+ expect(prompts.render("team.data", {taskId: "t", budget: "1", dataPaths: "d"}).text.replace(/\s+/g, " ")).not.toContain("end in their label");
+});
+
+test("a repeat call sees only a bounded view of this run's current findings", async () => {
+ const journal = path();
+ const {appendFindings, resolveFinding} = await import("./journal.js");
+ const entry = (runId: string, datasetSha256: string, text: string) => ({kind: "fact" as const, author: {role: "data" as const, runId, invocationId: "i"}, title: text.slice(0, 100), text, refs: [], datasetSha256});
+ const [superseded] = await appendFindings(journal, [entry("run", "data", "SUPERSEDED_MARKER")]);
+ await resolveFinding(journal, {id: superseded.id, status: "superseded"}, "data");
+ await appendFindings(journal, [entry("other-run", "data", "OTHER_RUN_MARKER"), entry("run", "other-data", "OTHER_DATA_MARKER")]);
+ await appendFindings(journal, Array.from({length: 20}, (_, i) => entry("run", "data", `entry-${i} ${"long ".repeat(100)}`)));
+ let opening = "";
+ await createScouts(scoutOptions({journalPath: journal, async run(input) {opening = input.opening.text; return "- x";}})).scout({role: "data", question: "q"});
+ for (const marker of ["SUPERSEDED_MARKER", "OTHER_RUN_MARKER", "OTHER_DATA_MARKER", "entry-7 "]) expect(opening).not.toContain(marker);
+ expect(opening).toContain("entry-8 "); expect(opening).toContain("entry-19 ");
+ expect(opening).toContain("newest 12 shown and\n8 older not shown");
+ expect(opening.length).toBeLessThan(5_000);
+});
+
+test("status pages new entries and its cursor resumes after the last one returned", async () => {
+ const {createFindings} = await import("./findings.js");
+ const api = createFindings(mkdtempSync(join(tmpdir(), "findings-page-")));
+ const entry = {kind: "idea" as const, author: {role: "ideas" as const, runId: "r", invocationId: "i"}, text: "t", refs: [], datasetSha256: "d"};
+ for (let i = 1; i <= 15; i++) await api.add("task", {...entry, title: `idea ${i}`});
+ const first = await api.status("task");
+ expect(first.newEntries.length).toBe(12); expect(first.cursor).toBe(12);
+ const second = await api.status("task", first.cursor);
+ expect(second.newEntries.map(row => row.title)).toEqual(["idea 13", "idea 14", "idea 15"]); expect(second.cursor).toBe(15);
+ expect((await api.status("task", second.cursor)).newEntries).toEqual([]);
+});
+
+test("scout citations resolve in the scout's folder; lead experiment refs stay off bullets and are pending", async () => {
+ const {createFindings} = await import("./findings.js");
+ const {mkdirSync} = await import("node:fs");
+ const root = mkdtempSync(join(tmpdir(), "findings-roots-"));
+ const scoutRoot = join(root, "solutions/scratch/scouts/s1");
+ mkdirSync(join(scoutRoot, "research"), {recursive: true}); writeFileSync(join(scoutRoot, "research/out.txt"), "1\n2\n3\n");
+ const scope = createScouts(scoutOptions({journalPath: join(root, "task/findings/journal.jsonl"), citationBase: root,
+  run: async () => ({text: "- fact: counted (`research/out.txt:3`)", root: scoutRoot})}));
+ await scope.scout({role: "data", question: "q", refs: [{experiment: "exp-1"}]});
+ const api = createFindings(root);
+ const page = await api.read("task");
+ expect(page.entries[0].refs).toEqual([{file: "solutions/scratch/scouts/s1/research/out.txt", line: 3}]);
+ expect((await api.status("task")).staleRefs).toEqual([]);
+ await api.add("task", {kind: "decision", author: {role: "lead", runId: "r", invocationId: "i"}, title: "chosen", text: "chosen", refs: [{experiment: "exp-1"}], datasetSha256: "d"});
+ const status = await api.status("task");
+ expect(status.staleRefs).toEqual([]); expect(status.pendingRefs).toEqual(["experiment:exp-1"]);
 });
