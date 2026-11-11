@@ -11,7 +11,7 @@ export interface PipelineTrace {
  readonly traceId: string;
  readonly traceUrl?: string;
  event(eventType: string, payload: Record<string, unknown>): void;
- stage(stage: StageName | "orchestrator", invocationId: string): StageReporter & { inputs(): SuppliedInput[] };
+ stage(stage: StageName | "orchestrator" | "scout-probe", invocationId: string): StageReporter & { inputs(): SuppliedInput[] };
  degraded(): boolean;
  failures(): string[];
  close(): Promise<void>;
