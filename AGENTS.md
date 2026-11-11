@@ -19,7 +19,9 @@ open decisions and the prioritized packages. The finetuned design is
 [expert-team-v2.md](harness/finetuned/docs/expert-team-v2.md), accepted
 2026-11-11; its contract appendix is
 [expert-team.md](harness/finetuned/docs/expert-team.md). Run project commands
-through `./dev` (see that file). [docs/v2-kickoff.md](docs/v2-kickoff.md) splits
+through `./dev` (see that file). During development run `./dev bun run test:fast`
+(about 40 s, without the ~20 integration test files); run the full `./dev bun test`
+(about 16 min) before merging. [docs/v2-kickoff.md](docs/v2-kickoff.md) splits
 the implementation into parallel work streams with one prompt each.
 
 Design decisions cite research papers only, marked peer-reviewed or preprint.
