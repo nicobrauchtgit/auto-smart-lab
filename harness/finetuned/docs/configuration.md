@@ -84,7 +84,7 @@ is a suggestion to the agent, not a constraint.
 | `maxSeconds` | 7200 | Hard cap per search. |
 | `validationTimeoutSeconds` | 60 | Time limit for validating a pipeline before any fit. |
 
-### `supervisor`: training process observation
+### `supervision`: process observation for trials and shell calls
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `linesPerUpdate` | 5 | Output lines carried per update. |
@@ -95,6 +95,11 @@ is a suggestion to the agent, not a constraint.
 | `sampleIntervalMs` | 250 | Process sampling interval. |
 | `maxConcurrent` | 2 | Training processes at once. |
 | `stopGraceMs` | 2000 | Time between SIGTERM and SIGKILL. |
+| `outputCapBytes` | 51200 | Most output an agent is shown at once; the log keeps the rest. |
+| `memoryReserveBytes` | 1073741824 | Available RAM below this stops the largest running process; memory warnings are measured against it. |
+| `swapFullSeconds` | 15 | How long swap must stay full before the largest process is stopped. |
+| `overrunMultiple` | 3 | Time-wasting: elapsed beyond this multiple of comparable work's wall time... |
+| `overrunMinMs` | 60000 | ...and beyond this. Without comparable history nothing is reported. |
 
 ### `setup`
 | Key | Default | Meaning |
