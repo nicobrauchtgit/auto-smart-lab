@@ -56,7 +56,7 @@ async function appendRecords(path: string, build: (view: Awaited<ReturnType<type
   const file = await open(path, "a+");
   try {
    if (view.incompleteTail) await file.truncate(view.validBytes);
-   await file.write(records.map(record => JSON.stringify(record) + "\n").join(""));
+   await file.writeFile(records.map(record => JSON.stringify(record) + "\n").join(""));
    await file.sync();
   } finally {await file.close();}
   return records;
