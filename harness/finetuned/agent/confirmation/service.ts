@@ -1,5 +1,5 @@
 /** Controller-only, durable held-back confirmation after every solve session closes. */
-import { ladderQuery } from "./ladder.js";
+import { balancedLosses, ladderQuery } from "./ladder.js";
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
@@ -31,6 +31,16 @@ function probe(options: ConfirmationOptions, args: string[]): void {
  const result = spawnSync(options.pythonExecutable, [WORKER, ...args], { env: sanitizeTrainingEnvironment(options.env),
   timeout: 30_000, encoding: "utf8", maxBuffer: 1024 * 1024 });
  if (result.error || result.status !== 0) throw new Error(`Holdout confirmation validation failed: ${result.error?.message ?? result.stderr.trim()}`);
+}
+
+/** Controller-only per-row losses of a validated confirmation; never part of agent feedback. */
+function holdoutLosses(directory: string): { ids: string[]; losses: number[] } {
+ // confirm.py --validate has already proven predictions.csv lists exactly these rows in this order.
+ const samples: { id: string; target: number }[] = json(join(directory, "sealed-samples.json")).samples;
+ // Columns are id, prediction, score; prediction and score never contain commas.
+ const predicted = readFileSync(join(directory, "predictions.csv"), "utf8").trim().split(/\r?\n/).slice(1).map(line => Number(line.split(",").at(-2)));
+ if (predicted.length !== samples.length) throw new Error("Confirmation predictions do not cover the sealed rows");
+ return { ids: samples.map(sample => sample.id), losses: balancedLosses(samples.map(sample => Number(sample.target)), predicted) };
 }
 
 export async function runConfirmation(options: ConfirmationOptions): Promise<ConfirmationOutput> {
@@ -163,8 +173,8 @@ export async function runConfirmation(options: ConfirmationOptions): Promise<Con
   atomicJson(join(root, "latest.json"), { path: resultPath, sha256: output.sha256 });
   let summary: Record<string, unknown>;
   if (result.status === "completed") {
-   const queried = ladderQuery(ledger.populations[population]?.ladder, identity, result.metrics.balancedAccuracy,
-    2 * Math.min(...Object.values(result.holdout.perClass).map(Number)));
+   const { ids, losses } = holdoutLosses(dirname(resultPath));
+   const queried = ladderQuery(ledger.populations[population]?.ladder, identity, ids, losses);
    ledger.populations[population].ladder = queried.state;
    atomicJson(ledgerPath, ledger);
    summary = { status: result.status, experimentId: result.experimentId, readCount: result.readCount, populationReadCount: count(), ...queried.feedback, queryCount: count() };

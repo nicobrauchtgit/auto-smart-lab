@@ -35,9 +35,11 @@ run, merge, push or submission was performed.
   winners can promote and refit directly with their exact winning parameters.
   Proxy searches and score-only outputs remain ineligible.
 - Trial status exposes fold scores and an explicit paired noise verdict.
-  Confirmation stores durable Ladder state per population, releases rounded
-  scores only above its fixed margin, and preserves the raw query ledger,
-  including reserved/interrupted attempts. Raw results remain controller-only.
+  Confirmation stores durable Ladder state per population: the parameter-free
+  Ladder (Blum & Hardt, ICML 2015) releases a score, rounded to 1/n of the
+  sealed rows, only when the champion's balanced error beats the best so far
+  by one paired standard error of the per-row loss differences. It
+  preserves the raw query ledger, including reserved/interrupted attempts. Raw results remain controller-only.
 - Session environments use captured tool environments rather than changing
   process.env. Bash and web-search factories receive separate snapshots.
   The legacy web-search registration remains a working adapter.

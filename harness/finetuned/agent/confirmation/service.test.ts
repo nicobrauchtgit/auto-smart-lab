@@ -70,6 +70,9 @@ test("closed solve confirms once, preserves hidden inputs and refit binds its id
    runAgentSession: async (options: any) => { expect(options.prompt).not.toContain('holdoutConfirmation'); sessionClosed = true; return { output: "existing champion is sufficient", agentRunId: "inert" } as any; },
    confirm: async options => { expect(sessionClosed).toBe(true); return runConfirmation(options); } } });
  expect(result.valid).toBe(true);
+ // The first champion's Ladder query releases its score; per-row losses stay in the ledger.
+ expect(result.confirmation!.summary).toMatchObject({ verdict: "holdout confirms the improvement", score: 1 });
+ expect(JSON.stringify(result.confirmation!.summary)).not.toContain("losses");
  const record = JSON.parse(readFileSync(result.confirmation!.artifact.path, "utf8"));
  expect(record).toMatchObject({ experimentId: f.started.id, source: { commit: f.commit }, fitCalls: 1, developmentRows: 120, validationRows: 20,
   readCount: 1, metrics: { balancedAccuracy: 1 }, interval: { lower: 1, upper: 1 }, gap: 0 });
