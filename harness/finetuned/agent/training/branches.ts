@@ -41,6 +41,11 @@ function failure(result: { stderr: string }) { return result.stderr.trim().split
  * files (data, caches) stay in the working tree and out of the permanent history.
  */
 export function checkpoint(root: string, reason: string): { committed: boolean; skipped: string[]; moved: { from: string; to: string }[] } {
+ const excludePath = git(root, ["rev-parse", "--git-path", "info/exclude"]).stdout.trim();
+ const exclude = isAbsolute(excludePath) ? excludePath : join(root, excludePath);
+ mkdirSync(dirname(exclude), { recursive: true });
+ const ignored = existsSync(exclude) ? readFileSync(exclude, "utf8") : "";
+ if (!ignored.split("\n").includes("/scratch/")) writeFileSync(exclude, `${ignored}\n/scratch/\n`);
  if (uncommittedFiles(root).length === 0) return { committed: false, skipped: [], moved: [] };
  const untracked = git(root, ["ls-files", "--others", "--exclude-standard", "-z"]).stdout.split("\0").filter(Boolean);
  const small = untracked.filter(path => { try { return statSync(join(root, path)).size <= MAX_CHECKPOINT_FILE_BYTES; } catch { return false; } });

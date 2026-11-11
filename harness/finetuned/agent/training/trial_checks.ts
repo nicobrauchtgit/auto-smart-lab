@@ -1,7 +1,7 @@
 /** Execute live check code against immutable trial imports in a fresh interpreter. */
 import { spawn } from "node:child_process";
-import { createWriteStream, mkdirSync, realpathSync } from "node:fs";
-import { join, resolve, sep } from "node:path";
+import { createWriteStream, mkdirSync, realpathSync, readFileSync } from "node:fs";
+import { join, resolve, sep, basename } from "node:path";
 import { projectPython } from "../pipeline/task_configuration.js";
 import type { SolveSandbox } from "../run/solve_sandbox.js";
 import { resolveCommit, uncommittedFiles } from "./git.js";
@@ -30,12 +30,13 @@ export async function runTrialChecks(snapshot: TrialSnapshot, checkPaths: string
  const inside = (path: string, root: string) => path === root || path.startsWith(`${root}${sep}`);
  if (!sandbox.mounts.some(m => !m.writable && inside(source, realpathSync(m.source))) || sandbox.mounts.some(m => m.writable && (inside(source, realpathSync(m.source)) || inside(realpathSync(m.source), source)))) throw new Error("Trial checks require read-only snapshot mounts");
  const checks = [];
- const outputRoot = join(sandbox.cwd, "scratch", "validation", snapshot.experimentId);
+ const live = sandbox.mounts.find(mount => basename(mount.source) === "solutions" && realpathSync(mount.source) !== realpathSync(worktree))?.source ?? sandbox.cwd;
+ const outputRoot = join(live, "scratch", "validation", snapshot.experimentId);
  mkdirSync(outputRoot, { recursive: true });
  for (const [index, path] of checkPaths.entries()) {
   signal?.throwIfAborted();
   const checked = realpathSync(path);
-  if (!inside(checked, resolve(sandbox.cwd, "checks")) || !checked.endsWith(".py")) throw new Error("Unsafe check path");
+  if (!inside(checked, resolve(live, "checks")) || !checked.endsWith(".py")) throw new Error("Unsafe check path");
   const outputPath = join(outputRoot, `${index}.log`);
   const output = createWriteStream(outputPath);
   const exitCode = await new Promise<number>((done, reject) => {
@@ -47,6 +48,7 @@ export async function runTrialChecks(snapshot: TrialSnapshot, checkPaths: string
    child.once("error", error => { signal?.removeEventListener("abort", cancel); output.end(); reject(error); });
    child.once("close", code => { signal?.removeEventListener("abort", cancel); output.end(() => signal?.aborted ? reject(signal.reason) : done(code ?? 1)); });
   });
+  if (readFileSync(outputPath, "utf8").includes("Unsafe live solutions import:")) throw new Error("Unsafe live solutions import origin; see the retained check log");
   checks.push({ path: checked, exitCode, outputPath });
  }
  return { passed: checks.every(check => check.exitCode === 0), checks };

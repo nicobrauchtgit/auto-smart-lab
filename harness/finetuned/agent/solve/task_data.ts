@@ -1,4 +1,5 @@
 /** Controller-only retained data. Legacy solve uses this same split implementation. */
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { PROJECT_ROOT } from "../pipeline/resolve_task.js";
@@ -15,6 +16,8 @@ export function readTaskData(taskId: string, projectRoot = PROJECT_ROOT): TaskDa
  const root = statePath(projectRoot, taskId, "data", "sealed");
  if (!existsSync(join(root, "split.json"))) return undefined;
  try {
+  const stored = JSON.parse(readFileSync(join(root, "split.json"), "utf8"));
+  if (!stored.split || stored.sha256 !== createHash("sha256").update(JSON.stringify(stored.split)).digest("hex")) throw new Error("split checksum");
   const data = JSON.parse(readFileSync(join(root, "task-data.json"), "utf8"));
   if (!data.split || !existsSync(data.sampleManifestPath) || !existsSync(data.devZip)) throw new Error("incomplete");
   return data;

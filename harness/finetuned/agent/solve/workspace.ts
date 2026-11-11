@@ -13,7 +13,7 @@
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, renameSync, statfsSync, statSync, openSync, readSync, closeSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { basename, join, relative } from "node:path";
+import { basename, join, relative, dirname } from "node:path";
 
 import { PROJECT_ROOT, resolveTask } from "../pipeline/resolve_task.js";
 import { projectPython, resolveTaskConfiguration, TASK_SAMPLES_SCRIPT, taskDataPaths, type TaskConfiguration } from "../pipeline/task_configuration.js";
@@ -143,7 +143,7 @@ export function prepareSolveWorkspace(taskId: string, options: PrepareOptions = 
     const release = claimWorkspace(sealedRoot);
     try {
     const declarationPath = join(sealedRoot, "split.json");
-    const declaration = { taskId, originalDatasetHash, configuration, rootSeed: options.seed ?? HARNESS_CONFIG.solve.seed, policy: options.holdoutPolicy ?? null };
+    const declaration = { taskId, originalDatasetHash, configuration, rootSeed: options.seed ?? HARNESS_CONFIG.solve.seed, policy: options.holdoutPolicy ?? HARNESS_CONFIG.holdout };
     let split: ReturnType<typeof seal>;
     if (existsSync(declarationPath)) {
         let stored;
@@ -157,6 +157,15 @@ export function prepareSolveWorkspace(taskId: string, options: PrepareOptions = 
         const disk = statfsSync(dataRoot);
         if (disk.bavail * disk.bsize < 1.2 * statSync(paths.trainZip).size + 1_000_000_000) throw new Error("Task preparation requires 1.2 times the archive plus 1 GB free disk space");
         split = seal(configuration, train.ids, targets, { ...options, seed: holdoutSeedPlan.sealedSeed });
+        const legacyPath = statePath(projectRoot, taskId, "solve", "data", "holdout.json");
+        if (existsSync(legacyPath)) {
+            let legacy;
+            try { legacy = JSON.parse(readFileSync(legacyPath, "utf8")); } catch { throw new Error("Corrupt legacy task split; repair before migration"); }
+            if (legacy.holdoutSeedPlan?.datasetSha256 !== originalDatasetHash
+                || legacy.holdoutSeedPlan?.rootSeed !== holdoutSeedPlan.rootSeed
+                || canonical(legacy.sealedIds) !== canonical(split.sealedIds) || legacy.sha256 !== split.sha256)
+                throw new Error("Legacy exposed task data conflicts with this split declaration; explicit task-state migration required");
+        }
         atomicJson(declarationPath, { declaration, split, sha256: createHash("sha256").update(JSON.stringify(split)).digest("hex") });
     }
 
@@ -173,7 +182,8 @@ export function prepareSolveWorkspace(taskId: string, options: PrepareOptions = 
 	for (const directory of [root, dataOut, ...(configuration.selection ? [join(root, "agent")] : [])]) mkdirSync(directory, { recursive: true });
 	const { solutionsRoot, entrypointPath } = prepareSolutionsWorkspace(projectRoot, taskId);
 	const taskPath = join(root, "task.md");
-	const prompt = readFileSync(join(taskDir, "prompt.md"), "utf8");
+	const intro = join(dirname(taskDir), "unit-intro.md");
+	const prompt = (existsSync(intro) ? `${readFileSync(intro, "utf8")}\n\n` : "") + readFileSync(join(taskDir, "prompt.md"), "utf8");
 	writeFileSync(taskPath, prompt.endsWith("\n") ? prompt : `${prompt}\n`);
 	// Harness-only. The agent is never pointed at this and never needs it.
 	const sealedPath = join(sealedRoot, "sealed_ids.txt");
@@ -246,3 +256,5 @@ function writeDevelopmentZip(trainZip: string, dataOut: string, devIds: readonly
 	rmSync(listing, { force: true });
 	return target;
 }
+
+export { prepareModellingWorkspace } from "./task_data.js";

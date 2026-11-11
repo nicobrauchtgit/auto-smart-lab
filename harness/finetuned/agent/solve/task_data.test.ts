@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { prepareSolveWorkspace, archiveRows } from "./workspace.js";
@@ -24,6 +24,16 @@ test("spam1 keeps the original split, resumes missing materialization, rejects c
   expect(readFileSync(resumed.sampleManifestPath)).toEqual(bytes);
   expect(() => prepareSolveWorkspace("spam1", { ...options, seed: 123 })).toThrow("rootSeed");
   const declaration = join(root, "runs", "finetuned", "spam1", "data", "sealed", "split.json");
+  const savedDeclaration = readFileSync(declaration);
+  const legacyRoot = join(first.root, "data"); mkdirSync(legacyRoot, { recursive: true });
+  const legacy = { ...first.split, holdoutSeedPlan: first.holdoutSeedPlan };
+  writeFileSync(join(legacyRoot, "holdout.json"), JSON.stringify(legacy));
+  rmSync(declaration);
+  expect(prepareSolveWorkspace("spam1", options).split).toEqual(first.split);
+  rmSync(declaration);
+  writeFileSync(join(legacyRoot, "holdout.json"), JSON.stringify({ ...legacy, holdoutSeedPlan: { ...first.holdoutSeedPlan, rootSeed: 123 } }));
+  expect(() => prepareSolveWorkspace("spam1", options)).toThrow("Legacy exposed task data");
+  writeFileSync(declaration, savedDeclaration);
   writeFileSync(declaration, "corrupt");
   expect(() => prepareSolveWorkspace("spam1", options)).toThrow("Corrupt task split");
   expect(readFileSync(declaration, "utf8")).toBe("corrupt");

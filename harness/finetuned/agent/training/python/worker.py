@@ -304,7 +304,7 @@ def execute(document: dict[str, Any]) -> dict[str, Any]:
             outputs = write_search_outputs(invocation, output_dir, outcome, manifest, dict(zip(ids, y)) if y is not None else {}, champion)
             summary = _summarise(invocation, folds, best.folds if best else [], best.oof if best else [],
                                  ids, y, manifest, started, bool(outcome["stopReason"]))
-            summary["promotionEligible"] = bool(best and best.status == "completed" and invocation.scope.kind == "promotion" and not invocation.search.objective and not outcome["stopReason"] and len(best.folds) == len(folds) and summary.get("metrics"))
+            summary["promotionEligible"] = bool(best and best.status == "completed" and invocation.scope.kind == "promotion" and not invocation.search.objective and not outcome["stopReason"] and len(best.folds) == len(folds) and summary.get("metrics") and best.oof and all(type(row.get("prediction")) is int for row in best.oof))
             if summary["promotionEligible"]:
                 from smartlab_trial.search import confirmation_request
                 summary["winningPipeline"] = confirmation_request(invocation, best)["pipeline"]

@@ -16,7 +16,7 @@ test("concurrent bash tools retain session-local environment without global muta
  const before = process.env.STREAM_B_SESSION_MARKER;
  const first = sessionBashTool(import.meta.dir, { STREAM_B_SESSION_MARKER: "first" });
  const second = sessionBashTool(import.meta.dir, { STREAM_B_SESSION_MARKER: "second" });
- const outputs = await Promise.all([first.execute("a", { command: 'printf "%s" "$STREAM_B_SESSION_MARKER"' }, undefined, undefined, {} as any), second.execute("b", { command: 'printf "%s" "$STREAM_B_SESSION_MARKER"' }, undefined, undefined, {} as any)]);
+ const outputs = await Promise.all([first.execute("a", { command: 'printf "%s" "$STREAM_B_SESSION_MARKER"' }, undefined, undefined, undefined as any), second.execute("b", { command: 'printf "%s" "$STREAM_B_SESSION_MARKER"' }, undefined, undefined, undefined as any)]);
  expect(JSON.stringify(outputs[0])).toContain("first");
  expect(JSON.stringify(outputs[1])).toContain("second");
  expect(process.env.STREAM_B_SESSION_MARKER).toBe(before);

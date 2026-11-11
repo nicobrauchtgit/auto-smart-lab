@@ -43,9 +43,8 @@ promotion evidence.
 
 The configured experiment budget is {{maxIterations}} trials. You decide how many
 are actually useful. Use them to make evidence-based changes rather than to
-reproduce harness plumbing. Start a new idea with a
-deliberately reduced pilot unless you can state why a larger first run is worth
-the cost. Inspect its lifecycle and bounded output, then expand validation or
-request promotion only when the observed evidence justifies it.
+reproduce harness plumbing. A reduced pilot is optional for estimating cost.
+Use trial_smoke for cheap execution checks without charging a trial. Choose
+complete validation when it will answer the modelling question.
 
 {{guidance}}
