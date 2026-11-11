@@ -14,18 +14,20 @@ export const sealedSplitRecords = (projectRoot: string, taskId: string) => [
  statePath(projectRoot, taskId, "solve", "data", "holdout.json"),
 ];
 /**
- * Why refit must wait for confirmation, or undefined when no harness split exists.
- * Any sealed split record means the solve chain confirms (or records a skip)
- * before refit; an unreadable record fails closed rather than waiving the gate.
+ * Why refit must wait for confirmation, or undefined when none applies.
+ * A split whose record carries confirmation metadata (binary stratified
+ * holdouts, including "too small" skips) is confirmed or explicitly skipped by
+ * the solve chain before refit. Group and label-free splits carry none.
+ * An unreadable record fails closed rather than waiving the gate.
  */
 export function confirmationRequirement(projectRoot: string, taskId: string): string | undefined {
  for (const path of sealedSplitRecords(projectRoot, taskId)) {
   if (!existsSync(path)) continue;
   let record: any;
   try { record = JSON.parse(readFileSync(path, "utf8")); } catch { return `unreadable sealed split record ${path}`; }
-  // Legacy solve records without confirmation metadata predate held-back confirmation.
-  if (path.endsWith(join("solve", "data", "holdout.json")) && !record?.confirmation && !record?.holdoutSeedPlan) continue;
-  return `sealed split recorded at ${path}`;
+  const split = path.endsWith("split.json") ? record?.split : record;
+  if (split === null || typeof split !== "object") return `incomplete sealed split record ${path}`;
+  if (split.confirmation) return `confirmation metadata recorded at ${path}`;
  }
  return undefined;
 }

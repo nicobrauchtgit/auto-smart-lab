@@ -14,7 +14,10 @@ test("refit refuses an unconfirmed champion whenever the harness sealed rows", (
   const sealed = join(root, "runs/finetuned/spam1/data/sealed");
   mkdirSync(sealed, { recursive: true });
   // Exactly the location prepareSolveWorkspace writes.
-  writeFileSync(join(sealed, "split.json"), JSON.stringify({ declaration: {}, split: { sealedIds: ["a"] } }));
+  // Group/label-free splits carry no confirmation metadata: no gate.
+  writeFileSync(join(sealed, "split.json"), JSON.stringify({ declaration: {}, split: { scheme: "group", sealedIds: ["a"] } }));
+  expect(confirmedCandidate(root, "spam1", candidate)).toBeUndefined();
+  writeFileSync(join(sealed, "split.json"), JSON.stringify({ declaration: {}, split: { sealedIds: ["a"], confirmation: { rows: 1, precision: "target" } } }));
   expect(confirmationRequirement(root, "spam1")).toContain("split.json");
   expect(() => confirmedCandidate(root, "spam1", candidate)).toThrow("Held-back confirmation is required before refit");
   rmSync(join(sealed, "split.json"));
