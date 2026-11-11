@@ -167,8 +167,8 @@ export async function runConfirmation(options: ConfirmationOptions): Promise<Con
     2 * Math.min(...Object.values(result.holdout.perClass).map(Number)));
    ledger.populations[population].ladder = queried.state;
    atomicJson(ledgerPath, ledger);
-   summary = { status: result.status, experimentId: result.experimentId, ...queried.feedback };
-  } else summary = { status: result.status, reason: result.reason, readCount: result.readCount, experimentId: result.experimentId };
+   summary = { status: result.status, experimentId: result.experimentId, readCount: result.readCount, populationReadCount: count(), ...queried.feedback, queryCount: count() };
+  } else summary = { status: result.status, precision: result.holdout.precision ?? "none", reason: result.reason, readCount: result.readCount, experimentId: result.experimentId };
 
   options.report?.event("holdout_confirmation_validated", summary);
   options.report?.input({ kind: "holdout_confirmation", version: 1, delivery: "workspace_file", status: "available", artifact: resultPath, content_sha256: output.sha256 });
