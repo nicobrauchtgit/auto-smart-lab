@@ -190,15 +190,27 @@ budget is used, tools are blocked and the scout gets one finish-up turn:
 "Write your final bullets now." The finish-up turn does not count. Running out
 never fails the run. Wall time is used only to detect stalls (section 6).
 
-Starting budgets, to be tested: data 15, ideas 10 (at most 3 of them web
-searches), validation 10. The ideas scout needs about 3 searches, 2 slide
-reads and a look at the data bullets, so 10 should suffice. The data scout
-reads the task and the harness profile, looks at a few training and test
-samples and runs one or two small scripts; Kim et al. found that 58% of runs
-needed at least one iteration to repair a failing script, so 10 is tight
-for it. P7a measures this before the integration gate: run each scout alone on
-spam1–3 and `code2` with 10 and with 20 calls, and compare calls used and
-what it surfaced.
+Starting budgets: data 15, ideas 10 (at most 3 of them web searches),
+validation 10 (`team.scouts` in `harness.config.json`). Planned from the
+expected work: the ideas scout needs about 3 searches, 2 slide reads and a
+look at the data bullets. The data scout reads the task and the harness
+profile, looks at a few training and test samples and runs one or two small
+scripts; Kim et al. found that 58% of runs needed at least one iteration to
+repair a failing script, so 10 is tight for it. Measured basis, the P7a budget
+test (each scout alone on spam1–3 and `code2` with 10 and 20 calls,
+2026-11-11, [results](../agent/team/budget-results.md)):
+
+- data used every call at both budgets, and 20 calls surfaced further useful
+  properties, so it gets 15, between the tested values;
+- ideas returned useful material at 9–10 calls; 18–19 of 20 added detail with
+  no shown gain, so it stays at 10;
+- validation completed at 10 calls on all four tasks, with one check each.
+  At 20 it wrote 2–4 checks and reached the same conclusions, so it stays at
+  10; a focused repeat call buys more checks.
+
+Limits of that basis: one probe per cell, one provider and model, prompt and
+backend changes between the data/ideas probes, and no quality comparison.
+Findings were not graded, and no trial with a seeded defect was validated.
 
 **Dry run (2026-11-11, one data scout on spam1, budget 10).** Original script and
 prompts (since moved to `agent/team/budget_probe.ts` and
@@ -224,9 +236,14 @@ were 79–375 s after initial staging/profiling. Results and what each surfaced
 are in [the scout budget report](../agent/team/budget-results.md). Propose
 starting budgets **data 15, ideas 10 (at most 3 searches), validation 10
 provisional**. These development probes had prompt/backend changes and do not
-isolate a budget effect or demonstrate model-quality gains. Validation remains
-an explicit unavailable adapter until stream B supplies frozen snapshots and
-the check runner; its eight live probes are deferred.
+isolate a budget effect or demonstrate model-quality gains. After the
+integration with stream B, the eight validation probes ran on measured trial
+snapshots with `run_checks`. All 10-call runs completed. Two 20-call runs were
+recorded as empty because the bullet parser dropped findings written without
+list markers; that parser is fixed. No probe called the label suffix a defect.
+The code2 runs wrongly required `fit`/`predict` of a `fit_predict`-only
+clustering pipeline; the solutions README and the validation prompt now state
+that batch clustering needs only `fit_predict`.
 
 **Repeat calls.** The lead passes a focused question and optional references
 (trial IDs, error summaries). A repeat call sees earlier bullets from the
@@ -564,11 +581,8 @@ Taken with the user on 2026-11-11:
 - More iterations over more upfront research: short scout runs first, then
   targeted new scout calls guided by trial results.
 - `agent/subagents/` is the base for the blocking scouts.
-
-Still open:
-
-- The starting budgets (lead 80, data 15, ideas 10, validation 10) until the
-  scout budget test has run.
+- Scout starting budgets data 15, ideas 10, validation 10, from the P7a scout
+  budget test (section 3). The lead's 80 is exercised at the integration gate.
 
 ## Sources
 

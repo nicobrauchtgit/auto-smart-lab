@@ -1,0 +1,16 @@
+{
+  "taskId": "spam3",
+  "role": "validation",
+  "budget": 10,
+  "backend": "pi-child",
+  "status": "completed",
+  "experiment": "9d163771-6bda-40a0-925a-4c5ee540d5e9",
+  "used": 10,
+  "attempted": 10,
+  "blockedAfterBudget": 0,
+  "turns": 8,
+  "bullets": 8,
+  "seconds": 225,
+  "outputChars": 2256,
+  "workspace": "2026-11-11T20-57-57-spam3-validation-10"
+}

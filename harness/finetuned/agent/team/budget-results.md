@@ -10,9 +10,13 @@ a blocked post-budget call. Admitted calls are not proven executions: the
 probes ran on a budget that admitted by tool-call ID, under which a reused ID
 could execute more than once for one counted call. The summaries do not record
 executions or IDs; the Langfuse traces could show them but were not checked.
-Adversarial scripted-provider tests separately exercise the blocking path. The eight validation cases are **deferred**, not measured:
-stream B's immutable trial snapshot/check adapter is unavailable. No live-source
-substitute was used.
+Adversarial scripted-provider tests separately exercise the blocking path.
+
+The eight validation cases ran later the same day, after the integration with
+stream B, on measured trial snapshots (plus one extra repeat of spam1 at 10
+calls): see [Validation probes](#validation-probes). The starting budgets
+follow from both sets: **data 15, ideas 10 (at most three searches),
+validation 10**.
 
 ## Protocol and artifacts
 
@@ -84,9 +88,131 @@ verification or harness trial evidence. Raw bullets retain their own sources.
 | code2 | ideas | 10 | 9 | 93 | [12](budget-results/bullets/2026-11-11T14-21-39-code2-ideas-10.md) | Static representations and similarity for unseen families; avoid assuming test has the four known families; calls the filename suffix label leakage. |
 | code2 | ideas | 20 | 18 | 195 | [14](budget-results/bullets/2026-11-11T14-23-13-code2-ideas-20.md) | Sparse similarity, normalization and threshold/cluster-count cautions; calls the filename suffix label leakage. |
 
+## Validation probes
+
+**Protocol.** After the integration with stream B (commits d7345db and
+2a3c177), `probe_trial.ts` ran one harness-owned trial per task through
+`createHarnessTraining` under the solve sandbox, on stream B's TaskData
+(development split only). The trial pipelines are deliberately minimal: hashed
+word counts and balanced logistic regression for spam1–3 (the same file for all
+three), TF-IDF and average-linkage cosine clustering with
+`distance_threshold=0.8` behind `fit_predict` for code2. Each validation
+probe got that trial's frozen snapshot read-only, `checks/<task>/` as its only
+writable folder, the `run_checks` tool, and the question in
+`prompts/team/probe-validation.md`. Same provider as above. Calls now count
+every emitted call; no probe had a call blocked after its budget.
+
+| Task | Budget | Status | Calls | Turns | Bullets | Seconds | Checks written |
+| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| spam1 | 10 | completed (extra repeat) | 10 | 6 | [11](budget-results/bullets/2026-11-11T20-33-56-spam1-validation-10.md) | 161 | 0 |
+| spam1 | 10 | completed | 10 | 11 | [10](budget-results/bullets/2026-11-11T20-37-35-spam1-validation-10.md) | 199 | 1 |
+| spam1 | 20 | completed | 20 | 12 | [5](budget-results/bullets/2026-11-11T20-40-55-spam1-validation-20.md) | 304 | 2 |
+| spam2 | 10 | completed | 10 | 8 | [7](budget-results/bullets/2026-11-11T20-46-00-spam2-validation-10.md) | 221 | 1 |
+| spam2 | 20 | empty (parser bug; [7 recovered](budget-results/bullets/2026-11-11T20-49-42-spam2-validation-20.reply.md)) | 19 | 20 | [0](budget-results/bullets/2026-11-11T20-49-42-spam2-validation-20.md) | 494 | 3 |
+| spam3 | 10 | completed | 10 | 8 | [8](budget-results/bullets/2026-11-11T20-57-57-spam3-validation-10.md) | 225 | 1 |
+| spam3 | 20 | empty (parser bug; [6 recovered](budget-results/bullets/2026-11-11T21-01-43-spam3-validation-20.reply.md)) | 19 | 17 | [0](budget-results/bullets/2026-11-11T21-01-43-spam3-validation-20.md) | 343 | 4 |
+| code2 | 10 | completed | 10 | 11 | [6](budget-results/bullets/2026-11-11T21-07-26-code2-validation-10.md) | 186 | 1 |
+| code2 | 20 | completed | 20 | 14 | [5](budget-results/bullets/2026-11-11T21-10-33-code2-validation-20.md) | 224 | 3 |
+
+Bullets count what the probe recorded, including lines the journal refused.
+The summaries are in [`budget-results/summaries/`](budget-results/summaries/).
+"Checks written" counts the check files under
+`runs/finetuned/solutions/checks/<task>/` whose modification times fall in the
+probe's run window; it is not recorded by the probe.
+
+The first spam1/10 run is an extra repeat. It started minutes before 2a3c177
+changed the probe question, under the earlier wording "inspect bytes/text only;
+never execute corpus members", so it wrote no check and validated by reading
+code alone. The question was then changed to allow checks that fit and predict
+with the snapshot's pipeline on development data, and spam1/10 was run again.
+Only the second spam1/10 run is the measured cell.
+
+**The two empty 20-call runs** (spam2 and spam3) were a harness bug, not a
+model failure. Their Langfuse traces (`9d4bbeda27220ae10eb1d3855673d794`,
+`76a5d2c3aac9717292f959f54e407939`) show both scouts using 19 of 20 calls,
+then ending on their own with a normal `stop` turn (turn 20 and 17 of at most
+22). Neither hit the budget or turn limit, so no finish-up turn was involved.
+Their final text held 7 and 6 well-sourced findings, each starting with a
+label, but written as `**ok:** …` lines (spam2) or `` `ok:` … `` paragraphs
+(spam3) with no `- ` list marker. `finalBullets` kept only list items, found
+none, and the probe recorded the role as empty, with "No sourced findings
+returned" as the lead's text. The prompt asks for "short bullets, each starting
+with `ok:`, `fix:` or `advice:`", and the labels were there. Fix: for
+validation, a line that starts with a label now opens a finding even without a
+list marker (`scouts.ts`, `finalBullets(..., {labelled: true})`). Prose that
+merely mentions a label ("OK — here is…") still does not. Replaying the traced
+replies through the fixed parser recovers 7 findings (5 ok, 2 advice) and 6
+findings (4 ok, 2 advice). The verbatim replies are tracked as
+`*.reply.md` next to the recorded bullets.
+
+**What validation found.** No probe snapshot has a real defect of the kinds the
+prompt names (fold leakage, fitting on test inputs, wrong output domain,
+forbidden inputs). So these probes measure evidence quality and false positives,
+not whether a real defect is caught. A trial with a seeded defect was not
+probed.
+
+- spam1 (10: 6 ok, 3 advice; 20: 3 ok, 1 advice). Both measured runs fitted
+  the pipeline on a development split (balanced accuracy 0.9769 and 0.9762),
+  checked the output domain, and confirmed that member bytes, not names, are
+  the features. The 20-call run also verified row alignment under permutation
+  and counted fits to show nothing is fitted at predict time. Each run had one line of its own check
+  failing, with no `ok:`/`fix:`/`advice:` label (10) or a mislabelled
+  "fix (my check, not the pipeline)" (20). The journal correctly refused both
+  lines and the lead text says so. The extra repeat's advice that
+  `HashingVectorizer` is "left at `norm=None`" is **wrong**: its default is
+  `norm='l2'`, which the spam3/20 check printed.
+- spam2 (10: 5 ok, 2 advice; 20 recovered: 5 ok, 2 advice). Name suffix and
+  target agree on 18096/18096 rows and the suffix is not a feature. A
+  shuffled-label control gives AUC 0.49, and 3-fold CV balanced accuracy is
+  0.9943. Predictions are invariant to row permutation. The archive holds
+  exactly the sample members. Advice: decoding loses binary/latin-1 MIME parts;
+  check whether `class_weight="balanced"` suits the test prior. One slip: the
+  10-call run says `profile.json` "targets accuracy-style scoring", but the
+  profile names no metric.
+- spam3 (10: 5 ok, 3 advice; 20 recovered: 4 ok, 2 advice). A corpus whose
+  pages are identical and whose names alone carry the label gives balanced
+  accuracy 0.500, so names do not leak. 5-fold OOF balanced accuracy is 0.9978,
+  `.x`-renamed members predict normally, and there are 0 exact-duplicate
+  groups. Advice: the three spam tasks share one byte-identical file (extract a
+  shared `lib/` module), the features are word-only, and near-perfect dev scores
+  mean dataset separability.
+- code2 (10: 2 ok, 2 fix, 2 advice; 20: 2 ok, 1 fix, 2 advice). Both confirmed
+  that features come from member bytes only. The 10-call run did so with fake
+  member names and targets; the 20-call run compared `fit_predict(frame, y)`
+  with `fit_predict(frame)`. Both `fix:` findings about the interface are
+  **wrong**. They report that `SourceClusters` lacks `fit`/`predict`, but the
+  harness drives batch clustering through `fit_predict` alone
+  (`training/python/smartlab_trial/agent_code.py` requires only that). The
+  cause was the solutions README, which stated only `fit(X, y)` and
+  `predict(X)`; it and the validation prompt now say that batch clustering
+  needs only `fit_predict`. The 10-call run's second `fix:` (threshold 0.8
+  "groups nearly everything together") is a quality judgement filed as a
+  defect, and its direction is wrong. Its own numbers (25 clusters for 2
+  families, one 502-row cluster, the 21-row family spread over about 24
+  clusters) show over-splitting, which is how the 20-call run correctly
+  reported it as `advice:` (completeness 0.254, ARI 0.492).
+
+**Labels from file names.** No probe flagged reading labels from member names
+as a defect. Every run that discussed it treated it as the course's delivery
+and checked that names do not reach the features. Seven of the nine backed this
+with an executed check: name/target agreement, name-only or shuffled labels,
+`.x`-renamed members, or fake names and targets. The extra spam1 repeat read
+code only, and the spam1/20 suffix-invariance sub-test never ran. The remaining false positives concern
+the clustering interface (now stated in the README and prompt) and one
+mislabelled quality finding.
+
+**Budget.** At 10 calls all five runs completed with 6–11 labelled bullets in
+161–225 s and ran one check each. At 20 calls they wrote 2–4 checks and took
+224–494 s. The extra checks (fit counting, shuffled-label and row-alignment
+controls, clustering structure) made the evidence stronger. They did not
+change a conclusion: the same false code2 interface finding appeared at both
+budgets. Validation starts at **10**; the lead can make a focused repeat call
+when it needs more checks.
+
 ## Starting budgets and quality limits
 
-Propose **data 15, ideas 10 (at most three searches), validation 10 provisional**.
+Set: **data 15, ideas 10 (at most three searches), validation 10**, in
+`harness.config.json` (`team.scouts`) and expert-team-v2.md section 3.
 The data scouts spent every admitted call at both tested budgets. Additional
 calls surfaced useful properties such as the spam2 date-window contrast,
 spam3 trailing bytes and code2 whitespace-only duplicates. Fifteen is an
@@ -94,7 +220,13 @@ engineering starting point between the tested values, not a measured optimum.
 A focused repeat question can investigate a particular failed probe or uncertain
 claim. Ideas already returned useful material at 9–10 calls; the 20-call cases
 used 18–19, with more reading/detail but no demonstrated model-quality gain.
-Validation's value is unmeasured until its frozen-source path can run.
+Validation completed at 10 calls on every task; 20 calls added checks but no
+different conclusion (see [Validation probes](#validation-probes)).
+
+The basis has limits: one probe per cell (spam1/validation/10 ran twice), one
+provider and model, development probes with prompt and backend changes between
+the data/ideas runs, and no quality comparison. Findings were not graded
+against a reference, and no seeded-defect trial was validated.
 
 More calls did not make every statement reliable. Some bullets infer “no
 leakage” from zero exact duplicates, recommend split/model details outside the
@@ -155,14 +287,25 @@ credentials, separate search caps/logs, durable journal contention/tail repair,
 paging/supersessions and stale check hashes. The actual lead integration check
 and the P7a lead/resume work remain stream D.
 
-Validation is an explicit unavailable adapter and prompt, built against
-expert-team.md section 3. Stream B must supply immutable snapshot resolution,
-read-only source, import-origin verification and the check runner before it
-can run. Its eight live probes remain deferred. Experiment/commit reference
-resolution and authoritative harness-result journal appends also await that
-adapter; agent-authored measured-result entries are refused. The read-only
-FindingsReader adapter is exported from team/findings.ts for B to re-export
-from workspace/findings_reader.ts without duplicating its projection.
+Round 2 (after merging `v2-clean-slate` with stream B) replaced the unavailable
+validation adapter. Validation resolves each call's experiment to B's verified
+trial snapshot. It gets a fresh sandbox per call (snapshot read-only,
+`checks/<task>/` writable) and a `run_checks` tool on B's check runner.
+Experiment and commit references resolve through B's snapshot resolver.
+Shared contract types live once in `team/contracts.ts`, and
+`workspace/findings_reader.ts` re-exports the reader. B's `webSearchExtension`
+replaced `team/search.ts`. Scout inputs come from B's TaskData, with the unit
+introduction delivered once and a `research/` folder. The
+[validation probes](#validation-probes) ran on that path.
+Agent-authored measured-result entries are still refused.
+
+After the validation probes, `finalBullets` accepts label-led validation
+findings without list markers, and the solutions README and validation prompt
+state that batch clustering needs only `fit_predict`. Tests: "validation
+findings written as labelled lines or paragraphs without list markers are kept"
+(scouts.test.ts), "a validation reply of labelled paragraphs completes and
+journals its findings" (integration.test.ts), and the validation prompt
+assertion in "every role gets the shared label-suffix fact".
 
 Shared-file changes: only the team block/validation in harness.config.json and
 agent/harness/config.ts; team prompt registry entries; and the scouts shared
