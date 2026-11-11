@@ -97,21 +97,25 @@ export function bulletRefs(text: string, location: { root?: string; base?: strin
 }
 
 const ITEM = /^(\s*)(?:[-*+]|\d{1,3}[.)])\s+(\S.*)$/;
+/** A line that opens with a validation label (`ok:`, `**fix:**`, `advice:`), list marker or not. */
+const LABELLED = /^[`*_]{0,2}(?:ok|fix|advice)[`*_]{0,2}\s*:/i;
 /**
  * Keeps only the final list: bulleted or numbered items, each with its
  * indented continuation lines (sources, nested points). Unindented prose ends
- * an item and is dropped.
+ * an item and is dropped. With `labelled`, a line that starts with a
+ * validation label also opens an item without a list marker: validation
+ * scouts sometimes write their findings as labelled lines or paragraphs.
  */
-export function finalBullets(text: string, fallback: string): string[] {
+export function finalBullets(text: string, fallback: string, options: { labelled?: boolean } = {}): string[] {
  const bullets: string[][] = [];
  let current: string[] | undefined, indent: number | undefined;
  for (const line of text.split("\n")) {
   if (!line.trim()) continue;
-  const item = ITEM.exec(line);
   const depth = line.length - line.trimStart().length;
-  if (item && (indent === undefined || depth <= indent)) {
+  const item = ITEM.exec(line)?.[2] ?? (options.labelled && LABELLED.test(line.trim()) ? line.trim() : undefined);
+  if (item !== undefined && (indent === undefined || depth <= indent)) {
    indent ??= depth;
-   current = [item[2].trim()]; bullets.push(current);
+   current = [item.trim()]; bullets.push(current);
   } else if (current && depth > (indent ?? 0)) current.push(line.trim());
   else current = undefined;
  }
@@ -216,7 +220,7 @@ export function createScouts(options: ScoutsOptions) {
     continue;
    }
    // Scout-written items only; the harness's stop or empty line is not a finding and is not journaled.
-   const bullets = finalBullets(reply.text, "").filter(Boolean);
+   const bullets = finalBullets(reply.text, "", { labelled: role === "validation" }).filter(Boolean);
    outcomes.push({ role, status: reply.stopped ? "stopped" : bullets.length ? "completed" : "empty", bullets: bullets.length, ...reply.stopped ? { reason: reply.stopped } : {} });
    if (!bullets.length) {
     output.push((reply.stopped ? options.prompts.render("team.stopped", { reason: reply.stopped }) : options.prompts.render("team.empty", {})).text.trim());

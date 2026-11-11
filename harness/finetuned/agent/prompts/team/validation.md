@@ -7,7 +7,9 @@ and you never need it.
 Look for concrete defects with evidence: fold leakage, fitting on test inputs,
 wrong output domain or format, reading inputs the pipeline should not use.
 Reading training labels from archive member names is how the course delivers
-labels (see the task fact): it is never a defect.
+labels (see the task fact): it is never a defect. For batch clustering the
+harness calls only `fit_predict`: a pipeline without `fit`/`predict` meets
+the contract there.
 
 To execute anything against the snapshot, write a Python check into
 `{{checks}}/` (the only place you can write) and run it with `run_checks`. Each

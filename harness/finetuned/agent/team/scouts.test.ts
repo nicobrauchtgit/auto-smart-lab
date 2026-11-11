@@ -291,6 +291,20 @@ test("numbered lists and indented source lines survive bullet normalization", ()
  expect(finalBullets("No list here", "- none")).toEqual(["- none"]);
 });
 
+test("validation findings written as labelled lines or paragraphs without list markers are kept", () => {
+ // The two reply shapes of the empty spam2 and spam3 validation probes at budget 20.
+ const lines = "\n\n**ok:** reads only member bytes (`tasks/spam2.py:8-20`).\n**ok:** CV checked\n  in `checks/spam2/cv_metric.py`.\n**advice:** drop `class_weight`.";
+ expect(finalBullets(lines, "", {labelled: true})).toEqual([
+  "- **ok:** reads only member bytes (`tasks/spam2.py:8-20`).", "- **ok:** CV checked\n  in `checks/spam2/cv_metric.py`.", "- **advice:** drop `class_weight`."]);
+ const paragraphs = "`ok:` only declared inputs.\n\n`fix:` a defect.\n\n`advice:` watch the score.\nTrailing prose is dropped.";
+ expect(finalBullets(paragraphs, "", {labelled: true})).toEqual(["- `ok:` only declared inputs.", "- `fix:` a defect.", "- `advice:` watch the score."]);
+ // Without the option, and for prose that merely mentions a label, nothing is a bullet.
+ expect(finalBullets(paragraphs, "")).toEqual([""]);
+ expect(finalBullets("OK — here is what I found.\nFixing this needs a rerun.", "", {labelled: true})).toEqual([""]);
+ // Listed bullets are unchanged.
+ expect(finalBullets("- ok: a\n- advice: b", "", {labelled: true})).toEqual(["- ok: a", "- advice: b"]);
+});
+
 test("a later role's failure keeps earlier bullets and reports the failed role", async () => {
  const journal = path();
  const scope = createScouts(scoutOptions({journalPath: journal, async run(input) {
@@ -312,6 +326,8 @@ test("every role gets the shared label-suffix fact; validation is told it is not
  for (const raw of seen) {const text = raw.replace(/\s+/g, " "); expect(text).toContain("end in their label"); expect(text).toContain("`.x`"); expect(text).toContain("not leakage");}
  const validation = prompts.render("team.validation", {taskId: "t", budget: "1", experiment: "e", commit: "c", checks: "/checks"}).text.replace(/\s+/g, " ");
  expect(validation).toContain("Reading training labels from archive member names"); expect(validation).toContain("never a defect");
+ // The code2 validation probes reported a fit_predict-only clustering pipeline as a contract break.
+ expect(validation).toContain("For batch clustering the harness calls only `fit_predict`");
  expect(prompts.render("team.data", {taskId: "t", budget: "1", dataPaths: "d", resources: "- none"}).text.replace(/\s+/g, " ")).not.toContain("end in their label");
 });
 

@@ -144,6 +144,20 @@ test("each validation call resolves its own experiment; fix bullets journal as d
  expect(seen.length).toBe(2);
 }, 30_000);
 
+test("a validation reply of labelled paragraphs completes and journals its findings", async () => {
+ const f = stateFixture();
+ const journal = join(f.state, "fixture/findings/journal.jsonl");
+ const scope = createScouts({prompts, taskId: "fixture", task: "UNIT INTRO\n\nTASK TEXT", dataPaths: "dev", resources: "- none", journalPath: journal, datasetSha256: "dataset",
+  runId: "run", invocationId: "paragraphs", trials: f.resolver, solutionsRoot: f.live, citationBase: f.state, prepare: async () => {},
+  run: async input => ({text: "\n\n`ok:` output domain checked (`tasks/model.py:1`).\n\n**advice:** pin the seed.", root: join(input.trial!.sourceRoot, "solutions")})});
+ const report = await scope.report({role: "validation", question: "check", refs: [{experiment: "exp-1"}]});
+ expect(report.roles).toEqual([{role: "validation", status: "completed", bullets: 2}]);
+ expect(report.text).toBe("- `ok:` output domain checked (`tasks/model.py:1`).\n- **advice:** pin the seed.");
+ const entries = (await readFindings(journal)).entries.filter(entry => entry.author.invocationId === "paragraphs");
+ expect(entries.map(entry => entry.kind)).toEqual(["fact", "idea"]);
+ expect(entries[0].refs).toEqual([{experiment: "exp-1"}, {file: "tasks/model.py", line: 1, commit: f.measured.commit}]);
+}, 30_000);
+
 test("the runner builds a fresh sandbox for every call from that call's trial", async () => {
  const f = stateFixture();
  const calls: [string, string | undefined][] = [];
