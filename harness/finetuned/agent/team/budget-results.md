@@ -1,10 +1,16 @@
 # Scout budget evaluation, 2026-11-11
 
-Sixteen data/ideas probes completed successfully, one scout at a time, with
-10 and 20 tool-call budgets on spam1, spam2, spam3 and code2. Every completed
-probe stayed within its cap and returned bullets; none attempted a blocked
-post-budget call. Adversarial scripted-provider tests separately exercise the
-blocking path. The eight validation cases are **deferred**, not measured:
+Sixteen data/ideas probes ran, one scout at a time, with 10 and 20 tool-call
+budgets on spam1, spam2, spam3 and code2. Every probe returned scout-written
+bullets: none of the sixteen tracked replies holds an error, stop or
+no-evidence line. (The probe then recorded success whenever the scout call
+returned, even for a failed or stopped scout; it now records those outcomes
+separately.) Every probe's admitted calls stayed within its cap, and none had
+a blocked post-budget call. Admitted calls are not proven executions: the
+probes ran on a budget that admitted by tool-call ID, under which a reused ID
+could execute more than once for one counted call. The summaries do not record
+executions or IDs; the Langfuse traces could show them but were not checked.
+Adversarial scripted-provider tests separately exercise the blocking path. The eight validation cases are **deferred**, not measured:
 stream B's immutable trial snapshot/check adapter is unavailable. No live-source
 substitute was used.
 
@@ -48,7 +54,7 @@ of the full training and test data. Stream B's TaskData gives scouts the
 development split only, so calls, timings and surfaced properties may differ
 under the pipeline's real view.
 
-The Calls column counts admitted calls only. Calls Pi rejected before the
+The Calls column counts admitted calls only, not executions (see above). Calls Pi rejected before the
 budget hook (unknown tool name, invalid arguments) were not counted at the
 time; none of the summaries records how many there were. The budget now
 counts every emitted call at its assistant message, so a rerun could report
@@ -123,10 +129,27 @@ guard; strict lead refs; partial journal appends; numbered and continued
 bullets; per-role failures; the bounded repeat view; status paging; citation
 roots and pending experiment refs; the scout-prompts preflight; and the
 runner's per-role tool set and mounts.
+Those 56 tests overstated two guarantees. A scripted child could not execute
+beyond its cap only while every call had a distinct ID: admission was by ID
+and never consumed, so with budget 1 several calls sharing one ID all ran, and
+the finish-up turn could reuse it. The stall guard returned a stop bullet but
+then stopped waiting for `close()` after 30 s; a provider that never settled
+left the session, its observer subscription and pending work in place.
+After the second review fixes: **62 tests passed, 0 failed; typecheck
+passed**. The added tests: scripted Pi children reusing one tool-call ID within
+a message and in the finish-up turn, on Pi's parallel and sequential paths,
+execute exactly the budget (the old budget executed 7 of 3); a hung provider
+in a real sandboxed data scout is terminated (session disposed once, no
+listener left, observer closed, no tool process left; it fails if the stopped
+session is merely closed); a hung sandboxed `sleep` leaves no process once the
+guard fires; and failed, guard-stopped and empty scouts get their own status,
+their harness line is neither a bullet nor a journal entry, and the probe
+outcome is unsuccessful.
 The P7a scout checks pass at the module boundary: a real scripted Pi child
-cannot execute beyond its cap, receives counters/finish feedback, and returns
-final text without forwarding tool traffic; the scout tool exposes bullets
-only; fixture AGENTS.md instructions stay out while selected team instructions
+cannot execute beyond its cap, including when it reuses tool-call IDs,
+receives counters/finish feedback, and returns final text without forwarding
+tool traffic; a stuck scout is terminated with its tool processes; the scout
+tool exposes bullets only; fixture AGENTS.md instructions stay out while selected team instructions
 remain. Tests also cover all-role preflight before any scout, missing search
 credentials, separate search caps/logs, durable journal contention/tail repair,
 paging/supersessions and stale check hashes. The actual lead integration check
@@ -149,7 +172,10 @@ and can disable its legacy wall timer for scouts; scouts use the
 `team.scoutGuard` stall guard instead. Later review fixes added `scoutGuard` to
 harness.config.json, agent/harness/config.ts and the expert-team-v2.md
 configuration block; optional `scoutPaths` to `setupChecks`; and the
-`scout-probe` stage name to the pipeline trace type. The setup command's generated
+`scout-probe` stage name to the pipeline trace type. The second review fixes
+added a forced `terminate()` to `SmartContextSession` (agent/context/session.ts,
+with an optional handle method) and to the Pi child session
+(agent/subagents/pi.ts); `close()` is unchanged for every other caller. The setup command's generated
 Python audit records were retained; dependency declarations and lockfile were
 not changed. agent/dryrun/ was absorbed and deleted. No minimal-arm files were
 changed. Supervision and lead/hand-over integration remain their named streams.

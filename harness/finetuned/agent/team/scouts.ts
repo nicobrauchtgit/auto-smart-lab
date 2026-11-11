@@ -17,6 +17,27 @@ export interface ScoutSessionInput {
  shared: RenderedPrompt;
  system: RenderedPrompt; opening: RenderedPrompt; budget: ScoutBudget; signal?: AbortSignal;
 }
+/**
+ * How one role ended. completed: it returned bullets. empty: it finished
+ * without any. stopped: the harness stopped it (`reason`). failed: its session
+ * failed (`reason`). `bullets` counts the scout's own items only, never the
+ * harness's error, stop or empty line.
+ */
+export interface ScoutRoleReport { role: ScoutRole; status: "completed" | "empty" | "stopped" | "failed"; bullets: number; reason?: string }
+export interface ScoutReport { text: string; roles: ScoutRoleReport[] }
+/**
+ * One outcome for a whole scout call: success only when every role completed
+ * with bullets; otherwise the worst role decides (failure, then stopped, then
+ * empty). `bullets` counts scout-written items only.
+ */
+export function scoutOutcome(report: ScoutReport): { outcome: "success" | "empty" | "stopped" | "failure"; bullets: number; reasons: string[] } {
+ const has = (status: ScoutRoleReport["status"]) => report.roles.some(role => role.status === status);
+ return {
+  outcome: !report.roles.length || has("failed") ? "failure" : has("stopped") ? "stopped" : has("empty") ? "empty" : "success",
+  bullets: report.roles.reduce((sum, role) => sum + role.bullets, 0),
+  reasons: report.roles.filter(role => role.reason).map(role => `${role.role} ${role.status}: ${role.reason}`),
+ };
+}
 /** Final scout text; `root` is the scout's cwd, against which its file citations resolve. */
 export interface ScoutReply { text: string; root?: string; stopped?: string }
 export interface ScoutsOptions {
@@ -106,7 +127,7 @@ export function createScouts(options: ScoutsOptions) {
  // Keep the requested scout roles sequential and journal observations before continuing.
  let tail: Promise<unknown> = Promise.resolve();
  const unavailable = "Validation scout unavailable: stream B trial snapshot/check adapter required; live source is never used";
- const execute = async (request: ScoutRequest, signal: AbortSignal | undefined, toolCallId: string): Promise<string> => {
+ const execute = async (request: ScoutRequest, signal: AbortSignal | undefined, toolCallId: string): Promise<ScoutReport> => {
   const problem = scoutRequestProblem(request);
   if (problem) throw new Error(`Invalid scout request: ${problem}`);
   const roles = [...new Set(Array.isArray(request.role) ? request.role : [request.role])];
@@ -114,6 +135,7 @@ export function createScouts(options: ScoutsOptions) {
   await options.prepare(roles, signal);
   const shared = options.prompts.render("team.shared", {});
   const output: string[] = [];
+  const outcomes: ScoutRoleReport[] = [];
   for (const role of roles) {
    signal?.throwIfAborted();
    const budget = new ScoutBudget(options.budgets?.[role] ?? HARNESS_CONFIG.team.scouts[role].maxToolCalls, options.prompts);
@@ -131,11 +153,18 @@ export function createScouts(options: ScoutsOptions) {
    } catch (error) {
     signal?.throwIfAborted();
     // Earlier roles' bullets are already journaled; report this role and continue.
-    output.push(options.prompts.render("team.failed", { role, reason: clip(error instanceof Error ? error.message : "unknown error", 200) }).text.trim());
+    const reason = clip(error instanceof Error ? error.message : "unknown error", 200);
+    output.push(options.prompts.render("team.failed", { role, reason }).text.trim());
+    outcomes.push({ role, status: "failed", bullets: 0, reason });
     continue;
    }
-   const fallback = reply.stopped ? options.prompts.render("team.stopped", { reason: reply.stopped }).text : options.prompts.render("team.empty", {}).text;
-   const bullets = finalBullets(reply.text, fallback);
+   // Scout-written items only; the harness's stop or empty line is not a finding and is not journaled.
+   const bullets = finalBullets(reply.text, "").filter(Boolean);
+   outcomes.push({ role, status: reply.stopped ? "stopped" : bullets.length ? "completed" : "empty", bullets: bullets.length, ...reply.stopped ? { reason: reply.stopped } : {} });
+   if (!bullets.length) {
+    output.push((reply.stopped ? options.prompts.render("team.stopped", { reason: reply.stopped }) : options.prompts.render("team.empty", {})).text.trim());
+    continue;
+   }
    const { rejected } = await appendValidFindings(options.journalPath, bullets.map(bullet => {
     const prose = bullet.replace(/^- /, "");
     return {
@@ -149,13 +178,15 @@ export function createScouts(options: ScoutsOptions) {
    if (rejected.length) output.push(options.prompts.render("team.rejected", { count: String(rejected.length),
     reasons: rejected.map(row => `"${clip(row.title, 40)}": ${row.reason}`).join("; ") }).text.trim());
   }
-  return output.join("\n");
+  return { text: output.join("\n"), roles: outcomes };
  };
- const scout = (request: ScoutRequest, signal?: AbortSignal, toolCallId: string = randomUUID()) => {
+ /** Lead-facing text plus each role's outcome, for callers that must tell completed scouts from failed or stopped ones. */
+ const report = (request: ScoutRequest, signal?: AbortSignal, toolCallId: string = randomUUID()): Promise<ScoutReport> => {
   const pending = tail.then(() => execute(request, signal, toolCallId));
   tail = pending.catch(() => undefined);
   return pending;
  };
+ const scout = async (request: ScoutRequest, signal?: AbortSignal, toolCallId?: string) => (await report(request, signal, toolCallId)).text;
  // Validation stays out of the lead's schema until stream B's snapshot adapter is wired.
  const role = Type.Union([Type.Literal("data"), Type.Literal("ideas")]);
  const strict = { additionalProperties: false } as const;
@@ -168,5 +199,5 @@ export function createScouts(options: ScoutsOptions) {
    ]))) }, strict),
   async execute(id, args, signal) { return { content: [{ type: "text", text: await scout(args, signal, id) }], details: {} }; },
  });
- return { scout, tool };
+ return { scout, report, tool };
 }

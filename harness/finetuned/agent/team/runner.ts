@@ -5,7 +5,7 @@ import { mkdirSync } from "node:fs";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { isolatedSolveTools, sandboxPolicy, type SolveSandbox } from "../run/solve_sandbox.js";
 import type { AgentObservation } from "../observability.js";
-import type { PromptSnapshot } from "../prompts/loader.js";
+import type { PromptSnapshot, RenderedPrompt } from "../prompts/loader.js";
 import type { ScoutRole } from "./contracts.js";
 import type { ScoutReply, ScoutSessionInput } from "./scouts.js";
 import { scoutRequirements } from "./setup.js";
@@ -14,7 +14,7 @@ import type { TaskConfiguration } from "../pipeline/task_configuration.js";
 import type { Telemetry } from "../telemetry/runtime.js";
 import { initializeModel } from "../model_provider.js";
 import { loadPipelineConfig } from "../pipeline_config.js";
-import { createPiChildFactory } from "../subagents/pi.js";
+import { createPiChildFactory, type PiChildSession } from "../subagents/pi.js";
 import { preparePythonEnvironment, readPythonEnvironment } from "../run/python_environment.js";
 import { HARNESS_CONFIG } from "../harness/config.js";
 import { guardScoutSession } from "./budget.js";
@@ -65,7 +65,8 @@ export function createScoutRunner(options: {
   const signal = input.signal ?? new AbortController().signal;
   await prepare([input.role], signal);
   mkdirSync(resolve(options.researchRoot), {recursive: true});
-  const {sandbox, tools} = scoutToolset(input.role, {sandbox: options.sandbox, researchRoot: options.researchRoot, searchApiKey: process.env.TAVILY_API_KEY});
+  const {sandbox, tools: own} = scoutToolset(input.role, {sandbox: options.sandbox, researchRoot: options.researchRoot, searchApiKey: process.env.TAVILY_API_KEY});
+  const tracked = trackScoutTools(own), tools = tracked.tools;
   const pipeline = await loadPipelineConfig();
   const model = await initializeModel({config: pipeline.config});
   const python = preparePythonEnvironment(options.prompts, readPythonEnvironment());
@@ -78,28 +79,76 @@ export function createScoutRunner(options: {
    observe: options.observe, turnTimeoutMs: null});
   options.record("scout_session_start", {role: input.role, budget: input.budget.limit, maxTurns: input.budget.maxTurns});
   const child = await factory({logicalAgentId: randomUUID(), parentAgentRunId: (typeof options.parentAgentRunId === "function" ? options.parentAgentRunId() : options.parentAgentRunId) ?? options.observe.identity.stageInvocationId ?? "scout-probe", spawnToolCallId: input.toolCallId}, signal);
-  let outcome = "failure";
-  try {
-   const guarded = await guardScoutSession(child.prompt(input.opening), {abort: () => child.abort(), lastActivity: () => input.budget.lastActivity,
-    ...HARNESS_CONFIG.team.scoutGuard});
-   if (guarded.stopped) {
-    outcome = `stopped:${guarded.stopped}`;
-    const minutes = Math.round((guarded.stopped === "wall" ? HARNESS_CONFIG.team.scoutGuard.wallMs : HARNESS_CONFIG.team.scoutGuard.stallMs) / 60_000);
-    return {text: "", root: sandbox.cwd, stopped: guarded.stopped === "wall" ? `still running after ${minutes} min` : `no progress for ${minutes} min`};
-   }
-   outcome = input.budget.stopped ? `success:${input.budget.stopped}-limit` : "success";
-   return {text: guarded.value, root: sandbox.cwd};
+  const result = await runScoutSession(child, input.opening, {lastActivity: () => input.budget.lastActivity, guard: HARNESS_CONFIG.team.scoutGuard, tools: tracked});
+  const outcome = "value" in result ? (input.budget.stopped ? `success:${input.budget.stopped}-limit` : "success")
+   : "stopped" in result ? `stopped:${result.stopped}` : "failure";
+  options.record("scout_session_end", {role: input.role, used: input.budget.used, attempted: input.budget.attempted,
+   blocked: input.budget.blocked, turns: input.budget.turns, outcome, ...result.cleanup});
+  if ("value" in result) return {text: result.value, root: sandbox.cwd};
+  if ("stopped" in result) {
+   const minutes = Math.round((result.stopped === "wall" ? HARNESS_CONFIG.team.scoutGuard.wallMs : HARNESS_CONFIG.team.scoutGuard.stallMs) / 60_000);
+   return {text: "", root: sandbox.cwd, stopped: result.stopped === "wall" ? `still running after ${minutes} min` : `no progress for ${minutes} min`};
   }
-  catch {signal.throwIfAborted(); throw new Error("Scout session failed; inspect its observed run");}
-  finally {
-   try {
-    // A stuck session may never settle; closing it must not block the lead either.
-    const closing = child.close().catch(() => undefined);
-    if (outcome.startsWith("stopped")) { let timer: ReturnType<typeof setTimeout> | undefined; await Promise.race([closing, new Promise(accept => { timer = setTimeout(accept, 30_000); })]); clearTimeout(timer); }
-    else await closing;
-   } finally {options.record("scout_session_end", {role: input.role, used: input.budget.used, attempted: input.budget.attempted,
-    blocked: input.budget.blocked, turns: input.budget.turns, outcome});}
-  }
+  signal.throwIfAborted();
+  throw new Error("Scout session failed; inspect its observed run");
  };
  return Object.assign(run, {prepare});
+}
+
+/**
+ * Gives every scout tool an abort signal the runner owns, besides Pi's, and
+ * tracks each execution until it settles. The isolated tools SIGKILL their
+ * bubblewrap process on abort and settle only after it has exited; bubblewrap
+ * runs with --die-with-parent in its own PID namespace, so the command's whole
+ * process tree ends with it.
+ */
+export function trackScoutTools(tools: readonly ToolDefinition[]) {
+ const controller = new AbortController();
+ const running = new Set<Promise<void>>();
+ return {
+  tools: tools.map(tool => ({...tool, execute(id, params, signal, onUpdate, context) {
+   const run = tool.execute(id, params, signal ? AbortSignal.any([signal, controller.signal]) : controller.signal, onUpdate, context);
+   const settled: Promise<void> = run.then(() => undefined, () => undefined).finally(() => { running.delete(settled); });
+   running.add(settled);
+   return run;
+  }} as ToolDefinition)),
+  get running() { return running.size; },
+  /** Aborts every execution, now and later; returns how many are still running after `ms`. */
+  async stop(ms: number): Promise<number> {
+   controller.abort();
+   let timer: ReturnType<typeof setTimeout> | undefined;
+   await Promise.race([Promise.all(running), new Promise(accept => { timer = setTimeout(accept, ms); })]);
+   clearTimeout(timer);
+   return running.size;
+  },
+ };
+}
+export type TrackedScoutTools = ReturnType<typeof trackScoutTools>;
+
+/**
+ * One scout prompt under the stall guard, with cleanup that cannot hang. A
+ * finished or failed session is closed normally. A stopped one may never
+ * settle, so it is terminated: the Pi session is disposed and its observer
+ * released without waiting for the prompt, and every tool execution is
+ * aborted and awaited (at most `killMs`). `cleanup` reports what remained.
+ */
+export async function runScoutSession(child: Pick<PiChildSession, "prompt" | "abort" | "close" | "terminate">, opening: RenderedPrompt, options: {
+ lastActivity(): number; tools: TrackedScoutTools; killMs?: number;
+ guard: { stallMs: number; wallMs: number; pollMs?: number; settleMs?: number };
+}): Promise<({ value: string } | { stopped: "stall" | "wall" } | { error: unknown }) & { cleanup: { forced: boolean; toolsLeft: number; terminated: boolean } }> {
+ const killMs = options.killMs ?? 10_000;
+ let result: { value: string } | { stopped: "stall" | "wall" } | { error: unknown };
+ try {
+  const guarded = await guardScoutSession(child.prompt(opening), {abort: () => child.abort(), lastActivity: options.lastActivity, ...options.guard});
+  result = guarded.stopped ? {stopped: guarded.stopped} : {value: guarded.value};
+ } catch (error) { result = {error}; }
+ const forced = "stopped" in result;
+ let terminated = true;
+ if (forced) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  terminated = await Promise.race([child.terminate().then(() => true, () => false), new Promise<false>(accept => { timer = setTimeout(() => accept(false), killMs); })]);
+  clearTimeout(timer);
+ } else await child.close().catch(() => undefined);
+ const toolsLeft = await options.tools.stop(killMs);
+ return {...result, cleanup: {forced, toolsLeft, terminated}};
 }

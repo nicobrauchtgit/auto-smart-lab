@@ -35,18 +35,35 @@ session-local; no scout changes process.env.
 
 `ScoutBudget` counts every tool call at the assistant message that emits it,
 before Pi resolves the tool or validates arguments, so unknown tools and
-invalid arguments use budget too. Calls within the budget are admitted; later
-ones are blocked with finish-up feedback. Every tool result, including Pi's own
-rejections, carries the counter. After the budget is spent the scout gets one
-more tool-call turn; tool calls in any later turn are removed from the message,
-which ends the loop with the text it wrote. Model turns are bounded by budget
-plus two the same way. `guardScoutSession` detects stuck sessions (no session
-event for `team.scoutGuard.stallMs`, or running past `wallMs`), aborts them
-and returns without waiting for them to settle; the lead then gets a stop
-bullet. It is not a work budget. The service normalizes the final reply to
-bullets (bulleted or numbered items with their indented continuation lines);
-an empty reply yields an explicit no-evidence bullet. Exhaustion is not an
-artifact validation failure.
+invalid arguments use budget too. Every call occurrence counts: calls that
+reuse a tool-call ID, within one message or across turns, are separate calls.
+Calls within the budget are admitted; later ones are blocked with finish-up
+feedback. Each admission is consumed by exactly one execution and expires at
+the next assistant message, so executions never exceed admitted calls (Pi
+prepares calls in message order on its sequential and parallel paths alike).
+Earlier versions admitted by ID, so a reused ID could execute more than once
+for one counted call; the budget probes in budget-results.md ran on such a
+version. Every tool result,
+including Pi's own rejections, carries the counter. After the budget is spent
+the scout gets one more tool-call turn; tool calls in any later turn are
+removed from the message, which ends the loop with the text it wrote. Model
+turns are bounded by budget plus two the same way.
+
+`guardScoutSession` detects stuck sessions (no session event for
+`team.scoutGuard.stallMs`, or running past `wallMs`) and aborts them without
+waiting for them to settle; it is not a work budget. `runScoutSession` then
+terminates a stopped session instead of closing it: the Pi session is disposed
+and its observer released without waiting for the prompt, and every tool
+execution is aborted through a signal the runner owns and awaited (bounded).
+The sandboxed tools SIGKILL their bubblewrap process, which runs with
+`--die-with-parent` in its own PID namespace, so no process of the scout's bash
+tool survives. `scout_session_end` records the cleanup. The lead then gets a
+stop line. The service normalizes the final reply to bullets (bulleted or
+numbered items with their indented continuation lines); an empty reply yields
+an explicit no-evidence line. Error, stop and no-evidence lines are harness
+text: they are not journaled, and `report()` returns each role's status
+(completed, empty, stopped, failed) with its count of scout-written bullets.
+Exhaustion is not an artifact validation failure.
 
 `appendFindings` serializes and flushes appends with a separate kernel flock
 (waiting with cancellation; released on process exit). Reads report a partial
@@ -87,7 +104,10 @@ Code2 has a local probe-only declaration from its supplied task text; it does
 not change pipeline.config.json. Scouts inspect corpus bytes/text, never run
 corpus programs. The probe runs the shared preflight (including the unit
 introduction and its journal destination) before staging anything, and records
-itself as stage `scout-probe`. Outputs and per-probe journals live under
+itself as stage `scout-probe`. Only a scout that completed with bullets is a
+successful probe; a failed, guard-stopped or empty scout records that outcome
+(`pipeline_run_end`, `summary.json` status) and exits nonzero, and its harness
+line is not counted as a bullet. Outputs and per-probe journals live under
 runs/finetuned/scout-dry-run/. Live telemetry uses Langfuse and shared run and
 invocation IDs. This probe does not promote, train, refit or submit anything.
 

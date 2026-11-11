@@ -12,7 +12,10 @@ const toolCalls = (message: AnyMessage) => Array.isArray(message.content)
  * arguments therefore use budget like any other call.
  *
  * Calls within the budget are admitted; later calls are blocked with
- * finish-up feedback. The model gets one more tool-call turn after the budget
+ * finish-up feedback. Every call occurrence counts: calls that share an ID,
+ * within a message or across turns, are separate calls. Each admission is
+ * consumed by exactly one execution and expires at the next assistant
+ * message, so executions never exceed `used`. The model gets one more tool-call turn after the budget
  * is spent; tool calls in any later turn are removed from that message, which
  * ends the agent loop with whatever text it wrote. Model turns are bounded by
  * `maxTurns` (default budget + 2, the most a compliant scout can need) the
@@ -30,7 +33,8 @@ export class ScoutBudget {
  /** Epoch milliseconds of the last session event; read by the stall guard. */
  lastActivity = Date.now();
  readonly maxTurns: number;
- private admitted = new Set<string>();
+ /** Admit/block decision per call of the latest assistant message, queued by ID in call order. */
+ private decisions = new Map<string, boolean[]>();
  private overBudgetTurns = 0;
  constructor(readonly limit: number, private prompts: PromptSnapshot, options: { maxTurns?: number } = {}) {
   if (!Number.isSafeInteger(limit) || limit < 1) throw new Error("Invalid scout budget");
@@ -40,6 +44,8 @@ export class ScoutBudget {
  /** Accounts one finished assistant message; returns a replacement when its tool calls must not run. */
  assistant<T extends AnyMessage>(message: T): T | undefined {
   this.turns++;
+  // Admissions the previous message left unused (Pi rejected those calls) expire.
+  this.decisions.clear();
   const calls = toolCalls(message);
   if (!calls.length) return;
   this.attempted += calls.length;
@@ -51,13 +57,18 @@ export class ScoutBudget {
   }
   if (overBudget) this.overBudgetTurns++;
   for (const call of calls) {
-   if (this.used < this.limit && typeof call.id === "string") { this.used++; this.admitted.add(call.id); }
-   else this.blocked++;
+   const admitted = this.used < this.limit && typeof call.id === "string";
+   if (admitted) this.used++; else this.blocked++;
+   if (typeof call.id === "string") this.decisions.set(call.id, [...this.decisions.get(call.id) ?? [], admitted]);
   }
  }
- /** Pi's pre-execution hook: only calls admitted at their message may run. */
+ /**
+  * Pi's pre-execution hook, called once per call in message order on both its
+  * sequential and parallel paths. Consumes one decision of that ID: a repeated
+  * ID gets its next occurrence's decision, and an ID with none left is blocked.
+  */
  admit(toolCallId: string): { block: true; reason: string } | undefined {
-  if (this.admitted.has(toolCallId)) return;
+  if (this.decisions.get(toolCallId)?.shift()) return;
   return { block: true, reason: this.prompts.render("team.finish", {}).text };
  }
  counter(): string {

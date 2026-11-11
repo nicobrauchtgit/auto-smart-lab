@@ -23,7 +23,7 @@ import { ARM_ROOT, statePath } from "../paths.js";
 import { prepareResearchSandbox } from "../run/solve_sandbox.js";
 import { SetupSession, setupChecks } from "../pipeline/setup.js";
 
-import { createScouts } from "./scouts.js";
+import { createScouts, scoutOutcome } from "./scouts.js";
 import { createScoutRunner } from "./runner.js";
 import { scoutRequirements } from "./setup.js";
 import { createPipelineTrace } from "../pipeline/trace.js";
@@ -95,13 +95,18 @@ try {
    try { return await backend(input); } finally {({used, attempted, blocked, turns} = input.budget);}
   }});
  console.log(`[scout] ${taskId} ${role} budget=${budget} workspace=${workspace}`);
- const output = await scope.scout({role: scoutRole, question: prompts.render("team.probe-question", {}).text});
+ const report = await scope.report({role: scoutRole, question: prompts.render("team.probe-question", {}).text});
+ const output = report.text;
  writeFileSync(join(workspace, "bullets.md"), `${output.trim()}\n`);
- const summary = {taskId, role, budget, backend: "pi-child", used, attempted, blockedAfterBudget: blocked, turns, bullets: output.split("\n").filter(line => line.startsWith("- ")).length,
+ // Failed and guard-stopped scouts are not successful probes; their error or stop line is not a bullet.
+ const {outcome, bullets, reasons} = scoutOutcome(report);
+ const summary = {taskId, role, budget, backend: "pi-child", status: report.roles[0]?.status, ...(reasons.length ? {reasons} : {}),
+  used, attempted, blockedAfterBudget: blocked, turns, bullets,
   seconds: Math.round((Date.now() - started) / 1000), outputChars: output.length, workspace: basename(workspace)};
  writeFileSync(join(workspace, "summary.json"), JSON.stringify(summary, null, 2) + "\n");
- trace.event("pipeline_run_end", {outcome: "success", summary});
- console.log(`[scout] done ${JSON.stringify(summary)}`);
+ trace.event("pipeline_run_end", {outcome, summary});
+ if (outcome === "success") console.log(`[scout] done ${JSON.stringify(summary)}`);
+ else { console.error(`[scout] ${outcome}: ${JSON.stringify(summary)}`); process.exitCode = 1; }
 } catch (error) {
  const reason = failureReason(error);
  trace.event("pipeline_run_end", {outcome: "failure", reason});

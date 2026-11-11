@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadPromptSnapshot } from "../prompts/loader.js";
 import { ScoutBudget } from "./budget.js";
-import { createScouts, finalBullets, bulletRefs } from "./scouts.js";
+import { createScouts, finalBullets, bulletRefs, scoutOutcome, type ScoutsOptions } from "./scouts.js";
 import { appendFindings, readFindings } from "./journal.js";
 import { parseHarnessConfig, HARNESS_CONFIG } from "../harness/config.js";
 const prompts = loadPromptSnapshot();
@@ -331,4 +331,36 @@ test("scout citations resolve in the scout's folder; lead experiment refs stay o
  await api.add("task", {kind: "decision", author: {role: "lead", runId: "r", invocationId: "i"}, title: "chosen", text: "chosen", refs: [{experiment: "exp-1"}], datasetSha256: "d"});
  const status = await api.status("task");
  expect(status.staleRefs).toEqual([]); expect(status.pendingRefs).toEqual(["experiment:exp-1"]);
+});
+
+test("failed, guard-stopped and empty scouts are reported as such; harness lines are neither bullets nor findings", async () => {
+ const journal = path();
+ const scouts = (run: ScoutsOptions["run"]) => createScouts({prepare: async () => {}, prompts, taskId: "fixture", task: "task", unitIntro: "intro", dataPaths: "dev",
+  journalPath: journal, datasetSha256: "dataset", runId: "run", invocationId: "invoke", validationReady: true, run});
+ // createScouts turns a backend exception (e.g. a failed model request) into an error line.
+ const failed = await scouts(async () => { throw new Error("Scout session failed; inspect its observed run"); }).report({role: "data", question: "q"});
+ expect(failed.text).toStartWith("- error: The data scout failed");
+ expect(failed.roles).toEqual([{role: "data", status: "failed", bullets: 0, reason: "Scout session failed; inspect its observed run"}]);
+ expect(scoutOutcome(failed)).toEqual({outcome: "failure", bullets: 0, reasons: ["data failed: Scout session failed; inspect its observed run"]});
+
+ const stopped = await scouts(async () => ({text: "", stopped: "no progress for 5 min"})).report({role: "data", question: "q"});
+ expect(stopped.text).toContain("The harness stopped this scout (no progress for 5 min)");
+ expect(stopped.roles).toEqual([{role: "data", status: "stopped", bullets: 0, reason: "no progress for 5 min"}]);
+ expect(scoutOutcome(stopped)).toMatchObject({outcome: "stopped", bullets: 0});
+
+ const empty = await scouts(async () => "prose only").report({role: "data", question: "q"});
+ expect(empty.text).toStartWith("- advice:");
+ expect(scoutOutcome(empty)).toMatchObject({outcome: "empty", bullets: 0});
+
+ const completed = await scouts(async () => "- fact: one\n- fact: two").report({role: "data", question: "q"});
+ expect(scoutOutcome(completed)).toEqual({outcome: "success", bullets: 2, reasons: []});
+
+ // One failed role makes the whole call unsuccessful; the other role's bullets still count.
+ const mixed = await scouts(async input => { if (input.role === "ideas") throw new Error("model request failed"); return "- fact: three"; })
+  .report({role: ["data", "ideas"], question: "q"});
+ expect(mixed.roles.map(role => role.status)).toEqual(["completed", "failed"]);
+ expect(scoutOutcome(mixed)).toMatchObject({outcome: "failure", bullets: 1});
+
+ // Only scout-written bullets were journaled.
+ expect((await readFindings(journal)).entries.map(entry => entry.title)).toEqual(["fact: one", "fact: two", "fact: three"]);
 });

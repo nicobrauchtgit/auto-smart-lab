@@ -12,7 +12,7 @@ import { observeAgentSession, type AgentObservation } from "../observability.js"
 import type { SuppliedInput } from "../pipeline/types.js";
 import type { PromptSnapshot, RenderedPrompt } from "../prompts/loader.js";
 import { createPipelineResourceLoader } from "../run/session_resources.js";
-import type { ChildIdentity, ChildSessionFactory } from "./types.js";
+import type { ChildIdentity, ChildSession } from "./types.js";
 
 export const CHILD_TOOL_NAMES = ["read", "grep", "find", "ls", "bash", "write", "edit"] as const;
 export type ChildToolName = typeof CHILD_TOOL_NAMES[number];
@@ -66,8 +66,17 @@ export async function loadChildResources(options: {
 	return { settingsManager, resourceLoader, systemPrompt };
 }
 
+export interface PiChildSession extends ChildSession {
+	/**
+	 * Forced close for a session that may never settle: disposes the Pi session
+	 * (aborting its tools) and releases its observer without waiting for the
+	 * active prompt. Later close() calls resolve immediately.
+	 */
+	terminate(): Promise<void>;
+}
+
 /** Each call creates one observed Pi session; follow-ups reuse that session. */
-export function createPiChildFactory(options: PiChildOptions): ChildSessionFactory {
+export function createPiChildFactory(options: PiChildOptions): (identity: ChildIdentity, signal: AbortSignal) => Promise<PiChildSession> {
 	const env = Object.freeze({ ...options.env });
 	const inputs = structuredClone(options.inputs);
 	const instructions = [...options.sharedInstructions, (options.childInstructions ?? options.prompts.render("subagents.child", {}))]
@@ -110,6 +119,8 @@ export function createPiChildFactory(options: PiChildOptions): ChildSessionFacto
 				let observer: Awaited<ReturnType<typeof observeAgentSession>>;
 				try { observer = await observeAgentSession({ session, model: `${model.provider}/${model.id}`, ...observe, parentAgentRunId: child.parentAgentRunId }); }
 				catch (error) { session.dispose(); throw error; }
+				let disposed = false;
+				const dispose = () => { if (!disposed) { disposed = true; session.dispose(); } };
 				observer.record("subagent_link", { ...child });
 				observer.record("runtime_input", { type: "runtime_input", version: 1,
 					inputs, cwd, tools: toolNames, turnTimeoutMs: timeoutMs });
@@ -128,7 +139,9 @@ export function createPiChildFactory(options: PiChildOptions): ChildSessionFacto
 							});
 						}
 					},
-					async close() { try { await observer.close(); } finally { session.dispose(); } },
+					async close() { try { await observer.close(); } finally { dispose(); } },
+					// A stuck session may never become idle: dispose it before releasing the observer.
+					async terminate() { try { dispose(); } finally { await observer.close(); } },
 				};
 			},
 		});
@@ -157,6 +170,11 @@ export function createPiChildFactory(options: PiChildOptions): ChildSessionFacto
 				signal.removeEventListener("abort", onAbort);
 				await logical.close();
 			})(),
+			terminate: async () => {
+				closing ??= Promise.resolve();
+				signal.removeEventListener("abort", onAbort);
+				await logical.terminate();
+			},
 		};
 	};
 }
