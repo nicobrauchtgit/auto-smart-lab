@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { prepareSolveWorkspace, archiveRows } from "./workspace.js";
@@ -23,5 +23,9 @@ test("spam1 keeps the original split, resumes missing materialization, rejects c
   expect(resumed.split).toEqual(first.split);
   expect(readFileSync(resumed.sampleManifestPath)).toEqual(bytes);
   expect(() => prepareSolveWorkspace("spam1", { ...options, seed: 123 })).toThrow("rootSeed");
+  const declaration = join(root, "runs", "finetuned", "spam1", "data", "sealed", "split.json");
+  writeFileSync(declaration, "corrupt");
+  expect(() => prepareSolveWorkspace("spam1", options)).toThrow("Corrupt task split");
+  expect(readFileSync(declaration, "utf8")).toBe("corrupt");
  } finally { rmSync(root, { recursive: true, force: true }); }
 }, 60000);

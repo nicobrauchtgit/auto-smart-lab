@@ -6,10 +6,10 @@ import type { TaskConfiguration } from "../pipeline/task_configuration.js";
 import { statePath } from "../paths.js";
 import { prepareSolveWorkspace, type PrepareOptions, type SolveWorkspace } from "./workspace.js";
 
-export type TaskData = SolveWorkspace;
+export interface TaskData extends SolveWorkspace { materializedHashes: Record<string, string>; taskId: string; profilePath: string; datasetSha256: string; developmentArchive: string; developmentManifest: string; testArchive: string; originalTrainingPath: string }
 export function prepareTaskData(taskId: string, configuration: TaskConfiguration, options: PrepareOptions & { signal?: AbortSignal } = {}): TaskData {
  options.signal?.throwIfAborted();
- return prepareSolveWorkspace(taskId, { ...options, configuration });
+ return prepareSolveWorkspace(taskId, { ...options, configuration }) as TaskData;
 }
 export function readTaskData(taskId: string, projectRoot = PROJECT_ROOT): TaskData | undefined {
  const root = statePath(projectRoot, taskId, "data", "sealed");

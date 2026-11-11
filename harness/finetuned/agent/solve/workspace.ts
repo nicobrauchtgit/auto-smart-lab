@@ -22,6 +22,9 @@ import { createHash } from "node:crypto";
 import { createSeedPlan, type SeedPlan } from "../training/seeds.js";
 import { HARNESS_CONFIG } from "../harness/config.js";
 import { noSeal, recommendFolds, sealConfirmationSet, sealGroups, type FoldRecommendation, type IdSealedSplit, type HoldoutPolicy, type HoldoutMetadata } from "./folds.js";
+import { claimWorkspace, atomicJson } from "../experiments/ownership.js";
+import { ensureSolutionsRepository } from "../training/git.js";
+import { canonical } from "../training/terminal.js";
 import { statePath } from "../paths.js";
 
 export interface SolveWorkspace {
@@ -73,7 +76,8 @@ export function prepareSolutionsWorkspace(
  if (!existsSync(join(solutionsRoot, "INDEX.md"))) writeFileSync(join(solutionsRoot, "INDEX.md"), "# Shared modules\n\nRecord module path, purpose, owner role and importing tasks here.\n");
 	// The agent reads this README; it lives with the harness code and is copied into the state folder.
 	const readme = join(solutionsRoot, "README.md");
-	if (!existsSync(readme)) copyFileSync(join(import.meta.dir, "solutions-README.md"), readme);
+	copyFileSync(join(import.meta.dir, "solutions-README.md"), readme);
+	ensureSolutionsRepository(solutionsRoot);
 	return {
 		solutionsRoot,
 		entrypointPath: join(solutionsRoot, "tasks", `${taskId}.py`),
@@ -136,8 +140,7 @@ export function prepareSolveWorkspace(taskId: string, options: PrepareOptions = 
     const dataRoot = statePath(projectRoot, taskId, "data");
     const sealedRoot = join(dataRoot, "sealed");
     mkdirSync(sealedRoot, { recursive: true });
-    const lock = join(sealedRoot, "prepare.lock");
-    try { mkdirSync(lock); } catch { throw new Error("Task preparation is locked; wait for its owner or repair an interrupted preparation lock"); }
+    const release = claimWorkspace(sealedRoot);
     try {
     const declarationPath = join(sealedRoot, "split.json");
     const declaration = { taskId, originalDatasetHash, configuration, rootSeed: options.seed ?? HARNESS_CONFIG.solve.seed, policy: options.holdoutPolicy ?? null };
@@ -147,17 +150,24 @@ export function prepareSolveWorkspace(taskId: string, options: PrepareOptions = 
         try { stored = JSON.parse(readFileSync(declarationPath, "utf8")); } catch { throw new Error("Corrupt task split; repair task state, never redraw it"); }
         if (stored.sha256 !== createHash("sha256").update(JSON.stringify(stored.split)).digest("hex")) throw new Error("Corrupt task split hash; repair task state");
         if (!stored.split?.devIds || !stored.split?.sealedIds || !stored.declaration) throw new Error("Incomplete task split; repair task state");
-        const differences = Object.keys(declaration).filter(key => JSON.stringify(stored.declaration[key]) !== JSON.stringify(declaration[key as keyof typeof declaration]));
+        const differences = Object.keys(declaration).filter(key => canonical(stored.declaration[key]) !== canonical(declaration[key as keyof typeof declaration]));
         if (differences.length) throw new Error(`Task split declaration changed: ${differences.join(", ")}; previously exposed rows must not become sealed. Explicit task-state reset required.`);
         split = stored.split;
     } else {
         const disk = statfsSync(dataRoot);
         if (disk.bavail * disk.bsize < 1.2 * statSync(paths.trainZip).size + 1_000_000_000) throw new Error("Task preparation requires 1.2 times the archive plus 1 GB free disk space");
         split = seal(configuration, train.ids, targets, { ...options, seed: holdoutSeedPlan.sealedSeed });
-        writeFileSync(`${declarationPath}.tmp`, JSON.stringify({ declaration, split, sha256: createHash("sha256").update(JSON.stringify(split)).digest("hex") }));
-        renameSync(`${declarationPath}.tmp`, declarationPath);
+        atomicJson(declarationPath, { declaration, split, sha256: createHash("sha256").update(JSON.stringify(split)).digest("hex") });
     }
 
+    const retainedPath = join(sealedRoot, "task-data.json");
+    if (existsSync(retainedPath)) {
+        let retained;
+        try { retained = JSON.parse(readFileSync(retainedPath, "utf8")); } catch { throw new Error("Corrupt task data record; repair before resuming"); }
+        for (const [path, expected] of Object.entries(retained.materializedHashes ?? {})) {
+            if (existsSync(path) && hashFile(path).digest("hex") !== expected) throw new Error("Retained task inputs changed; repair their measured bytes before resuming");
+        }
+    }
 	const root = statePath(projectRoot, taskId, "solve");
 	const dataOut = dataRoot;
 	for (const directory of [root, dataOut, ...(configuration.selection ? [join(root, "agent")] : [])]) mkdirSync(directory, { recursive: true });
@@ -187,7 +197,12 @@ export function prepareSolveWorkspace(taskId: string, options: PrepareOptions = 
 			: { kind: "anomaly_detection", execution: configuration.execution, sampleManifestPath, ...configuration.anomaly!, ...(configuration.selection ? { selection: configuration.selection, evidence: { path: join(root, "agent", "evidence.json"), source: "agent_provided" as const } } : {}) };
 	const described = describeTargets(configuration, split.devIds, targets, relative(projectRoot, sampleManifestPath), split.sealedGroups);
 	const groups = configuration.targets.kind === "families" ? new Set(split.devIds.map(id => targets.get(id))).size : undefined;
-	const workspace: SolveWorkspace = {
+	const profilePath = join(dataOut, "profile.json");
+    atomicJson(profilePath, { taskId, rowCount: split.devIds.length, targetSummary: described.summary, samples: configuration.samples.source });
+    const datasetSha256 = hashFile(devZip).update(readFileSync(sampleManifestPath)).digest("hex");
+    const workspace = { taskId, profilePath, datasetSha256,
+        materializedHashes: { [devZip]: hashFile(devZip).digest("hex"), [sampleManifestPath]: hashFile(sampleManifestPath).digest("hex") },
+        developmentArchive: devZip, developmentManifest: sampleManifestPath, testArchive: paths.testZip, originalTrainingPath: paths.trainZip,
 		root, solutionsRoot, entrypointPath, taskPath, configuration,
         originalTargetsPath: paths.targetsPath, holdoutSeedPlan,
 		sampleManifestPath, measurement,
@@ -203,11 +218,10 @@ export function prepareSolveWorkspace(taskId: string, options: PrepareOptions = 
 		rowCount: split.devIds.length,
 		targets: described.targets,
 		targetSummary: described.summary,
-    };
-    writeFileSync(join(sealedRoot, "task-data.json.tmp"), JSON.stringify(workspace));
-    renameSync(join(sealedRoot, "task-data.json.tmp"), join(sealedRoot, "task-data.json"));
+    } satisfies SolveWorkspace & { taskId: string; profilePath: string; datasetSha256: string; materializedHashes: Record<string, string>; developmentArchive: string; developmentManifest: string; testArchive: string; originalTrainingPath: string };
+    atomicJson(join(sealedRoot, "task-data.json"), workspace);
     return workspace;
-    } finally { rmSync(lock, { recursive: true, force: true }); }
+    } finally { release(); }
 }
 
 /**
