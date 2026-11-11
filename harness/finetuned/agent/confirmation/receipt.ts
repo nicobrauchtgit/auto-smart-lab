@@ -7,12 +7,34 @@ import { statePath } from "../paths.js";
 
 export const confirmationRoot = (projectRoot: string, taskId: string) => statePath(projectRoot, taskId, "confirmation");
 export const confirmationHash = (path: string) => createHash("sha256").update(readFileSync(path)).digest("hex");
+/** Harness-owned split records, current location first, then the pre-v2 solve location. */
+export const sealedSplitRecords = (projectRoot: string, taskId: string) => [
+ statePath(projectRoot, taskId, "data", "sealed", "split.json"),
+ statePath(projectRoot, taskId, "data", "sealed", "holdout.json"),
+ statePath(projectRoot, taskId, "solve", "data", "holdout.json"),
+];
+/**
+ * Why refit must wait for confirmation, or undefined when no harness split exists.
+ * Any sealed split record means the solve chain confirms (or records a skip)
+ * before refit; an unreadable record fails closed rather than waiving the gate.
+ */
+export function confirmationRequirement(projectRoot: string, taskId: string): string | undefined {
+ for (const path of sealedSplitRecords(projectRoot, taskId)) {
+  if (!existsSync(path)) continue;
+  let record: any;
+  try { record = JSON.parse(readFileSync(path, "utf8")); } catch { return `unreadable sealed split record ${path}`; }
+  // Legacy solve records without confirmation metadata predate held-back confirmation.
+  if (path.endsWith(join("solve", "data", "holdout.json")) && !record?.confirmation && !record?.holdoutSeedPlan) continue;
+  return `sealed split recorded at ${path}`;
+ }
+ return undefined;
+}
 export function confirmedCandidate(projectRoot: string, taskId: string, candidate: { chosenExperimentId: string; source: unknown; pipeline: unknown }) {
  const latest = join(confirmationRoot(projectRoot, taskId), "latest.json");
  if (!existsSync(latest)) {
-  const metadata = statePath(projectRoot, taskId, "solve", "data", "holdout.json");
-  if (existsSync(metadata) && JSON.parse(readFileSync(metadata, "utf8")).confirmation) throw new Error("Held-back confirmation is required before refit");
-  return undefined; // Older/manual champions retain their existing refit contract.
+  const required = confirmationRequirement(projectRoot, taskId);
+  if (required) throw new Error(`Held-back confirmation is required before refit (${required}); run the confirmation of the frozen champion first`);
+  return undefined; // Champions without harness-sealed task data retain their existing refit contract.
  }
  const pointer = JSON.parse(readFileSync(latest, "utf8"));
  if (confirmationHash(pointer.path) !== pointer.sha256) throw new Error("Holdout confirmation checksum changed");
