@@ -19,6 +19,8 @@ function jail(script: string) {
 	const task = join(base, "units/01-spam/task");
 	mkdirSync(workspace, { recursive: true });
 	mkdirSync(task, { recursive: true });
+	mkdirSync(join(workspace, "resources"), { recursive: true });
+	writeFileSync(join(workspace, "resources/slides.txt"), "course slides\n");
 	writeFileSync(join(task, "prompt.md"), "the task\n");
 	mkdirSync(join(base, "units/01-spam/other"), { recursive: true });
 	writeFileSync(join(base, "units/01-spam/other/prompt.md"), "another task\n");
@@ -45,4 +47,11 @@ test("research reads its task, writes only its workspace, and has Python", () =>
 	expect(result.status).toBe(0);
 	expect(readFileSync(join(result.workspace, "analysis/a.txt"), "utf8")).toBe("ok\n");
 	expect(readFileSync(task, "utf8")).toBe("the task\n");
+});
+
+test("research reads supplied course resources but cannot modify them", () => {
+	const result = jail('set -e; cat resources/slides.txt; ! echo tampered > resources/slides.txt; ! rm resources/slides.txt');
+	expect(result.status).toBe(0);
+	expect(result.stdout.trim()).toBe("course slides");
+	expect(readFileSync(join(result.workspace, "resources/slides.txt"), "utf8")).toBe("course slides\n");
 });

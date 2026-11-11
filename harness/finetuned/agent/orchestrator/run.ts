@@ -25,7 +25,7 @@ import { followUpBranches } from "../training/branches.js";
 export interface OrchestratorOptions {
  telemetry?: import("../telemetry/runtime.js").TelemetryOptions;
  taskId: string; targetScore?: number; maxSubmissions?: number; noSubmit?: boolean; checkSetupOnly?: boolean;
- model?: string; configPath?: string; runsDir?: string; resumeRunId?: string; limits?: Partial<Limits>; signal?: AbortSignal;
+ model?: string; configPath?: string; runsDir?: string; resumeRunId?: string; resumeSolveInvocationId?: string; limits?: Partial<Limits>; signal?: AbortSignal;
  /** Receives one line per run event (stage started/finished, hand-over, run start/end). Defaults to stdout. */
  progress?: (line: string) => void;
 }
@@ -38,12 +38,15 @@ export function reconcileOwnedInvocation(work: Work, input: StageInput, options:
   invocationId: work.id, stage: work.stage, input, mode: work.stage === "submit" ? "reconcile" : "execute" });
 }
 /** Return false when recovery/official state terminates work before model setup. */
-export async function prepareDecisionLoop(coordinator: Coordinator, options: { resume: boolean; recoverySetup(): Promise<void>; allSetup(): Promise<void> }): Promise<boolean> {
+export async function prepareDecisionLoop(coordinator: Coordinator, options: { resume: boolean; resumeSolveInvocationId?: string; recoverySetup(): Promise<void>; allSetup(): Promise<void> }): Promise<boolean> {
  await options.recoverySetup();
- if (options.resume) await coordinator.recover(); else await coordinator.refreshOfficial();
+ // Explicit solve continuation can launch an agent, so the whole-chain setup
+ // must pass before recovery effects, just as on an ordinary first dispatch.
+ if (options.resumeSolveInvocationId) await options.allSetup();
+ if (options.resume) await coordinator.recover(options.resumeSolveInvocationId); else await coordinator.refreshOfficial();
  coordinator.finishIfOfficialComplete();
  if (coordinator.state.status !== "running") return false;
- await options.allSetup(); return true;
+ if (!options.resumeSolveInvocationId) await options.allSetup(); return true;
 }
 export interface DecisionLoopOptions {
  runAgent(attempt: number): Promise<unknown>;
@@ -90,6 +93,7 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Pip
  const task = resolveTask({ taskId: options.taskId });
  const runsDir = options.runsDir ?? statePath(PROJECT_ROOT);
  if (options.resumeRunId && !/^[A-Za-z0-9_-]{1,128}$/.test(options.resumeRunId)) throw new Error("Invalid resume run ID");
+ if (options.resumeSolveInvocationId && (!options.resumeRunId || !/^[A-Za-z0-9_-]{1,128}$/.test(options.resumeSolveInvocationId))) throw new Error("--resume-solve requires --resume and a valid invocation ID");
  const releaseWorkspace = claimWorkspace(join(runsDir, task.taskId, "orchestrator-ownership"));
  let store: StateStore | undefined, coordinator: Coordinator | undefined, trace: Awaited<ReturnType<typeof createPipelineTrace>> | undefined;
  // `controller` stops the decision loop and its stages at the deadline or on a
@@ -166,7 +170,7 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Pip
   } else {
    // Read-only official/recovery access is checked before unrelated model probes.
    // Exhausted or already-achieved goals require no new provider session.
-   const ready = await prepareDecisionLoop(coordinator, { resume: !!options.resumeRunId, allSetup, recoverySetup });
+   const ready = await prepareDecisionLoop(coordinator, { resume: !!options.resumeRunId, resumeSolveInvocationId: options.resumeSolveInvocationId, allSetup, recoverySetup });
    if (!ready) { stoppedBecause = coordinator.state.reason ?? coordinator.state.status; outcome = coordinator.state.status === "finished" ? "success" : "failure"; return result(); }
    const knowledge = new TaskKnowledge({ root: statePath(PROJECT_ROOT, "knowledge"), origin: { taskId: task.taskId, datasetSha256: context.dataset.snapshot_sha256, pipelineRunId: saved.runId, stageInvocationId: saved.controlInvocationId } });
    ended = await runDecisionLoop(coordinator, { ...loop, runAgent: attempt => runDecisionAgent({ coordinator: coordinator!, prompts, report, taskDescription, taskFiles: listTaskDataFiles(task.taskId), knowledgeSummaries: knowledge.search(task.taskTitle.slice(0, 200), 6), model: options.model, signal: controller.signal, attempt }) });

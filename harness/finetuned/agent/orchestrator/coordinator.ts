@@ -367,11 +367,27 @@ export class Coordinator {
   const receipt = { status: request.outcome, reason: request.rationale };
   this.commit("pipeline_finished", { ...request }, s => { s.actions.push(this.action(request, "pipeline_finish", receipt)); s.status = request.outcome; s.reason = request.rationale; }); return receipt;
  }
- async recover() {
+ /** Explicit operator continuation of one lost solve retains its allocation and identity. */
+ async recover(resumeSolveInvocationId?: string) {
+  const requested = resumeSolveInvocationId === undefined ? undefined : this.state.works.find(w => w.id === resumeSolveInvocationId);
+  if (resumeSolveInvocationId !== undefined) {
+   if (!requested || requested.stage !== "solve" || requested.result || !["reserved", "active", "interrupted"].includes(requested.status)) throw new Error("Operator resume requires an unfinished solve invocation");
+   if (this.state.status !== "running" || Date.now() >= this.state.deadline) throw new Error("Operator resume requires a running task within its original deadline");
+   if (this.handles.has(requested.id) || this.state.works.some(w => w.id !== requested.id && !terminal(w))) throw new Error("Settle owned work before operator resume");
+   if (this.state.journal.filter(e => e.kind === "operator_solve_resumed" && e.payload.invocationId === requested.id).length >= 2) throw new Error("Operator solve resume limit reached (2)");
+  }
   this.commit("trials_reconciled", {}, s => { this.reconcileTrials(s); });
   if (this.state.status === "blocked" && (this.state.reason?.startsWith("Task-global submission accounting") || this.state.works.some(w => unresolvedSubmission(w) || w.status === "uncertain"))) this.commit("explicit_reconciliation_resume", {}, s => { s.status = "running"; s.reason = undefined; });
   await this.refreshOfficial();
-  for (const work of this.state.works.filter(w => !terminal(w) || unresolvedSubmission(w))) {
+  for (const work of this.state.works.filter(w => w.id === requested?.id || !terminal(w) || unresolvedSubmission(w))) {
+   if (work.id === requested?.id) {
+    this.commit("operator_solve_resumed", { invocationId: work.id, allocation: work.options, deadline: this.state.deadline }, s => {
+     const resumed = s.works.find(w => w.id === work.id)!;
+     resumed.status = "reserved"; delete resumed.summary;
+    });
+    this.launch(this.state.works.find(w => w.id === work.id)!);
+    continue;
+   }
    if (["research", "solve", "evaluate"].includes(work.stage)) {
     // Lost Pi session cannot be reattached. Live training is recovered by the next
     // solver's existing harness root ownership path; no worker is duplicated here.

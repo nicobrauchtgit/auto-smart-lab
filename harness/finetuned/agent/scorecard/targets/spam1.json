@@ -1,6 +1,5 @@
 {
   "task": "spam1",
-  "source": "docs/redesign-plan.md, section \"What a good spam1 run looks like\"",
   "metric": {
     "name": "balanced_accuracy",
     "trialKey": "balancedAccuracy"

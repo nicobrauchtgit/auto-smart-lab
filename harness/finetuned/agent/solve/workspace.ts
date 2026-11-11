@@ -231,6 +231,13 @@ export function copyResearch(researchDir: string, taskId: string, upstream: Stag
 		cpSync(analysis, join(researchDir, "analysis"), { recursive: true });
 		lines.push(`- Research analysis scripts and artifacts: ${join(researchDir, "analysis")} (rerunnable)`);
 	}
+	// Keep supplied course citations resolvable alongside the brief handed to solve.
+	const resources = statePath(projectRoot, taskId, "research", "resources");
+	rmSync(join(researchDir, "resources"), { recursive: true, force: true });
+	if (existsSync(resources)) {
+		cpSync(resources, join(researchDir, "resources"), { recursive: true });
+		lines.push(`- Course resources cited by the brief: ${join(researchDir, "resources")}`);
+	}
 	// The brief cites `[profile:<key>]` records; keep them resolvable next to it.
 	const profile = statePath(projectRoot, taskId, "research", "profile", "profile.json");
 	if (existsSync(profile)) {

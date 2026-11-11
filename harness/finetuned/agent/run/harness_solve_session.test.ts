@@ -10,6 +10,7 @@ import { spamConfiguration } from "../pipeline/task_configuration.testing.js";
 import type { TaskConfiguration } from "../pipeline/task_configuration.js";
 import {
 	runHarnessSolveSession,
+	recoveryTrainingRoot,
 	type HarnessSolveDependencies,
 } from "./harness_solve_session.js";
 
@@ -66,9 +67,41 @@ function reporter() {
 	return { report, events, inputs };
 }
 
+function pausedTrainingRoot(parent: string, id: string) {
+	const root = join(parent, id), directory = join(root, "paused-trial");
+	mkdirSync(directory, { recursive: true });
+	writeFileSync(join(directory, "recovery.json"), JSON.stringify({ lifecycle: "service_closed", trial: { startedAt: 1 } }));
+	writeFileSync(join(directory, "trial-result.json"), JSON.stringify({ status: "interrupted" }));
+	writeFileSync(join(directory, "search-report.json"), JSON.stringify({ stopReason: "acknowledgement_required" }));
+	return { root, directory };
+}
+
+describe("solve recovery root ownership", () => {
+	test("fresh follow-up does not inherit a successful solve's paused search budget", () => {
+		const parent = mkdtempSync(join(tmpdir(), "solve-root-budget-"));
+		const prior = pausedTrainingRoot(parent, "successful-solve");
+		expect(recoveryTrainingRoot(parent, "followup", [prior.root])).toBe(join(parent, "followup"));
+		// Restarting that very invocation must still recover its charged budget.
+		expect(recoveryTrainingRoot(parent, "successful-solve", [prior.root])).toBe(prior.root);
+	});
+	test("an uncompleted invocation retains its paused search across a new invocation", () => {
+		const parent = mkdtempSync(join(tmpdir(), "solve-root-paused-"));
+		const prior = pausedTrainingRoot(parent, "interrupted-solve");
+		expect(recoveryTrainingRoot(parent, "recovery")).toBe(prior.root);
+	});
+	test("successful upstream evidence cannot hide an active recovery candidate", () => {
+		const parent = mkdtempSync(join(tmpdir(), "solve-root-active-"));
+		const prior = pausedTrainingRoot(parent, "prior");
+		writeFileSync(join(prior.directory, "recovery.json"), JSON.stringify({ lifecycle: "active" }));
+		writeFileSync(join(prior.directory, "search-report.json"), "{}");
+		expect(recoveryTrainingRoot(parent, "followup", [prior.root])).toBe(prior.root);
+	});
+});
+
 describe("agent-driven harness solve session", () => {
 	test("exposes only constrained training controls and fails without promotion evidence", async () => {
 		const workspace = fixtureWorkspace();
+		const prior = pausedTrainingRoot(join(workspace.root, "training"), "successful-solve");
 		const observed = reporter();
 		let closed = false;
 		let bound = false;
@@ -79,6 +112,7 @@ describe("agent-driven harness solve session", () => {
 			prepareSandbox: () => sandbox(workspace),
 			readPython: python,
 			createTraining: (options) => {
+				expect(options.root).toBe(join(workspace.root, "training", "stage-1"));
 				updateIntervalMs = options.limits?.updateIntervalMs;
 				expect(typeof options.sandboxCommand).toBe("function");
 				expect(options.executionBoundaryFingerprint).toMatch(/^[a-f0-9]{64}$/);
@@ -109,6 +143,7 @@ describe("agent-driven harness solve session", () => {
 		const result = await runHarnessSolveSession("task", undefined, {
 			guidance: (() => { const body = { id: "solve-note", version: 1, stage: "solve" as const, taskId: "task", content: "SOLVE_GUIDANCE", evidence: [] }; return { ...body, contentSha256: guidanceHash(body) }; })(),
             runId: "stage-1", report: observed.report, dependencies,
+			upstream: [{ kind: "training_selected_result", path: join(prior.root, "selected-trial", "trial-result.json") }],
 			experimentUpdateIntervalSeconds: 45,
 		});
 		expect(bound).toBe(true);

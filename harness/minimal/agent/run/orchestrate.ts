@@ -446,6 +446,7 @@ async function main() {
 		...Object.fromEntries(Object.entries(conditions.prompts).map(([k, v]) => [`prompt_${k.replace(/\.md$/, "")}`, v])),
 		host: conditions.host, python: conditions.python?.version ?? "none",
 		caps: JSON.stringify(conditions.caps),
+		course_resources: JSON.stringify(conditions.courseResources ?? []),
 	} });
 	/** This run's submissions, for the status file and the batch summary. */
 	const submissions: { iteration: number; local: number | null; platform: number | null; triesLeft: number | null }[] = [];

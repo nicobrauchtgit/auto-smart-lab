@@ -16,8 +16,9 @@ import { selectedKnowledge } from "../knowledge/service.js";
 import { submissionSetupChecks, submissionRecoverySetupChecks } from "../submission/setup.js";
 import type { Telemetry } from "../telemetry/runtime.js";
 import { ARM_ROOT, statePath } from "../paths.js";
+import { readCourseResources } from "../research/resources.js";
 
-export type SetupRequirement = "observability" | "model" | "python" | "task" | "training" | "evaluation" | "refit" | "web-search" | "knowledge" | "knowledge-history" | "submission" | "submission-recovery" | "orchestrator" | "solve-isolation" | "confirmation" | "data-profile";
+export type SetupRequirement = "observability" | "model" | "python" | "task" | "training" | "evaluation" | "refit" | "web-search" | "knowledge" | "knowledge-history" | "submission" | "submission-recovery" | "orchestrator" | "solve-isolation" | "confirmation" | "data-profile" | "course-resources";
 export interface SetupCheck {
  id: string;
  phase: "local" | "remote";
@@ -25,6 +26,12 @@ export interface SetupCheck {
  run(signal: AbortSignal): void | Promise<void>;
 }
 export interface SetupResult { id: string; status: "passed" | "failed" | "skipped"; remedy?: string }
+
+export function courseResourcesSetupCheck(unit: () => string, root?: string): SetupCheck {
+ return { id: "course-resources", phase: "local",
+  remedy: "Restore resources/<unit>/manifest.json and its declared course PDFs/text files with matching SHA-256 hashes. Research must receive the supplied course material before its agent starts.",
+  run() { readCourseResources(unit(), root); } };
+}
 
 /** Never record arbitrary exception text: SDK/HTTP errors can contain credentials. */
 export class SetupSession {
@@ -158,6 +165,7 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
   readable(join(ARM_ROOT, "agent/research/python/data_profile.py"));
   readable(join(ARM_ROOT, "agent/training/python/task_samples.py"));
  });
+ if (needs.has("course-resources")) checks.push(courseResourcesSetupCheck(() => resolveTask({ taskId: options.taskId }).unitSlug));
  if (needs.has("task") && options.taskConfiguration?.samples.source === "pcap_tcp_connections") add("pcap-sample-runtime", "local", "Run ./dev setup to install dpkt; restore pcap_samples.py. Captures must contain non-fragmented TCP over Ethernet, raw IP or Linux cooked capture, with complete packet headers.", () => {
   readable(join(ARM_ROOT, "agent/training/python/pcap_samples.py"));
   const result = spawnSync(options.executables?.python ?? projectPython(), ["-c", "import dpkt"], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });

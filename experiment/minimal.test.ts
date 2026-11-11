@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +8,7 @@ import { armModelsJson, checkMinimalSetup, minimalArgs, minimalPolicy, prepareMi
 import { experimentConfigProblems } from "./config.js";
 import { harnessStatePaths, parseExperimentArgs } from "./cli.js";
 import { shellEnvironment } from "../harness/minimal/agent/run/session_runner.js";
+import { courseResources } from "../harness/minimal/agent/run/course_resources.js";
 
 const created: string[] = [];
 afterAll(() => { for (const path of created) rmSync(path, { recursive: true, force: true }); });
@@ -26,6 +28,11 @@ function fixture() {
 	write("units/index.json", "{}\n");
 	write("units/01-spam/task/prompt.md", "the task\n");
 	write("units/_vm-archive/old/prompt.md", "archived\n");
+	const slides = "course slides\n";
+	write("resources/01-spam/slides.txt", slides);
+	write("resources/01-spam/manifest.json", JSON.stringify({ version: 1, files: [{ file: "slides.txt", title: "Slides", media_type: "text/plain", pages: 7,
+		sha256: createHash("sha256").update(slides).digest("hex") }] }));
+	write("resources/README.md", "development notes\n");
 	// Everything the agent must not reach.
 	write(".env", "MYTHLLM_API_KEY=secret\n");
 	write("harness/finetuned/agent/prompts/solve/system.md", "harness coaching\n");
@@ -102,6 +109,29 @@ describe("minimal arm boundary", () => {
 		expect(result.stdout.trim()).toBe("[secret-key][]");
 		const shell = shellEnvironment({ PATH: "/bin", MYTHLLM_API_KEY: "a", LITELLM_TOKEN: "b", LANGFUSE_SECRET_KEY: "c", LAB_USER: "d", GOOGLE_APPLICATION_CREDENTIALS: "e", TAVILY_API_KEY: "f" });
 		expect(shell).toEqual({ PATH: "/bin" });
+	});
+
+	test("the supplied slides are read-only snapshots with recorded identities", () => {
+		const root = fixture();
+		const result = inJail(root, "set -e; cat resources/01-spam/slides.txt; ! echo changed > resources/01-spam/slides.txt; ! rm resources/01-spam/slides.txt; test ! -e resources/README.md");
+		expect(result.status).toBe(0);
+		expect(result.stdout.trim()).toBe("course slides");
+		const inputs = courseResources("01-spam", result.run.root);
+		expect(inputs).toHaveLength(1);
+		expect(inputs[0]).toMatchObject({ path: "resources/01-spam/slides.txt", title: "Slides", pages: 7, bytes: 14 });
+		writeFileSync(join(root, "resources/01-spam/slides.txt"), "later source change");
+		expect(courseResources(undefined, result.run.root)).toEqual(inputs);
+		expect(courseResources("02-other", result.run.root)).toEqual([]);
+	});
+
+	test("missing or altered declared slides prevent preparing a run", () => {
+		const root = fixture();
+		rmSync(join(root, "resources/01-spam/slides.txt"));
+		expect(checkMinimalSetup({ projectRoot: root, env: {} }).join("\n")).toContain("Course resources for 01-spam are invalid");
+		expect(() => prepareMinimalRun({ projectRoot: root, stamp: "bad" })).toThrow();
+		writeFileSync(join(root, "resources/01-spam/slides.txt"), "changed");
+		expect(() => prepareMinimalRun({ projectRoot: root, stamp: "changed" })).toThrow("checksum mismatch");
+		expect(() => courseResources("01-spam", root)).toThrow("Invalid course resource");
 	});
 });
 

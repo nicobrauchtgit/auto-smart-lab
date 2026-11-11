@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -73,6 +74,22 @@ function check(document: string, options?: Parameters<typeof workspace>[1]) {
 }
 
 describe("solution brief", () => {
+	test("course slides can support methods but cannot substitute for measured dataset evidence", () => {
+		const text = "Course definitions and evaluation methods.\n";
+		const courseContext: ResearchContext = { ...context, resources: [{ title: "Slides", path: "resources/slides.txt", media_type: "text/plain",
+			pages: 1, bytes: Buffer.byteLength(text), sha256: createHash("sha256").update(text).digest("hex") }] };
+		const document = brief({ pipeline: "TF-IDF with a linear SVM [profile:training.targets; resources/slides.txt]." })
+			.replace(researchContextHash(context), researchContextHash(courseContext));
+		const fixture = workspace(document);
+		try {
+			const root = join(fixture.path, "..");
+			mkdirSync(join(root, "resources"));
+			writeFileSync(join(root, "resources/slides.txt"), text);
+			expect(validateResearchFile(fixture.path, courseContext)).toEqual({ valid: true, errors: [] });
+			writeFileSync(fixture.path, document.replace(/- Training has[^\n]+/, "- Spam is present [resources/slides.txt]."));
+			expect(validateResearchFile(fixture.path, courseContext).errors.some(error => /Fact .* cites no dataset source/.test(error))).toBe(true);
+		} finally { fixture.close(); }
+	});
 	test("a brief with resolvable sources and supported numbers passes", () => {
 		expect(check(brief())).toEqual({ valid: true, errors: [] });
 	});

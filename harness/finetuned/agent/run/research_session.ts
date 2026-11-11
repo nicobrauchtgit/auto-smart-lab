@@ -24,6 +24,7 @@ import { validateResearchFile, WEB_SOURCES_LOG } from "../research/validate.js";
 import { createBriefTools } from "../research/tools.js";
 import { ResearchBudget } from "../research/budget.js";
 import { buildDataProfile } from "../research/profile.js";
+import { reportCourseResources, stageCourseResources } from "../research/resources.js";
 import { loadPromptSnapshot, type PromptSnapshot } from "../prompts/loader.js";
 import { prepareResearchPrompts } from "../prompts/research.js";
 import type { StageReporter } from "../pipeline/types.js";
@@ -84,10 +85,12 @@ export async function runResearchSession(taskId: string, model?: string, options
 	const injectStartupContext = options.injectStartupContext ?? HARNESS_CONFIG.research.injectStartupContext;
 	const report = options.report;
 	const prompts = options.prompts ?? loadPromptSnapshot();
-	const { context, prompt } = buildResearchContext(taskId, options.taskConfiguration);
+	const { context, prompt, resources } = buildResearchContext(taskId, options.taskConfiguration);
 	const workspace = statePath(PROJECT_ROOT, taskId, "research");
 	mkdirSync(workspace, { recursive: true });
 	mkdirSync(join(workspace, "analysis"), { recursive: true });
+	stageCourseResources(workspace, resources);
+	reportCourseResources(report, workspace, context.resources ?? []);
 
 	// The harness profiles the declared data before the agent starts, so the
 	// agent does not rewrite the same survey. A failed profile is reported, not fatal.

@@ -15,6 +15,11 @@ modify solver code, or expose credentials.
 - `task.md`: canonical task prompt.
 - `context.json`: freshly generated task/data manifest with paths, hashes, the
   run date and the brief limits (`limits`).
+- `resources/`: supplied course slides and page-labelled text copies, when
+  listed in `context.json.resources`. Read the text copies for exercise context
+  and evaluation definitions; consult the PDFs for figures if needed. These are
+  course references, not measurements of the current dataset. Text extraction
+  may omit figures and mathematical notation.
 - `profile/profile.json`: harness-computed, full-corpus data profile, when
   `context.json` reports `data_profile.status: "available"`. Its `evidence`
   records cover inventory, sizes, content types, duplicates, target counts,
@@ -38,7 +43,7 @@ paths such as `/home/...`.
 ## Workflow
 
 1. Read `task.md`, `context.json`, `profile/profile.json` and any existing
-   `research.md`.
+   `research.md`, together with the text resources listed in `context.json`.
 2. Search the web for the strongest current approaches to this kind of data
    and metric. Use at most the searches `context.json` allows, and prefer
    primary papers and official documentation.
@@ -63,6 +68,9 @@ square brackets, several separated by `;`:
 - `[analysis/<file>.json#<key>]` for a key in your own JSON artifact, or
   `[analysis/<file>.json]` for the whole file.
 - `[https://...]` for a URL returned by `web_search`.
+- `[resources/<name>.txt]` for supplied course slides; state the page in prose
+  when useful. These references support methods and exercise context, not
+  dataset facts; keep profile/analysis evidence for current-dataset claims.
 
 `check_brief` verifies that each source exists, that every number in a dataset
 fact appears in the data it cites, and that each URL came from your searches.

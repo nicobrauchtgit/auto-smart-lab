@@ -1,5 +1,5 @@
 /**
- * The seven indicators of a good run (docs/redesign-plan.md), judged against a
+ * The seven indicators of a good run, judged against a
  * task's targets file. Each indicator is a list of checks; an indicator fails
  * when any check fails, is "not measurable yet" when no check fails but one
  * lacks its fact, and passes otherwise.

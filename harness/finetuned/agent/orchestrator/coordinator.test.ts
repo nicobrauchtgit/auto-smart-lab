@@ -13,6 +13,7 @@ import { startStageInvocation, type StageInvocationHandle } from "../pipeline/ex
 import { runDecisionAgent, orchestrationSessionOptions } from "./session.js";
 import type { StageInput, StageInvocation, StageName } from "../pipeline/types.js";
 import { parseOrchestrateArgs } from "../orchestrate_cli.js";
+import { prepareDecisionLoop } from "./run.js";
 import { spamConfiguration } from "../pipeline/task_configuration.testing.js";
 import type { TaskConfiguration } from "../pipeline/task_configuration.js";
 import { PROJECT_ROOT } from "../pipeline/resolve_task.js";
@@ -201,6 +202,62 @@ test("restart marks lost model invocation interrupted and preserves finite budge
  const status = restarted.status(); expect(status.notifications[0].kind).toBe("stage_interrupted");
  await restarted.wait(status.cursor, undefined, 0); expect(restarted.status().notifications).toEqual([]);
  expect(restorePromptSnapshot(restarted.state.promptTemplates).fingerprint).toBe(f.prompts.fingerprint); restarted.close();
+});
+
+test("explicit operator solve resume retains identity, allocation and spent budgets and is bounded across restarts", async () => {
+ const f = fixture(); let work!: Work;
+ const c = new Coordinator(f.store, { trainingDirectory: join(f.directory, "training"), start: w => { work = w; return controllable(w).handle; } });
+ c.charge("modelRequests"); c.charge("toolCalls");
+ for (let i = 0; i < 3; i++) c.charge("retries");
+ c.start(request(c, "solve", "active"));
+ const original = c.state; c.close();
+ for (let attempt = 1; attempt <= 3; attempt++) {
+  let launches = 0;
+  const restarted = new Coordinator(new StateStore(f.directory), { trainingDirectory: join(f.directory, "training"), start: w => {
+   launches++; expect(w.id).toBe(work.id); expect(w.options).toEqual(work.options); expect(w.guidance).toEqual(work.guidance);
+   return controllable(w).handle;
+  } });
+  try {
+   if (attempt <= 2) {
+    await restarted.recover(work.id);
+    expect(launches).toBe(1); expect(restarted.state.works).toHaveLength(1);
+    expect(restarted.state.works[0].status).toBe("active");
+    expect(restarted.state.counters).toEqual(original.counters);
+    expect(restarted.state.deadline).toBe(original.deadline);
+    expect(restarted.state.policy).toEqual(original.policy);
+    expect(restarted.state.promptFingerprint).toBe(original.promptFingerprint);
+    expect(restarted.state.journal.filter(e => e.kind === "operator_solve_resumed")).toHaveLength(attempt);
+    await expect(restarted.recover(work.id)).rejects.toThrow("Settle owned work");
+   } else {
+    await expect(restarted.recover(work.id)).rejects.toThrow("limit reached (2)"); expect(launches).toBe(0);
+   }
+  } finally { restarted.close(); }
+ }
+});
+
+test("operator resume refuses completed work and expired deadlines", async () => {
+ const f = fixture(); let active!: ReturnType<typeof controllable>;
+ const c = new Coordinator(f.store, { trainingDirectory: join(f.directory, "training"), start: w => (active = controllable(w)).handle });
+ const receipt = c.start(request(c, "solve", "completed"));
+ active.resolve(fakeResult(c.state.works[0])); await c.settle();
+ await expect(c.recover(String(receipt.invocationId))).rejects.toThrow("unfinished solve");
+ const next = c.start(request(c, "solve", "expired"));
+ c.store.transaction("fixture_expired", {}, s => { s.startedAt = Date.now() - s.limits.maxWallMs - 1000; s.deadline = s.startedAt + s.limits.maxWallMs; });
+ await expect(c.recover(String(next.invocationId))).rejects.toThrow("original deadline"); c.close();
+});
+
+test("operator solve resume waits for whole-chain setup before launching recovery", async () => {
+ const calls: string[] = [];
+ const coordinator = { recover: async () => { calls.push("recover"); }, finishIfOfficialComplete() {}, state: { status: "running" } } as any;
+ const options = { resume: true, resumeSolveInvocationId: "solve-id", recoverySetup: async () => { calls.push("recovery-setup"); },
+  allSetup: async () => { calls.push("whole-chain-setup"); throw new Error("missing prerequisite"); } };
+ await expect(prepareDecisionLoop(coordinator, options)).rejects.toThrow("missing prerequisite");
+ expect(calls).toEqual(["recovery-setup", "whole-chain-setup"]);
+ calls.length = 0;
+ await prepareDecisionLoop(coordinator, { ...options, allSetup: async () => { calls.push("whole-chain-setup"); } });
+ expect(calls).toEqual(["recovery-setup", "whole-chain-setup", "recover"]);
+ expect(parseOrchestrateArgs(["spam1", "--resume", "run-id", "--resume-solve", "solve-id"]).options.resumeSolveInvocationId).toBe("solve-id");
+ expect(() => parseOrchestrateArgs(["spam1", "--resume-solve", "solve-id"])).toThrow("requires --resume");
 });
 
 test("deterministic restart uncertainty blocks new effects without duplicating dispatch", async () => {

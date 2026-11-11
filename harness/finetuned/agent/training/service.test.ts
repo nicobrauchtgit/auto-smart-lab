@@ -16,6 +16,32 @@ function measurement(root: string) {
 
 const noPipelineChecks = async () => [];
 
+test("search status and history omit repeated full fold records while retaining artifacts", () => {
+ const directory = mkdtempSync(join(tmpdir(), "training-status-size-"));
+ const foldResults = Array.from({ length: 15 }, (_, fold) => ({ fold, repeat: 0, metrics: { balancedAccuracy: .99 },
+  diagnostics: { curve: Array.from({ length: 1000 }, (_, i) => ({ threshold: i / 1000, score: .99 })) } }));
+ const report = { leaderboard: Array.from({ length: 6 }, (_, i) => ({ configId: `c${i}`, parameters: { C: i + 1 },
+  meanScore: .99, foldResults, foldScores: Array(15).fill(.99) })), nextStep: "Confirm the selected configuration" };
+ const reportPath = join(directory, "search-report.json"); writeFileSync(reportPath, JSON.stringify(report));
+ const reportBytes = readFileSync(reportPath, "utf8");
+ writeFileSync(join(directory, "trial-result.json"), JSON.stringify({ status: "completed", metrics: { balancedAccuracy: .99 },
+  diagnostics: { kind: "classification", folds: foldResults, foldSpread: { mean: .99, std: .001 }, fitSeconds: 100 } }));
+ const service = Object.create(TrainingService.prototype) as TrainingService;
+ (service as any).trials = new Map([["trial", { id: "trial", directory, request: { hypothesis: "test", search: {}, scope: { kind: "promotion" } } }]]);
+ const status = service.describe("trial") as any;
+ expect(Buffer.byteLength(JSON.stringify(status))).toBeLessThan(400_000);
+ expect(status.searchReport.leaderboard).toHaveLength(5);
+ expect(status.searchReport.leaderboard[0]).toMatchObject({ configId: "c0", parameters: { C: 1 }, meanScore: .99 });
+ expect(status.searchReport.leaderboard[0].foldResults).toBeUndefined();
+ expect(status.searchReport.leaderboard[0].foldScores).toBeUndefined();
+ expect(status.diagnostics.folds).toHaveLength(8);
+ const history = service.leaderboard() as any[];
+ expect(Buffer.byteLength(JSON.stringify(history))).toBeLessThan(2048);
+ expect(history[0].diagnostics.foldSpread.mean).toBe(.99);
+ expect(history[0].diagnostics.folds).toBeUndefined();
+ expect(readFileSync(reportPath, "utf8")).toBe(reportBytes);
+});
+
 describe("TrainingService", () => {
     test("retired text-only input is refused before spawning", async () => {
         const root = mkdtempSync(join(tmpdir(), "training-retired-"));

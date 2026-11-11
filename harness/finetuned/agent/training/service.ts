@@ -990,7 +990,10 @@ export class TrainingService {
 		if (report) {
 			summary.searchReport = {
 				path: join(trial.directory, "search-report.json"),
-				leaderboard: Array.isArray(report.leaderboard) ? report.leaderboard.slice(0, 5) : undefined,
+				leaderboard: Array.isArray(report.leaderboard) ? report.leaderboard.slice(0, 5).map((row: any) => {
+					const { foldResults: _results, foldScores: _scores, ...summary } = row;
+					return summary;
+				}) : undefined,
 				parameterImportance: report.parameterImportance,
 				parameterEffects: report.parameterEffects?.summary,
 				bestVersusRunnerUp: report.comparison?.bestVersusRunnerUp,
@@ -1016,7 +1019,7 @@ export class TrainingService {
 				balancedAccuracy: result?.metrics?.balancedAccuracy,
 				adjustedRandIndex: result?.metrics?.adjustedRandIndex,
                 selection: selectionSummary(result),
-				diagnostics: compactDiagnostics(result),
+				diagnostics: result?.diagnostics ? compactDiagnostics({ ...result, diagnostics: { ...result.diagnostics, folds: undefined } }) : undefined,
 				promotionEligible: result?.promotionEligible ?? false,
 				...(trial.source ? {
 					commit: trial.source.commit.slice(0, 12), subject: trial.source.subject,

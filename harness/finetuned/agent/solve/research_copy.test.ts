@@ -11,6 +11,8 @@ test("solve receives the brief together with the data profile its sources cite",
 		const research = join(project, "runs", "finetuned", "spam1", "research");
 		mkdirSync(join(research, "profile"), { recursive: true });
 		mkdirSync(join(research, "analysis"));
+		mkdirSync(join(research, "resources"));
+		writeFileSync(join(research, "resources", "slides.txt"), "Course slides\n");
 		writeFileSync(join(research, "research.md"), "# Brief: Spam\n[profile:training.targets]\n");
 		writeFileSync(join(research, "profile", "profile.json"), '{"evidence":{}}');
 		writeFileSync(join(research, "analysis", "text.json"), "{}");
@@ -20,6 +22,8 @@ test("solve receives the brief together with the data profile its sources cite",
 		expect(readFileSync(join(target, "profile", "profile.json"), "utf8")).toBe('{"evidence":{}}');
 		expect(existsSync(join(target, "analysis", "text.json"))).toBe(true);
 		expect(state).toContain("Harness data profile cited by the brief");
+		expect(readFileSync(join(target, "resources", "slides.txt"), "utf8")).toBe("Course slides\n");
+		expect(state).toContain("Course resources cited by the brief");
 	} finally { rmSync(project, { recursive: true, force: true }); }
 });
 

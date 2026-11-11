@@ -3,7 +3,7 @@ import { runOrchestrator } from "./orchestrator/run.js";
 import { printTelemetry } from "./telemetry/cli.js";
 export function parseOrchestrateArgs(args: string[]) {
  const selector: TaskSelector = {};
- const options: { targetScore?: number; maxSubmissions?: number; noSubmit?: boolean; telemetry?: { allowFallback?: boolean }; checkSetupOnly?: boolean; model?: string; configPath?: string; resumeRunId?: string } = {};
+ const options: { targetScore?: number; maxSubmissions?: number; noSubmit?: boolean; telemetry?: { allowFallback?: boolean }; checkSetupOnly?: boolean; model?: string; configPath?: string; resumeRunId?: string; resumeSolveInvocationId?: string } = {};
  const positional: string[] = [];
  for (let i = 0; i < args.length; i++) {
   const arg = args[i], value = () => { const next = args[++i]; if (!next || next.startsWith("--")) throw new Error(`Missing value for ${arg}`); return next; };
@@ -17,6 +17,7 @@ export function parseOrchestrateArgs(args: string[]) {
   else if (arg === "--model") options.model = value();
   else if (arg === "--config") options.configPath = value();
   else if (arg === "--resume") options.resumeRunId = value();
+  else if (arg === "--resume-solve") options.resumeSolveInvocationId = value();
   else if (arg.startsWith("-")) throw new Error(`Unknown option ${arg}`);
   else positional.push(arg);
  }
@@ -26,6 +27,7 @@ export function parseOrchestrateArgs(args: string[]) {
  if (!selector.taskId && !(selector.unit && selector.task)) throw new Error("Usage: npm run orchestrate -- unit 1 task 1 [--goal 1] [--no-submit] [--check-setup] [--resume <run-id>]");
  if (options.targetScore !== undefined && (!Number.isFinite(options.targetScore) || options.targetScore < 0 || options.targetScore > 1)) throw new Error("Goal must be in [0,1]");
  if (options.maxSubmissions !== undefined && (!Number.isInteger(options.maxSubmissions) || options.maxSubmissions < 0 || options.maxSubmissions > 3)) throw new Error("Submission cap must be in [0,3]");
+ if (options.resumeSolveInvocationId && !options.resumeRunId) throw new Error("--resume-solve requires --resume");
  return { selector, options };
 }
 export async function main(args = process.argv.slice(2)) {

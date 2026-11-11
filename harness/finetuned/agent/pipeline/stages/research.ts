@@ -34,8 +34,8 @@ function artifact(kind: string, path: string): StageArtifact | undefined {
 
 export const researchStage: StageDefinition<ResearchOptions> = {
 	name: "research",
-	setupRequirements: ["observability", "knowledge", "model", "python", "task", "web-search", "data-profile", "solve-isolation"],
-	version: 3,
+	setupRequirements: ["observability", "knowledge", "model", "python", "task", "web-search", "data-profile", "solve-isolation", "course-resources"],
+	version: 4,
 	description: "Data profile and a validated solution brief (research.md) for a task",
 	next: "solve",
 

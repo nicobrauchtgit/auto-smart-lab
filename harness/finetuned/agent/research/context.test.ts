@@ -34,6 +34,8 @@ test.skipIf(!hasSpamData)(`actual context pairs the test archive (${fetchReason}
  expect(context.dataset.research_inputs?.training?.path).toEndWith('spam1-train.zip');
  expect(context.dataset.research_inputs?.test?.path).toEndWith('spam1-test.zip');
  expect(context.dataset.research_inputs?.test?.sha256).toHaveLength(64);
+ expect(context.resources?.map(resource => resource.path)).toContain("resources/smartlab-spam.txt");
+ expect(context.resources?.find(resource => resource.path === "resources/mlsec-perf-small.pdf")?.pages).toBe(23);
 });
 test("research retains the shared task/archive preflight without downloaded data", () => {
  expect(researchStage.setupRequirements).toContain('task');

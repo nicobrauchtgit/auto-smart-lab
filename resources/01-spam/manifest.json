@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "files": [
+    {
+      "file": "smartlab-spam.pdf",
+      "title": "Spam Filtering: Basics",
+      "media_type": "application/pdf",
+      "pages": 7,
+      "sha256": "54472e63c4bd7e0ce3f628102fa376c4d3f1f82c0f2aae075f19800d057b44ff"
+    },
+    {
+      "file": "smartlab-spam.txt",
+      "title": "Spam Filtering: Basics",
+      "media_type": "text/plain",
+      "pages": 7,
+      "sha256": "285c19d2e9dc4ed7d3e4a119fcf77c39e07ae6d531ed24f648e7808b53b3699e"
+    },
+    {
+      "file": "mlsec-perf-small.pdf",
+      "title": "Performance Measures",
+      "media_type": "application/pdf",
+      "pages": 23,
+      "sha256": "945f8f899005b6fb50afe03120c764ee73b182749eb5179671b243030228b299"
+    },
+    {
+      "file": "mlsec-perf-small.txt",
+      "title": "Performance Measures",
+      "media_type": "text/plain",
+      "pages": 23,
+      "sha256": "98094edc5c630f28f68e2422f0ddabaf97686d4782c50f7d59b230181f84b296"
+    }
+  ],
+  "extraction": {
+    "library": "pypdf",
+    "version": "7.0.1",
+    "mode": "plain",
+    "page_markers": true
+  }
+}

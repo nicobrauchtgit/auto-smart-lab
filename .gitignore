@@ -29,6 +29,9 @@ reports/
 # Downloaded course material stays local. Share archive hashes in unit-data.sha256.
 /units/*
 !/units/README.md
+# Course slides and their text copies stay local too; the manifests are shared.
+/resources/*/*.pdf
+/resources/*/*.txt
 /challenges/
 
 

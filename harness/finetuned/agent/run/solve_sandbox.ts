@@ -108,6 +108,7 @@ export function prepareResearchSandbox(workspace: string, taskDir: string, pytho
  const runtimePython = dirname(dirname(realpathSync(python.executable)));
  const mounts: SandboxMount[] = [
   { source: workspace, writable: true }, { source: taskDir },
+  ...[join(workspace, "resources")].filter(existsSync).map(source => ({ source })),
   { source: python.prefix }, { source: dirname(runtimePython) }, { source: WORKER },
   { source: join(REPO_ROOT, "node_modules") }, { source: realpathSync(join(REPO_ROOT, "node_modules")) },
   { source: dirname(realpathSync(process.execPath)) },

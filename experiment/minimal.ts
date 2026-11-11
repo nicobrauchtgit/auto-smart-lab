@@ -10,9 +10,10 @@
  */
 import { spawn, spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadExperimentConfig, modelReference, type ExperimentConfig } from "./config.js";
+import { readCourseResources } from "../harness/finetuned/agent/research/resources.js";
 import { checkSolveSandbox, executable, sandboxPolicy, type SandboxMount, type SolveSandbox } from "../harness/finetuned/agent/run/solve_sandbox.js";
 
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -68,6 +69,18 @@ export function prepareMinimalRun(options: { projectRoot?: string; stamp: string
 		if (statSync(path).isDirectory()) symlinkSync(path, join(units, name));
 		else if (name === "index.json") cpSync(path, join(units, name));
 	}
+	// Only declared course files, never resource tooling or development notes.
+	for (const unit of readdirSync(units).filter(name => statSync(join(units, name)).isDirectory())) {
+		const inputs = readCourseResources(unit, join(projectRoot, "resources"));
+		if (!inputs.length) continue;
+		const destination = join(root, "resources", unit);
+		mkdirSync(destination, { recursive: true });
+		for (const { source } of inputs) cpSync(source, join(destination, basename(source)));
+		writeFileSync(join(destination, "manifest.json"), JSON.stringify({ version: 1, files: inputs.map(({ resource }) => ({
+			...resource, file: resource.path.slice("resources/".length), path: undefined,
+		})) }, null, 2) + "\n");
+		readCourseResources(unit, join(root, "resources")); // Validate the copied snapshot too.
+	}
 	const modules = join(projectRoot, "node_modules");
 	if (existsSync(modules)) symlinkSync(modules, join(root, "node_modules"));
 	return { root, venv: join(root, ".venv"), home, units };
@@ -97,6 +110,7 @@ export function minimalPolicy(run: MinimalRun, options: { env?: NodeJS.ProcessEn
 		{ source: dirname(realpathSync(process.execPath)) },
 		...tools.map(path => ({ source: path })),
 	];
+	if (existsSync(join(run.root, "resources"))) mounts.push({ source: join(run.root, "resources") });
 	const add = (path: string) => { if (existsSync(path)) mounts.push({ source: path }); };
 	for (const name of readdirSync(run.units)) {
 		const link = join(run.units, name);
@@ -139,6 +153,11 @@ export function checkMinimalSetup(options: { projectRoot?: string; env?: NodeJS.
 		if (!existsSync(join(projectRoot, path))) problems.push(`${path} is missing: run ./dev setup`);
 	}
 	if (!existsSync(join(projectRoot, "units", "index.json"))) problems.push("units/index.json is missing: prepare the course units first");
+	const units = join(projectRoot, "units");
+	if (existsSync(units)) for (const unit of readdirSync(units).filter(name => !name.startsWith("_") && !name.startsWith(".") && statSync(join(units, name)).isDirectory())) {
+		try { readCourseResources(unit, join(projectRoot, "resources")); }
+		catch { problems.push(`Course resources for ${unit} are invalid or incomplete: restore resources/${unit}/manifest.json and its declared files with matching checksums`); }
+	}
 	let config: ExperimentConfig;
 	try { config = loadShared(projectRoot); } catch (error) { return [...problems, error instanceof Error ? error.message : String(error)]; }
 	const model = options.model ?? modelReference(config);

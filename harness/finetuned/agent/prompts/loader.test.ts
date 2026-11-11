@@ -147,6 +147,9 @@ test("research asks for a route-limited brief with checkable sources and the sel
  assert.match(system, /limits\.max_alternates/);
  assert.match(system, /\[profile:<record key>\]/);
  assert.match(system, /check_brief/);
+ assert.match(system, /context\.json\.resources/);
+ assert.match(system, /\[resources\/<name>\.txt\]/);
+ assert.match(prepared.prompt, /listed course resources/);
  assert.match(prompts.render('research.check-brief-tool', {}).text, /same validator the controller uses/);
 });
 

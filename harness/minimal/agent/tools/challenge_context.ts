@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { courseResources } from "../run/course_resources.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(HERE, "..", ".."); // agent/tools/ → agent/ → <root>
@@ -154,7 +155,7 @@ export default function challengeContextExtension(pi: ExtensionAPI) {
 			name: "read_challenge",
 			label: "Challenges: read",
 			description:
-				"Read the full task prompt and unit introduction for a specific challenge. Pass the short task id (e.g. 'spam1') or the task_path returned by list_challenges.",
+				"Read the full task prompt, unit introduction, and available course-resource file paths for a specific challenge. Pass the short task id (e.g. 'spam1') or the task_path returned by list_challenges.",
 			promptSnippet: "Read a SmartLab challenge prompt",
 			promptGuidelines: [
 				"Use read_challenge at the start of a solve session to understand the task requirements, input format, and evaluation metric.",
@@ -191,6 +192,7 @@ export default function challengeContextExtension(pi: ExtensionAPI) {
 					data_files: dataFiles,
 					unit_intro: unitIntroText || null,
 					prompt: promptText || null,
+					course_resources: courseResources(taskDir.slice(CHALLENGES_DIR.length + 1).split("/")[0]),
 				};
 
 				return {

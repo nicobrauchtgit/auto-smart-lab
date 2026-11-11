@@ -9,6 +9,7 @@
  * available to the agent as a self-check tool before it stops.
  */
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { dirname, join, resolve, sep } from "node:path";
 
 import { researchContextHash, type ResearchContext } from "./context.js";
@@ -164,6 +165,14 @@ export function resolveSource(source: Source, workspace: string, context: Resear
 	if (statSync(path).size > context.limits.max_analysis_artifact_bytes) {
 		return { source, error: `[${source.text}]: artifact exceeds ${context.limits.max_analysis_artifact_bytes} bytes; store compact aggregates` };
 	}
+	if (source.kind === "artifact" && source.path.startsWith("resources/")) {
+		const resource = context.resources?.find(item => item.path === source.path);
+		if (!resource || resource.media_type !== "text/plain" || source.key
+			|| createHash("sha256").update(readFileSync(path)).digest("hex") !== resource.sha256) {
+			return { source, error: `[${source.text}]: cite an unchanged text resource declared in context.json, without a key` };
+		}
+		return { source, values: [] };
+	}
 	if (!path.endsWith(".json")) return source.kind === "artifact" && source.key ? { source, error: `[${source.text}]: keys can only be cited in JSON artifacts` } : { source, values: [] };
 	const document = readJson(path);
 	if (document === undefined) return { source, error: `[${source.text}]: not valid JSON` };
@@ -220,7 +229,8 @@ export function validateBrief(document: string, workspace: string, context: Rese
 		const resolved = resolveOnce(source);
 		if (resolved.error && !errors.includes(resolved.error)) errors.push(resolved.error);
 	}
-	const dataSources = (text: string) => extractSources(text).filter(source => source.kind !== "url");
+	const dataSources = (text: string) => extractSources(text).filter(source => source.kind === "profile"
+		|| (source.kind === "artifact" && !source.path.startsWith("resources/")));
 	if (!dataSources(body("## Recommended pipeline")).length) {
 		errors.push("Recommended pipeline cites no dataset source; tie it to the profile or your analysis artifacts");
 	}

@@ -5,7 +5,7 @@ import type { InvocationFeedback } from "../pipeline/feedback.js";
 import { HARNESS_CONFIG } from "../harness/config.js";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync, readdirSync } from "node:fs";
-import { delimiter, dirname, join, relative } from "node:path";
+import { delimiter, dirname, join, relative, resolve } from "node:path";
 
 import { PROJECT_ROOT } from "../pipeline/resolve_task.js";
 import type { StageArtifact, StageReporter } from "../pipeline/types.js";
@@ -169,9 +169,10 @@ function reportInputs(
 }
 
 /** Preserve the originating workspace and its budget on interrupted solve restart. */
-export function recoveryTrainingRoot(parent: string, runId: string): string {
+export function recoveryTrainingRoot(parent: string, runId: string, completedRoots: readonly string[] = []): string {
     const candidates: string[] = [];
     const paused: { root: string; at: number }[] = [];
+    const completed = new Set(completedRoots.map(root => resolve(root)));
     if (existsSync(parent)) for (const rootName of readdirSync(parent)) {
         const root = join(parent, rootName);
         if (!statSync(root).isDirectory()) continue;
@@ -184,7 +185,12 @@ export function recoveryTrainingRoot(parent: string, runId: string): string {
                 if (meta.lifecycle === "active" && !read("supervisor-state.json").stopReason
                     && !read("search-report.json").stopReason) candidates.push(root);
                 else if (!["completed", "failed"].includes(read("trial-result.json").status)
-                    && read("search-report.json").stopReason !== "max_seconds") paused.push({ root, at: meta.trial?.startedAt ?? 0 });
+                    && read("search-report.json").stopReason !== "max_seconds"
+                    // A successful upstream solve can retain an intentionally paused
+                    // search. It is history, not recovery work for a fresh round.
+                    // The same invocation still retains its original budget.
+                    && (resolve(root) === resolve(join(parent, runId)) || !completed.has(resolve(root))))
+                    paused.push({ root, at: meta.trial?.startedAt ?? 0 });
             } catch { throw new Error(`Corrupt recovery state at ${path}; restore it before restarting solve.`); }
         }
     }
@@ -223,7 +229,10 @@ export async function runHarnessSolveSession(
 	const environmentTool = solvePythonEnvironmentTool(python, environmentToolPrompt.text, PROJECT_ROOT, {
         pipelineRunId: identity?.pipelineRunId ?? runId, stageInvocationId: identity?.stageInvocationId ?? runId, attempt: 1 });
 	const isolationPrompt = prompts.render("solve.isolation", { workspace: sandbox.agentRoot });
-	const trainingRoot = recoveryTrainingRoot(join(workspace.root, "training"), runId);
+	const completedTrainingRoots = (options.upstream ?? [])
+		.filter(artifact => artifact.kind === "training_selected_result")
+		.map(artifact => dirname(dirname(artifact.path)));
+	const trainingRoot = recoveryTrainingRoot(join(workspace.root, "training"), runId, completedTrainingRoots);
 	const fingerprint = datasetFingerprint(workspace);
 
 	reportInputs(report, workspace, python, trainingRoot);

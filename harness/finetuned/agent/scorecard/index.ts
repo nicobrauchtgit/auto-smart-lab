@@ -1,6 +1,6 @@
 /**
  * The scorecard of a finetuned run: plain numbers, the seven indicators of
- * docs/redesign-plan.md, and with two runs the differences indicator 7 needs.
+ * a good run, and with two runs the differences indicator 7 needs.
  * Read-only; see README.md.
  */
 import { resolve } from "node:path";
