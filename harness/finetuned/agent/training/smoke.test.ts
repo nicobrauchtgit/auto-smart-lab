@@ -1,10 +1,11 @@
 import { test, expect } from "bun:test";
-import { writeFileSync, rmSync, existsSync, readdirSync, mkdirSync, symlinkSync } from "node:fs";
+import { writeFileSync, rmSync, existsSync, readdirSync, readFileSync, mkdirSync, symlinkSync } from "node:fs";
+import { git, uncommittedFiles } from "./git.js";
 import { collectTrainingResults } from "./results.js";
 import { join } from "node:path";
 import { createHarnessTraining } from "./index.js";
 import { loadPromptSnapshot } from "../prompts/loader.js";
-import { temporaryProject, commitAll, trainingEnvironment, PYTHON, WORKER } from "./testing.js";
+import { temporaryProject, commitAll, trainingEnvironment, PYTHON, WORKER, until } from "./testing.js";
 test("broken fit fails smoke with traceback and no charged or launched trial", async () => {
  const project = temporaryProject("trial-smoke-");
  rmSync(join(project.solutionsRoot, "features.py"));
@@ -49,3 +50,31 @@ test("smoke runs the pipeline despite shared-tree findings, blocks only unsafe s
   expect(training.supervisor.list()).toHaveLength(0);
  } finally { await training.close(); }
 }, 60000);
+
+test("concurrent smoke runs and experiment_start on the same tree keep each other's worktrees intact", async () => {
+ const project = temporaryProject("trial-smoke-race-");
+ const root = join(project.root, "training");
+ const training = createHarnessTraining({ root, env: trainingEnvironment(), record() {}, pythonExecutable: PYTHON, projectRoot: project.root, solutionsRoot: project.solutionsRoot, taskId: "fixture", datasetSha256: project.datasetSha256, measurement: project.measurement, rootSeed: 13, zipPath: project.zipPath, labelsPath: project.labelsPath, prompts: loadPromptSnapshot(), workerPath: WORKER, maxExperiments: 1 });
+ try {
+  const raw = { schemaVersion: 2, hypothesis: "race smoke and start", pipeline: { module: "solutions/tasks/fixture.py", factory: "build_pipeline" }, cv: { kind: "builtin", scheme: "stratified_kfold", folds: 3, repeats: 1 }, scope: { kind: "promotion" } };
+  // All three race for the shared repository's worktree list in one tick.
+  const [first, started, second] = await Promise.all([training.service.smoke(raw), training.service.start(raw), training.service.smoke(raw)]);
+  expect(first.passed).toBe(true); expect(second.passed).toBe(true);
+  expect(first.issues).toEqual([]); expect(second.issues).toEqual([]);
+  const trial = JSON.parse(readFileSync(join(started.directory, "recovery.json"), "utf8")).trial;
+  expect(trial.source.commit).toBe(project.head);
+  expect(await until(() => training.supervisor.status(started.id).status !== "running", 60_000)).toBe(true);
+  const result = JSON.parse(readFileSync(join(started.directory, "trial-result.json"), "utf8"));
+  expect(result.status).toBe("completed");
+  expect(result.completedFolds).toBe(3);
+  await training.service.finalize(started.id);
+  // Neither side removed or dirtied the other's worktree, and nothing is left behind.
+  const worktrees = git(project.solutionsRoot, ["worktree", "list", "--porcelain"]).stdout;
+  expect(worktrees.match(/^worktree /gm)).toHaveLength(1);
+  expect(worktrees).not.toContain("prunable");
+  for (const path of trial.worktrees) expect(existsSync(path)).toBe(false);
+  expect(uncommittedFiles(project.solutionsRoot)).toEqual([]);
+  expect(git(project.solutionsRoot, ["rev-parse", "HEAD"]).stdout.trim()).toBe(project.head);
+  expect((await collectTrainingResults(root)).trials.map(entry => entry.experimentId)).toEqual([started.id]);
+ } finally { await training.close(); }
+}, 90000);

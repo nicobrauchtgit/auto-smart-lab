@@ -257,6 +257,39 @@ def _fold_plan(total_folds: int, cores: Sequence[int]) -> tuple[int, int]:
     return workers, max(1, available // workers)
 
 
+FOLD_PLAN_FILE = "fold-plan.json"
+
+
+def _recorded_fold_plan(output_dir: Path, total_folds: int, cores: Sequence[int], sequential: bool) -> tuple[int, int]:
+    """The trial's fold resource plan, fixed at its first start.
+
+    A resumed trial and its champion rerun reuse the recorded processes and
+    threads per process even when the machine now offers different cores, so
+    thread-sensitive estimators fit every fold of one trial identity with the
+    same thread budget.
+    """
+    path = output_dir / FOLD_PLAN_FILE
+    if path.exists():
+        try:
+            plan = json.loads(path.read_text(encoding="utf-8"))
+        except ValueError:
+            plan = None
+        processes = plan.get("processes") if isinstance(plan, dict) else None
+        threads = plan.get("threadsPerProcess") if isinstance(plan, dict) else None
+        if type(processes) is not int or type(threads) is not int or processes < 1 or threads < 1:
+            raise InvocationError(f"Corrupt {FOLD_PLAN_FILE}; restore the trial's recorded fold resource plan. No fit started.")
+        return processes, threads
+    processes, threads = _fold_plan(1 if sequential else total_folds, cores)
+    _atomic_json(path, {"processes": processes, "threadsPerProcess": threads})
+    return processes, threads
+
+
+def _apply_thread_budget(threads: int, cores: Sequence[int] = ()) -> None:
+    """Bound this process, and processes it starts, to the recorded thread budget."""
+    os.environ.update({name: str(threads) for name in _THREAD_VARIABLES})
+    _bound_threads(threads, cores)
+
+
 def _ids_digest(ids: Sequence[str]) -> str:
     return hashlib.sha256(json.dumps(list(ids), separators=(",", ":")).encode()).hexdigest()
 
@@ -398,8 +431,10 @@ def _run_fold_processes(document: dict[str, Any], invocation: Invocation, folds:
                     "reason": "fold_process_ended", "repeat": fold.repeat, "fold": fold.fold, "exitCode": code,
                     "message": (f"The process fitting repeat {fold.repeat} fold {fold.fold} ended without a result "
                                 f"({_describe_exit(code)}). It was stopped from outside the trial, for example by "
-                                "machine memory protection. Completed folds are recorded; this trial is not "
-                                "promotion evidence. Reduce the pipeline's memory use before starting a new trial."),
+                                "machine memory protection. Completed folds are recorded; until its missing folds "
+                                "complete this trial is not promotion evidence. experiment_resume fits only the "
+                                "missing folds with the same plan; if memory caused the stop, reduce the pipeline's "
+                                "memory use in a new trial instead."),
                 }
 
     try:
@@ -474,6 +509,12 @@ def execute(document: dict[str, Any]) -> dict[str, Any]:
             manifest = _manifest(invocation.experiment_id, ids, folds, invocation.scope, invocation.trial_seed)
             _atomic_json(output_dir / "fold-manifest.json", manifest)
         events.emit("folds_materialized", folds=len(folds), manifestSha256=manifest["sha256"])
+    cores = tuple(sorted(os.sched_getaffinity(0))) if hasattr(os, "sched_getaffinity") else ()
+    workers, threads = _recorded_fold_plan(output_dir, len(folds), cores, invocation.search is not None)
+    events.emit("fold_plan", processes=workers, threadsPerProcess=threads, availableCores=len(cores) or os.cpu_count())
+    if workers == 1:
+        # Folds fit in this process: bound it before agent code loads its libraries.
+        _apply_thread_budget(threads)
     with events.stage("agent_code"):
         pipeline = invocation.pipeline
         pipeline_factory = _factory(_load_module(project_root, pipeline.module), pipeline.factory)
@@ -490,7 +531,7 @@ def execute(document: dict[str, Any]) -> dict[str, Any]:
         champion = None
         if invocation.champion and best is not None and not invocation.search.objective and not outcome["stopReason"] and not _stop_requested:
             with events.stage("champion"):
-                champion = rerun(document, invocation, Path(__file__).resolve(), events)
+                champion = rerun(document, invocation, Path(__file__).resolve(), events, threads)
         with events.stage("artifacts"):
             outputs = write_search_outputs(invocation, output_dir, outcome, manifest, dict(zip(ids, y)) if y is not None else {}, champion)
             summary = _summarise(invocation, folds, best.folds if best else [], best.oof if best else [],
@@ -548,8 +589,6 @@ def execute(document: dict[str, Any]) -> dict[str, Any]:
             _write_oof(output_dir / "oof_predictions.csv", oof_rows)
         events.emit("fold_completed", repeat=fold.repeat, fold=fold.fold, metrics=result["metrics"], durationSeconds=result["durationSeconds"])
 
-    cores = tuple(sorted(os.sched_getaffinity(0))) if hasattr(os, "sched_getaffinity") else ()
-    workers, threads = _fold_plan(len(folds), cores)
     interruption = None
     if workers == 1:
         for position in pending:
@@ -572,7 +611,7 @@ def execute(document: dict[str, Any]) -> dict[str, Any]:
     if invocation.champion and summary["status"] == "completed" and summary["promotionEligible"] and not _stop_requested:
         from smartlab_trial.champion import rerun, compare
         with events.stage("champion"):
-            champion = rerun(document, invocation, Path(__file__).resolve(), events)
+            champion = rerun(document, invocation, Path(__file__).resolve(), events, threads)
             summary["championComparison"] = compare(completed, oof_rows, champion, dict(zip(ids, y)) if y is not None else {}, output_dir,
                                                     task_kind=task_kind)
     with events.stage("artifacts"):
@@ -618,6 +657,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     signal.signal(signal.SIGINT, _handle_stop)
     if arguments.champion_rerun:
         from smartlab_trial.champion import run_child
+        # The champion fits sequentially with the challenger's recorded thread budget.
+        threads = json.loads(arguments.champion_rerun.read_text(encoding="utf-8")).get("threadsPerProcess")
+        if type(threads) is int and threads >= 1:
+            _apply_thread_budget(threads)
         return run_child(arguments.champion_rerun, _prepare_data, _run_fold, lambda: _stop_requested,
                          lambda root, module, factory: _factory(_load_module(root, module), factory), expose_project)
     document: dict[str, Any] = {}

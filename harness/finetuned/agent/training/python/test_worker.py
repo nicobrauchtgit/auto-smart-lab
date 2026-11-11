@@ -408,6 +408,68 @@ class Worker(unittest.TestCase):
         self.assertEqual(worker._fold_plan(1, range(6)), (1, 6))
         self.assertEqual(worker._fold_plan(15, range(1)), (1, 1))
 
+    def _bound_calls(self, name, available_plan):
+        """Run a trial with `_fold_plan` returning `available_plan`; return the thread bounds applied in-process."""
+        original_plan, original_bound = worker._fold_plan, worker._bound_threads
+        calls = []
+        worker._fold_plan = lambda total, cores: available_plan
+        worker._bound_threads = lambda threads, cores: calls.append(threads)
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                result = worker.execute(self.invocation(name))
+        finally:
+            worker._fold_plan, worker._bound_threads = original_plan, original_bound
+        return result, calls
+
+    def test_resumed_trial_reuses_the_recorded_fold_plan_when_cores_differ(self):
+        # First start on a machine where the plan is one process with three threads.
+        first, calls = self._bound_calls("plan", (1, 3))
+        self.assertEqual(first["status"], "completed")
+        self.assertEqual(self.read_json("plan", "fold-plan.json"), {"processes": 1, "threadsPerProcess": 3})
+        # The sequential path bounds its own threads too.
+        self.assertEqual(calls, [3])
+        # Interrupt after two folds, as a killed run leaves it.
+        from smartlab_trial.recovery import load_checkpoint, save_checkpoint
+        checkpoint_path = self.root / "plan" / "single-checkpoint.json"
+        value = load_checkpoint(checkpoint_path)
+        kept = value["completed"][:2]
+        keys = {(fold["repeat"], fold["fold"]) for fold in kept}
+        save_checkpoint(checkpoint_path, {**value, "completed": kept,
+                                          "oof": [row for row in value["oof"] if (row["repeat"], row["fold"]) in keys]})
+        for artifact in ("trial-result.json", "metrics.json"):
+            (self.root / "plan" / artifact).unlink()
+        # The resumed trial now sees different cores; it keeps the recorded plan.
+        resumed, calls = self._bound_calls("plan", (2, 8))
+        self.assertEqual(resumed["status"], "completed")
+        self.assertEqual(resumed["completedFolds"], 6)
+        self.assertEqual(calls, [3])
+        self.assertEqual(self.read_json("plan", "fold-plan.json"), {"processes": 1, "threadsPerProcess": 3})
+        events = [json.loads(line) for line in (self.root / "plan" / "events.jsonl").read_text().splitlines()]
+        self.assertNotIn("fold_processes", [event["type"] for event in events])
+        plans = [event for event in events if event["type"] == "fold_plan"]
+        self.assertEqual([(event["processes"], event["threadsPerProcess"]) for event in plans], [(1, 3), (1, 3)])
+
+    def test_corrupt_fold_plan_refuses_before_any_fit(self):
+        (self.root / "corrupt").mkdir()
+        (self.root / "corrupt" / "fold-plan.json").write_text('{"processes": 0}')
+        with self.assertRaisesRegex(worker.InvocationError, "fold-plan.json"):
+            worker.execute(self.invocation("corrupt"))
+        self.assertFalse((self.root / "corrupt" / "fold-results.jsonl").exists())
+
+    def test_champion_rerun_spec_carries_the_recorded_thread_budget(self):
+        from smartlab_trial import champion
+        output = self.root / "champion-spec"
+        output.mkdir()
+        invocation = parse_invocation({**self.invocation("champion-spec")})
+        original = champion.subprocess.run
+        champion.subprocess.run = lambda *args, **kwargs: subprocess.CompletedProcess(args, 2)
+        try:
+            champion.rerun({"fixture": True}, invocation, Path(worker.__file__), None, 3)
+        finally:
+            champion.subprocess.run = original
+        self.assertEqual(json.loads((output / champion.SPEC_FILE).read_text()),
+                         {"invocation": {"fixture": True}, "threadsPerProcess": 3})
+
     def test_resume_accepts_folds_completed_out_of_order(self):
         with contextlib.redirect_stdout(io.StringIO()):
             worker.execute(self.invocation("order"))

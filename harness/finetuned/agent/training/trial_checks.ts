@@ -23,7 +23,12 @@ finally:
   if path and 'solutions' in Path(path).parts and not Path(path).resolve().is_relative_to(source):
    raise RuntimeError('Unsafe live solutions import: '+path)
 `;
-export async function runTrialChecks(snapshot: TrialSnapshot, checkPaths: string[], sandbox: SolveSandbox, signal?: AbortSignal): Promise<{ passed: boolean; checks: { path: string; exitCode: number; outputPath: string }[] }> {
+/** Grace after SIGTERM before the check's process group is killed, and again before its output pipes are abandoned. */
+export const CHECK_CANCEL_GRACE_MS = 2000;
+
+export async function runTrialChecks(snapshot: TrialSnapshot, checkPaths: string[], sandbox: SolveSandbox, signal?: AbortSignal,
+ options: { cancelGraceMs?: number } = {}): Promise<{ passed: boolean; checks: { path: string; exitCode: number; outputPath: string }[] }> {
+ const grace = options.cancelGraceMs ?? CHECK_CANCEL_GRACE_MS;
  const source = realpathSync(snapshot.sourceRoot), worktree = join(source, "solutions");
  const identity = resolveCommit(worktree, "HEAD");
  if (!identity || identity.commit !== snapshot.commit || identity.tree !== snapshot.tree || uncommittedFiles(worktree).length) throw new Error("Trial snapshot identity mismatch");
@@ -43,10 +48,30 @@ export async function runTrialChecks(snapshot: TrialSnapshot, checkPaths: string
    const command = [projectPython(), "-I", "-c", runner, checked, source, snapshot.experimentId];
    const child = spawn(sandbox.executable, sandbox.args(command), { cwd: sandbox.cwd, env: sandbox.env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
    child.stdout.pipe(output, { end: false }); child.stderr.pipe(output, { end: false });
-   const cancel = () => { try { process.kill(-child.pid!, "SIGTERM"); } catch {} };
+   const timers: ReturnType<typeof setTimeout>[] = [];
+   let settled = false;
+   const settle = (error?: unknown, code?: number | null) => {
+    if (settled) return;
+    settled = true;
+    for (const timer of timers) clearTimeout(timer);
+    signal?.removeEventListener("abort", cancel);
+    output.end(() => error !== undefined ? reject(error) : signal?.aborted ? reject(signal.reason) : done(code ?? 1));
+   };
+   const group = (name: NodeJS.Signals) => { try { process.kill(-child.pid!, name); } catch {} };
+   // A check may handle SIGTERM, or leave a descendant that ignores it:
+   // escalate to SIGKILL on the whole group, then stop waiting for pipes a
+   // process outside the group may still hold open.
+   function cancel() {
+    group("SIGTERM");
+    timers.push(setTimeout(() => {
+     group("SIGKILL");
+     timers.push(setTimeout(() => { child.stdout.destroy(); child.stderr.destroy(); settle(signal?.reason ?? new Error("Check cancelled")); }, grace));
+    }, grace));
+   }
    signal?.addEventListener("abort", cancel, { once: true });
-   child.once("error", error => { signal?.removeEventListener("abort", cancel); output.end(); reject(error); });
-   child.once("close", code => { signal?.removeEventListener("abort", cancel); output.end(() => signal?.aborted ? reject(signal.reason) : done(code ?? 1)); });
+   if (signal?.aborted) cancel();
+   child.once("error", error => settle(error));
+   child.once("close", code => settle(undefined, code));
   });
   if (readFileSync(outputPath, "utf8").includes("Unsafe live solutions import:")) throw new Error("Unsafe live solutions import origin; see the retained check log");
   checks.push({ path: checked, exitCode, outputPath });

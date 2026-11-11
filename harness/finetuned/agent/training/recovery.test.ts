@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { availableParallelism } from "node:os";
 import { createHarnessTraining } from "./index.js";
 import { TrainingService } from "./service.js";
 import { loadPromptSnapshot } from "../prompts/loader.js";
@@ -134,7 +135,7 @@ for (const [name, state, result, report, lifecycle] of [
  atomicJson(join(dir, "supervisor-state.json"), state); atomicJson(join(dir, "trial-result.json"), result); atomicJson(join(dir, "search-report.json"), report);
  atomicJson(join(dir, "recovery.json"), { ...read(dir, "recovery.json"), lifecycle });
  const service = f.make(); try { await service.ready(); expect(f.starts).toBe(1); } finally { await service.close(); }
-});
+}, 30_000); // Fixture and restart each run real Python metadata checks.
 
 test("concurrent workspace claims are exclusive and kernel releases them", async () => {
  const f = await durableFixture(); const release = claimWorkspace(f.opts.root);
@@ -229,3 +230,57 @@ test("altered frozen worktree is refused and preserved through cleanup", async (
  const service = f.make(); await service.ready(); await service.close();
  expect(f.starts).toBe(1); expect(readFileSync(path, "utf8")).toBe("# retained edit\n");
 });
+
+/** Log every fit; the first fit to claim the marker parks until it is killed. One-shot: a resume never parks. */
+function enableFoldKillBarrier(project: ReturnType<typeof temporaryProject>) {
+ const path = join(project.solutionsRoot, "features.py");
+ const log = JSON.stringify(join(project.root, "fit-log")); const marker = JSON.stringify(join(project.root, "fit-blocked"));
+ const code = readFileSync(path, "utf8").replace("        if self.delay:",
+  `        import os\n        with open(${log}, "a") as stream:\n            stream.write(f"{os.getpid()}\\n")\n        try:\n            handle = os.open(${marker}, os.O_CREAT | os.O_EXCL | os.O_WRONLY)\n        except FileExistsError:\n            pass\n        else:\n            os.write(handle, str(os.getpid()).encode())\n            os.close(handle)\n            while True:\n                time.sleep(0.05)\n        if self.delay:`);
+ writeFileSync(path, code); project.head = commitAll(project.solutionsRoot, "Fold kill barrier");
+}
+
+test.skipIf(availableParallelism() < 2)("a killed fold process interrupts the trial; experiment_resume fits only the missing folds on the same budget unit", async () => {
+ const project = temporaryProject("recovery-fold-kill-"); enableFoldKillBarrier(project); const opts = options(project); const events: any[] = [];
+ const training = createHarnessTraining({ ...opts, prompts: loadPromptSnapshot(), record: (type, payload) => events.push({ type, ...payload }) });
+ const fits = () => readFileSync(join(project.root, "fit-log"), "utf8").trim().split("\n").length;
+ try {
+  const started = await training.service.start(request(false, 0.2));
+  const blocked = join(project.root, "fit-blocked");
+  expect(await until(() => existsSync(blocked) && readFileSync(blocked, "utf8").length > 0)).toBe(true);
+  expect(await until(() => existsSync(join(started.directory, "single-checkpoint.json")))).toBe(true);
+  const plan = readFileSync(join(started.directory, "fold-plan.json"), "utf8");
+  expect(JSON.parse(plan).processes).toBe(2);
+  // Machine protection kills one fold process; the trial process survives it.
+  process.kill(Number(readFileSync(blocked, "utf8")), "SIGKILL");
+  expect(await until(() => training.supervisor.status(started.id).status !== "running" && existsSync(join(started.directory, "trial-result.json")))).toBe(true);
+  const interrupted = read(started.directory, "trial-result.json");
+  expect(interrupted.status).toBe("interrupted");
+  expect(interrupted.interruption.reason).toBe("fold_process_ended");
+  expect(interrupted.completedFolds).toBeGreaterThanOrEqual(1);
+  expect(interrupted.completedFolds).toBeLessThan(3);
+  expect(read(started.directory, "worker-exit.json").exitCode).toBe(2);
+  // Not retried automatically; the agent decides.
+  expect(events.find(e => e.type === "training_recovery_skipped")?.reason).toBe("fold_process_ended");
+  expect(read(started.directory, "recovery.json").attempts).toBe(0);
+  const before = read(started.directory, "single-checkpoint.json"); const fitsBefore = fits();
+
+  const resumed = await training.service.resume(started.id) as any;
+  expect(resumed.budgetConsumed).toBe(false);
+  expect(await until(() => training.supervisor.status(started.id).status !== "running" && existsSync(join(started.directory, "trial-result.json")))).toBe(true);
+  const result = read(started.directory, "trial-result.json");
+  expect(result.status).toBe("completed");
+  expect(result.completedFolds).toBe(3);
+  // Only the missing folds ran; completed folds are kept unchanged.
+  expect(fits() - fitsBefore).toBe(3 - interrupted.completedFolds);
+  const after = read(started.directory, "single-checkpoint.json");
+  for (const fold of before.completed) expect(after.completed).toContainEqual(fold);
+  for (const row of before.oof) expect(after.oof).toContainEqual(row);
+  expect(readFileSync(join(started.directory, "fold-plan.json"), "utf8")).toBe(plan);
+  expect(read(join(started.directory, "recovery-history", "1"), "trial-result.json").status).toBe("interrupted");
+  // Same budget unit, no second charged trial.
+  const meta = read(started.directory, "recovery.json");
+  expect(meta.attempts).toBe(1); expect(meta.budgetUnit).toBe(started.id);
+  await expect(training.service.start(request(false))).rejects.toThrow("budget exhausted");
+ } finally { await training.close(); }
+}, 60000);

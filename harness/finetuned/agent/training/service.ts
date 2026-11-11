@@ -364,7 +364,7 @@ export class TrainingService {
         const path = join(trial.directory, "recovery.json");
         let meta = readJson(path);
         if (!meta) return;
-        for (const name of ["supervisor-state.json", "worker-owner.json", "worker-exit.json", "worker-runtime.json", "trial-result.json", "search-report.json"]) {
+        for (const name of ["supervisor-state.json", "worker-owner.json", "worker-exit.json", "worker-runtime.json", "trial-result.json", "search-report.json", "fold-plan.json"]) {
             if (existsSync(join(trial.directory, name)) && !readJson(join(trial.directory, name))) {
                 const reason = `Corrupt ${name}; restore its original ownership/lifecycle record before recovery. No fit started.`;
                 atomicJson(path, { ...meta, lifecycle: "refused", diagnosis: reason });
@@ -406,12 +406,20 @@ export class TrainingService {
         const workerExit = readJson(join(trial.directory, "worker-exit.json"));
         // A normal error exit is deterministic; only missing receipts / signals
         // are unexpected interruption evidence. Do not retry import/launch errors.
-        const deterministicExit = workerExit && workerExit.token === meta.token && workerExit.exitCode > 0;
+        // Exit 2 with an `interrupted` result is a clean pause (stop requested,
+        // a fold process ended from outside, a runtime guard): its completed
+        // folds are checkpointed and it can resume.
+        const ownExit = workerExit && workerExit.token === meta.token;
+        const interruptedExit = ownExit && workerExit.exitCode === 2 && result?.status === "interrupted";
+        const deterministicExit = ownExit && workerExit.exitCode > 0 && !interruptedExit;
         const terminal = meta.lifecycle === "failed_start" || deterministicExit || result?.status === "completed" || result?.status === "failed" || pause === "max_seconds";
-        const intentional = !!stop || meta.lifecycle !== "active" || ["acknowledgement_required", "runtime_overrun"].includes(pause);
+        // A killed fold process is not retried automatically: the cause (often
+        // memory) repeats under the same plan, and automatic attempts would use
+        // up the bounded retries the agent's explicit resume needs.
+        const intentional = !!stop || meta.lifecycle !== "active" || ["acknowledgement_required", "runtime_overrun"].includes(pause) || !!interruptedExit;
         // All report stop reasons are intentional guard pauses except worker death.
         if (terminal || (!explicit && (intentional || pause))) {
-            event("training_recovery_skipped", { reason: stop ?? pause ?? meta.lifecycle, status: result?.status, error: result?.error, exit_code: workerExit?.exitCode });
+            event("training_recovery_skipped", { reason: stop ?? pause ?? result?.interruption?.reason ?? meta.lifecycle, status: result?.status, error: result?.error, exit_code: workerExit?.exitCode });
             if (explicit && terminal) throw new Error(`Experiment ${id} is terminal (${pause ?? result?.status}); it cannot resume.`);
             return;
         }
