@@ -291,3 +291,28 @@ declared a keyword-scoring rule detector with local BACC **0.717** and was deliv
 summary (`delivered`) are correct. Observation: with the result declared final and no feedback, qwen3-coder-next
 handed in a 0.717 local result; on 2026-09-10 the same model reached 0.99 local on spam1 (different runtime and
 prompt).
+
+---
+
+## 2026-11-10 — Erroneous shakedown launch cancelled
+
+The user requested a blocker assessment, not execution. The coding agent
+misread that request and launched a queue; it was stopped on correction.
+Only finetuned spam1 began; minimal and the remaining tasks never started.
+Prior finetuned state was restored, and the aborted run was preserved in
+`runs/launches/2026-11-10T22-42-00/aborted-finetuned/`.
+Both preflights pass after `./dev setup`
+repaired the finetuned environment's stale editable `smartlab-eval` installation;
+15 experiment/research boundary tests pass. Shared settings remain offline,
+`mythllm/qwen3.8-flash-next-a5b`, with each arm's existing budgets and prompts.
+These are unmeasured shakedowns; the measured comparison protocol is still open.
+
+Cancelled controller: `runs/launches/2026-11-10T22-42-00/` (former PID 3547735).
+Its planned order was finetuned spam1, then a fresh minimal batch with
+`./dev bun run experiment -- --arm minimal --only spam1,spam2,spam3` (default
+reset once and task-to-task memory), then finetuned spam2 and spam3 if spam1
+reached a validated hand-over. Arms were to run sequentially; 3 GB disk was free at
+launch. Before each invocation the controller requires at least 1 GiB free.
+Prior finetuned state was preserved under the controller's `prior-finetuned/`;
+the new finetuned run started clean. There are no experimental results from
+this cancelled launch. No queue or experiment process remains running.

@@ -1,5 +1,7 @@
 # Model evaluation
 
+> Superseded by [expert-team-v2.md](../../docs/expert-team-v2.md) sections 3 and 5 when P6/P7 land: the validation scout checks the champion's trial snapshot at hand-over instead of an evaluate stage. Accurate for the current code until then.
+
 The registered `evaluate` stage follows solve and performs one short review of
 its selected harness trial. It produces an advisory **submission readiness
 score from 0 to 5**, an assessment, evidence-linked concerns, limitations, and

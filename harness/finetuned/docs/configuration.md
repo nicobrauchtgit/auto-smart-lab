@@ -1,5 +1,7 @@
 # Configuration reference
 
+> Superseded by [expert-team-v2.md](expert-team-v2.md) section 5 (one `team` budget block in tool calls, plus the `supervision` block of section 6) when P6/P7 land. Accurate for the current code until then.
+
 This file covers the harness. The settings both arms share (`online`, the chosen
 `model` and all `providers`) are in `experiment.config.json` at the repository root,
 described in `docs/experiment.md` there; `pipeline.config.json` must not repeat them.

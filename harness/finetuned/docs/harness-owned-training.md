@@ -1,5 +1,7 @@
 # Harness-owned training framework
 
+> Superseded by [expert-team-v2.md](expert-team-v2.md) sections 4, 7 and 8 (trial feedback, `trial_smoke`, changes to the harness) when P6/P7 land. Harness ownership of seeds, folds, fits and predictions stays.
+
 Status: implementation contract, 2026-09-24.
 
 The solve agent designs experiments; the harness executes them. This is the

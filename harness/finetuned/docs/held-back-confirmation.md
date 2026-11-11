@@ -1,5 +1,7 @@
 # Held-back confirmation
 
+> Superseded by [expert-team-v2.md](expert-team-v2.md) section 4 when P6/P7 land. Planned holdout policy: see [Planned: Ladder feedback](#planned-ladder-feedback) below.
+
 Binary classification now sizes its stratified holdout from `harness.config.json`:
 200 rows in the smallest class if possible, at most 20% of each class, and no
 holdout if that would provide fewer than 50 smallest-class rows. Counts round
@@ -10,7 +12,8 @@ Group and label-free tasks explicitly skip this binary confirmation measurement.
 
 After the solve agent closes and its workers stop, the harness checks the champion
 tag and freezes its exact commit, tree, factory and fixed parameters. It fits on
-all development rows, predicts exactly the sealed IDs and runs the ID canary.
+all development rows, predicts exactly the sealed IDs and runs the ID canary
+(dropped by decision of 2026-11-11; P6 removes it).
 The model process sees development inputs and a sealed-only validation archive;
 the original full archive and labels remain outside its filesystem boundary.
 As in CV, model and scorer share a Python process; this is not protection against
@@ -42,3 +45,15 @@ Existing manual/older workspaces without controller holdout metadata retain
 their old refit contract. New binary solve workspaces require a completed or
 explicitly skipped confirmation. Setup checks the worker and its dependencies
 before an agent starts. No lab access or submission is part of confirmation.
+
+## Planned: Ladder feedback
+
+Decided 2026-11-11 ([expert-team-v2.md section 4](expert-team-v2.md#4-feedback-to-the-lead),
+[ADR 005](../../../docs/adr/005-isolation-confirmation-provenance.md)); not
+implemented. Today the score never reaches the solve agent. Under v2 the lead
+knows the withheld rows exist. When a trial becomes champion, the harness
+scores it on the withheld rows and tells the lead either "holdout confirms the
+improvement" with a rounded score, or "no significant improvement over the
+previous champion" (the Ladder, Blum & Hardt, ICML 2015). Labels are never
+shown and raw per-trial holdout scores are not shown. Every query is counted in
+the ledger above, and the hand-over states how often the holdout was used.

@@ -1,5 +1,7 @@
 # Pipeline versioning and hyperparameter search
 
+> Superseded by [expert-team-v2.md](expert-team-v2.md) section 8 when P6/P7 land (a search winner counts once measured on the shared folds; no mandatory second confirmation run). Accurate for the current code until then.
+
 Status: implemented with deterministic local acceptance coverage, 2026-10-05.
 The five delivery phases below are wired into the registered solve path. It extends the [harness-owned training contract](harness-owned-training.md).
 

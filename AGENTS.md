@@ -14,51 +14,41 @@ add coaching to the minimal arm.
 
 # Current state and next tasks
 
-Start with [docs/cleanup-plan.md](docs/cleanup-plan.md): it records the current
-state, the decisions taken with the user, open questions and the prioritized
-work queue. Run project commands through `./dev` (see that file).
+[docs/cleanup-plan.md](docs/cleanup-plan.md) is the work queue: current state,
+open decisions and the prioritized packages. The finetuned design is
+[expert-team-v2.md](harness/finetuned/docs/expert-team-v2.md), accepted
+2026-11-11; its contract appendix is
+[expert-team.md](harness/finetuned/docs/expert-team.md). Run project commands
+through `./dev` (see that file).
 
-# Pipeline development
+# Harness development
 
-When creating or changing a pipeline module, follow
-[the pipeline integration contract](harness/finetuned/docs/pipeline-integration.md).
+The current code still runs the old design until P6 and P7 land: an LLM
+orchestrator calling registered research, solve, evaluate, refit and submit
+stages through `agent/pipeline/executor.ts`. Keep it working while it runs, and
+follow [the pipeline integration contract](harness/finetuned/docs/pipeline-integration.md)
+when changing it. Configured chains stop before submit; only an explicit
+controller submission policy authorizes uploads.
+
+New work follows expert-team-v2.md: one lead agent drives the run and calls
+blocking scouts (data, ideas, validation); there is no LLM orchestrator and no
+fixed stage chain. The agent's pipeline is any object with `fit`/`predict`
+(`fit_predict` for batch clustering), declared in `solutions/tasks/<id>.py`
+under `runs/finetuned/solutions/`. The agent chooses features, estimator,
+hyperparameters and cross-validation scheme. The harness owns seeds, folds,
+fits, predictions and measurements; harness-run trials are the measurement and
+the only promotion evidence. Labels of the withheld rows never reach an agent;
+they join training only at the terminal refit. Follow
+[the harness-owned training contract](harness/finetuned/docs/harness-owned-training.md).
+Add primitives and measurements, not constraints on model design.
+
 Langfuse Cloud is the shared observability backend; JSONL is emergency-only.
 Use `agent/telemetry/` and pipeline reporters, declare `observability` setup, and
 preserve authoritative harness/recovery records. See [telemetry](harness/finetuned/docs/telemetry.md).
-Observability is part of module completion: record stage lifecycle, typed
-configuration and input metadata, artifact results, and any agent sessions
-under shared pipeline and invocation IDs. Standalone module commands must use
-the same instrumented execution path as the pipeline.
-
-The shared executor exists: `agent/pipeline/executor.ts` invokes registered
-stages, and `agent/pipeline/registry.ts` lists the implemented ones. Research,
-solve, evaluate, refit, and deterministic submit are registered. Configuration
-enables submission as an available capability; only an explicit controller
-submission policy authorizes uploads. Configured stage chains stop before submit.
-Evaluation is an advisory
-model/code review with a readiness score; it does not authorize submission.
-
-The solve stage is a training framework, not a prescribed model. The agent
-writes its own scikit-learn pipeline under `solutions/` (`runs/finetuned/solutions/`), chooses its own
-features, estimator, hyperparameters, and cross-validation scheme, and reuses
-code across tasks. The harness owns the training processes, supplies seeds,
-materializes the agent's fold design, writes authoritative predictions and
-measurements, and controls observation, interruption, promotion, and final
-refitting. Follow [the harness-owned training contract](harness/finetuned/docs/harness-owned-training.md).
-Add primitives and measurements, not constraints on model design.
-
-The `solutions/tasks/<id>.py` entrypoint convention exists so the harness can
-execute the agent's pipeline. Agent-run fits may inform development, but only
-harness-run fits are promotion evidence. The sealed confirmation split stays
-unavailable to the agent and joins training only after the selected pipeline is
-frozen for terminal refitting.
-
-To add a stage, implement `StageDefinition` from `agent/pipeline/types.ts`,
-register it, and enable it in `pipeline.config.json`. Report every agent session
-through `context.report.observation(attempt)`, declare supplied inputs through
-`context.report.input(...)`, and let the executor own stage lifecycle events.
-Never treat a finished agent session as stage success: return the artifact
-validation result and let the executor decide.
+Record lifecycle, typed configuration and input metadata, results and every
+agent session under shared run and invocation IDs. Standalone commands use the
+same instrumented execution path. Never treat a finished agent session as
+success: the harness validates the result.
 
 `agent/pi_sdk.ts` is an observability experiment, not the main pipeline.
 
@@ -135,14 +125,10 @@ and variables. Keep prompts in version control alongside their callers.
   paths, measured dataset context, and validation errors as typed data. Reject
   missing files and missing or unexpected template variables before starting
   an agent.
-- Use a stable research opening prompt regardless of whether a research
-  document exists or passes validation. Let the agent inspect workspace state
-  and decide what work is needed. Allow sound existing research to remain
-  unchanged; do not require edits just because another run started.
-- Treat existing documents as prior work, not proof of correctness or relevance
-  to the current dataset. Keep artifact validation as the controller's
-  completion check. After a failed attempt, supply the failed checks as factual
-  feedback without changing the underlying research task.
+- Keep opening prompts stable across runs and attempts. Let the agent inspect
+  workspace state; existing work is prior work, not proof of correctness. After
+  a failed attempt, supply the failed checks as factual feedback without
+  changing the underlying task.
 - Resolve prompt templates once per run and reuse that snapshot across attempts.
   Record prompt IDs, template content hashes, and rendered-message hashes in
   observability alongside the captured messages. Keep prompt identity separate

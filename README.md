@@ -2,15 +2,33 @@
 
 An experiment comparing a minimal autonomous agent with a task-adapted ML harness on SmartLab tasks. Both arms share task data, model/provider configuration and offline/online mode; their instructions, execution and evidence policies intentionally differ.
 
-Start with the **[review guide](docs/review-guide.md)** for reading order, verified command sources, status and limitations. Continue to [architecture and pipeline diagrams](docs/architecture.md), [code analysis](docs/code-analysis.md) and [architecture decisions](docs/adr/README.md).
+Start here:
 
-```bash
-./dev setup
-./dev mise run test
-./dev bun scripts/code-inventory.ts --check
-```
+- [The experiment](docs/experiment.md): question, shared conditions, arm differences, reset and isolation.
+- [Work queue](docs/cleanup-plan.md): current state, the running spam batch, packages and follow-ups.
+- [Expert team v2](harness/finetuned/docs/expert-team-v2.md): the accepted plan for the finetuned arm (one lead agent, blocking scouts, harness-run trials). The current finetuned code still runs the old research → solve → evaluate chain until P6/P7 land.
 
-The [experiment contract](docs/experiment.md) explains arm selection and isolation. [Cleanup queue](docs/cleanup-plan.md) owns active work; [redesign plan](docs/redesign-plan.md) records design and package status. P3 run mechanics are integrated; P1 resource-pool work is explicitly deferred from this merge. The four-expert team is a design awaiting implementation; current registered finetuned stages are research, solve, evaluate, refit and submit. [Merge evidence](docs/merge-readiness.md) separates local validation from unverified live behavior.
+Then [architecture](docs/architecture.md) (current diagrams), [architecture decisions](docs/adr/README.md), [task readiness](docs/tasks.md) and the [source inventory](docs/code-inventory.md).
+
+## Commands
+
+Run from the repository root. [dev](dev) and [mise.toml](mise.toml) keep the pinned toolchain and caches in `.tools/`. Host requirements: Linux with git, zip/unzip and curl or wget; agent confinement needs bubblewrap and working user namespaces. The finetuned Python environment is `harness/finetuned/.venv`, exposed as `VENV_DIR`.
+
+| Command | Purpose |
+| --- | --- |
+| `./dev setup` | Sync managed Python and locked packages; frozen JS install |
+| `./dev mise run test` | Typecheck, Bun tests, Python test suites |
+| `./dev bun scripts/code-inventory.ts --check` | Verify the source inventory is fresh (without `--check`: regenerate) |
+| `./dev bun run experiment -- --arm minimal --check-setup` | Minimal prerequisites |
+| `./dev bun run experiment -- --arm finetuned --check-setup spam1` | Whole-chain preflight; may make a tiny explicit provider probe |
+| `./dev bun run experiment -- --arm finetuned spam1` | Actual finetuned model run |
+| `./dev bun run experiment -- --arm minimal --only spam1` | Actual minimal run in a fresh run directory |
+| `./dev bun run experiment -- --arm finetuned --reset` | Preview state deletion; `--yes` performs it, preserving deliveries |
+| `./dev bun run scorecard -- spam1 --run <id>` | Inspect recorded finished-run evidence |
+
+Shared [experiment.config.json](experiment.config.json) sets `online: false`: no uploads or fetching. Configured chains stop before submit; evaluation does not authorize it.
+
+## Layout
 
 | Location | Purpose |
 | --- | --- |
@@ -19,6 +37,7 @@ The [experiment contract](docs/experiment.md) explains arm selection and isolati
 | `experiment/`, `experiment.config.json` | Dispatch, confinement and shared conditions |
 | `runs/` | Ignored arm-specific execution state and deliveries |
 | `units/` | Ignored task material; private underscore directories excluded from agent inputs |
-| `docs/` | Review navigation, decisions, plans and evidence references |
+| `resources/` | Course slides supplied read-only to both arms |
+| `docs/` | Experiment, work queue, decisions, reports and archive |
 
-All project commands use [./dev](dev), which keeps tools and caches in `.tools/`. Credentials stay in ignored local configuration. Runtime prompts are explicitly selected from each arm; this README is development documentation.
+Credentials stay in ignored local configuration. Runtime prompts are explicitly selected from each arm; this README is development documentation.

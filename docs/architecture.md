@@ -1,12 +1,13 @@
 # Architecture and flow
 
-[Review entry](review-guide.md) · [Decisions](adr/README.md) · [Source inventory](code-inventory.md)
+[Work queue](cleanup-plan.md) · [Decisions](adr/README.md) · [Source inventory](code-inventory.md)
 
-All **CURRENT** diagrams describe the runtime in this reviewed integration, including
-P3 at fd96ccd. P1 is deferred from this merge by the user's decision; the expert
-team remains a design. The [generated inventory](code-inventory.md) identifies
-the measured source bytes, and [merge evidence](merge-readiness.md) records
-validation. Dashed links describe access or feedback, not automatic stage
+All **CURRENT** diagrams describe the code that runs today, including P3 run
+mechanics. The accepted v2 design
+([expert-team-v2.md](../harness/finetuned/docs/expert-team-v2.md)) is not
+implemented; its run shape is at the end of this page. The
+[generated inventory](code-inventory.md) identifies the measured source bytes.
+Dashed links describe access or feedback, not automatic stage
 succession. Stage names are capabilities selected by the controller; arrows
 give a common local route, not a mandatory fixed workflow.
 
@@ -145,26 +146,30 @@ flowchart TD
     DISK[Authoritative run receipts, source and predictions] -. recovery .-> SERVICE
 ```
 
-[Supervisor](../harness/finetuned/agent/experiments/supervisor.ts), [ownership](../harness/finetuned/agent/experiments/ownership.ts), [sampler](../harness/finetuned/agent/experiments/sampler.ts), [runner](../harness/finetuned/agent/training/python/runner.py). The generic supervisor is used by harness workers; its opt-in tools are not a universal observer of current agent shell commands. Research still has a bash timeout. **Deferred, unintegrated P1** proposes observed agent commands and a shared Linux systemd/cgroup RAM pool. Investigation eee1894 did not establish strict victim ordering with tested unprivileged controls. Neither its resource backend nor its unconditional production guard is integrated. The user chose to defer P1 while retaining its strict future acceptance requirements; see the [scope decision and counterexamples](p1-memory-pool-blocker.md). RAM protection must cover descendants, not only the parent PID. Context-token hand-offs are separate from process RAM.
+[Supervisor](../harness/finetuned/agent/experiments/supervisor.ts), [ownership](../harness/finetuned/agent/experiments/ownership.ts), [sampler](../harness/finetuned/agent/experiments/sampler.ts), [runner](../harness/finetuned/agent/training/python/runner.py). The generic supervisor is used by harness workers; its opt-in tools are not a universal observer of current agent shell commands. Research still has a bash timeout. The sampler returns no samples on Linux, so CPU/RSS-based stall and memory signals do not work on this host today. There is no shared RAM pool and no machine-protection stop yet; v2 section 6 plans one with its own sampler, because the deferred P1 investigation showed kernel OOM ordering cannot be controlled without privileges ([ADR 003](adr/003-finite-ram-observation.md)). Context-token hand-offs are separate from process RAM.
 
-## ACCEPTED DESIGN, IMPLEMENTATION PLANNED: expert team
+## ACCEPTED v2 DESIGN, NOT IMPLEMENTED: lead agent and scouts
 
 ```mermaid
 flowchart TD
-    O[Future controller] --> D[Data expert: loader and short dataset checks]
-    O --> L[Literature expert: read/search only, no shell or writes]
-    O --> M[Modelling expert: pipeline and harness trial requests]
-    O --> V[Validation expert: checks on immutable trial source]
-    D --> WS[One versioned solutions checkout and one sandbox]
-    M --> WS
-    V --> WS
-    L -. findings .-> J[Append-only findings with evidence links]
-    WS --> J
-    M --> TR[Existing harness-owned trials and promotion]
-    TR --> SC[Sealed confirmation: controller only]
-    SC --> O
-    TR --> RF[Terminal refit and hand-over]
-    RULE[At most one code-writing expert active; literature may overlap] -. scheduling constraint .-> O
+    H[Harness: prepare task data and persistent split once per task] --> L[Lead agent: drives the run, budget in tool calls]
+    L -->|blocking call, focused question| S{Scouts}
+    S --> SD[Data scout]
+    S --> SI[Ideas scout: read-only, web search]
+    S --> SV[Validation scout: checks on trial snapshot]
+    SD -. bullets with sources .-> L
+    SI -. bullets with sources .-> L
+    SV -. ok / fix / advice .-> L
+    S -. bullets .-> J[Findings journal]
+    L --> WS[Shared solutions tree]
+    L --> SM[trial_smoke: cheap checks, no trial charged]
+    SM --> T[Harness trial on shared folds]
+    T -. folds, noise verdict, Ladder holdout verdict .-> L
+    SUP[Global supervision: wake on news, machine-protection stop] -. observes .-> T
+    SUP -. observes agent shell calls .-> L
+    L -->|hand_over| HV[Validation scout once on champion snapshot]
+    HV --> RF[Terminal refit including withheld rows]
+    B[Budget end without hand-over] --> RF
 ```
 
-This is [expert-team.md](../harness/finetuned/docs/expert-team.md), **not registered runtime**. P6 foundations precede P7a/P7b; P7c adds clustering verification and label-free hand-over. Proposed task-level sealed split persistence, source-bound executable validation and findings provenance address gaps identified above. Literature may overlap one writer, but parallel heavy computation is restrained by local RAM/cores even when remote model throughput improves. [ADR 006](adr/006-shared-expert-workspace.md) records the accepted choice.
+This is [expert-team-v2.md](../harness/finetuned/docs/expert-team-v2.md) sections 2–6, **not current runtime**. There is no LLM orchestrator and no fixed stage order; the lead decides when to call scouts, start trials and hand over. Labels of withheld rows are never shown; on a new champion the lead hears only a rounded Ladder verdict. P6 foundations come first, then P7a (lead and scouts) and P7b (harness services), then the integration gate and P7c. Contracts kept from the first design are in [expert-team.md](../harness/finetuned/docs/expert-team.md). [ADR 007](adr/007-lead-and-scouts.md) records the decision.

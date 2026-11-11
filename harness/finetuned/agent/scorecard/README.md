@@ -1,7 +1,9 @@
 # Scorecard
 
+> Superseded by [expert-team-v2.md](../../docs/expert-team-v2.md) section 11 (integration gate) when P6/P7 land. The seven indicators below still describe the current scorecard.
+
 Reads one finished (or dead) finetuned run and prints its plain numbers and the
-seven indicators of [a good spam1 run](../../../../docs/redesign-plan.md#what-a-good-spam1-run-looks-like),
+seven indicators of a good spam1 run,
 each **pass**, **fail** or **not measurable yet** (with the missing fact and the
 smallest hook that would record it). Two runs are also compared for indicator 7.
 
@@ -20,7 +22,7 @@ disabled; a test checks that the runs directory is unchanged afterwards.
 
 | File | Role |
 | --- | --- |
-| `layout.ts` | **Every folder, file and stage name the scorecard assumes.** Change this when the workspace changes (P6/P7: one `solutions/` workspace, four experts). |
+| `layout.ts` | **Every folder, file and stage name the scorecard assumes.** Change this when the workspace changes (P6/P7: one `solutions/` workspace, lead agent and scouts). |
 | `facts.ts` | Reads a run: `state.json` (journal, works, counters), trial folders, champion tag, sealed check, hand-over, reports, knowledge notes, memory records. |
 | `code.ts` | Census of agent-written Python and the data-loading heuristic. |
 | `indicators.ts` | The seven indicators against `targets/<task>.json`. |

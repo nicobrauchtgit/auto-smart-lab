@@ -1,5 +1,7 @@
 # Goal-directed orchestration
 
+> Superseded by [expert-team-v2.md](../../docs/expert-team-v2.md) sections 2 and 5 when P6/P7 land: the LLM orchestrator is retired in P7b and the lead agent drives the run; durable state and budget-end hand-over stay. Accurate for the current code until then.
+
 `npm run orchestrate -- unit 1 task 1 --goal 1` resolves the canonical task and
 starts a Pi decision agent. It selects actions; no configured stage chain is
 run under an orchestrator label. Enable/disable available modules in
@@ -20,6 +22,17 @@ access uses the existing tiny explicit provider probe.
 remaining budgets. Configuration/task changes refuse effects; restart with a new
 run for changed configuration. A resume cannot increase the cap, change the goal,
 or turn submission on/off. All counters and the wall deadline survive restart.
+
+For an operator recovery after an infrastructure fault, the standalone host CLI
+also accepts `./dev bun run orchestrate -- <task> --resume <run-id>
+--resume-solve <invocation-id>`. Stop and settle the old process tree first.
+This restarts one unfinished solve with the same invocation ID, typed inputs,
+guidance, trial allocation, counters and original deadline; it starts a new
+physical agent session and does not restore its in-memory conversation. It is
+bounded to two operator continuations per invocation in the durable journal,
+requires whole-chain setup before launch, and refuses completed work, a live
+in-process handle or an expired deadline. Ordinary `--resume` keeps its existing
+interruption behavior. The option is not exposed to decision-agent tools.
 
 The coordinator stores checksummed `state.json` at
 `runs/<task>/pipeline/<run-id>/`. Its append-only journal is inside the same atomic,

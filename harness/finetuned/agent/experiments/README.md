@@ -1,8 +1,12 @@
 # Experiment supervision
 
-Optional module. Nothing in the registered pipeline receives these tools yet.
-A caller opts in by creating a scope, binding the observed session, and
-attaching the tools to it.
+The registered solve stage uses this module: `agent/training/index.ts` creates
+its scope with `createExperiments`, solve exposes the training versions of the
+`experiment_*` tools (`agent/training/tools.ts`), and refit starts workers
+through `ExperimentSupervisor` (`agent/refit/service.ts`). The generic tools in
+`tools.ts` remain opt-in for other callers. Agent shell commands are not
+observed by it; v2 plans that in its global supervision
+([expert-team-v2.md section 6](../../docs/expert-team-v2.md#6-global-supervision-of-tool-calls-and-trials)).
 
 The design is [experiment-supervision.md](../../docs/experiment-supervision.md);
 the measurements behind its numbers are in
@@ -31,7 +35,7 @@ change that.
 | File | What it does |
 | --- | --- |
 | `supervisor.ts` | Detached start, line drain to `runs/<task>/experiments/<id>/output.log`, sampling loop, process-group stop |
-| `sampler.ts` | CPU and RSS for a process group through libproc |
+| `sampler.ts` | CPU and RSS for a process group through libproc; Darwin only, returns no samples on Linux (`sampler.ts:31`) |
 | `updates.ts` | When to wake the agent, and the coalescer that bounds how often |
 | `tools.ts` | `experiment_start`, `experiment_status`, `experiment_output`, `experiment_stop` |
 | `index.ts` | The opt-in scope, and the single delivery channel |
@@ -92,7 +96,7 @@ telemetry rules out hangs; only the loss or validation series rules out waste.
 ```
 
 Every test spawns real processes and no test calls a model. The paid live check
-described in the [build prompt](../../docs/supervisor-build-prompt.md) -- the
+planned for the supervisor -- the
 agent stopping a fit on its own evidence, a fit surviving a model turn and a
 compaction, and trial results failing to promote a champion -- is not written
 yet. Until it has run against both corpora, treat the transport as tested and

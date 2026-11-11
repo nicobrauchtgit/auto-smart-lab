@@ -178,8 +178,7 @@ usefulness and concision still need evaluation against fixed tasks.
 The original JSONL and failed summary remain untouched. An offline review of
 that trace passes the corrected transport checks; its 776-byte reply is not
 truncated but repeats the marker. No corrected live rerun has occurred. See
-[the handover](../../docs/HANDOVER.md#live-smoke-evidence) for evidence paths and
-identities, and [telemetry operations](../../docs/telemetry.md) for SQL/API checks.
+[telemetry operations](../../docs/telemetry.md) for SQL/API checks.
 
 Shared logical sessions now support context handovers and session replacement;
 see [Smart context sessions](../context/README.md). Durable workflow recovery

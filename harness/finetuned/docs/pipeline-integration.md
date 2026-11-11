@@ -1,5 +1,7 @@
 # Pipeline integration and observability
 
+> Superseded by [expert-team-v2.md](expert-team-v2.md) sections 2 and 8 when P6/P7 land (the stage chain and orchestrator are retired in P7b). Accurate for the current code until then.
+
 Updated 2026-10-09. Research, solve, advisory evaluation, terminal refit and
 policy-controlled submission are registered. Langfuse Cloud replaces the custom
 trace stack; JSONL is an emergency fallback. See [telemetry.md](telemetry.md).
@@ -34,7 +36,7 @@ non-zero when it does not.
 | `agent/solve/workspace.ts` | Run workspace preparation and dev/sealed label split |
 | `agent/solve/results.ts` | Typed access to one iteration's measurements |
 | `agent/solve/iteration.py` | Recomputes every reported number and emits the signal |
-| `agent/solve/canary.py` | Filename-leakage canary |
+| `agent/solve/canary.py` | Filename-leakage canary; dropped 2026-11-11, removal in P6 |
 | `agent/solve/champion.py` | Champion re-run under the challenger's folds |
 | `agent/libs/smartlab-eval/` | Corpus loader and measurement library, installed into the venv |
 | `agent/observability.ts` | Pi event and final-request observer |
@@ -179,8 +181,6 @@ The training ownership contract is defined in
 solve stage now uses the agent-driven harness path: the agent authors a pipeline
 and deliberately requests trials, while the harness owns fold materialization,
 fitting, predictions, measurements, process control, and promotion evidence.
-See the [integration plan](agent-driven-harness-integration.md) for its boundary
-and remaining milestones.
 
 The material below describes the retained pre-migration result format. It is
 historical compatibility documentation only: the registered solve stage no
@@ -262,26 +262,13 @@ it is re-run in a separate interpreter. Loading both in one process would hand
 the second import Python's cached copy of the first and silently compare the
 challenger with itself.
 
-### The leakage canary
+### The leakage canary (dropped)
 
-Training filenames end in `.0`/`.1` and encode the label; test files end in `.x`.
-The canary fits the agent's pipeline twice on identical text, once with real ids
-and once with ids rewritten to the neutral form, and requires identical output.
+Training member names end in their label; test members end in `.x`. By
+decision of 2026-11-11 this is a stated task fact, not a leak, and the
+filename-leakage canary is dropped ([v2 section 9](expert-team-v2.md#9-datasets-and-the-interface)).
+The current code still runs it (`agent/solve/canary.py`) until P6 removes it;
 
-It compares `predict_proba` or `decision_function` rather than predicted labels.
-Comparing labels only detects a leak that flips a decision; where the text alone
-already separates the classes a pipeline can read the filename and still predict
-identically, and the leak stays invisible until the test set. This is the one
-check the stage gates on, because a failure invalidates every other number.
-
-A failure is not automatically a leak. Before it can compare anything the canary
-has to load the declared entrypoint and re-fit the pipeline, and either can fail
-on its own, so `CanaryResult` reports a `kind`: `id_dependence`,
-`entrypoint_failed`, `fit_failed`, or `sample_unusable`. Only the first is
-evidence about the model. The guidance the agent receives branches on the kind,
-because telling it to remove whatever reads the id when its module path was
-wrong sends it hunting a leak that does not exist. Promotion is blocked for
-every kind, since an unverified pipeline is not a verified one.
 
 ### Trace shape
 
@@ -367,7 +354,7 @@ Before the research agent starts, the harness profiles the declared data
 `data_profile` supplied input). The agent then writes a short solution brief:
 one recommended pipeline, a few alternates and atomic next improvements, with
 sources the validator resolves. See [research workflow](../agent/research/README.md)
-and [the redesign decisions](research-redesign.md).
+and [expert-team-v2.md](expert-team-v2.md).
 
 ### Training restart recovery
 

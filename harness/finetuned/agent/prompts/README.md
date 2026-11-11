@@ -1,5 +1,7 @@
 # Pipeline prompts
 
+> Superseded by [expert-team-v2.md](../../docs/expert-team-v2.md) section 11 (P7a: lead and scout prompts in `agent/prompts/team/`) when P6/P7 land. The loading, snapshot and provenance rules below stay.
+
 The repository-maintained knowledge skills live under `knowledge/*/SKILL.md`.
 `knowledge.task` and `knowledge.refresh` are explicitly selected runtime snapshot
 resources, with `knowledge.tool` supplying their controlled tool description.

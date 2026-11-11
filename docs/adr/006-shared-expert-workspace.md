@@ -4,7 +4,13 @@
 
 ## Status
 
-Accepted design; implementation planned in P6/P7. The four experts are not current runtime.
+Superseded on 2026-11-11 by [ADR 007](007-lead-and-scouts.md). The four
+experts and their scheduling rules (at most one code writer, literature
+overlapping) were never implemented and are dropped. Kept from this record:
+one versioned solutions tree shared by all agents, follow-up branches from the
+champion, immutable trial snapshots as the basis of validation, and the
+append-only findings journal; their contracts are in
+[expert-team.md](../../harness/finetuned/docs/expert-team.md).
 
 ## Context
 
@@ -24,7 +30,7 @@ The chosen policy limits apparent parallelism but makes code ownership understan
 
 ## Code and contracts
 
-[Expert-team design](../../harness/finetuned/docs/expert-team.md), [current stage registry](../../harness/finetuned/agent/pipeline/registry.ts), [follow-up branches](../../harness/finetuned/agent/training/branches.ts).
+[contract appendix](../../harness/finetuned/docs/expert-team.md), [current stage registry](../../harness/finetuned/agent/pipeline/registry.ts), [follow-up branches](../../harness/finetuned/agent/training/branches.ts).
 
 ## Revisit triggers
 

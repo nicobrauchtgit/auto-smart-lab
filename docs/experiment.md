@@ -1,5 +1,7 @@
 # The experiment: minimal agent vs. task-adapted harness
 
+> The finetuned arm's design is superseded by [expert-team-v2.md](../harness/finetuned/docs/expert-team-v2.md) when P6/P7 land (one lead agent with scouts instead of the orchestrator and stage chain). This page describes the current code.
+
 **Question:** on the SmartLab tasks, which performs better: a single minimal agent
 that is simply run, or a more complex harness adapted to the task?
 
@@ -89,6 +91,7 @@ These are part of what is compared. Do not equalize them; report them with resul
 | | Minimal | Finetuned |
 | --- | --- | --- |
 | Instructions | Environment and protocol facts only, no coaching | Authored prompts per stage, with coaching |
+| Course slides | Same PDFs/text copies in a read-only snapshot; `read_challenge` lists paths and hashes | User-supplied spam slides from `resources/01-spam/`, supplied to research as read-only files with text copies and input hashes |
 | Stages | One solver session, then a deterministic check | An orchestrator agent picks the stages: research, solve, a code and evidence review, up to three follow-up rounds, then one refit as the hand-over (online: up to three submissions with score feedback) |
 | Who trains | The agent runs its own code | The harness runs the agent's pipeline and owns folds, seeds and promotion |
 | Labels | All labels visible to the agent | A sealed split stays hidden until the terminal refit |

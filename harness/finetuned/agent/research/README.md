@@ -1,10 +1,21 @@
 # Research: data profile and solution brief
 
+> Superseded by [expert-team-v2.md](../../docs/expert-team-v2.md) section 3 when P6/P7 land: the research stage, its brief and `check_brief` are replaced by data and ideas scouts that return bullets. Accurate for the current code until then.
+
 Research turns a task and its data into a short **solution brief**: one
 recommended scikit-learn pipeline tailored to the dataset, at most a few ranked
 alternates, and a few atomic next improvements. Solve starts from the
 recommendation, and harness hold-out measurements decide what wins. The reasons
-for this design are in [research-redesign.md](../../docs/research-redesign.md).
+for this design were recorded in the 2026-11 research redesign, superseded by
+[expert-team-v2.md](../../docs/expert-team-v2.md).
+
+Course material under the repository's `resources/<unit>/` is declared in a
+checksummed manifest, validated by the `course-resources` preflight and copied
+into read-only `resources/` in the research workspace. `context.json.resources`
+and stage input records identify every supplied file. The spam unit includes
+the user-supplied exercise and performance-measure slides, with page-labelled
+text copies. Course citations support methods/context, never measured dataset
+facts. See [the resource guide](../../../../resources/README.md).
 
 ## 1. Harness data profile
 
