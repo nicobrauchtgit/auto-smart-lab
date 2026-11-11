@@ -604,6 +604,13 @@ export class TrainingService {
 		return { experimentId: message.experimentId, commit: tag.commit, pipeline: message.pipeline };
 	}
 
+    async workspaceCheck() {
+        if (!this.options.solutionsRoot) throw new Error("Workspace checks require the shared solutions repository");
+        const { checkWorkspace } = await import("../solve/workspace_check.js");
+        return checkWorkspace(this.options.solutionsRoot, this.options.taskId);
+    }
+    get taskKind() { return this.options.measurement?.kind; }
+
     /** Cheap explicit execution; never reserves a trial or consumes its budget. */
     async smoke(raw: unknown): Promise<{ passed: boolean; budgetConsumed: false; issues: unknown[] }> {
         const parsed = validateExperimentRequest(raw);
@@ -618,10 +625,13 @@ export class TrainingService {
         const worktree = join(sourceRoot, relative(this.options.projectRoot, this.options.solutionsRoot));
         addWorktree(this.options.solutionsRoot, worktree, checked.source.commit);
         try {
+            const { readTaskData } = await import("../solve/task_data.js");
+            const { repoRootOf } = await import("../paths.js");
+            const data = readTaskData(this.options.taskId, repoRootOf(this.options.solutionsRoot));
             const scriptPath = join(PYTHON_ROOT, "smoke.py");
             const issues = await runPipelineValidation({ pythonExecutable: this.options.pythonExecutable, scriptPath,
                 command: this.options.sandboxCommand?.([this.options.pythonExecutable, scriptPath], { directory, sourceRoots: [sourceRoot] }),
-                sourceRoot, request: parsed.request, measurement: this.checkMeasurement(), env: this.options.env,
+                sourceRoot, request: parsed.request, measurement: this.checkMeasurement(), testZip: data?.testZip, sampleSource: data?.configuration.samples.source, env: this.options.env,
                 cwd: this.options.projectRoot, timeoutMs: this.settings.validationTimeoutSeconds * 1000 });
             this.options.record?.("training_smoke_completed", { passed: !issues.length, source: checked.source, budget_consumed: false });
             return { passed: !issues.length, budgetConsumed: false, issues };
@@ -867,7 +877,7 @@ export class TrainingService {
             });
             if (!root) return;
 			this.cleanupWorktrees(trial);
-			if (!trial.source || result?.status !== "completed" || result.promotionEligible !== true || trial.request.search) return;
+			if (!trial.source || result?.status !== "completed" || result.promotionEligible !== true) return;
 			const collection = await collectTrainingResults(this.options.trainingRoot);
 			const own = collection.trials.find((entry) => entry.experimentId === id);
 			if (!own?.eligible) return;
@@ -904,7 +914,7 @@ export class TrainingService {
 				adjustedRandIndex: selected.result?.metrics?.adjustedRandIndex,
 				measurement: selectedTrial.measurement ?? null,
 				selection: selected.result?.selection ?? null,
-				pipeline: selectedTrial.request.pipeline,
+				pipeline: selected.request!.pipeline,
 				cv: selectedTrial.request.cv,
 				subject: selectedTrial.source.subject,
 				trainingRoot: this.options.trainingRoot,

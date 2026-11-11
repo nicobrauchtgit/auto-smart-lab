@@ -504,10 +504,10 @@ async function collectTrial(directory: string, experimentId: string): Promise<Tr
 		}
 		await read("oof_runner_up.csv", "training_search_runner_up", true);
 	}
-	if (isSearch && result?.promotionEligible === true) {
-		error(errors, experimentId, "invalid_promotion_eligibility", "a search trial is never promotion-eligible", "trial-result.json");
+	if (isSearch && result?.promotionEligible === true && !isObject(result.winningPipeline)) {
+		error(errors, experimentId, "invalid_promotion_eligibility", "a measured search winner requires its fixed pipeline", "trial-result.json");
 	}
-	const completePromotion = !unlabelled && !isSearch && scope === "promotion"
+	const completePromotion = !unlabelled && scope === "promotion"
 		&& result?.scope === "promotion"
 		&& result.status === "completed"
 		&& nonNegativeInteger(requestedFolds)
@@ -520,6 +520,12 @@ async function collectTrial(directory: string, experimentId: string): Promise<Tr
 		error(errors, experimentId, "invalid_promotion_eligibility", "promotionEligible is true without a completed promotion and all requested folds", "trial-result.json");
 	}
 
+    if (isSearch && result?.promotionEligible === true && request) {
+        const report = JSON.parse(await readFile(join(directory, "search-report.json"), "utf8"));
+        const winning = report.nextStep?.confirmationRequest?.pipeline;
+        if (!winning || !sameJson(winning, result.winningPipeline) || report.proxyEvidence) error(errors, experimentId, "invalid_search_winner", "Search winner differs from the measured fixed pipeline", "search-report.json");
+        else request = { ...request, pipeline: winning };
+    }
 	const valid = errors.length === 0;
 	return {
 		experimentId,

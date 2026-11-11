@@ -20,7 +20,7 @@ def smoke(document):
     frame, targets, _ = load_samples(measurement)
     # Fixed, balanced small sample; no scoring evidence is returned.
     indices = []
-    if targets is not None:
+    if targets is not None and measurement['kind'] == 'classification':
         for value in sorted(set(targets), key=str):
             indices.extend([i for i, y in enumerate(targets) if y == value][:8])
     else:
@@ -29,9 +29,8 @@ def smoke(document):
     train.attrs.clear()
     test_zip = document.get('testZip')
     if test_zip:
-        with zipfile.ZipFile(test_zip) as archive:
-            names = sorted(x.filename for x in archive.infolist() if not x.is_dir())[:8]
-        test = pd.DataFrame([dict(id=name, input=dict(archive=test_zip, member=name)) for name in names])
+        from task_samples import sample_descriptors
+        test = pd.DataFrame(sample_descriptors(test_zip, document.get('sampleSource') or 'zip_members')[:8])
     else:
         test = frame.iloc[:min(8, len(frame))].copy()
     test.attrs.clear()

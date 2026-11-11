@@ -233,6 +233,15 @@ def _summarise(invocation: Invocation, folds: Sequence[ConcreteFold], completed:
     return summary
 
 
+def _fold_worker_init(cores, workers):
+    import os
+    import multiprocessing
+    if cores and hasattr(os, "sched_setaffinity"):
+        identity = multiprocessing.current_process()._identity
+        slot = (identity[-1] - 1) % workers
+        os.sched_setaffinity(0, cores[slot::workers])
+
+
 def _observed_fold(invocation, factory, fold, frame, y, ids):
     events = EventWriter(invocation.output_dir, invocation.experiment_id)
     events.emit("fold_started", repeat=fold.repeat, fold=fold.fold, trainRows=len(fold.train), validationRows=len(fold.validation))
@@ -295,7 +304,14 @@ def execute(document: dict[str, Any]) -> dict[str, Any]:
             outputs = write_search_outputs(invocation, output_dir, outcome, manifest, dict(zip(ids, y)) if y is not None else {}, champion)
             summary = _summarise(invocation, folds, best.folds if best else [], best.oof if best else [],
                                  ids, y, manifest, started, bool(outcome["stopReason"]))
-            summary["promotionEligible"] = False
+            summary["promotionEligible"] = bool(best and best.status == "completed" and invocation.scope.kind == "promotion" and not invocation.search.objective and not outcome["stopReason"] and len(best.folds) == len(folds) and summary.get("metrics"))
+            if summary["promotionEligible"]:
+                from smartlab_trial.search import confirmation_request
+                summary["winningPipeline"] = confirmation_request(invocation, best)["pipeline"]
+                save_checkpoint(output_dir / "single-checkpoint.json", {"experimentId": invocation.experiment_id, "manifestSha256": manifest["sha256"], "completed": best.folds, "oof": best.oof})
+                if champion:
+                    from smartlab_trial.champion import compare
+                    summary["championComparison"] = compare(best.folds, best.oof, champion, dict(zip(ids, y)) if y is not None else {}, output_dir, task_kind=task_kind)
             if not outcome["stopReason"]:
                 summary["status"] = "completed" if best else "failed"
             summary["search"] = {**outputs["report"]["configs"], "bestConfigId": best.config_id if best else None,
@@ -305,7 +321,7 @@ def execute(document: dict[str, Any]) -> dict[str, Any]:
             if outcome["guard"]:
                 summary["runtimeGuard"] = outcome["guard"]
             write_summary(output_dir, summary)
-        events.emit("trial_finished", status=summary["status"], promotionEligible=False,
+        events.emit("trial_finished", status=summary["status"], promotionEligible=summary["promotionEligible"],
                     completedFolds=summary["completedFolds"], requestedFolds=len(folds), metrics=summary["metrics"])
         return summary
     checkpoint = output_dir / "single-checkpoint.json"
@@ -322,11 +338,12 @@ def execute(document: dict[str, Any]) -> dict[str, Any]:
     from joblib import Parallel, delayed, parallel_config
     import os
     pending = folds[len(completed):]
-    workers = min(len(pending) or 1, len(os.sched_getaffinity(0)) if hasattr(os, 'sched_getaffinity') else (os.cpu_count() or 1), 2)
+    cores = tuple(sorted(os.sched_getaffinity(0))) if hasattr(os, "sched_getaffinity") else ()
+    workers = min(len(pending) or 1, len(cores) or (os.cpu_count() or 1), 2)
     # Ordered consumption preserves the atomic prefix checkpoint used for recovery.
     # BLAS/OpenMP threads are bounded inside each child, avoiding nested oversubscription.
     with parallel_config(backend="loky", inner_max_num_threads=1):
-      results = Parallel(n_jobs=workers, return_as="generator", pre_dispatch=workers)(
+      results = Parallel(n_jobs=workers, return_as="generator", pre_dispatch=workers, initializer=_fold_worker_init, initargs=(cores, workers))(
           delayed(_observed_fold)(invocation, pipeline_factory, fold, frame, y, ids) for fold in pending)
       for fold, (result, rows) in zip(pending, results):
         if _stop_requested:

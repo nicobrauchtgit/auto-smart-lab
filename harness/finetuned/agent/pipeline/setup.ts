@@ -162,6 +162,12 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
    const result = spawnSync(python, [join(ARM_ROOT, "agent/training/python/check_measurement.py"), "--check-imports"], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });
    if (result.error || result.status !== 0) throw new Error("Imports failed");
   });
+  add("training-trial-services", "local", "Run ./dev setup and restore smoke.py, solve/workspace_check.py and trial source services; parallel folds require joblib.", () => {
+   for (const name of ["training/python/smoke.py", "solve/workspace_check.py", "training/trial_source.ts"]) readable(join(ARM_ROOT, "agent", name));
+   const python = options.executables?.python ?? readPythonEnvironment().executable;
+   const result = spawnSync(python, ["-c", "import ast, zipfile, numpy, pandas, joblib; from joblib import Parallel, parallel_config"], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });
+   if (result.error || result.status !== 0) throw new Error("Trial services Python prerequisites unavailable");
+  });
   add("training-optuna", "local", "Run ./dev setup; optuna is a declared dependency used for harness-owned hyperparameter search.", () => {
    const python = options.executables?.python ?? readPythonEnvironment().executable;
    const result = spawnSync(python, ["-c", "import optuna\nfrom optuna.storages.journal import JournalFileBackend"], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });

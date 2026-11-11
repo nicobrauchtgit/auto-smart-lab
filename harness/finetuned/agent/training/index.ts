@@ -76,7 +76,7 @@ export function createHarnessTraining(options: HarnessTrainingOptions) {
 		lockPath: options.lockPath,
 	});
 	const tools = createHarnessTrainingTools(service, processScope.supervisor, options.prompts);
-	const toolPrompts = (["training.start-tool", "training.status-tool", "training.output-tool", "training.stop-tool",
+	const toolPrompts = ([service.taskKind ? `training.start-${service.taskKind}` as const : "training.start-tool", "training.smoke-tool", "training.workspace-check-tool", "training.status-tool", "training.output-tool", "training.stop-tool",
 		"training.search-caveats", "training.runtime-guard", "training.resume-tool"] as const)
 		.map((id) => options.prompts.render(id, {}).reference);
 	const trainingService = service;

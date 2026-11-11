@@ -90,9 +90,9 @@ unit, and every configuration shares one persisted fold manifest.
 
 Read search-report.json after the run: leaderboard, parameter importance and
 effects, paired differences, progress, cost, caveats, and the exact confirmation
-request. A search is never promotion-eligible, including promotion scope.
-Start the report's fixed-parameter confirmation request to validate the winner
-on fresh folds. The champion is rerun from its frozen commit on those folds.
+request. A completed promotion-scope search winner counts once measured on the shared
+folds; no extra confirmation trial is required. The harness freezes its winning
+factory and estimator parameters. The champion is rerun from its frozen commit on those folds.
 A challenger replaces the champion only when its paired lead on those folds
 exceeds fold noise (more than 2 standard errors of the per-fold differences).
 
