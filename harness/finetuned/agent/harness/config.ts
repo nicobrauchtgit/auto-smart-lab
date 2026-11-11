@@ -31,7 +31,16 @@ export type HarnessConfig = Omit<typeof document, "solve"> & {
 	solve: Omit<typeof document.solve, "foldPolicy"> & { foldPolicy: "auto" | { folds: number; repeats: number } };
 };
 export function parseHarnessConfig(raw: unknown): HarnessConfig {
-	const value = object(raw, ["version", ...Object.keys(fields), "foldRecommendations"], "harness");
+	const value = object(raw, ["version", ...Object.keys(fields), "foldRecommendations", "team"], "harness");
+	const team = object(value.team, ["lead", "scouts", "budgetCounter", "holdoutFeedback"], "team");
+	positive(object(team.lead, ["maxToolCalls"], "team.lead").maxToolCalls, "team.lead.maxToolCalls");
+	const scouts = object(team.scouts, ["data", "ideas", "validation"], "team.scouts");
+	for (const role of ["data", "ideas", "validation"]) {
+		const scout = object(scouts[role], role === "ideas" ? ["maxToolCalls", "webSearches"] : ["maxToolCalls"], `team.${role}`);
+		positive(scout.maxToolCalls, `team.${role}.maxToolCalls`);
+	}
+	positive(scouts.ideas.webSearches, "team.ideas.webSearches");
+	if (scouts.ideas.webSearches > 3 || team.budgetCounter !== "every_call" || team.holdoutFeedback !== "ladder") throw new Error("Invalid team policy");
 	if (value.version !== 1) throw new Error("Unsupported harness version");
 	for (const [section, keys] of Object.entries(fields)) {
 		const block = object(value[section], keys, section);

@@ -1,5 +1,14 @@
 /** Stable prompt IDs and their required string inputs. Prose belongs in files. */
 export const PROMPTS = {
+ "team.probe-question": { file: "team/probe-question.md", variables: [] },
+ "team.data": { file: "team/data.md", variables: ["taskId", "budget", "dataPaths"] },
+ "team.ideas": { file: "team/ideas.md", variables: ["taskId", "budget", "webSearches"] },
+ "team.validation": { file: "team/validation.md", variables: ["taskId", "budget"] },
+ "team.start": { file: "team/start.md", variables: ["task", "unitIntro", "question", "refs", "earlier"] },
+ "team.scout-tool": { file: "team/scout-tool.md", variables: [] },
+ "team.counter": { file: "team/counter.md", variables: ["used", "budget"] },
+ "team.finish": { file: "team/finish.md", variables: [] },
+ "team.empty": { file: "team/empty.md", variables: [] },
  "solve.follow-up": { file: "solve/follow-up.md", variables: ["branch", "champion", "previous"] },
  "shared.stage-guidance": { file: "shared/stage-guidance.md", variables: ["note"] },
  "shared.stage-feedback": { file: "shared/stage-feedback.md", variables: ["note"] },

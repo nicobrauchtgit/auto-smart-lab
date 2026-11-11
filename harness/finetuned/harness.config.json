@@ -72,6 +72,16 @@
     "maxConcurrent": 2,
     "stopGraceMs": 2000
   },
+  "team": {
+    "lead": { "maxToolCalls": 80 },
+    "scouts": {
+      "data": { "maxToolCalls": 15 },
+      "ideas": { "maxToolCalls": 10, "webSearches": 3 },
+      "validation": { "maxToolCalls": 10 }
+    },
+    "budgetCounter": "every_call",
+    "holdoutFeedback": "ladder"
+  },
   "subagents": {
     "turnTimeoutMs": 1800000,
     "waitTimeoutMs": 30000,

@@ -16,7 +16,7 @@ import type { Telemetry } from "../telemetry/runtime.js";
 import { ARM_ROOT, statePath } from "../paths.js";
 import { readCourseResources } from "../research/resources.js";
 
-export type SetupRequirement = "observability" | "model" | "python" | "task" | "training" | "refit" | "web-search" | "submission" | "submission-recovery" | "solve-isolation" | "confirmation" | "data-profile" | "course-resources";
+export type SetupRequirement = "scouts" | "observability" | "model" | "python" | "task" | "training" | "refit" | "web-search" | "submission" | "submission-recovery" | "solve-isolation" | "confirmation" | "data-profile" | "course-resources";
 export interface SetupCheck {
  id: string;
  phase: "local" | "remote";
@@ -103,6 +103,14 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
  const checks: SetupCheck[] = [];
  const add = (id: string, phase: SetupCheck["phase"], remedy: string, run: SetupCheck["run"]) => checks.push({ id, phase, remedy, run });
  const needs = new Set(requirements);
+ if (needs.has("scouts")) add("scout-prompts", "local", "Restore agent/prompts/team and a non-empty unit-intro.md; every scout requires task text and the unit introduction.", () => {
+  const task = resolveTask({taskId: options.taskId});
+  readable(join(dirname(task.taskDir), "unit-intro.md"));
+  options.prompts.render("team.data", {taskId: options.taskId, budget: "1", dataPaths: "preflight"});
+  options.prompts.render("team.ideas", {taskId: options.taskId, budget: "1", webSearches: "3"});
+  options.prompts.render("team.validation", {taskId: options.taskId, budget: "1"});
+  options.prompts.render("team.start", {task: "preflight", unitIntro: "preflight", question: "preflight", refs: "[]", earlier: "[]"});
+ });
  if (needs.has("observability")) {
   add("langfuse-configuration", "local", "Set LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY and the HTTPS LANGFUSE_BASE_URL in the project .env; run ./dev setup and make the emergency trace destination writable.", () => {
    if (!options.telemetry) throw new Error("Missing shared telemetry runtime");
