@@ -86,7 +86,8 @@ try {
  writeFileSync(join(workspace, "summary.json"), JSON.stringify(summary, null, 2) + "\n");
  trace.event("pipeline_run_end", {outcome: "success", summary});
  console.log(`[scout] done ${JSON.stringify(summary)}`);
-} catch (error) {
+} catch {
  trace.event("pipeline_run_end", {outcome: "failure"});
- throw error;
+ console.error("[scout] failed; inspect setup results and the shared trace");
+ process.exitCode = 1;
 } finally {await trace.close();}

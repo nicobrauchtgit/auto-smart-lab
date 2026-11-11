@@ -36,7 +36,7 @@ export function bulletRefs(text: string): FindingRef[] {
 }
 export function finalBullets(text: string, fallback: string): string[] {
  const bullets = text.split("\n").filter(line => /^\s*[-*]\s+/.test(line)).map(line => line.replace(/^\s*[-*]\s+/, "").trim()).filter(Boolean);
- return bullets.length ? bullets.map(line => `- ${line.slice(0, 798)}`) : [fallback.trim()];
+ return bullets.length ? bullets.map(line => `- ${line}`) : [fallback.trim()];
 }
 
 export function createScouts(options: ScoutsOptions) {
@@ -63,7 +63,7 @@ export function createScouts(options: ScoutsOptions) {
    const bullets = finalBullets(text, options.prompts.render("team.empty", {}).text);
    await appendFindings(options.journalPath, bullets.map(bullet => ({
     kind: role === "ideas" ? "idea" as const : role === "validation" ? (/^-\s*fix\b/i.test(bullet) && request.refs?.some(ref => "experiment" in ref || "check" in ref) ? "defect" as const : "decision" as const) : "fact" as const,
-    author: { role, invocationId: options.invocationId, runId: options.runId }, title: bullet.slice(2, 102), text: bullet.slice(2),
+    author: { role, invocationId: options.invocationId, runId: options.runId }, title: bullet.slice(2, 102), text: bullet.slice(2, 802),
     refs: [...(request.refs ?? []), ...bulletRefs(bullet)], datasetSha256: options.datasetSha256,
    })), signal);
    output.push(...bullets);

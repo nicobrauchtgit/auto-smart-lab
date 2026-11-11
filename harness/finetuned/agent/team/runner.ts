@@ -55,6 +55,7 @@ export function createScoutRunner(options: {
   const child = await factory({logicalAgentId: randomUUID(), parentAgentRunId: (typeof options.parentAgentRunId === "function" ? options.parentAgentRunId() : options.parentAgentRunId) ?? options.observe.identity.stageInvocationId ?? "scout-probe", spawnToolCallId: input.toolCallId}, signal);
   let outcome = "failure";
   try { const output = await child.prompt(input.opening); outcome = "success"; return output; }
+  catch {signal.throwIfAborted(); throw new Error("Scout session failed; inspect its observed run");}
   finally {
    try {await child.close();} finally {options.record("scout_session_end", {role: input.role, used: input.budget.used, blocked: input.budget.blocked, outcome});}
   }

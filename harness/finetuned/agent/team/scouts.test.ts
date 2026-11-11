@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadPromptSnapshot } from "../prompts/loader.js";
 import { ScoutBudget } from "./budget.js";
-import { createScouts } from "./scouts.js";
+import { createScouts, finalBullets, bulletRefs } from "./scouts.js";
 import { appendFindings, readFindings } from "./journal.js";
 import { parseHarnessConfig, HARNESS_CONFIG } from "../harness/config.js";
 const prompts = loadPromptSnapshot();
@@ -209,4 +209,12 @@ test("changed check hashes are stale without rewriting the original finding", as
  writeFileSync(check, "changed");
  expect((await api.status("task")).staleRefs.length).toBe(1);
  expect((await api.read("task")).entries[0]).toEqual(entry);
+});
+
+
+test("long final bullets retain their trailing evidence links", () => {
+ const source = "https://example.org/evidence";
+ const bullet = finalBullets("- " + "observation ".repeat(90) + source, "- none")[0];
+ expect(bullet).toEndWith(source);
+ expect(bulletRefs(bullet)).toContainEqual({url: source});
 });
