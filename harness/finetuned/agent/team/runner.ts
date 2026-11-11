@@ -5,6 +5,7 @@ import { mkdirSync } from "node:fs";
 import { isolatedSolveTools, sandboxPolicy, type SolveSandbox } from "../run/solve_sandbox.js";
 import type { AgentObservation } from "../observability.js";
 import type { PromptSnapshot } from "../prompts/loader.js";
+import type { ScoutRole } from "./contracts.js";
 import type { ScoutSessionInput } from "./scouts.js";
 import { scoutRequirements } from "./setup.js";
 import { SetupSession, setupChecks } from "../pipeline/setup.js";
@@ -22,14 +23,18 @@ export function createScoutRunner(options: {
  record(event: string, payload: Record<string, unknown>): void;
  /** Controller supplies permitted development inputs only; never withheld targets. */
  sandbox: SolveSandbox; researchRoot: string; observe: AgentObservation;
- parentAgentRunId?: string;
+ parentAgentRunId?: string | (() => string);
 }) {
  const setup = new SetupSession();
- return async (input: ScoutSessionInput): Promise<string> => {
+ const prepare = async (roles: readonly ScoutRole[], signal = new AbortController().signal) => {
+  if (roles.includes("validation")) throw new Error("Stream B snapshot check adapter not integrated");
+  await setup.check(setupChecks([...new Set(roles.flatMap(scoutRequirements))], {taskId: options.taskId, taskConfiguration: options.taskConfiguration,
+   prompts: options.prompts, telemetry: options.telemetry}), signal, options.record);
+ };
+ const run = async (input: ScoutSessionInput): Promise<string> => {
   if (input.role === "validation") throw new Error("Stream B snapshot check adapter not integrated");
   const signal = input.signal ?? new AbortController().signal;
-  await setup.check(setupChecks(scoutRequirements(input.role), {taskId: options.taskId, taskConfiguration: options.taskConfiguration,
-   prompts: options.prompts, telemetry: options.telemetry}), signal, options.record);
+  await prepare([input.role], signal);
   const research = resolve(options.researchRoot);
   if (research !== resolve(options.sandbox.cwd, "research")) throw new Error("Scout workspace must have its own research/ folder");
   mkdirSync(research, {recursive: true});
@@ -44,13 +49,14 @@ export function createScoutRunner(options: {
   const factory = createPiChildFactory({cwd: sandbox.cwd, agentDir: pipeline.agentDir, ...model, prompts: options.prompts,
    sharedInstructions: [python.prompt], childInstructions: input.system, inputs: [python.input], env: {...process.env, ...python.env},
    tools: tools.map(tool => tool.name), customTools: tools, extensionFactories: [input.budget.extension()],
-   observe: options.observe, turnTimeoutMs: HARNESS_CONFIG.session.maxWallMs});
+   observe: options.observe, turnTimeoutMs: null});
   options.record("scout_session_start", {role: input.role, budget: input.budget.limit});
-  const child = await factory({logicalAgentId: randomUUID(), parentAgentRunId: options.parentAgentRunId ?? options.observe.identity.stageInvocationId ?? "scout-probe", spawnToolCallId: randomUUID()}, signal);
+  const child = await factory({logicalAgentId: randomUUID(), parentAgentRunId: (typeof options.parentAgentRunId === "function" ? options.parentAgentRunId() : options.parentAgentRunId) ?? options.observe.identity.stageInvocationId ?? "scout-probe", spawnToolCallId: input.toolCallId}, signal);
   let outcome = "failure";
   try { const output = await child.prompt(input.opening); outcome = "success"; return output; }
   finally {
    try {await child.close();} finally {options.record("scout_session_end", {role: input.role, used: input.budget.used, blocked: input.budget.blocked, outcome});}
   }
  };
+ return Object.assign(run, {prepare});
 }

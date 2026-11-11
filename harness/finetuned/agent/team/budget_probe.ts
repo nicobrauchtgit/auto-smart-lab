@@ -72,7 +72,7 @@ try {
   taskId, taskConfiguration: configuration, telemetry: trace.telemetry, record: reporter.event});
  const scope = createScouts({prompts, taskId, task: prompt, unitIntro: readFileSync(unitIntro, "utf8"), dataPaths,
   journalPath: join(workspace, "findings/journal.jsonl"), datasetSha256: context.dataset.snapshot_sha256,
-  runId, invocationId, budgets: {[role]: budget},
+  runId, invocationId, prepare: backend.prepare, budgets: {[role]: budget},
   async run(input) {
    reporter.input({kind: "scout_request", version: 1, delivery: "initial_prompt", status: "available",
     role, budget, dataset_sha256: context.dataset.snapshot_sha256});

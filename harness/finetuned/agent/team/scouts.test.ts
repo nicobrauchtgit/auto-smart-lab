@@ -19,8 +19,9 @@ test("hard call cap includes failed calls; every result has counter and last cal
 });
 test("blocking boundary returns only final bullets and repeat gets journal, task and unit", async () => {
  let calls = 0;
- const scope = createScouts({ prompts, taskId: "fixture", task: "TASK TEXT", unitIntro: "UNIT INTRO", dataPaths: "dev.zip", journalPath: path(), datasetSha256: "dataset", runId: "run", invocationId: "invoke",
+ const scope = createScouts({ prepare: async () => {}, prompts, taskId: "fixture", task: "TASK TEXT", unitIntro: "UNIT INTRO", dataPaths: "dev.zip", journalPath: path(), datasetSha256: "dataset", runId: "run", invocationId: "invoke",
   async run(input) {
+   expect(input.toolCallId).toBe("call");
    expect(input.opening.text).toContain("TASK TEXT"); expect(input.opening.text).toContain("UNIT INTRO");
    if (calls++) expect(input.opening.text).toContain("sourced observation");
    return "Private preamble\n- sourced observation (profile.count)\nPrivate transcript";
@@ -30,7 +31,7 @@ test("blocking boundary returns only final bullets and repeat gets journal, task
  expect(JSON.stringify(result)).toContain("sourced observation"); expect(calls).toBe(2);
 });
 test("empty response always yields a factual bullet and validation fails closed", async () => {
- const scope = createScouts({ prompts, taskId: "fixture", task: "task", unitIntro: "intro", dataPaths: "dev", journalPath: path(), datasetSha256: "dataset", runId: "run", invocationId: "invoke", run: async () => "" });
+ const scope = createScouts({ prepare: async () => {}, prompts, taskId: "fixture", task: "task", unitIntro: "intro", dataPaths: "dev", journalPath: path(), datasetSha256: "dataset", runId: "run", invocationId: "invoke", run: async () => "" });
  expect(await scope.scout({role: "data", question: "inspect"})).toStartWith("- advice:");
  await expect(scope.scout({role: "validation", question: "check"})).rejects.toThrow("snapshot/check adapter");
 });
@@ -143,7 +144,7 @@ test("search budgets and logs are session-local, cap network calls and sanitize 
  const { scoutSearch } = await import("./search.js");
  const original = globalThis.fetch;
  let requests = 0;
- globalThis.fetch = (async () => {requests++; return new Response(JSON.stringify({results: [{title: "paper", url: "https://example.org/paper", content: "evidence"}]}), {status: 200});}) as typeof fetch;
+ globalThis.fetch = (async () => {requests++; return new Response(JSON.stringify({results: [{title: "paper", url: "https://example.org/paper", content: "evidence"}]}), {status: 200});}) as unknown as typeof fetch;
  const root = mkdtempSync(join(tmpdir(), "scout-search-"));
  const first = scoutSearch({apiKey: "FIXTURE_CREDENTIAL", limit: 3, log: join(root, "first.jsonl")});
  const second = scoutSearch({apiKey: "FIXTURE_CREDENTIAL", limit: 3, log: join(root, "second.jsonl")});
@@ -154,7 +155,17 @@ test("search budgets and logs are session-local, cap network calls and sanitize 
   const {readFileSync} = await import("node:fs");
   expect(readFileSync(join(root, "first.jsonl"), "utf8").trim().split("\n").length).toBe(3);
   expect(readFileSync(join(root, "first.jsonl"), "utf8")).not.toContain("FIXTURE_CREDENTIAL");
-  globalThis.fetch = (async () => {throw new Error("RAW_PROVIDER_ERROR_WITH_CREDENTIAL");}) as typeof fetch;
+  globalThis.fetch = (async () => {throw new Error("RAW_PROVIDER_ERROR_WITH_CREDENTIAL");}) as unknown as typeof fetch;
   expect(JSON.stringify(await call(second))).not.toContain("RAW_PROVIDER_ERROR");
  } finally {globalThis.fetch = original;}
+});
+
+
+test("all requested roles pass preflight before the first scout can start", async () => {
+ let starts = 0;
+ const scope = createScouts({prompts, taskId: "fixture", task: "task", unitIntro: "intro", dataPaths: "dev", journalPath: path(), datasetSha256: "data", runId: "run", invocationId: "invocation",
+  prepare: async roles => {expect(roles).toEqual(["data", "ideas"]); throw new Error("ideas missing prerequisite");},
+  run: async () => {starts++; return "- result";}});
+ await expect(scope.scout({role: ["data", "ideas"], question: "inspect"})).rejects.toThrow("missing prerequisite");
+ expect(starts).toBe(0);
 });

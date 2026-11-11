@@ -9,7 +9,8 @@ unit introduction through the run's immutable prompt snapshot.
 `createScoutRunner` adapts the existing observed subagent session factory and
 isolated filesystem tools. The controller supplies a sandbox containing only
 permitted development inputs, profile, course resources and the shared tree.
-Its cwd must have a dedicated `research/` folder (under the shared solutions
+Pass `prepare: runner.prepare` to `createScouts` so all requested roles are
+preflighted before any starts. Its cwd must have a dedicated `research/` folder (under the shared solutions
 research area); only that folder is writable for the data scout. Ideas has
 read-only tools and the existing scoped search extension, limited to three
 searches. The runner uses the shared preflight before starting its session.

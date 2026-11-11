@@ -36,7 +36,8 @@ export interface PiChildOptions {
 	customTools?: readonly ToolDefinition[];
 	extensionFactories?: readonly InlineExtension[];
 	childInstructions?: RenderedPrompt;
-	turnTimeoutMs?: number;
+	/** null disables the legacy request wall timer for tool-budgeted scouts. */
+	turnTimeoutMs?: number | null;
 }
 
 /** Uses Pi's cancellation, streaming, and output truncation with a session-local environment. */
@@ -73,8 +74,8 @@ export function createPiChildFactory(options: PiChildOptions): ChildSessionFacto
 		.map(prompt => Object.freeze({ text: prompt.text, reference: Object.freeze({ ...prompt.reference }) }));
 	const toolNames = [...new Set(options.tools ?? CHILD_TOOL_NAMES)];
 	for (const name of toolNames) if (!(CHILD_TOOL_NAMES as readonly string[]).includes(name) && !options.customTools?.some(tool => tool.name === name)) throw new Error(`Unsupported child tool: ${name}`);
-	const timeoutMs = options.turnTimeoutMs ?? HARNESS_CONFIG.subagents.turnTimeoutMs;
-	if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2_147_483_647) throw new Error("Invalid child turn timeout");
+	const timeoutMs = options.turnTimeoutMs === null ? null : options.turnTimeoutMs ?? HARNESS_CONFIG.subagents.turnTimeoutMs;
+	if (timeoutMs !== null && (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2_147_483_647)) throw new Error("Invalid child turn timeout");
 	const identity = { ...options.observe.identity };
 	const observe = { identity, telemetry: options.observe.telemetry };
 	// Snapshot declarative values; do not consult a mutable pipeline config on follow-up.
@@ -143,7 +144,7 @@ export function createPiChildFactory(options: PiChildOptions): ChildSessionFacto
 				if (closing) throw new Error("Child session is closed");
 				signal.throwIfAborted();
 				let timedOut = false;
-				const timer = setTimeout(() => { timedOut = true; onAbort(); }, timeoutMs);
+				const timer = timeoutMs === null ? undefined : setTimeout(() => { timedOut = true; onAbort(); }, timeoutMs);
 				try {
 					const output = await logical.prompt(message);
 					signal.throwIfAborted();
