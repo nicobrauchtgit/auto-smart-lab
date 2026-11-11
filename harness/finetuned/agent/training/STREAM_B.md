@@ -23,8 +23,11 @@ run, merge, push or submission was performed.
   `evaluation/checks.ts` runs live checks in fresh Python interpreters with the
   measured solutions package first, verifies source identity, requires a
   read-only snapshot mount, and rejects live solution import origins.
-- `trial_smoke` performs static checks and a small execution without reserving
-  an experiment. Prepared tasks supply their real test input descriptors;
+- `trial_smoke` runs the pipeline on a class-balanced 256-row sample without
+  reserving an experiment and reports workspace_check findings alongside; only
+  unsafe source paths block. A fit/predict failure is retried on up to 2048
+  rows to tell sample-size limits from defects. Smoke work lives outside the
+  trial root. Prepared tasks supply their real test input descriptors;
   standalone fixture callers without TaskData use a development input sample.
 - Fixed-trial folds run in at most two harness-owned fold processes, each
   with its share of the cores as BLAS/OpenMP threads (cores // processes,
