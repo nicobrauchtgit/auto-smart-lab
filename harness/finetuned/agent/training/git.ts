@@ -80,7 +80,7 @@ export interface RepositoryPreparation {
 }
 
 /** Files git would otherwise report as untracked after ordinary local runs. */
-const DEFAULT_IGNORES = ["__pycache__/", "*.py[cod]", ".ipynb_checkpoints/", ".pytest_cache/", ""].join("\n");
+const DEFAULT_IGNORES = ["scratch/","__pycache__/", "*.py[cod]", ".ipynb_checkpoints/", ".pytest_cache/", ""].join("\n");
 
 /**
  * Initialize `solutions/` as an independent repository if needed and commit

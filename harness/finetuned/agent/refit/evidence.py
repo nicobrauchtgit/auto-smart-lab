@@ -13,7 +13,11 @@ from smartlab_trial.metrics import _measure
 def validate(directory):
     document = json.loads((directory / 'invocation.json').read_text())
     invocation = parse_invocation(document)
-    assert not invocation.search and invocation.scope.kind == 'promotion'
+    assert invocation.scope.kind == 'promotion'
+    if invocation.search:
+        result = json.loads((directory / 'trial-result.json').read_text())
+        report = json.loads((directory / 'search-report.json').read_text())
+        assert result['winningPipeline'] == report['nextStep']['confirmationRequest']['pipeline'] and not report['proxyEvidence']
     return validate_samples(directory, document, invocation)
 
 

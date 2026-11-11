@@ -84,7 +84,7 @@ class EvidenceSelection(unittest.TestCase):
         with self.assertRaisesRegex(InvocationError, 'known development IDs'):
             load_samples(doc['measurement'])
 
-    def test_search_uses_explicit_selection_and_still_requires_confirmation(self):
+    def test_search_uses_explicit_selection_and_promotes_measured_winner(self):
         doc = self.document()
         doc['request']['schemaVersion'] = 2
         doc['schemaVersion'] = 2
@@ -92,7 +92,7 @@ class EvidenceSelection(unittest.TestCase):
         result = self.execute(doc)
         self.assertEqual(result['status'], 'completed')
         self.assertEqual(result['metrics']['selectionScore'], 1)
-        self.assertFalse(result['promotionEligible'])
+        self.assertTrue(result['promotionEligible'])
         self.assertEqual(result['search']['selectionMean'], 1)
 
     def test_explicit_proxy_search_with_one_class_evidence_stays_advisory(self):

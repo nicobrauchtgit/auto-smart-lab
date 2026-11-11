@@ -134,7 +134,7 @@ export async function inspectRefitCandidate(options: RefitOptions): Promise<Refi
  if (trainingRoot !== resolve(chosen.trainingRoot)) throw new Error("Supplied evidence root disagrees with champion tag");
  const collection = await collectTrainingResults(trainingRoot);
  const trial = collection.trials.find(t => t.experimentId === chosen.experimentId);
- if (!trial?.eligible || !trial.invocation || !trial.request || trial.request.search) throw new Error("Chosen champion has no valid eligible measured confirmation evidence");
+ if (!trial?.eligible || !trial.invocation || !trial.request) throw new Error("Chosen champion has no valid eligible measured confirmation evidence");
  if (canonical(chosen.pipeline) !== canonical(trial.request.pipeline)) throw new Error("Champion parameters disagree with measured confirmation");
  const source = trial.invocation.source as { commit: string; tree: string; repository: string } | undefined;
  const resolved = resolveCommit(options.solutionsRoot, tag.commit);

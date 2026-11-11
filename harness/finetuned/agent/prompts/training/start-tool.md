@@ -63,10 +63,9 @@ selection, search and fixed confirmation use that score, requiring both explicit
 classes per fold; the champion is rerun on the challenger's snapshot and folds.
 Evidence remains scoring-only and never enters estimator fitting. Diagnostic hooks must not fit or mutate models.
 
-Start a new idea with `scope.kind: "pilot"` and deliberately reduced work, such
-as `maxRows` or `maxFolds`. A pilot validates assumptions and estimates cost but
-cannot promote a model. Use `scope.kind: "promotion"` only when the preceding
-evidence justifies complete validation.
+A pilot is optional: scope.kind "pilot" with maxRows or maxFolds estimates cost.
+Use scope.kind "promotion" for a full measured trial. State the hypothesis in
+one or two sentences; longer text is truncated rather than rejected.
 
 A built-in CV request supports stratified_kfold, kfold, or group_kfold (whole
 families/groups held out, when supplied by the task). A factory CV request points to
@@ -91,9 +90,9 @@ unit, and every configuration shares one persisted fold manifest.
 
 Read search-report.json after the run: leaderboard, parameter importance and
 effects, paired differences, progress, cost, caveats, and the exact confirmation
-request. A search is never promotion-eligible, including promotion scope.
-Start the report's fixed-parameter confirmation request to validate the winner
-on fresh folds. The champion is rerun from its frozen commit on those folds.
+request. A completed promotion-scope search winner counts once measured on the shared
+folds; no extra confirmation trial is required. The harness freezes its winning
+factory and estimator parameters. The champion is rerun from its frozen commit on those folds.
 A challenger replaces the champion only when its paired lead on those folds
 exceeds fold noise (more than 2 standard errors of the per-fold differences).
 

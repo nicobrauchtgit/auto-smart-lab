@@ -74,7 +74,8 @@ test("the solve opening carries the fit policy as its own identified template", 
 	assert.match(prepared.prompt, /`experiment_output`/);
 	assert.match(prepared.prompt, /`experiment_stop`/);
 	assert.match(prepared.prompt, /The harness materializes your fold\s+design with harness-owned seeds/);
-	assert.match(prepared.prompt, /A pilot should deliberately reduce work/);
+	assert.match(prepared.prompt, /An optional pilot can deliberately reduce work/);
+	assert.doesNotMatch(prepared.prompt, /Start with a pilot|deliberately reduced pilot unless/);
 	assert.equal(snapshot.render("solve.observable-fits", {}).reference.rendered_sha256, policy.rendered_sha256);
 });
 

@@ -70,6 +70,7 @@ export interface HarnessSolveDependencies {
 	readPython: typeof readPythonEnvironment;
 	createTraining: typeof createHarnessTraining;
 	runAgentSession: typeof runSession;
+	environmentTool: typeof solvePythonEnvironmentTool;
 	collectResults: typeof collectTrainingResults;
 	prepareRepository: typeof ensureSolutionsRepository;
 	prepareSandbox: typeof prepareSolveSandbox;
@@ -81,6 +82,7 @@ const DEFAULT_DEPENDENCIES: HarnessSolveDependencies = {
 	readPython: readPythonEnvironment,
 	createTraining: createHarnessTraining,
 	runAgentSession: runSession,
+	environmentTool: solvePythonEnvironmentTool,
 	collectResults: collectTrainingResults,
 	prepareRepository: ensureSolutionsRepository,
 	prepareSandbox: prepareSolveSandbox,
@@ -214,8 +216,10 @@ export async function runHarnessSolveSession(
         tool_worker_sha256: sha256(readFileSync(join(ARM_ROOT, "agent/run/solve_tool_worker.ts"))) }));
 	const isolatedTools = isolatedSolveTools(sandbox);
 	const environmentToolPrompt = prompts.render("solve.python-environment-tool", {});
-	const environmentTool = solvePythonEnvironmentTool(python, environmentToolPrompt.text, PROJECT_ROOT, {
-        pipelineRunId: identity?.pipelineRunId ?? runId, stageInvocationId: identity?.stageInvocationId ?? runId, attempt: 1 });
+	// One ID attributes packages the tool adds to the session that uses it.
+	const pythonSessionId = crypto.randomUUID();
+	const environmentTool = dependencies.environmentTool(python, environmentToolPrompt.text, PROJECT_ROOT, {
+        pipelineRunId: identity?.pipelineRunId ?? runId, stageInvocationId: identity?.stageInvocationId ?? runId, attempt: 1, sessionId: pythonSessionId });
 	const isolationPrompt = prompts.render("solve.isolation", { workspace: sandbox.agentRoot });
 	const completedTrainingRoots = (options.upstream ?? [])
 		.filter(artifact => artifact.kind === "training_selected_result")
@@ -319,7 +323,7 @@ export async function runHarnessSolveSession(
 		if (recovered.recovered || recovered.error) report?.event("follow_up_branch_recovered", { branch: recovered.recovered?.branch, previous: recovered.recovered?.previous, ...(recovered.error ? { error: recovered.error } : {}) });
 		// Still in an open round: this one runs where the repository stands, without a new branch.
 		if (recovered.error) throw new Error(`Earlier follow-up round could not be closed: ${recovered.error}`); followUp = startFollowUp(workspace.solutionsRoot, taskId, runId.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 12)); }
-	catch (error) { report?.event("follow_up_branch_failed", { message: error instanceof Error ? error.message : String(error) }); }
+	catch (error) { report?.event("follow_up_branch_failed", { message: error instanceof Error ? error.message : String(error) }); await training.close(); throw error; }
 	if (followUp) {
 		const note = prompts.render("solve.follow-up", { branch: followUp.branch, champion: followUp.champion.slice(0, 12), previous: followUp.previous });
 		opening.prompt += `\n\n${note.text}`;
@@ -346,6 +350,7 @@ export async function runHarnessSolveSession(
 			model,
 			cwd: PROJECT_ROOT,
 			env: { SOLVE_WORKSPACE: sandbox.agentRoot },
+			pythonSessionId,
 			tools: [],
 			customTools: [...training.tools, ...isolatedTools, environmentTool],
 			onSessionReady: training.bindSession,

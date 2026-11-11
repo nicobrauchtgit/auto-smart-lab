@@ -22,8 +22,7 @@ import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
  * can check that cited URLs came from real search results. Best effort: a
  * failed write never fails the search.
  */
-function recordResults(query: string, urls: string[]): void {
-	const path = process.env.WEB_SEARCH_LOG;
+function recordResults(query: string, urls: string[], path?: string): void {
 	if (!path) return;
 	try {
 		mkdirSync(dirname(path), { recursive: true });
@@ -70,7 +69,16 @@ function post(url: string, body: string, headers: Record<string, string>): Promi
 	});
 }
 
-export default function webSearchExtension(pi: ExtensionAPI) {
+export function webSearchExtension(options: { maxCalls: number; maxResults: number; logPath?: string; env?: Readonly<Record<string, string | undefined>> }) {
+ if (!Number.isSafeInteger(options.maxCalls) || options.maxCalls < 0 || !Number.isSafeInteger(options.maxResults) || options.maxResults < 1) throw new Error("Invalid web search limits");
+ const environment = { ...(options.env ?? process.env) };
+ const frozen = { ...options };
+ return (pi: ExtensionAPI) => registerWebSearch(pi, frozen, environment);
+}
+export default function legacyWebSearchExtension(pi: ExtensionAPI) {
+ return webSearchExtension({ maxCalls: Number(process.env.WEB_SEARCH_MAX_CALLS ?? Number.MAX_SAFE_INTEGER), maxResults: Number(process.env.WEB_SEARCH_MAX_RESULTS ?? 5), logPath: process.env.WEB_SEARCH_LOG })(pi);
+}
+function registerWebSearch(pi: ExtensionAPI, options: { maxCalls: number; maxResults: number; logPath?: string }, environment: Readonly<Record<string, string | undefined>>) {
 	let calls = 0;
 	pi.registerTool(
 		defineTool({
@@ -84,7 +92,7 @@ export default function webSearchExtension(pi: ExtensionAPI) {
 				max_results: Type.Optional(Type.Integer({ description: TOOL_PROMPTS.web_search.parameters.max_results, default: 5 })),
 			}),
 			async execute(_toolCallId, params, signal) {
-				const configuredLimit = Number.parseInt(process.env.WEB_SEARCH_MAX_CALLS ?? "", 10);
+				const configuredLimit = Number.parseInt(String(options.maxCalls), 10);
 				const callLimit = Number.isFinite(configuredLimit) && configuredLimit >= 0
 					? configuredLimit
 					: undefined;
@@ -95,7 +103,7 @@ export default function webSearchExtension(pi: ExtensionAPI) {
 					};
 				}
 				calls++;
-				const apiKey = process.env.TAVILY_API_KEY;
+				const apiKey = environment.TAVILY_API_KEY;
 				if (!apiKey) {
 					return {
 						content: [
@@ -114,7 +122,7 @@ export default function webSearchExtension(pi: ExtensionAPI) {
 					return { content: [{ type: "text", text: "Cancelled" }], details: {} };
 				}
 
-				const configuredResults = Number.parseInt(process.env.WEB_SEARCH_MAX_RESULTS ?? "", 10);
+				const configuredResults = Number.parseInt(String(options.maxResults), 10);
 				const resultLimit = Number.isFinite(configuredResults) && configuredResults > 0
 					? configuredResults
 					: 5;
@@ -147,7 +155,7 @@ export default function webSearchExtension(pi: ExtensionAPI) {
 						snippet: r.content,
 					}));
 
-					recordResults(params.query, results.map(result => result.url));
+					recordResults(params.query, results.map(result => result.url), options.logPath);
 					return {
 						content: [{ type: "text", text: JSON.stringify({ results }, null, 2) }],
 						details: { results } as unknown as Record<string, unknown>,

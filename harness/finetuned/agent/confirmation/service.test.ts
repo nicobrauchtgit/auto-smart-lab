@@ -40,7 +40,9 @@ async function fixture(delay = 0, barrier = false) {
   split: { scheme: "stratified", sealedIds: ids, fraction: 20 / 140, seed: 13, sha256: digest(ids), confirmation: { precision: "target", rows: 20, perClass: { "0": 10, "1": 10 } } },
   holdoutSeedPlan: createSeedPlan({ rootSeed: 13, taskId: "fixture", datasetSha256: full.datasetSha256, experimentId: "holdout-split" }),
   recommendation: { scheme: "stratified_kfold", folds: 2, repeats: 1, rationale: "fixture" }, rowCount: 120, targets: samples.sampleManifestPath, targetSummary: "balanced" };
- mkdirSync(join(root, "data")); writeFileSync(join(root, "data/holdout.json"), JSON.stringify(workspace.split));
+ // The harness-only split record lives where prepareSolveWorkspace writes it.
+ const sealedRoot = join(p.root, "runs/finetuned/fixture/data/sealed");
+ mkdirSync(sealedRoot, { recursive: true }); writeFileSync(join(sealedRoot, "holdout.json"), JSON.stringify(workspace.split));
  const policy = prepareSolveSandbox(workspace, python);
  const trainingRoot = join(root, "training/initial");
  const training = createHarnessTraining({ root: trainingRoot, projectRoot: p.root, solutionsRoot: p.solutionsRoot, pythonExecutable: PYTHON,
@@ -68,6 +70,9 @@ test("closed solve confirms once, preserves hidden inputs and refit binds its id
    runAgentSession: async (options: any) => { expect(options.prompt).not.toContain('holdoutConfirmation'); sessionClosed = true; return { output: "existing champion is sufficient", agentRunId: "inert" } as any; },
    confirm: async options => { expect(sessionClosed).toBe(true); return runConfirmation(options); } } });
  expect(result.valid).toBe(true);
+ // The first champion's Ladder query releases its score; per-row losses stay in the ledger.
+ expect(result.confirmation!.summary).toMatchObject({ verdict: "holdout confirms the improvement", score: 1 });
+ expect(JSON.stringify(result.confirmation!.summary)).not.toContain("losses");
  const record = JSON.parse(readFileSync(result.confirmation!.artifact.path, "utf8"));
  expect(record).toMatchObject({ experimentId: f.started.id, source: { commit: f.commit }, fitCalls: 1, developmentRows: 120, validationRows: 20,
   readCount: 1, metrics: { balancedAccuracy: 1 }, interval: { lower: 1, upper: 1 }, gap: 0 });
@@ -97,7 +102,7 @@ test("insufficient precision records a skip and consumes no sealed read", async 
  const f = await fixture();
  f.workspace.split = { ...f.workspace.split, sealedIds: [], fraction: 0, confirmation: { rows: 0, perClass: { "0": 0, "1": 0 }, precision: "none", reason: "too small" } };
  f.workspace.trainZip = f.p.zipPath; f.workspace.originalTargetsPath = f.p.labelsPath;
- writeFileSync(join(f.workspace.root, "data/holdout.json"), JSON.stringify(f.workspace.split));
+ writeFileSync(join(f.p.root, "runs/finetuned/fixture/data/sealed/holdout.json"), JSON.stringify(f.workspace.split));
  const output = await runConfirmation(f.options);
  expect(output.summary).toMatchObject({ status: "skipped", precision: "none", reason: "too small", readCount: 0 });
  expect(existsSync(join(f.p.root, "runs/finetuned/fixture/holdout-ledger.json"))).toBe(false);
