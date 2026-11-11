@@ -33,7 +33,7 @@ export function createHarnessTraining(options: HarnessTrainingOptions) {
 	const processScope = createExperiments({
 		root: options.root,
 		env,
-		onFinished: (id) => service?.workerFinished(id),
+		onFinished: (id, view) => { service?.recordDuration(id, view); return service?.workerFinished(id); },
 		record: options.record,
 		limits: options.limits,
 		environmentFingerprint: options.environmentFingerprint,

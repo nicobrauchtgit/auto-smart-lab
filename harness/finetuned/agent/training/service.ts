@@ -19,7 +19,7 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { atomicJson, claimWorkspace, liveGroup, ownedProcessAlive, type ProcessIdentity } from "../experiments/ownership.js";
-import type { ExperimentRecord } from "../experiments/types.js";
+import type { ExperimentRecord, ExperimentView } from "../experiments/types.js";
 import type { ExperimentSupervisor } from "../experiments/supervisor.js";
 import { ExperimentRequestError, validateExperimentRequest } from "./contract.js";
 import {
@@ -153,6 +153,12 @@ function readJson(path: string): Record<string, any> | undefined {
 	}
 }
 
+/** What a trial does, without why: comparable work for time projections. */
+function workKey(request: ExperimentRequest): string {
+	const { hypothesis: _hypothesis, ...work } = request;
+	return canonical(work);
+}
+
 function readJsonLines(path: string): Record<string, any>[] {
 	try {
 		return readFileSync(path, "utf8").split("\n").filter((line) => line.trim()).map((line) => JSON.parse(line));
@@ -226,6 +232,14 @@ function measurementDeclaration(value: any): unknown {
 export class TrainingService {
 	private started = 0;
 	private readonly trials = new Map<string, StartedTrialRecord>();
+	/**
+	 * Wall time of completed trials, keyed by the work they did: the request
+	 * without its hypothesis. A later trial doing the same work gets it as its
+	 * projection, so "far beyond its projected cost" can be reported. Until such
+	 * a trial has completed in this service there is no projection and the
+	 * supervisor stays silent about time.
+	 */
+	private readonly durations = new Map<string, number>();
 	private readonly finalizing = new Map<string, Promise<void>>();
 	private readonly settings: SearchSettings;
 	private starting: Promise<unknown> = Promise.resolve();
@@ -793,6 +807,7 @@ export class TrainingService {
 				cwd: this.options.projectRoot,
 				hypothesis: request.hypothesis,
 				scope: scopeSummary(request),
+				...(this.durations.has(workKey(request)) ? { projectedDurationMs: this.durations.get(workKey(request)) } : {}),
 			}, requestedByToolCallId, id);
 		} catch (error) {
             atomicJson(join(directory, "recovery.json"), { ...readJson(join(directory, "recovery.json")), lifecycle: "failed_start", budgetCharged: false, diagnosis: String(error) });
@@ -810,6 +825,14 @@ export class TrainingService {
 	 * After the worker exits: remove its worktrees, tag a completed promotion,
 	 * and move `champion` to it when its paired lead over the current champion exceeds noise (or to the best open trial when there is none). Idempotent per trial.
 	 */
+	/** Record a cleanly completed trial's wall time from the supervisor's final view. */
+	recordDuration(id: string, view: Pick<ExperimentView, "status" | "exitCode" | "elapsedSeconds">): void {
+		const trial = this.trials.get(id);
+		if (!trial || view.status !== "exited" || view.exitCode !== 0) return;
+		if (readJson(join(trial.directory, "trial-result.json"))?.status !== "completed") return;
+		this.durations.set(workKey(trial.request), view.elapsedSeconds * 1000);
+	}
+
 	async workerFinished(id: string): Promise<void> {
         if (!this.closed) {
             const recovered = await this.recover(id, false);
