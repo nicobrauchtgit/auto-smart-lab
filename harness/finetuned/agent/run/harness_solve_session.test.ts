@@ -6,6 +6,7 @@ import { join } from "node:path";
 
 import type { StageReporter, SuppliedInput } from "../pipeline/types.js";
 import type { PythonEnvironment } from "./python_environment.js";
+import { pythonManagerEnvironment, solvePythonEnvironmentTool, type PythonManagerIdentity } from "./solve_sandbox.js";
 import { spamConfiguration } from "../pipeline/task_configuration.testing.js";
 import type { TaskConfiguration } from "../pipeline/task_configuration.js";
 import {
@@ -106,11 +107,16 @@ describe("agent-driven harness solve session", () => {
 		let closed = false;
 		let bound = false;
 		let updateIntervalMs: number | undefined;
+		let environmentIdentity: PythonManagerIdentity | undefined;
 		const toolNames = ["experiment_start", "experiment_status", "experiment_output", "experiment_stop"];
 		const dependencies: Partial<HarnessSolveDependencies> = {
 			prepareWorkspace: () => workspace,
 			prepareSandbox: () => sandbox(workspace),
 			readPython: python,
+			environmentTool: (python, description, root, identity) => {
+				environmentIdentity = identity;
+				return solvePythonEnvironmentTool(python, description, root, identity);
+			},
 			createTraining: (options) => {
 				expect(options.root).toBe(join(workspace.root, "training", "stage-1"));
 				updateIntervalMs = options.limits?.updateIntervalMs;
@@ -130,6 +136,10 @@ describe("agent-driven harness solve session", () => {
 				expect(options.prompt).toContain("mount and PID namespace");
 				expect(options.env?.SOLVE_WORKSPACE).toBe(join(workspace.root, "agent"));
 				expect(options.customTools?.some((tool) => tool.name === "experiments_start")).toBe(false);
+				// Packages the python_environment tool adds are attributed to this session.
+				expect(options.pythonSessionId).toMatch(/^[0-9a-f-]{36}$/);
+				expect(environmentIdentity?.sessionId).toBe(options.pythonSessionId);
+				expect(pythonManagerEnvironment(python(), "/tmp/manager", environmentIdentity).PIPELINE_PYTHON_SESSION_ID).toBe(options.pythonSessionId!);
 				await options.onSessionReady?.({} as never, { agentRunId: "agent-test", piSessionId: "session-test" });
 				return { output: "done", agentRunId: "agent-1" };
 			},
@@ -180,4 +190,21 @@ describe("agent-driven harness solve session", () => {
 		expect(result.sessionError).toBe("model session failed");
 		expect(observed.events.some((event) => event.type === "agent_attempt_error")).toBe(true);
 	});
+});
+
+
+test("unrecoverable follow-up closes training and prevents agent execution", async () => {
+ const { ensureSolutionsRepository, git } = await import("../training/git.js");
+ const workspace = fixtureWorkspace();
+ ensureSolutionsRepository(workspace.solutionsRoot);
+ const directory = git(workspace.solutionsRoot, ["rev-parse", "--absolute-git-dir"]).stdout.trim();
+ writeFileSync(join(directory, "smartlab-follow-up.json"), "corrupt");
+ let called = false, closed = false;
+ await expect(runHarnessSolveSession("task", undefined, { runId: "failed-recovery", dependencies: {
+  prepareWorkspace: () => workspace, prepareSandbox: () => sandbox(workspace), readPython: python,
+  createTraining: () => ({ tools: [], toolPrompts: [], supervisor: {}, service: {}, bindSession() {}, close: async () => { closed = true; } } as never),
+  runAgentSession: async () => { called = true; throw new Error("must not execute"); },
+ } })).rejects.toThrow("could not be closed");
+ expect(called).toBe(false);
+ expect(closed).toBe(true);
 });

@@ -14,9 +14,13 @@ export interface PipelineValidationInput {
 	sourceRoot: string;
 	request: ExperimentRequest;
 	measurement?: MeasurementConfig;
+ testZip?: string;
+ sampleSource?: string;
 	env?: Record<string, string>;
 	cwd: string;
 	timeoutMs: number;
+	/** Maps a script's own JSON output to issues; undefined treats the output as malformed. */
+	interpret?: (output: unknown) => ValidationIssue[] | undefined;
 }
 
 export type PipelineValidator = (input: PipelineValidationInput) => Promise<ValidationIssue[]>;
@@ -63,7 +67,12 @@ export const runPipelineValidation: PipelineValidator = (input) => new Promise((
 		}
 		try {
 			const parsed = JSON.parse(stdout) as { issues?: unknown };
-			if (code === 0 && Array.isArray(parsed.issues) && parsed.issues.every(isIssue)) {
+			const interpreted = code === 0 && input.interpret ? input.interpret(parsed) : undefined;
+			if (interpreted) {
+				settle(interpreted);
+				return;
+			}
+			if (code === 0 && !input.interpret && Array.isArray(parsed.issues) && parsed.issues.every(isIssue)) {
 				settle(parsed.issues);
 				return;
 			}
@@ -74,5 +83,5 @@ export const runPipelineValidation: PipelineValidator = (input) => new Promise((
 		settle(failure("validation crashed while loading the pipeline",
 			"Run the module locally to reproduce; the last lines of its error output are included.", tail || `exit code ${code}`));
 	});
-	child.stdin.end(JSON.stringify({ sourceRoot: input.sourceRoot, request: input.request, measurement: input.measurement }));
+	child.stdin.end(JSON.stringify({ sourceRoot: input.sourceRoot, request: input.request, measurement: input.measurement, testZip: input.testZip, sampleSource: input.sampleSource }));
 });

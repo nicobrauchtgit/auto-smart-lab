@@ -14,10 +14,8 @@ and the paired champion comparison. It is not a design constraint:
 everything else here is the agent's to organise, and shared modules can live
 wherever it finds useful.
 
-Training file names end in their label and test names in `.x`, so the id, path,
-filename and extension carry nothing at test time: read labels from them if
-convenient, but they are no use as features.
-
-Model code persists locally for reuse across runs. Only this README is tracked;
-agent-generated implementations are excluded from Git. Per-run outputs live in
-`runs/<task>/solve/` and are also local.
+Search INDEX.md and existing modules before writing code. Record module paths,
+purpose, owner role and importing tasks in INDEX.md. Python belongs in tasks/,
+lib/ or checks/. Each module starts with a two-line purpose/input-output
+docstring. Move shared code into lib/ when a second task imports it. Keep large
+or temporary output in ignored scratch/. Run workspace_check before trials.

@@ -1,0 +1,1 @@
+Check the shared solutions tree without importing code. Missing docstrings, index entries, indexed paths and stray Python are errors; duplicate functions and files over 400 lines are warnings. The check is bounded to two seconds.

@@ -17,13 +17,12 @@ Use them as an active control loop, not as a fire-and-forget command:
 6. Revise the agent-owned code or request broader validation only when the
    evidence supports that decision.
 
-### Start with a pilot
+### Optional pilot
 
-A pilot should deliberately reduce work in a way appropriate to the estimator,
+An optional pilot can deliberately reduce work in a way appropriate to the estimator,
 for example with fewer rows or folds. It checks that the authored pipeline is
-viable and estimates cost; it is not promotion evidence. Move to a complete
-promotion-scope run only after the candidate and validation design are stable.
-If you skip pilot scope, record the reason in the experiment hypothesis.
+viable and estimates cost; it is not promotion evidence. Choose a complete
+promotion-scope run when it will answer the modelling question.
 
 You choose the model, features, hyperparameters, CV semantics, and the timing of
 starts, observations, stops, and expansions. The harness materializes your fold

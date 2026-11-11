@@ -488,12 +488,13 @@ async function collectTrial(directory: string, experimentId: string): Promise<Tr
 	// A search winner was selected on the folds that scored it; only a
 	// confirmation trial on a fresh manifest can become eligible.
 	const isSearch = request?.search !== undefined || invocation?.request.search !== undefined;
+	let searchReport: JsonObject | undefined;
 	if (isSearch && result?.status !== "failed") {
 		for (const [kind, file] of [["training_search_configs", "configs.jsonl"], ["training_search_report", "search-report.json"],
 			["training_search_journal", "study.journal"]]) {
 			const bytes = await read(file, kind);
 			if (file === "search-report.json" && bytes) {
-				const report = parseJsonObject(bytes.toString("utf8"), file, experimentId, errors);
+				const report = searchReport = parseJsonObject(bytes.toString("utf8"), file, experimentId, errors);
 				if (report?.experimentId !== experimentId || report?.manifestSha256 !== loaded.manifest?.sha256) {
 					error(errors, experimentId, "identity_mismatch", "search report identity/manifest differs from the trial", file);
 				}
@@ -504,10 +505,10 @@ async function collectTrial(directory: string, experimentId: string): Promise<Tr
 		}
 		await read("oof_runner_up.csv", "training_search_runner_up", true);
 	}
-	if (isSearch && result?.promotionEligible === true) {
-		error(errors, experimentId, "invalid_promotion_eligibility", "a search trial is never promotion-eligible", "trial-result.json");
+	if (isSearch && result?.promotionEligible === true && !isObject(result.winningPipeline)) {
+		error(errors, experimentId, "invalid_promotion_eligibility", "a measured search winner requires its fixed pipeline", "trial-result.json");
 	}
-	const completePromotion = !unlabelled && !isSearch && scope === "promotion"
+	const completePromotion = !unlabelled && scope === "promotion"
 		&& result?.scope === "promotion"
 		&& result.status === "completed"
 		&& nonNegativeInteger(requestedFolds)
@@ -520,6 +521,15 @@ async function collectTrial(directory: string, experimentId: string): Promise<Tr
 		error(errors, experimentId, "invalid_promotion_eligibility", "promotionEligible is true without a completed promotion and all requested folds", "trial-result.json");
 	}
 
+    if (isSearch && result?.promotionEligible === true && request) {
+        // The report parsed above; a missing or malformed one is already an
+        // artifact error and cannot vouch for the winner.
+        const nextStep = searchReport?.nextStep as { confirmationRequest?: { pipeline?: unknown } } | undefined;
+        const winning = nextStep?.confirmationRequest?.pipeline;
+        if (!searchReport) error(errors, experimentId, "invalid_search_winner", "search-report.json is missing or unreadable; the search winner cannot be verified", "search-report.json");
+        else if (!winning || !sameJson(winning, result.winningPipeline) || searchReport.proxyEvidence) error(errors, experimentId, "invalid_search_winner", "Search winner differs from the measured fixed pipeline", "search-report.json");
+        else request = { ...request, pipeline: winning as ExperimentRequest["pipeline"] };
+    }
 	const valid = errors.length === 0;
 	return {
 		experimentId,
@@ -549,10 +559,20 @@ export async function collectTrainingResults(root: string): Promise<TrainingColl
 		return { trials: [], valid: false, errors, artifacts: [] };
 	}
 
-	const directories = entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort();
+	// `smoke-*` directories are work left by an interrupted trial_smoke of older
+	// versions; smoke never reserves a trial, so they are not evidence.
+	const directories = entries.filter((entry) => entry.isDirectory() && !entry.name.startsWith("smoke-")).map((entry) => entry.name).sort();
 	const trials: TrainingTrialResult[] = [];
 	for (const experimentId of directories) {
-		trials.push(await collectTrial(join(trainingRoot, experimentId), experimentId));
+		const directory = join(trainingRoot, experimentId);
+		try {
+			trials.push(await collectTrial(directory, experimentId));
+		} catch (cause) {
+			// One damaged trial is recorded, never allowed to hide its siblings.
+			const errors: TrainingResultError[] = [];
+			error(errors, experimentId, "unreadable_trial", `trial artifacts could not be collected: ${cause instanceof Error ? cause.message : String(cause)}`);
+			trials.push({ experimentId, directory, valid: false, eligible: false, errors, artifacts: [] });
+		}
 	}
 
 	// No selection here: the champion tag is the only selection rule

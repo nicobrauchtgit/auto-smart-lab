@@ -18,9 +18,9 @@ base data identity, recovery and terminal freezing.
 
 Evidence labels never enter estimator fit frames, factory inputs or CV inputs.
 Every scored fold needs both classes. Fixed promotion also requires integer
-predictions; score-only pilots and searches remain advisory. Worker scores,
+predictions; score-only pilots and proxy searches remain advisory. Worker scores,
 search selection, fixed confirmation, result integrity checks, evaluation and
-refit use the same explicit selection score. Search itself cannot promote.
+refit use the same explicit selection score. A completed full-fold search winner can promote using its exact measured parameters.
 The champion reruns on the challenger's exact evidence snapshot and folds;
 D7/D13 still require a positive paired lead greater than two standard errors.
 Changing AP to ROC also requires this paired rerun, rather than resetting the

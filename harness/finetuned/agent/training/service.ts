@@ -14,14 +14,16 @@ import { assertDevelopmentCandidate, isTerminalCandidate, selectionClaimAsync } 
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, openSync, readSync, closeSync } from "node:fs";
-import { mkdir, rename, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rename, rm, unlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { atomicJson, claimWorkspace, liveGroup, ownedProcessAlive, type ProcessIdentity } from "../experiments/ownership.js";
 import type { ExperimentRecord } from "../experiments/types.js";
 import type { ExperimentSupervisor } from "../experiments/supervisor.js";
-import { ExperimentRequestError, validateExperimentRequest } from "./contract.js";
+import { ExperimentRequestError, preview, validateExperimentRequest } from "./contract.js";
+import type { PromptSnapshot } from "../prompts/loader.js";
 import {
 	addWorktree,
 	git,
@@ -42,6 +44,7 @@ import type { ExperimentRequest, JsonValue, MeasurementConfig, ValidationIssue }
 import { HARNESS_CONFIG } from "../harness/config.js";
 const PYTHON_ROOT = join(dirname(fileURLToPath(import.meta.url)), "python");
 import { championTag } from "./development_selection.js";
+import { noiseVerdict } from "./feedback.js";
 export { championTag };
 
 export interface SearchSettings {
@@ -97,6 +100,8 @@ export interface TrainingServiceOptions {
 	executionBoundaryFingerprint?: string;
 	/** The Python lock that identifies the training framework; defaults to `<projectRoot>/uv.lock`. */
 	lockPath?: string;
+	/** The run's prompt snapshot, for agent-facing smoke feedback. */
+	prompts?: PromptSnapshot;
 }
 
 export interface StartedTrainingExperiment {
@@ -359,7 +364,7 @@ export class TrainingService {
         const path = join(trial.directory, "recovery.json");
         let meta = readJson(path);
         if (!meta) return;
-        for (const name of ["supervisor-state.json", "worker-owner.json", "worker-exit.json", "worker-runtime.json", "trial-result.json", "search-report.json"]) {
+        for (const name of ["supervisor-state.json", "worker-owner.json", "worker-exit.json", "worker-runtime.json", "trial-result.json", "search-report.json", "fold-plan.json"]) {
             if (existsSync(join(trial.directory, name)) && !readJson(join(trial.directory, name))) {
                 const reason = `Corrupt ${name}; restore its original ownership/lifecycle record before recovery. No fit started.`;
                 atomicJson(path, { ...meta, lifecycle: "refused", diagnosis: reason });
@@ -401,12 +406,20 @@ export class TrainingService {
         const workerExit = readJson(join(trial.directory, "worker-exit.json"));
         // A normal error exit is deterministic; only missing receipts / signals
         // are unexpected interruption evidence. Do not retry import/launch errors.
-        const deterministicExit = workerExit && workerExit.token === meta.token && workerExit.exitCode > 0;
+        // Exit 2 with an `interrupted` result is a clean pause (stop requested,
+        // a fold process ended from outside, a runtime guard): its completed
+        // folds are checkpointed and it can resume.
+        const ownExit = workerExit && workerExit.token === meta.token;
+        const interruptedExit = ownExit && workerExit.exitCode === 2 && result?.status === "interrupted";
+        const deterministicExit = ownExit && workerExit.exitCode > 0 && !interruptedExit;
         const terminal = meta.lifecycle === "failed_start" || deterministicExit || result?.status === "completed" || result?.status === "failed" || pause === "max_seconds";
-        const intentional = !!stop || meta.lifecycle !== "active" || ["acknowledgement_required", "runtime_overrun"].includes(pause);
+        // A killed fold process is not retried automatically: the cause (often
+        // memory) repeats under the same plan, and automatic attempts would use
+        // up the bounded retries the agent's explicit resume needs.
+        const intentional = !!stop || meta.lifecycle !== "active" || ["acknowledgement_required", "runtime_overrun"].includes(pause) || !!interruptedExit;
         // All report stop reasons are intentional guard pauses except worker death.
         if (terminal || (!explicit && (intentional || pause))) {
-            event("training_recovery_skipped", { reason: stop ?? pause ?? meta.lifecycle, status: result?.status, error: result?.error, exit_code: workerExit?.exitCode });
+            event("training_recovery_skipped", { reason: stop ?? pause ?? result?.interruption?.reason ?? meta.lifecycle, status: result?.status, error: result?.error, exit_code: workerExit?.exitCode });
             if (explicit && terminal) throw new Error(`Experiment ${id} is terminal (${pause ?? result?.status}); it cannot resume.`);
             return;
         }
@@ -603,6 +616,85 @@ export class TrainingService {
 		return { experimentId: message.experimentId, commit: tag.commit, pipeline: message.pipeline };
 	}
 
+    async workspaceCheck() {
+        if (!this.options.solutionsRoot) throw new Error("Workspace checks require the shared solutions repository");
+        const { checkWorkspace } = await import("../solve/workspace_check.js");
+        return checkWorkspace(this.options.solutionsRoot, this.options.taskId);
+    }
+    get taskKind() { return this.options.measurement?.kind; }
+
+    /**
+     * Cheap explicit execution; never reserves a trial or consumes its budget.
+     * The pipeline always runs; workspace_check findings are reported beside
+     * it and only findings that make a trial invalid block. Work lives
+     * outside the trial root, so an interrupted smoke never looks like a trial.
+     */
+    async smoke(raw: unknown): Promise<{ passed: boolean; budgetConsumed: false; issues: unknown[]; notice?: string; workspace?: Record<string, unknown> }> {
+        const parsed = validateExperimentRequest(raw);
+        if (!parsed.request) return { passed: false, budgetConsumed: false, issues: parsed.issues };
+        const checked = this.sourceIssues(parsed.request);
+        if (checked.issues.length || !checked.source || !this.options.solutionsRoot) return { passed: false, budgetConsumed: false, issues: checked.issues };
+        const solutionsRoot = this.options.solutionsRoot;
+        const prompts = this.options.prompts ?? (await import("../prompts/loader.js")).loadPromptSnapshot();
+        const { checkWorkspace } = await import("../solve/workspace_check.js");
+        let workspace: Record<string, unknown>;
+        let blocking: ValidationIssue[] = [];
+        try {
+            const found = await checkWorkspace(solutionsRoot, this.options.taskId);
+            workspace = { valid: found.valid, errors: found.errors, warnings: found.warnings, blocking: found.blocking,
+                ...(found.errors.length || found.warnings.length ? { note: prompts.render("training.smoke-workspace", {}).text } : {}) };
+            blocking = found.blocking.map(problem => ({ path: "workspace", problem, received: problem, expected: "regular files inside solutions/", hint: prompts.render("training.smoke-workspace", {}).text }));
+        } catch (error) {
+            workspace = { valid: false, errors: [error instanceof Error ? error.message : String(error)], warnings: [], blocking: [] };
+        }
+        const directory = await mkdtemp(join(tmpdir(), "smartlab-smoke-"));
+        const sourceRoot = join(directory, "source");
+        const worktree = join(sourceRoot, relative(this.options.projectRoot, solutionsRoot));
+        // Worktree changes are serialised with trial starts on the shared repository.
+        const serialised = <T>(work: () => T | Promise<T>): Promise<T> => {
+            const next = this.starting.then(async () => { const release = await selectionClaimAsync(solutionsRoot); try { return await work(); } finally { release(); } });
+            this.starting = next.catch(() => undefined);
+            return next;
+        };
+        let added = false;
+        try {
+            await serialised(() => { addWorktree(solutionsRoot, worktree, checked.source!.commit); added = true; });
+            const { readTaskData } = await import("../solve/task_data.js");
+            const { repoRootOf } = await import("../paths.js");
+            const data = readTaskData(this.options.taskId, repoRootOf(solutionsRoot));
+            const scriptPath = join(PYTHON_ROOT, "smoke.py");
+            let notice: string | undefined;
+            const request = parsed.request;
+            const issues = await runPipelineValidation({ pythonExecutable: this.options.pythonExecutable, scriptPath,
+                command: this.options.sandboxCommand?.([this.options.pythonExecutable, scriptPath], { directory, sourceRoots: [sourceRoot] }),
+                sourceRoot, request, measurement: this.checkMeasurement(), testZip: data?.testZip, sampleSource: data?.configuration.samples.source, env: this.options.env,
+                cwd: this.options.projectRoot, timeoutMs: this.settings.validationTimeoutSeconds * 1000,
+                interpret: (output) => {
+                    const value = output as { passed?: unknown; phase?: string; error?: { type?: string; message?: string }; traceback?: string; sample?: { trainRows?: number }; largerSample?: { passed?: boolean; trainRows?: number }; sampleSensitive?: boolean; developmentRows?: number };
+                    if (typeof value?.passed !== "boolean") return undefined;
+                    const error = `${value.error?.type ?? "Error"}: ${value.error?.message ?? ""}`;
+                    if (value.passed) {
+                        if (value.sampleSensitive) notice = prompts.render("training.smoke-sample-sensitive", { phase: String(value.phase), smallRows: String(value.sample?.trainRows), largerRows: String(value.largerSample?.trainRows), error }).text;
+                        return [];
+                    }
+                    const sampleNote = value.largerSample ? prompts.render("training.smoke-sample-defect", { largerRows: String(value.largerSample.trainRows) }).text
+                        : prompts.render("training.smoke-sample-unchecked", {}).text;
+                    return [{ path: "pipeline", problem: `smoke failed in the ${value.phase ?? "unknown"} step: ${error}`.slice(0, 2_000), received: preview(request.pipeline),
+                        expected: "a fit on a development sample and finite, row-aligned predictions of the task's kind",
+                        hint: prompts.render("training.smoke-failed", { phase: String(value.phase ?? "unknown"), trainRows: String(value.sample?.trainRows ?? "unknown"),
+                            developmentRows: String(value.developmentRows ?? "unknown"), sampleNote }).text,
+                        ...(value.traceback ? { message: value.traceback } : {}) }];
+                } });
+            const all = [...issues, ...blocking];
+            this.options.record?.("training_smoke_completed", { passed: !all.length, source: checked.source, budget_consumed: false,
+                sample_sensitive: notice !== undefined, workspace_errors: (workspace.errors as unknown[]).length, workspace_blocking: blocking.length });
+            return { passed: !all.length, budgetConsumed: false, issues: all, ...(notice ? { notice } : {}), workspace };
+        } finally {
+            if (added) await serialised(() => removeWorktree(solutionsRoot, worktree)).catch(() => undefined);
+            await rm(directory, { recursive: true, force: true });
+        }
+    }
+
 	/** Persist identity and inputs before spawning the harness-owned worker. */
 	start(raw: unknown, requestedByToolCallId?: string): Promise<StartedTrainingExperiment> {
 		const work = this.starting.then(async () => { await this.ready(); if (this.closed) throw new Error("training service is closed"); const release = this.options.solutionsRoot ? await selectionClaimAsync(this.options.solutionsRoot) : undefined; try { return await this.startValidated(raw, requestedByToolCallId); } finally { release?.(); } });
@@ -775,7 +867,7 @@ export class TrainingService {
             ...(champion ? { champion: { experimentId: champion.experimentId, commit: champion.commit } } : {}),
         };
         atomicJson(join(directory, "recovery.json"), {
-            schemaVersion: 1, trial: record, budgetCharged: true, budgetUnit: id, budgetLimit: this.options.maxExperiments,
+            schemaVersion: 1, solutionsRoot: this.options.solutionsRoot, trial: record, budgetCharged: true, budgetUnit: id, budgetLimit: this.options.maxExperiments,
             taskId: this.options.taskId, rootSeed: this.options.rootSeed,
             datasetSha256: this.options.datasetSha256, dataHash: this.dataHash(),
             environmentFingerprint: this.options.environmentFingerprint ?? null,
@@ -842,7 +934,7 @@ export class TrainingService {
             });
             if (!root) return;
 			this.cleanupWorktrees(trial);
-			if (!trial.source || result?.status !== "completed" || result.promotionEligible !== true || trial.request.search) return;
+			if (!trial.source || result?.status !== "completed" || result.promotionEligible !== true) return;
 			const collection = await collectTrainingResults(this.options.trainingRoot);
 			const own = collection.trials.find((entry) => entry.experimentId === id);
 			if (!own?.eligible) return;
@@ -879,7 +971,7 @@ export class TrainingService {
 				adjustedRandIndex: selected.result?.metrics?.adjustedRandIndex,
 				measurement: selectedTrial.measurement ?? null,
 				selection: selected.result?.selection ?? null,
-				pipeline: selectedTrial.request.pipeline,
+				pipeline: selected.request!.pipeline,
 				cv: selectedTrial.request.cv,
 				subject: selectedTrial.source.subject,
 				trainingRoot: this.options.trainingRoot,
@@ -969,6 +1061,8 @@ export class TrainingService {
 		if (!result) return { ...summary, status: "running_or_missing_result" };
 		Object.assign(summary, {
 			status: result.status, scope: result.scope, promotionEligible: result.promotionEligible,
+            noiseVerdict: noiseVerdict(result.championComparison),
+            foldScores: readJsonLines(join(trial.directory, "fold-results.jsonl")).map((row: any) => ({ repeat: row.repeat, fold: row.fold, metrics: row.metrics })),
 			completedFolds: result.completedFolds, requestedFolds: result.requestedFolds,
 			balancedAccuracy: result.metrics?.balancedAccuracy,
 			adjustedRandIndex: result.metrics?.adjustedRandIndex,
@@ -976,6 +1070,7 @@ export class TrainingService {
 			diagnostics: compactDiagnostics(result),
 			promotionIneligibleReason: result.promotionIneligibleReason,
 			...(result.error ? { error: result.error } : {}),
+			...(result.interruption ? { interruption: result.interruption } : {}),
 			...(result.search ? { search: result.search } : {}),
 			...(result.runtimeGuard ? { runtimeGuard: result.runtimeGuard } : {}),
 			...(result.championComparison ? { championComparison: result.championComparison } : {}),
