@@ -1,4 +1,5 @@
 /** Controller-only, durable held-back confirmation after every solve session closes. */
+import { ladderQuery } from "./ladder.js";
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
@@ -160,9 +161,15 @@ export async function runConfirmation(options: ConfirmationOptions): Promise<Con
   if (result.identity !== identity) throw new Error("Confirmation identity check failed");
   const output = artifact("holdout_confirmation", resultPath);
   atomicJson(join(root, "latest.json"), { path: resultPath, sha256: output.sha256 });
-  const summary = { status: result.status, precision: result.holdout.precision ?? "none", balancedAccuracy: result.metrics?.balancedAccuracy,
-   gap: result.gap, interval: result.interval, likelySelectionOverfit: result.likelySelectionOverfit, readCount: result.readCount,
-   populationReadCount: count(), reason: result.reason, experimentId: result.experimentId };
+  let summary: Record<string, unknown>;
+  if (result.status === "completed") {
+   const queried = ladderQuery(ledger.populations[population]?.ladder, identity, result.metrics.balancedAccuracy,
+    2 * Math.min(...Object.values(result.holdout.perClass).map(Number)));
+   ledger.populations[population].ladder = queried.state;
+   atomicJson(ledgerPath, ledger);
+   summary = { status: result.status, experimentId: result.experimentId, ...queried.feedback };
+  } else summary = { status: result.status, reason: result.reason, readCount: result.readCount, experimentId: result.experimentId };
+
   options.report?.event("holdout_confirmation_validated", summary);
   options.report?.input({ kind: "holdout_confirmation", version: 1, delivery: "workspace_file", status: "available", artifact: resultPath, content_sha256: output.sha256 });
   return { artifact: output, summary };

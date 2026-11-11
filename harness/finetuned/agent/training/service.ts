@@ -42,6 +42,7 @@ import type { ExperimentRequest, JsonValue, MeasurementConfig, ValidationIssue }
 import { HARNESS_CONFIG } from "../harness/config.js";
 const PYTHON_ROOT = join(dirname(fileURLToPath(import.meta.url)), "python");
 import { championTag } from "./development_selection.js";
+import { noiseVerdict } from "./feedback.js";
 export { championTag };
 
 export interface SearchSettings {
@@ -993,6 +994,8 @@ export class TrainingService {
 		if (!result) return { ...summary, status: "running_or_missing_result" };
 		Object.assign(summary, {
 			status: result.status, scope: result.scope, promotionEligible: result.promotionEligible,
+            noiseVerdict: noiseVerdict(result.championComparison),
+            foldScores: readJsonLines(join(trial.directory, "fold-results.jsonl")).map((row: any) => ({ repeat: row.repeat, fold: row.fold, metrics: row.metrics })),
 			completedFolds: result.completedFolds, requestedFolds: result.requestedFolds,
 			balancedAccuracy: result.metrics?.balancedAccuracy,
 			adjustedRandIndex: result.metrics?.adjustedRandIndex,
