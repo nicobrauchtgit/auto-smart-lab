@@ -69,7 +69,8 @@ export function prepareSolutionsWorkspace(
 	taskId: string,
 ): Pick<SolveWorkspace, "solutionsRoot" | "entrypointPath"> {
 	const solutionsRoot = statePath(projectRoot, "solutions");
-	mkdirSync(join(solutionsRoot, "tasks"), { recursive: true });
+	for (const directory of ["tasks", "lib/io", "lib/parse", "lib/features", "lib/models", "lib/cv", "checks/lib", `checks/${taskId}`, "docs", "scratch"]) mkdirSync(join(solutionsRoot, directory), { recursive: true });
+ if (!existsSync(join(solutionsRoot, "INDEX.md"))) writeFileSync(join(solutionsRoot, "INDEX.md"), "# Shared modules\n\nRecord module path, purpose, owner role and importing tasks here.\n");
 	// The agent reads this README; it lives with the harness code and is copied into the state folder.
 	const readme = join(solutionsRoot, "README.md");
 	if (!existsSync(readme)) copyFileSync(join(import.meta.dir, "solutions-README.md"), readme);
