@@ -100,7 +100,7 @@ test("run_checks runs B's check runner on the snapshot: a live fix cannot make t
  writeFileSync(check, "from solutions.tasks.model import LEAK\nassert not LEAK, 'measured pipeline leaks'\n");
  const events: Record<string, unknown>[] = [];
  const checks = validationCheckTool({trial, sandbox: view.checkSandbox!, solutionsRoot: f.live, taskId: "fixture", prompts, record: (_event, payload) => events.push(payload)});
- const run = async (paths: string[]) => JSON.parse((await checks.tool.execute("id", {paths}, undefined, undefined, undefined as never)).content[0].text as string);
+ const run = async (paths: string[]) => JSON.parse(((await checks.tool.execute("id", {paths}, undefined, undefined, undefined as never)).content[0] as {text: string}).text);
  const result = await run(["test_leak.py"]);
  expect(result.passed).toBe(false); expect(result.checks[0].exitCode).not.toBe(0);
  expect(result.checks[0].output).toContain("measured pipeline leaks");
@@ -110,7 +110,7 @@ test("run_checks runs B's check runner on the snapshot: a live fix cannot make t
  const fixed = await f.resolver.snapshot("exp-2");
  const fixedChecks = validationCheckTool({trial: fixed, solutionsRoot: f.live, taskId: "fixture", prompts,
   sandbox: scoutToolset("validation", {sandbox: expertSandbox(f.data, "validation", readPythonEnvironment(false), fixed), solutionsRoot: f.live, taskId: "fixture", trial: fixed}).checkSandbox!});
- expect(JSON.parse((await fixedChecks.tool.execute("id", {paths: ["test_leak.py"]}, undefined, undefined, undefined as never)).content[0].text as string).passed).toBe(true);
+ expect(JSON.parse(((await fixedChecks.tool.execute("id", {paths: ["test_leak.py"]}, undefined, undefined, undefined as never)).content[0] as {text: string}).text).passed).toBe(true);
  expect((await run(["../../tasks/model.py"])).error).toContain("not a .py file in");
 }, 60_000);
 
