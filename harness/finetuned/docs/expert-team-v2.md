@@ -218,11 +218,15 @@ texts now state. The ideas scout has not been dry-run yet.
 **Stream C implementation and budget matrix (2026-11-11).** Blocking scouts,
 role tools, continuous counters, journal append and prompt-exclusion regressions
 are implemented under `agent/team/`. The serial 10/20-call data/ideas matrix on
-spam1–3 and code2 is recorded in
-[the scout budget report](../agent/team/budget-results.md). Validation remains
+spam1–3 and code2 completed all 16 probes within budget with bullet replies:
+data used 10/10 or 20/20 calls; ideas used 9–10/10 or 18–19/20. Recorded times
+were 79–375 s after initial staging/profiling. Results and what each surfaced
+are in [the scout budget report](../agent/team/budget-results.md). Propose
+starting budgets **data 15, ideas 10 (at most 3 searches), validation 10
+provisional**. These development probes had prompt/backend changes and do not
+isolate a budget effect or demonstrate model-quality gains. Validation remains
 an explicit unavailable adapter until stream B supplies frozen snapshots and
-the check runner; its live budget matrix is deferred. Starting budgets are
-provisional until these measurements have been reviewed.
+the check runner; its eight live probes are deferred.
 
 **Repeat calls.** The lead passes a focused question and optional references
 (trial IDs, error summaries). A repeat call sees earlier bullets from the
