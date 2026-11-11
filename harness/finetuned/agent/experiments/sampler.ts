@@ -232,10 +232,14 @@ function ioCounters(root: string, pid: number): { readBytes: number; writeBytes:
 
 export function sampleLinuxGroup(pgid: number, previous?: ResourceSample, root = "/proc", maxAgeMs = SNAPSHOT_REUSE_MS): ResourceSample | null {
  const snapshot = processSnapshot(root, maxAgeMs);
- const members = processTree(pgid, snapshot.processes);
+ return sampleProcesses(processTree(pgid, snapshot.processes), snapshot.at, previous, root);
+}
+
+/** One reading over a known set of processes from one scan, such as an owner's tracked members. */
+export function sampleProcesses(members: readonly LinuxProcess[], at: number, previous?: ResourceSample, root = "/proc"): ResourceSample | null {
  if (!members.length) return null;
  const io = members.map(p => ioCounters(root, p.pid));
- const sample: ResourceSample = { at: snapshot.at, processes: members.length, pids: members.map(p => p.pid),
+ const sample: ResourceSample = { at, processes: members.length, pids: members.map(p => p.pid),
   largestProcessBytes: Math.max(...members.map(p => p.rssBytes)),
   rssBytes: members.reduce((n, p) => n + p.rssBytes, 0), cpuSeconds: members.reduce((n, p) => n + p.cpuSeconds, 0),
   readBytes: io.reduce((n, p) => n + p.readBytes, 0), writeBytes: io.reduce((n, p) => n + p.writeBytes, 0) };

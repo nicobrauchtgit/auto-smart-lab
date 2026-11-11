@@ -35,6 +35,7 @@ export const PROMPTS = {
 	"experiments.note-stale": { file: "experiments/note-stale.md", variables: ["silenceSeconds", "cpuPercent", "gapSeconds", "gaps"] },
 	"experiments.note-flooding": { file: "experiments/note-flooding.md", variables: ["capKiB"] },
 	"experiments.note-time-wasting": { file: "experiments/note-time-wasting.md", variables: ["elapsedSeconds", "projectedSeconds", "multiple"] },
+	"experiments.note-busy-silence": { file: "experiments/note-busy-silence.md", variables: ["silenceSeconds", "cpuPercent", "rssMb", "elapsedSeconds", "limitSeconds"] },
 	"experiments.machine-at-risk": { file: "experiments/machine-at-risk.md", variables: ["peakMb"] },
 	"experiments.shell-result": { file: "experiments/shell-result.md", variables: ["exitCode", "logPath"] },
 	"experiments.shell-stopped": { file: "experiments/shell-stopped.md", variables: ["reason"] },

@@ -32,16 +32,25 @@ export function recordShellDuration(key: string, ms: number): void {
 	durations.set(key, [...(durations.get(key) ?? []), ms].slice(-SHELL_HISTORY_KEEP));
 }
 
+export interface SupervisedBashOptions extends SupervisorOptions {
+	/**
+	 * The process supervised for one command. Defaults to `bash -c <command>`; a
+	 * sandboxed session passes its sandbox launcher, so the supervised process is
+	 * the sandboxed one and the boundary holds.
+	 */
+	argv?: (command: string) => string[];
+}
+
 /** Blocking shell tool, with the same sampler/arbiter as harness trials.
  * Callers supply the owning session's delivery and reporter callbacks.
  * root must be writable and visible to that session's read tool.
  *
  * The tool result is the answer: the end of the output (within the cap), the
  * exit code and the path of the full output. Only findings while the call runs
- * (stuck, stale, time-wasting, runaway memory, machine protection) are
- * delivered on top of it.
+ * (stuck, stale, flooding, time-wasting, runaway memory, machine protection)
+ * are delivered on top of it.
  */
-export function createSupervisedBashTool(cwd: string, options: SupervisorOptions) {
+export function createSupervisedBashTool(cwd: string, options: SupervisedBashOptions) {
 	const definition = createBashToolDefinition(cwd);
 	return { ...definition,
 		async execute(id: string, args: { command: string; timeout?: number }, signal?: AbortSignal) {
@@ -50,7 +59,7 @@ export function createSupervisedBashTool(cwd: string, options: SupervisorOptions
 			const key = shellCommandKey(cwd, args.command);
 			const root = mkdtempSync(join(options.root, "bash-"));
 			const supervisor = new ExperimentSupervisor({ ...options, root, blocking: true });
-			const view = supervisor.start({ argv: ["bash", "-c", args.command], cwd,
+			const view = supervisor.start({ argv: options.argv?.(args.command) ?? ["bash", "-c", args.command], cwd,
 				hypothesis: "agent shell call", scope: "shell", projectedDurationMs: shellProjection(key) }, id);
 			const abort = () => { void supervisor.stop(view.id, "owning session cancelled"); };
 			signal?.addEventListener("abort", abort, { once: true });

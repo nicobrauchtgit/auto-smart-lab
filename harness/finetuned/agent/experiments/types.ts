@@ -8,6 +8,7 @@
  */
 
 import { HARNESS_CONFIG } from "../harness/config.js";
+import type { PromptId } from "../prompts/registry.js";
 export type ExperimentStatus = "running" | "exited" | "stopped" | "failed";
 
 /** What the caller asks for. Persisted before the process is spawned. */
@@ -96,6 +97,8 @@ export interface Update {
 	view: ExperimentView;
 	/** Measured values behind the finding: the variables of its note prompt. */
 	facts?: Record<string, string>;
+	/** The note template, when it is not the default one for this kind. */
+	notePrompt?: PromptId;
 	/** Rendered from `agent/prompts/experiments/` by the supervisor. */
 	note?: string;
 }
@@ -123,7 +126,15 @@ export interface SupervisorLimits {
 	overrunMultiple: number;
 	/** ...and beyond this much wall time. Short calls are never reported as time-wasting. */
 	overrunMinMs: number;
+	/**
+	 * Busy silence beyond this is reported even without a rhythm or a projection:
+	 * no healthy call stays silent this long. Generous on purpose.
+	 */
+	busySilenceCeilingMs: number;
 }
+
+/** The smallest output read: one character of up to four UTF-8 bytes always fits. */
+export const MIN_OUTPUT_BYTES = 4;
 
 export const DEFAULT_LIMITS: Readonly<SupervisorLimits> = HARNESS_CONFIG.supervision;
 

@@ -84,7 +84,7 @@ test("a pressure stop informs the owner, retains peak memory and allows the next
   expect(supervisor.output(next.id).text).toContain("next trial");
  } finally { await supervisor.close(); rmSync(root, { recursive: true, force: true }); }
 });
-test("supervised bash keeps the end of a flooding output within the cap and reports nothing on top", async () => {
+test("supervised bash keeps the end of a flooding output within the cap and adds no exit or diagnostic report", async () => {
  const root = mkdtempSync(join(tmpdir(), "bash-supervision-")); const updates: Update[] = [];
  try {
   const tool = createSupervisedBashTool(root, { root, env: { PATH: process.env.PATH! }, deliver: (_, u) => { updates.push(u); }, limits: { sampleIntervalMs: 25, stopGraceMs: 25 } });
@@ -103,8 +103,10 @@ test("supervised bash keeps the end of a flooding output within the cap and repo
   const shown = text.slice(text.indexOf("\n") + 1, text.lastIndexOf("\nexit code:"));
   expect(full.endsWith(`${shown}\n`)).toBe(true);
   await Bun.sleep(100);
-  // No exit, diagnostic or flooding update on top of the tool result.
-  expect(updates).toEqual([]);
+  // No exit or diagnostic update on top of the tool result; flooding is reported
+  // at most once, and only while the call was still running.
+  expect(updates.filter(update => update.kind !== "flooding")).toEqual([]);
+  expect(updates.length).toBeLessThanOrEqual(1);
  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

@@ -95,11 +95,12 @@ is a suggestion to the agent, not a constraint.
 | `sampleIntervalMs` | 250 | Process sampling interval. |
 | `maxConcurrent` | 2 | Training processes at once. |
 | `stopGraceMs` | 2000 | Time between SIGTERM and SIGKILL. |
-| `outputCapBytes` | 51200 | Most output an agent is shown at once; the log keeps the rest. |
+| `outputCapBytes` | 51200 | Most output an agent is shown at once; the log keeps the rest. At least 4, so one character always fits. |
 | `memoryReserveBytes` | 1073741824 | Available RAM below this stops the largest running process; memory warnings are measured against it. |
 | `swapFullSeconds` | 15 | How long swap must stay full before the largest process is stopped. |
 | `overrunMultiple` | 3 | Time-wasting: elapsed beyond this multiple of comparable work's wall time... |
 | `overrunMinMs` | 60000 | ...and beyond this. Without comparable history nothing is reported. |
+| `busySilenceCeilingMs` | 1800000 | Busy silence beyond this is reported once (as stale) even without an output rhythm or a projection. With a projection the limit is the projected overrun instead. Healthy silent folds stay well below it. |
 
 ### `setup`
 | Key | Default | Meaning |

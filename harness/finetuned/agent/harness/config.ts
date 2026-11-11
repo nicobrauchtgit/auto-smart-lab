@@ -10,7 +10,7 @@ const fields = {
 	solve: ["maxIterations", "seed", "foldPolicy", "idleWakeMs"],
 	holdout: ["targetSmallestClassRows", "minSmallestClassRows", "maxFraction", "groupFraction"],
 	search: ["confirmAboveSeconds", "overrunFactor", "maxSeconds", "validationTimeoutSeconds"],
-	supervision: ["linesPerUpdate", "minStallMs", "stallGapMultiple", "importPreludeMs", "idleCpuPercent", "sampleIntervalMs", "maxConcurrent", "stopGraceMs", "outputCapBytes", "memoryReserveBytes", "swapFullSeconds", "overrunMultiple", "overrunMinMs"],
+	supervision: ["linesPerUpdate", "minStallMs", "stallGapMultiple", "importPreludeMs", "idleCpuPercent", "sampleIntervalMs", "maxConcurrent", "stopGraceMs", "outputCapBytes", "memoryReserveBytes", "swapFullSeconds", "overrunMultiple", "overrunMinMs", "busySilenceCeilingMs"],
 	subagents: ["turnTimeoutMs", "waitTimeoutMs", "maxWaitTimeoutMs", "limits"],
 };
 function object(value: unknown, keys: readonly string[], name: string): Record<string, any> {
@@ -41,6 +41,8 @@ export function parseHarnessConfig(raw: unknown): HarnessConfig {
 		}
 	}
 	if (value.supervision.idleCpuPercent > 100) throw new Error("supervision.idleCpuPercent must be at most 100");
+	// One character of up to four UTF-8 bytes must fit any capped read.
+	if (value.supervision.outputCapBytes < 4) throw new Error("supervision.outputCapBytes must be at least 4");
 	if (value.research.profileTextMinPercent > 100) throw new Error("research.profileTextMinPercent must be at most 100");
 	for (const key of ["maxFraction", "groupFraction"]) if (!(typeof value.holdout[key] === "number" && value.holdout[key] > 0 && value.holdout[key] < 0.5)) throw new Error(`Invalid holdout.${key}`);
 	if (value.holdout.minSmallestClassRows > value.holdout.targetSmallestClassRows) throw new Error("holdout minimum exceeds target");

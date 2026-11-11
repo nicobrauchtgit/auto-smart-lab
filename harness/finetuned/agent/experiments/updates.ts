@@ -36,6 +36,21 @@ export interface GateOptions {
 	blocking?: boolean;
 }
 
+/**
+ * What a gate has learned about one run. Persisted with the run, so a
+ * reattached supervisor neither repeats a report nor forgets the run's rhythm.
+ */
+export interface GateState {
+	observedMaxGap: number;
+	gaps: number;
+	firstLineAt?: number;
+	lastLineAt?: number;
+	reported: UpdateKind[];
+}
+
+const UPDATE_KINDS: ReadonlySet<string> = new Set<UpdateKind>(["progress", "stalled", "exited", "diagnostic", "memory", "stale", "time-wasting", "flooding", "machine-at-risk"]);
+const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+
 /** Output gaps needed before silence can be judged against the call's own rhythm. */
 export const RHYTHM_GAPS = 3;
 
@@ -84,12 +99,32 @@ export class UpdateGate {
 		return now - (this.lastLineAt ?? this.startedAt);
 	}
 
+	/** When output last arrived, if ever. */
+	get lastOutputAt(): number | undefined { return this.lastLineAt; }
+
+	snapshot(): GateState {
+		return { observedMaxGap: this.observedMaxGap, gaps: this.gaps, firstLineAt: this.firstLineAt,
+			lastLineAt: this.lastLineAt, reported: [...this.reported] };
+	}
+
+	/** Restore what an earlier supervisor of the same run learned. Malformed fields are ignored. */
+	restore(state: Partial<GateState> | undefined): void {
+		if (!state || typeof state !== "object") return;
+		if (finite(state.observedMaxGap) && state.observedMaxGap >= 0) this.observedMaxGap = state.observedMaxGap;
+		if (Number.isSafeInteger(state.gaps) && (state.gaps as number) >= 0) this.gaps = state.gaps as number;
+		if (finite(state.firstLineAt)) this.firstLineAt = state.firstLineAt;
+		if (finite(state.lastLineAt)) this.lastLineAt = state.lastLineAt;
+		if (Array.isArray(state.reported)) {
+			for (const kind of state.reported) if (UPDATE_KINDS.has(kind)) this.reported.add(kind);
+		}
+	}
+
 	decide(input: GateInput): Update | null {
 		const { now, pending } = input;
-		const emit = (kind: UpdateKind, facts: Record<string, string>): Update => {
+		const emit = (kind: UpdateKind, facts: Record<string, string>, notePrompt?: Update["notePrompt"]): Update => {
 			this.reported.add(kind);
 			return {
-				kind, id: input.view.id, at: now, view: input.view, facts,
+				kind, id: input.view.id, at: now, view: input.view, facts, ...(notePrompt ? { notePrompt } : {}),
 				lines: (input.recent ?? pending).slice(-this.limits.linesPerUpdate),
 			};
 		};
@@ -123,7 +158,9 @@ export class UpdateGate {
 				gaps: String(this.gaps),
 			});
 		}
-		if (!blocking && input.outputBytes !== undefined && input.outputBytes > this.limits.outputCapBytes
+		// While a blocking call runs its owner sees none of its output, so flooding is news
+		// then too. Its exit is the tool result (returned above), so nothing follows it.
+		if (input.outputBytes !== undefined && input.outputBytes > this.limits.outputCapBytes
 			&& !this.reported.has("flooding")) {
 			return emit("flooding", { capKiB: String(Math.round(this.limits.outputCapBytes / 1024)) });
 		}
@@ -137,6 +174,8 @@ export class UpdateGate {
 				});
 			}
 		}
+		const busySilence = this.busySilence(input);
+		if (busySilence) return emit("stale", busySilence, "experiments.note-busy-silence");
 		return null;
 	}
 
@@ -180,6 +219,32 @@ export class UpdateGate {
 		if (this.silenceMs(input.now) < this.stallThresholdMs()) return false;
 		const cpu = input.sample?.cpuPercent;
 		return cpu !== undefined && cpu < this.limits.idleCpuPercent;
+	}
+
+	/**
+	 * Busy silence far beyond anything plausible for the call.
+	 *
+	 * Stale needs a rhythm and stuck needs idle CPU, so a run that prints once
+	 * and then loops at full CPU would otherwise never be reported. A healthy
+	 * fold can be silent for minutes, so the limit is generous: the projected
+	 * overrun when comparable work was measured, otherwise the configured
+	 * ceiling. Reported once, as stale, and never on top of time-wasting.
+	 */
+	private busySilence(input: GateInput): Record<string, string> | undefined {
+		if (input.exited || this.reported.has("stale") || this.reported.has("time-wasting")) return undefined;
+		const sample = input.sample;
+		const cpu = sample?.cpuPercent;
+		if (!sample || cpu === undefined || cpu < this.limits.idleCpuPercent) return undefined;
+		const projected = input.projectedDurationMs;
+		const limit = projected && projected > 0
+			? Math.max(this.limits.overrunMinMs, projected * this.limits.overrunMultiple)
+			: this.limits.busySilenceCeilingMs;
+		const silence = this.silenceMs(input.now);
+		if (silence < limit) return undefined;
+		return {
+			silenceSeconds: seconds(silence), cpuPercent: cpu.toFixed(0), rssMb: mib(sample.rssBytes),
+			elapsedSeconds: seconds(input.now - this.startedAt), limitSeconds: seconds(limit),
+		};
 	}
 
 	/**

@@ -15,19 +15,25 @@
 
 import { machineProtection, type MachineProtection, type ProtectedWork } from "./protection.js";
 import { randomUUID } from "node:crypto";
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
 import { join } from "node:path";
 
-import { atomicJson, processIdentity, ownedProcessAlive, liveGroup, type ProcessIdentity } from "./ownership.js";
+import {
+	atomicJson, confirmedTargets, ownedMembers, processIdentity, ownedProcessAlive, liveGroup, sameProcessAlive,
+	type ProcessIdentity,
+} from "./ownership.js";
 import { loadPromptSnapshot, type PromptReference, type PromptSnapshot } from "../prompts/loader.js";
 import type { PromptId } from "../prompts/registry.js";
 
-import { UpdateGate, renderUpdate } from "./updates.js";
-import { groupAlive, groupRunning, libproc, linuxSystem, processSnapshot, processTree, sampleGroup, type MachineSample } from "./sampler.js";
+import { UpdateGate, renderUpdate, type GateState } from "./updates.js";
+import {
+	groupAlive, groupRunning, libproc, linuxSystem, processSnapshot, sampleGroup, sampleProcesses, SNAPSHOT_REUSE_MS,
+	type LinuxProcess, type MachineSample,
+} from "./sampler.js";
 import { decodePrefix, fileSize, readRange, readTail } from "./text.js";
 import {
-	DEFAULT_LIMITS,
+	DEFAULT_LIMITS, MIN_OUTPUT_BYTES,
 	type ExperimentRecord, type ExperimentSpec, type ExperimentStatus, type ExperimentView,
 	type ResourceSample, type SupervisorLimits, type Update, type UpdateKind,
 } from "./types.js";
@@ -64,7 +70,28 @@ export interface SupervisorOptions {
 	blocking?: boolean;
 	/** Called once per experiment after its process group is gone, for harness bookkeeping. */
 	onFinished?: (id: string, view: ExperimentView) => void | Promise<void>;
+	/** Test seam for signal delivery: production uses `process.kill`. */
+	kill?: (pid: number, signal: NodeJS.Signals) => void;
 }
+
+/** What a reattached supervisor restores, in addition to the caller's view of the run. */
+export interface AttachState {
+	identity?: ProcessIdentity;
+	stopReason?: string;
+	status?: ExperimentStatus;
+	cursor?: number;
+	lines?: number;
+	/** Reported kinds, output timing and learned gaps. Read from the run's state file when absent. */
+	gate?: Partial<GateState>;
+	/** Every process of the run tracked so far, by birth identity. Read from the run's state file when absent. */
+	members?: ProcessIdentity[];
+}
+
+/**
+ * One scan's view of a run: its live processes, when they were read, and
+ * whether its process group still has live processes, verified or not.
+ */
+interface Scan { at: number; members: LinuxProcess[]; groupAlive: boolean }
 
 let processPrompts: PromptSnapshot | undefined;
 
@@ -105,7 +132,16 @@ interface Live {
 	finished?: boolean;
 	protectedWork?: ProtectedWork;
 	unregister?: () => void;
+	/**
+	 * Every process of this run seen so far, keyed by PID and birth. Members stay
+	 * tracked after the leader exits or after their link to the group is gone.
+	 */
+	members: Map<string, ProcessIdentity>;
+	/** The process group is ours: spawned or verified here, and not seen empty since. */
+	groupHeld: boolean;
 }
+
+const memberKey = (identity: ProcessIdentity) => `${identity.pid}:${identity.birth}`;
 
 export class ExperimentSupervisor {
 	readonly limits: SupervisorLimits;
@@ -114,6 +150,7 @@ export class ExperimentSupervisor {
 
 	constructor(private readonly options: SupervisorOptions) {
 		this.limits = { ...DEFAULT_LIMITS, ...options.limits };
+		if (!(this.limits.outputCapBytes >= MIN_OUTPUT_BYTES)) throw new RangeError(`outputCapBytes must be at least ${MIN_OUTPUT_BYTES}`);
 		options.record?.("supervisor_configuration", { limits: this.limits, blocking: options.blocking === true });
 		mkdirSync(options.root, { recursive: true });
 	}
@@ -183,6 +220,7 @@ export class ExperimentSupervisor {
 		const entry: Live = {
 			record, child, identity: processIdentity(pgid), startedAt, status: "running", lines: 0, pending: [], recent: [],
 			logBytes: fileSize(logPath), gate: this.gate(startedAt, spec.expectedGapMs),
+			members: new Map(), groupHeld: pgid > 0,
 		};
 		this.live.set(id, entry);
 		this.protect(entry);
@@ -218,39 +256,61 @@ export class ExperimentSupervisor {
 	}
 
 	/**
-	 * Signal the process tree, then confirm it is gone.
+	 * Signal every process of the run, then confirm they are gone.
 	 *
-	 * The tree is the process group plus descendants that left it (`setsid`)
-	 * while their parent lives: the same members the sampler measures and
-	 * machine protection chooses by. Each is captured with its birth identity
-	 * before the first signal, so a member that the SIGTERM orphans still gets
-	 * the SIGKILL, and a reused PID never does. Repeating a stop is a no-op
-	 * rather than an error, because an agent that stopped a trial and asks again
-	 * should be told the same thing it was told the first time.
+	 * The targets are every process tracked for this run by birth identity: the
+	 * process group while it is ours, descendants that left it (`setsid`), and
+	 * members whose leader or parent has already exited. That is the set the
+	 * sampler measures and machine protection chooses by. A member the SIGTERM
+	 * orphans still gets the SIGKILL, and a reused PID never does.
+	 *
+	 * The run is `stopped` only once none of its processes remain. Until then it
+	 * stays `running` with its stop reason, keeps being watched, and is finished
+	 * as stopped when the last process goes; a repeated stop signals again.
+	 * Either way it is no longer a candidate for machine protection, which moves
+	 * on to the next largest process. Repeating a stop of a stopped run is a
+	 * no-op rather than an error, because an agent that stopped a trial and asks
+	 * again should be told the same thing it was told the first time.
 	 */
 	async stop(id: string, reason: string, observations: string[] = []): Promise<ExperimentView> {
 		const entry = this.require(id);
 		if (entry.status !== "running") return this.view(entry);
-		entry.stopReason = reason;
+		entry.stopReason ??= reason;
+		entry.unregister?.();
+		entry.unregister = undefined;
 		this.persist(entry);
 		this.options.record?.("experiment_stop_requested", {
 			experiment_id: id, reason, observations,
 			elapsed_seconds: (Date.now() - entry.startedAt) / 1000,
 			lines_emitted: entry.lines,
 		});
-		entry.stopping ??= (async () => {
-			const targets = this.stopTargets(entry);
-			this.signalTree(entry, targets, "SIGTERM");
-			await new Promise((settle) => setTimeout(settle, this.limits.stopGraceMs));
-			const remaining = [...targets, ...this.stopTargets(entry)];
-			if (groupAlive(entry.record.pgid) || remaining.some((target) => ownedProcessAlive(target))) {
-				this.signalTree(entry, remaining, "SIGKILL");
-			}
-		})();
+		entry.stopping ??= this.terminate(entry).finally(() => { entry.stopping = undefined; });
 		await entry.stopping;
-		entry.status = "stopped";
 		this.finish(entry);
+		if (!entry.finished) {
+			this.options.record?.("experiment_stop_incomplete", {
+				experiment_id: id, reason: entry.stopReason,
+				remaining: [...entry.members.values()].map((member) => member.pid),
+			});
+		}
 		return this.view(entry);
+	}
+
+	/** SIGTERM, a grace period, SIGKILL to whatever remains, and a bounded wait for it to go. */
+	private async terminate(entry: Live): Promise<void> {
+		const gone = async () => {
+			const deadline = Date.now() + this.limits.stopGraceMs;
+			while (Date.now() < deadline) {
+				if (!this.running(entry, 0)) return true;
+				await new Promise((settle) => setTimeout(settle, Math.min(25, this.limits.stopGraceMs)));
+			}
+			return !this.running(entry, 0);
+		};
+		const targets = this.stopTargets(entry);
+		this.signalTree(entry, targets, "SIGTERM");
+		if (await gone()) return;
+		this.signalTree(entry, [...targets, ...this.stopTargets(entry)], "SIGKILL");
+		await gone();
 	}
 
 	/**
@@ -259,9 +319,14 @@ export class ExperimentSupervisor {
 	 * Reading forward from a cursor is what lets observation resume across a
 	 * model turn or a compaction without replaying the whole metric history into
 	 * the model's context. The cursor stops before a character the cap would cut,
-	 * so the next read starts on it and no byte is skipped.
+	 * so the next read starts on it and no byte is skipped. A cap below one
+	 * character's widest encoding (four bytes) is refused: it could not return
+	 * a whole character.
 	 */
 	output(id: string, cursor = 0, maxBytes = 8_192): { text: string; cursor: number; remaining: number } {
+		if (!Number.isSafeInteger(maxBytes) || maxBytes < MIN_OUTPUT_BYTES) {
+			throw new RangeError(`maxBytes must be an integer of at least ${MIN_OUTPUT_BYTES}`);
+		}
 		const entry = this.require(id);
 		const size = fileSize(entry.record.logPath);
 		const from = Math.max(0, Math.min(cursor, size));
@@ -275,7 +340,9 @@ export class ExperimentSupervisor {
 		// Only a character still being written may wait for its remaining bytes.
 		const finished = entry.status !== "running" || from + buffer.length < size;
 		if (bytes === 0 && finished) {
-			text = buffer.toString("utf8");
+			// A truncated character at the end of a finished log never completes:
+			// it reads as one replacement character (three bytes, within any cap).
+			text = "\uFFFD";
 			bytes = buffer.length;
 		}
 		return { text, cursor: from + bytes, remaining: size - (from + bytes) };
@@ -294,12 +361,23 @@ export class ExperimentSupervisor {
 	}
 
 	/** Reattach logs, liveness polling and control without spawning anything. */
-	attach(record: ExperimentRecord, state: { identity?: ProcessIdentity; stopReason?: string; status?: ExperimentStatus; cursor?: number; lines?: number }): ExperimentView {
+	attach(record: ExperimentRecord, state: AttachState): ExperimentView {
 		if (this.live.has(record.id)) return this.status(record.id);
 		const startedAt = Date.parse(record.startedAt);
+		// What the earlier supervisor learned: reported kinds, output calibration and tracked members.
+		let persisted: Partial<AttachState> | undefined;
+		try { persisted = JSON.parse(readFileSync(join(record.directory, "supervisor-state.json"), "utf8")); }
+		catch { persisted = undefined; }
+		const gate = this.gate(startedAt, record.expectedGapMs);
+		gate.restore(state.gate ?? persisted?.gate);
+		const members = (state.members ?? persisted?.members ?? []).filter((member) =>
+			member && Number.isSafeInteger(member.pid) && member.pid > 0 && typeof member.birth === "string");
 		const entry: Live = { record, identity: state.identity, startedAt, status: state.status ?? "running",
 			stopReason: state.stopReason, logBytes: state.cursor ?? 0, lines: state.lines ?? 0, pending: [], recent: [],
-			gate: this.gate(startedAt, record.expectedGapMs) };
+			gate, lastLineAt: gate.lastOutputAt,
+			members: new Map(members.map((member) => [memberKey(member), member])),
+			// The group is verifiably ours only while its recorded leader is alive.
+			groupHeld: ownedProcessAlive(state.identity) };
 		this.live.set(record.id, entry);
 		if (entry.status === "running") {
 			this.protect(entry);
@@ -337,30 +415,65 @@ export class ExperimentSupervisor {
 		return this.options.protection ?? machineProtection;
 	}
 
-	/** `maxAgeMs: 0` for decisions that must not act on a reading from before a signal. */
-	private groupRunning(entry: Live, maxAgeMs?: number): boolean {
-		if (process.platform === "darwin") return liveGroup(entry.record.pgid).length > 0;
-		return groupRunning(entry.record.pgid, maxAgeMs);
+	/**
+	 * The run's live processes from one `/proc` scan, updating what is tracked.
+	 * Undefined where membership cannot be scanned (Darwin, or `/proc` failing);
+	 * callers then fall back to the process group.
+	 */
+	private scan(entry: Live, maxAgeMs = SNAPSHOT_REUSE_MS): Scan | undefined {
+		if (process.platform !== "linux") return undefined;
+		let snapshot: ReturnType<typeof processSnapshot>;
+		try { snapshot = processSnapshot("/proc", maxAgeMs); } catch { return undefined; }
+		const found = ownedMembers(entry.record.pgid, snapshot.processes, entry.members.values(), entry.groupHeld);
+		entry.groupHeld = found.groupHeld;
+		const tracked = new Map(found.tracked.map((member) => [memberKey(member), member]));
+		const joined = [...tracked.keys()].some((key) => !entry.members.has(key));
+		entry.members = tracked;
+		// A process that joined is persisted at once: after a restart it is still ours.
+		if (joined && !entry.finished) this.persist(entry);
+		const pgid = entry.record.pgid;
+		return { at: snapshot.at, members: found.members, groupAlive: pgid > 0 && snapshot.processes.some((p) => p.pgid === pgid) };
 	}
 
-	/** Every live member of the tree, with birth identities. Empty unless the leader is verifiably ours. */
+	/** Whether any process of the run lives. `maxAgeMs: 0` for decisions that must not act on a reading from before a signal. */
+	private running(entry: Live, maxAgeMs?: number, scan = this.scan(entry, maxAgeMs)): boolean {
+		// A group with live processes that are no longer verifiably ours (a recovered run
+		// whose leader exited) still blocks finishing, but is never signalled.
+		if (scan) return scan.members.length > 0 || scan.groupAlive;
+		if (process.platform === "darwin") return ownedProcessAlive(entry.identity) || liveGroup(entry.record.pgid).length > 0;
+		return ownedProcessAlive(entry.identity) || groupRunning(entry.record.pgid, maxAgeMs);
+	}
+
+	/** One reading over the run's processes; CPU is a rate since `previous`. */
+	private measure(entry: Live, scan: Scan | undefined, previous?: ResourceSample): ResourceSample | null {
+		if (scan) return sampleProcesses(scan.members, scan.at, previous);
+		return sampleGroup(entry.record.pgid, previous);
+	}
+
+	/**
+	 * Every live process of the run from a fresh scan, each confirmed against a
+	 * fresh read of its PID: a PID whose birth changed since the scan is dropped.
+	 */
 	private stopTargets(entry: Live): ProcessIdentity[] {
-		if (process.platform !== "linux" || !ownedProcessAlive(entry.identity)) return [];
-		try {
-			return processTree(entry.record.pgid, processSnapshot("/proc", 0).processes)
-				.map((member) => processIdentity(member.pid))
-				.filter((identity): identity is ProcessIdentity => identity !== undefined);
-		} catch {
-			return [];
-		}
+		const scan = this.scan(entry, 0);
+		return scan ? confirmedTargets(scan.members) : [];
 	}
 
 	private signalTree(entry: Live, targets: ProcessIdentity[], signal: NodeJS.Signals): void {
-		this.signalGroup(entry, signal);
+		const kill = this.options.kill ?? ((pid: number, sig: NodeJS.Signals) => { process.kill(pid, sig); });
+		// The group as a whole, while a verified member still holds its ID: a group
+		// ID is not reused while any process carries it. This also reaches members
+		// born after the scan.
+		const pgid = entry.record.pgid;
+		const held = pgid > 0 && (ownedProcessAlive(entry.identity)
+			|| targets.some((target) => target.pgid === pgid && ownedProcessAlive(target)));
+		if (held) {
+			try { kill(-pgid, signal); } catch { /* already gone */ }
+		}
 		for (const target of targets) {
 			// Checked again at the moment of signalling: never signal a reused PID.
-			if (!ownedProcessAlive(target)) continue;
-			try { process.kill(target.pid, signal); } catch { /* already gone */ }
+			if (!sameProcessAlive(target)) continue;
+			try { kill(target.pid, signal); } catch { /* already gone */ }
 		}
 	}
 
@@ -368,6 +481,7 @@ export class ExperimentSupervisor {
 		atomicJson(join(entry.record.directory, "supervisor-state.json"), {
 			schemaVersion: 1, status: entry.status, stopReason: entry.stopReason, identity: entry.identity,
 			cursor: entry.logBytes, lines: entry.lines, exitCode: entry.exitCode,
+			gate: entry.gate.snapshot(), members: [...entry.members.values()],
 		});
 	}
 
@@ -408,17 +522,6 @@ export class ExperimentSupervisor {
 		}
 		this.persist(entry);
 		return true;
-	}
-
-	private signalGroup(entry: Live, signal: NodeJS.Signals): void {
-		try {
-			// Never signal a reused PID/group. Descendants without a live verified
-			// leader block recovery but require operator intervention to stop.
-			if (!ownedProcessAlive(entry.identity)) return;
-			process.kill(-entry.record.pgid, signal);
-		} catch {
-			// Already gone, or never started. Both are the state stop asks for.
-		}
 	}
 
 	private require(id: string): Live {
@@ -468,13 +571,15 @@ export class ExperimentSupervisor {
 	private protect(entry: Live): void {
 		const work: ProtectedWork = { rssBytes: 0, peakBytes: 0, largestProcessBytes: 0,
 			refresh: () => {
-				const sample = sampleGroup(entry.record.pgid);
-				if (!sample) { work.rssBytes = 0; work.largestProcessBytes = 0; return; }
-				work.rssBytes = sample.rssBytes;
-				work.peakBytes = Math.max(work.peakBytes, work.rssBytes);
-				work.largestProcessBytes = sample.largestProcessBytes ?? sample.rssBytes;
+				// The shared scan of this tick: tracked members, not only the group. Memory
+				// only, so the CPU rate of the run's own sample is left alone.
+				this.account(entry, this.measure(entry, this.scan(entry)));
 			},
-			stop: async (peak) => {
+			stop: async (peak, machine) => {
+				// The owner hears its memory warning no later than the stop, from the same
+				// reading, even when another owner's tick made the decision before this one sampled.
+				this.resample(entry, this.scan(entry));
+				this.evaluate(entry, machine);
 				const rendered = this.notes.render("experiments.machine-at-risk", { peakMb: (peak / 1024 ** 2).toFixed(0) });
 				const note = rendered.text;
 				const update: Update = { kind: "machine-at-risk", id: entry.record.id, at: Date.now(), lines: [...entry.recent], view: this.view(entry), note };
@@ -488,24 +593,53 @@ export class ExperimentSupervisor {
 		entry.unregister = this.protection.register(work);
 	}
 
+	/** The run's own sample, its CPU a rate since the previous one. A reading of the same scan keeps the previous rate. */
+	private resample(entry: Live, scan: Scan | undefined): ResourceSample | null {
+		const previous = entry.sample;
+		const sample = this.measure(entry, scan, previous);
+		if (!sample) return null;
+		if (previous && sample.at - previous.at < 1) sample.cpuPercent = previous.cpuPercent;
+		entry.sample = sample;
+		return sample;
+	}
+
+	/** What machine protection chooses by: the run's memory now and at its peak. */
+	private account(entry: Live, sample: ResourceSample | null | undefined): void {
+		const work = entry.protectedWork;
+		if (!work) return;
+		if (!sample) { work.rssBytes = 0; work.largestProcessBytes = 0; return; }
+		work.rssBytes = sample.rssBytes;
+		work.peakBytes = Math.max(work.peakBytes, work.rssBytes);
+		work.largestProcessBytes = sample.largestProcessBytes ?? sample.rssBytes;
+	}
+
+	/**
+	 * One tick: one `/proc` scan for liveness, the sample and the protection
+	 * refresh, and one machine reading for the warning and the protection check.
+	 * Warnings are evaluated before protection acts on the same reading.
+	 */
 	private tick(entry: Live): void {
 		this.tailLog(entry);
-		if (!entry.finished && !ownedProcessAlive(entry.identity) && !this.groupRunning(entry)) {
+		const scan = this.scan(entry);
+		if (!entry.finished && !this.running(entry, undefined, scan)) {
 			this.finish(entry);
 			return;
 		}
 		let machine: MachineSample | undefined;
 		if (entry.status === "running") {
-			// One /proc scan serves the sample, the protection refresh and the liveness check.
-			entry.sample = sampleGroup(entry.record.pgid, entry.sample) ?? entry.sample;
-			entry.protectedWork?.refresh?.();
+			this.account(entry, this.resample(entry, scan));
 			try { machine = this.protection.machine(); } catch { machine = undefined; }
-			void this.protection.check().catch(() => undefined);
 		}
-		this.decide(entry, machine);
+		this.evaluate(entry, machine);
+		if (machine && entry.status === "running") void this.protection.check(Date.now(), machine).catch(() => undefined);
 	}
 
-	private decide(entry: Live, machine?: MachineSample): void {
+	/** Every finding due now, each kind once, in the gate's order. */
+	private evaluate(entry: Live, machine?: MachineSample): void {
+		for (let round = 0; round < 16 && this.decide(entry, machine); round++);
+	}
+
+	private decide(entry: Live, machine?: MachineSample): boolean {
 		const update = entry.gate.decide({
 			now: Date.now(), view: this.view(entry), sample: entry.sample,
 			pending: entry.pending, recent: entry.recent, exited: entry.status !== "running",
@@ -513,14 +647,16 @@ export class ExperimentSupervisor {
 			...(machine ? { machine: { availableBytes: machine.availableBytes, reserveBytes: this.protection.reserveBytes } } : {}),
 		});
 		entry.pending = [];
-		if (!update) return;
+		if (!update) return false;
 		let prompt: PromptReference | undefined;
-		const promptId = NOTE_PROMPTS[update.kind];
+		const promptId = update.notePrompt ?? NOTE_PROMPTS[update.kind];
 		if (promptId && update.facts) {
 			const rendered = this.notes.render(promptId, update.facts as never);
 			update.note = rendered.text;
 			prompt = rendered.reference;
 		}
+		// Reported kinds survive a restart of the harness.
+		this.persist(entry);
 		this.options.record?.("experiment_update", {
 			experiment_id: entry.record.id, kind: update.kind, note: update.note, facts: update.facts, prompt,
 			elapsed_seconds: update.view.elapsedSeconds, cpu_percent: update.view.cpuPercent,
@@ -528,24 +664,27 @@ export class ExperimentSupervisor {
 			stall_threshold_ms: entry.gate.stallThresholdMs(),
 		});
 		void Promise.resolve(this.options.deliver(renderUpdate(update), update)).catch(() => undefined);
+		return true;
 	}
 
 	private finish(entry: Live): void {
 		if (entry.finished) return;
-		if (this.groupRunning(entry, 0)) return;
+		if (this.running(entry, 0)) return;
 		this.tailLog(entry, true);
 		entry.unregister?.();
+		entry.unregister = undefined;
 		if (entry.timer) {
 			clearInterval(entry.timer);
 			entry.timer = undefined;
 		}
-		if (entry.status === "running") entry.status = "exited";
+		// A requested stop is complete only now that no process of the run remains.
+		if (entry.status === "running") entry.status = entry.stopReason ? "stopped" : "exited";
 		entry.endedAt ??= Date.now();
 		// One last pass so the exit itself, and whatever it printed on the way
 		// out, still reach the agent.
 		entry.finished = true;
 		this.persist(entry);
-		this.decide(entry);
+		this.evaluate(entry);
 		this.options.record?.("experiment_finished", {
 			experiment_id: entry.record.id, status: entry.status, exit_code: entry.exitCode,
 			stop_reason: entry.stopReason, lines_emitted: entry.lines,

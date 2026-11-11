@@ -2,7 +2,7 @@
 import { dlopen, FFIType, ptr } from "bun:ffi";
 import { closeSync, fsyncSync, openSync, readFileSync, readdirSync, mkdirSync, writeFileSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { libproc } from "./sampler.js";
+import { libproc, type LinuxProcess } from "./sampler.js";
 import { randomUUID } from "node:crypto";
 
 // Loaded on first claim, so importing this module never fails on a libc it cannot open.
@@ -74,4 +74,59 @@ export function atomicJson(path: string, value: unknown): void {
   renameSync(tmp, path);
   const directory = openSync(dirname(path), "r");
   try { fsyncSync(directory); } finally { closeSync(directory); }
+}
+
+/** The birth identity a `/proc` scan implies for a process: the string `processIdentity` builds. */
+export function birthOf(startTicks: number): string {
+  return `${bootId()}:${startTicks}`;
+}
+
+/**
+ * Every live process of one owner, by birth identity, from one scan.
+ *
+ * Roots are the processes tracked earlier that are still the same processes,
+ * plus the process group while it is verifiably ours: a group ID is not reused
+ * while any process carries it, so a group that was ours and has not been seen
+ * empty since, or that a tracked member still belongs to, is still ours.
+ * Descendants of any root join through their parent link. Tracking survives the
+ * leader's exit and a descendant's `setsid` after its parent has gone, because
+ * each member stays tracked by its own birth identity.
+ */
+export function ownedMembers(pgid: number, processes: readonly LinuxProcess[], tracked: Iterable<ProcessIdentity>, groupHeld: boolean):
+  { members: LinuxProcess[]; tracked: ProcessIdentity[]; groupHeld: boolean } {
+  const byPid = new Map(processes.map(p => [p.pid, p]));
+  const roots = new Set<number>();
+  for (const identity of tracked) {
+    const current = byPid.get(identity.pid);
+    if (current && birthOf(current.startTicks) === identity.birth) roots.add(current.pid);
+  }
+  const group = pgid > 0 ? processes.filter(p => p.pgid === pgid) : [];
+  const held = group.length > 0 && (groupHeld || group.some(p => roots.has(p.pid)));
+  if (held) for (const p of group) roots.add(p.pid);
+  for (let changed = roots.size > 0; changed;) {
+    changed = false;
+    for (const p of processes) if (!roots.has(p.pid) && roots.has(p.ppid)) { roots.add(p.pid); changed = true; }
+  }
+  const members = processes.filter(p => roots.has(p.pid));
+  return { members, groupHeld: held,
+    tracked: members.map(p => ({ pid: p.pid, pgid: p.pgid, birth: birthOf(p.startTicks), state: "R" })) };
+}
+
+/**
+ * Stop targets from a scan, each confirmed against a fresh read of its PID.
+ * A process whose birth differs from the scan's is a different process that
+ * reused the PID after the scan, and is dropped.
+ */
+export function confirmedTargets(processes: readonly LinuxProcess[], identityOf: (pid: number) => ProcessIdentity | undefined = processIdentity): ProcessIdentity[] {
+  return processes.flatMap(p => {
+    const current = identityOf(p.pid);
+    return current && current.birth === birthOf(p.startTicks) && !["Z", "X"].includes(current.state) ? [current] : [];
+  });
+}
+
+/** The same process as captured, whichever group it has moved to since. */
+export function sameProcessAlive(identity?: ProcessIdentity): boolean {
+  if (!identity) return false;
+  const current = processIdentity(identity.pid);
+  return !!current && current.birth === identity.birth && !["Z", "X"].includes(current.state);
 }

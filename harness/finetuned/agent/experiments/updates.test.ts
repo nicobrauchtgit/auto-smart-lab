@@ -268,23 +268,91 @@ describe("time-wasting compares like with like", () => {
 		expect(gate.decide(input)).toBeNull();
 	});
 
-	test("without a projection there is no verdict", () => {
+	test("without a projection there is no time verdict", () => {
 		const gate = new UpdateGate(limits(), START);
+		// Busy and silent for twenty minutes: long, but within the ceiling for silence.
+		expect(gate.decide({ now: START + 1_200_000, view: view(), sample: sample(100), pending: [] })).toBeNull();
+		// An hour of output keeps it news-free; only silence has a ceiling.
+		gate.observeLine(START + 3_599_000);
 		expect(gate.decide({ now: START + 3_600_000, view: view(), sample: sample(100), pending: [] })).toBeNull();
 	});
 });
 
 describe("a blocking shell call", () => {
-	test("delivers no exit, diagnostic or flooding update: the tool result is the answer", () => {
+	test("delivers no exit or diagnostic update, and flooding only while it runs: the tool result is the answer", () => {
 		const gate = new UpdateGate(limits(), START, { blocking: true });
 		const noisy = { now: START + 500, view: view(), sample: sample(90), pending: ["Traceback (most recent call last):"],
 			outputBytes: 10 * DEFAULT_LIMITS.outputCapBytes };
+		// The owner sees no output until the call returns, so flooding is news once.
+		expect(gate.decide(noisy)?.kind).toBe("flooding");
 		expect(gate.decide(noisy)).toBeNull();
 		expect(gate.decide({ ...noisy, exited: true })).toBeNull();
+		// A call that flooded and ended before it was sampled is reported by its result alone.
+		const quick = new UpdateGate(limits(), START, { blocking: true });
+		expect(quick.decide({ ...noisy, exited: true })).toBeNull();
 	});
 
 	test("still reports a stall while it runs", () => {
 		const gate = new UpdateGate(limits(), START, { blocking: true });
 		expect(gate.decide({ now: START + 60_000, view: view(), sample: sample(0), pending: [] })?.kind).toBe("stalled");
+	});
+});
+
+describe("busy silence far beyond anything plausible", () => {
+	const MiB = 1024 ** 2;
+	const at = (gate: UpdateGate, ms: number, extra: Record<string, unknown> = {}) =>
+		gate.decide({ now: START + ms, view: view(), sample: sample(100, 2048 * MiB), pending: [], ...extra });
+
+	test("a run that prints once and then loops at full CPU is reported once, with CPU, memory and elapsed time", () => {
+		// `fold_started`, then a pegged core and stable memory: neither stale (no rhythm) nor stuck (busy).
+		const gate = new UpdateGate(limits(), START);
+		gate.observeLine(START + 2_000);
+		expect(at(gate, 2_000 + 29 * 60_000)).toBeNull();
+		const update = at(gate, 2_000 + 30 * 60_000);
+		expect(update?.kind).toBe("stale");
+		expect(update?.notePrompt).toBe("experiments.note-busy-silence");
+		expect(update?.facts).toEqual({ silenceSeconds: "1800.0", cpuPercent: "100", rssMb: "2048",
+			elapsedSeconds: "1802.0", limitSeconds: "1800.0" });
+		expect(at(gate, 4 * 3_600_000)).toBeNull();
+	});
+
+	test("healthy silent folds of normal length cause no wake", () => {
+		// Five folds, each silent for twelve minutes at full CPU between its start and end lines.
+		const gate = new UpdateGate(limits(), START);
+		let now = 2_000;
+		gate.observeLine(START + now);
+		for (let fold = 0; fold < 5; fold++) {
+			for (let step = 0; step < 12 * 60; step++) expect(at(gate, now + step * 1_000)).toBeNull();
+			now += 12 * 60_000;
+			gate.observeLine(START + now);
+		}
+	});
+
+	test("with a projection the limit is the projected overrun, reported once as time-wasting", () => {
+		const gate = new UpdateGate(limits(), START);
+		gate.observeLine(START + 2_000);
+		const projected = { projectedDurationMs: 100_000 };
+		expect(at(gate, 299_000, projected)).toBeNull();
+		expect(at(gate, 300_000, projected)?.kind).toBe("time-wasting");
+		// The same silence is not reported a second time under another name.
+		expect(at(gate, 3_600_000, projected)).toBeNull();
+	});
+});
+
+describe("a reattached gate", () => {
+	test("keeps reported kinds, output timing and learned gaps", () => {
+		const first = new UpdateGate(limits({ minStallMs: 1_000 }), START);
+		for (const ms of [1_000, 1_400, 1_900, 2_500]) first.observeLine(START + ms);
+		const idle = (gate: UpdateGate, ms: number) => gate.decide({ now: START + ms, view: view(), sample: sample(0), pending: [] });
+		expect(idle(first, 20_000)?.kind).toBe("stalled");
+		const second = new UpdateGate(limits({ minStallMs: 1_000 }), START);
+		second.restore(JSON.parse(JSON.stringify(first.snapshot())));
+		expect(second.stallThresholdMs()).toBe(first.stallThresholdMs());
+		expect(second.silenceMs(START + 20_000)).toBe(first.silenceMs(START + 20_000));
+		expect(idle(second, 30_000)).toBeNull();
+		// Malformed state is ignored rather than trusted.
+		const third = new UpdateGate(limits({ minStallMs: 1_000 }), START);
+		third.restore({ gaps: -1, observedMaxGap: Number.NaN, reported: ["nonsense" as never] });
+		expect(idle(third, 30_000)?.kind).toBe("stalled");
 	});
 });
