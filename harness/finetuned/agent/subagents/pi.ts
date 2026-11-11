@@ -35,6 +35,8 @@ export interface PiChildOptions {
 	/** Controller-supplied tools/guards; never model-selected capabilities. */
 	customTools?: readonly ToolDefinition[];
 	extensionFactories?: readonly InlineExtension[];
+	/** Names of tools the controller's `extensionFactories` register (e.g. web_search); allowed like custom tools. */
+	extensionTools?: readonly string[];
 	childInstructions?: RenderedPrompt;
 	/** null disables the legacy request wall timer for tool-budgeted scouts. */
 	turnTimeoutMs?: number | null;
@@ -82,7 +84,7 @@ export function createPiChildFactory(options: PiChildOptions): (identity: ChildI
 	const instructions = [...options.sharedInstructions, (options.childInstructions ?? options.prompts.render("subagents.child", {}))]
 		.map(prompt => Object.freeze({ text: prompt.text, reference: Object.freeze({ ...prompt.reference }) }));
 	const toolNames = [...new Set(options.tools ?? CHILD_TOOL_NAMES)];
-	for (const name of toolNames) if (!(CHILD_TOOL_NAMES as readonly string[]).includes(name) && !options.customTools?.some(tool => tool.name === name)) throw new Error(`Unsupported child tool: ${name}`);
+	for (const name of toolNames) if (!(CHILD_TOOL_NAMES as readonly string[]).includes(name) && !options.customTools?.some(tool => tool.name === name) && !options.extensionTools?.includes(name)) throw new Error(`Unsupported child tool: ${name}`);
 	const timeoutMs = options.turnTimeoutMs === null ? null : options.turnTimeoutMs ?? HARNESS_CONFIG.subagents.turnTimeoutMs;
 	if (timeoutMs !== null && (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2_147_483_647)) throw new Error("Invalid child turn timeout");
 	const identity = { ...options.observe.identity };

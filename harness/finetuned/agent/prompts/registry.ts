@@ -1,10 +1,12 @@
 /** Stable prompt IDs and their required string inputs. Prose belongs in files. */
 export const PROMPTS = {
  "team.probe-question": { file: "team/probe-question.md", variables: [] },
- "team.data": { file: "team/data.md", variables: ["taskId", "budget", "dataPaths"] },
- "team.ideas": { file: "team/ideas.md", variables: ["taskId", "budget", "webSearches"] },
- "team.validation": { file: "team/validation.md", variables: ["taskId", "budget"] },
- "team.start": { file: "team/start.md", variables: ["task", "unitIntro", "question", "refs", "shown", "omitted", "earlier"] },
+ "team.probe-validation": { file: "team/probe-validation.md", variables: [] },
+ "team.data": { file: "team/data.md", variables: ["taskId", "budget", "dataPaths", "resources"] },
+ "team.ideas": { file: "team/ideas.md", variables: ["taskId", "budget", "webSearches", "resources"] },
+ "team.validation": { file: "team/validation.md", variables: ["taskId", "budget", "experiment", "commit", "checks"] },
+ "team.check-tool": { file: "team/check-tool.md", variables: [] },
+ "team.start": { file: "team/start.md", variables: ["task", "question", "refs", "shown", "omitted", "earlier"] },
  "team.shared": { file: "team/shared.md", variables: [] },
  "team.stopped": { file: "team/stopped.md", variables: ["reason"] },
  "team.failed": { file: "team/failed.md", variables: ["role", "reason"] },

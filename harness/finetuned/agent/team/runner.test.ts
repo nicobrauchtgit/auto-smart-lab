@@ -12,32 +12,41 @@ import { readPythonEnvironment } from "../run/python_environment.js";
 import { AgentSession } from "@earendil-works/pi-coding-agent";
 const prompts = loadPromptSnapshot();
 
-function scoutsBehindSetup(scoutPaths: {journal: string; unitIntro: string}) {
+function scoutsBehindSetup(scoutPaths: {journal: string; unitIntro: string; task: string; profile: string}) {
  const starts = {count: 0};
- const scope = createScouts({prompts, taskId: "fixture", task: "task", unitIntro: "intro", dataPaths: "dev", journalPath: scoutPaths.journal,
+ const scope = createScouts({prompts, taskId: "fixture", task: "task", dataPaths: "dev", resources: "- none", journalPath: scoutPaths.journal,
   datasetSha256: "data", runId: "run", invocationId: "invoke",
   prepare: (_roles, signal) => new SetupSession().check(setupChecks(["scouts"], {taskId: "fixture", prompts, scoutPaths}), signal ?? new AbortController().signal, () => {}),
   run: async () => {starts.count++; return "- result";}});
  return {scope, starts};
 }
 
-test("scout-prompts preflight blocks every scout on a missing unit introduction or unwritable journal", async () => {
+test("scout-prompts preflight blocks every scout on missing inputs, a task.md without the unit introduction or an unwritable journal", async () => {
  const root = mkdtempSync(join(tmpdir(), "scout-setup-"));
  const unitIntro = join(root, "unit-intro.md"); writeFileSync(unitIntro, "Unit introduction");
+ const task = join(root, "task.md"); writeFileSync(task, "Unit introduction\n\nTask text\n");
+ const profile = join(root, "profile.json"); writeFileSync(profile, '{"rowCount": 1}');
  const journal = join(root, "task/findings/journal.jsonl");
 
- const missing = scoutsBehindSetup({journal, unitIntro: join(root, "missing/unit-intro.md")});
+ const missing = scoutsBehindSetup({journal, unitIntro: join(root, "missing/unit-intro.md"), task, profile});
  await expect(missing.scope.scout({role: ["data", "ideas"], question: "q"})).rejects.toThrow("scout-prompts");
  expect(missing.starts.count).toBe(0);
 
+ const noProfile = scoutsBehindSetup({journal, unitIntro, task, profile: join(root, "missing.json")});
+ await expect(noProfile.scope.scout({role: "data", question: "q"})).rejects.toThrow("scout-prompts");
+ const bare = join(root, "bare-task.md"); writeFileSync(bare, "Task text only\n");
+ const noIntro = scoutsBehindSetup({journal, unitIntro, task: bare, profile});
+ await expect(noIntro.scope.scout({role: "data", question: "q"})).rejects.toThrow("scout-prompts");
+ expect(noProfile.starts.count + noIntro.starts.count).toBe(0);
+
  const locked = join(root, "locked"); mkdirSync(locked); chmodSync(locked, 0o500);
  try {
-  const unwritable = scoutsBehindSetup({journal: join(locked, "journal.jsonl"), unitIntro});
+  const unwritable = scoutsBehindSetup({journal: join(locked, "journal.jsonl"), unitIntro, task, profile});
   await expect(unwritable.scope.scout({role: "data", question: "q"})).rejects.toThrow("scout-prompts");
   expect(unwritable.starts.count).toBe(0);
  } finally {chmodSync(locked, 0o700);}
 
- const ready = scoutsBehindSetup({journal, unitIntro});
+ const ready = scoutsBehindSetup({journal, unitIntro, task, profile});
  expect(await ready.scope.scout({role: "data", question: "q"})).toBe("- result");
  expect(ready.starts.count).toBe(1);
 });
@@ -49,20 +58,23 @@ test("the runner's tool set: ideas is read-only with search, data writes only it
  // The real policy needs an executable for bubblewrap; no process is started here.
  const sandbox = {executable: process.execPath, cwd: workspace, env: {}, args: () => [],
   mounts: [{source: workspace, writable: true}, {source: shared, writable: true}, {source: join(root, "data")}]};
- const ideas = scoutToolset("ideas", {sandbox, researchRoot: join(workspace, "research"), searchApiKey: "fixture"});
- expect(ideas.tools.map(tool => tool.name).sort()).toEqual([...READ_ONLY_SCOUT_TOOLS, "web_search"].sort());
+ const common = {solutionsRoot: shared, taskId: "fixture"};
+ const ideas = scoutToolset("ideas", {sandbox, ...common, searchEnv: {TAVILY_API_KEY: "fixture"}});
+ expect(ideas.tools.map(tool => tool.name).sort()).toEqual([...READ_ONLY_SCOUT_TOOLS].sort());
+ expect(ideas.extensionTools).toEqual(["web_search"]);
  expect(ideas.sandbox.mounts.filter(mount => mount.writable)).toEqual([]);
  expect(ideas.sandbox.args(["true"])).not.toContain("--bind");
 
- const data = scoutToolset("data", {sandbox, researchRoot: join(workspace, "research")});
- expect(data.tools.map(tool => tool.name)).toContain("bash"); expect(data.tools.map(tool => tool.name)).not.toContain("web_search");
+ const data = scoutToolset("data", {sandbox, ...common});
+ expect(data.tools.map(tool => tool.name)).toContain("bash"); expect(data.extensionTools).toEqual([]);
  expect(data.sandbox.mounts.filter(mount => mount.writable).map(mount => mount.source)).toEqual([join(workspace, "research")]);
  const args = data.sandbox.args(["true"]);
  expect(args[args.indexOf("--bind") + 1]).toBe(join(workspace, "research"));
  expect(args.filter(arg => arg === "--bind").length).toBe(1);
 
- expect(() => scoutToolset("ideas", {sandbox, researchRoot: join(workspace, "research")})).toThrow("search key");
- expect(() => scoutToolset("data", {sandbox, researchRoot: join(root, "elsewhere")})).toThrow("research/ folder");
+ expect(() => scoutToolset("ideas", {sandbox, ...common})).toThrow("search key");
+ expect(() => scoutToolset("data", {sandbox: {...sandbox, cwd: join(root, "elsewhere")}, ...common})).toThrow("research/ folder");
+ expect(() => scoutToolset("validation", {sandbox, ...common})).toThrow("snapshot");
 });
 
 /** Live processes whose command line contains `marker`, from /proc (sandboxed PIDs are visible to the host). */
@@ -84,18 +96,18 @@ async function sandboxedScout(responses: Parameters<Awaited<ReturnType<typeof im
  const workspace = join(root, "workspace"), task = join(root, "task");
  mkdirSync(join(workspace, "research"), {recursive: true}); mkdirSync(task);
  const sandbox = prepareResearchSandbox(workspace, task, readPythonEnvironment(false));
- const tools = trackScoutTools(scoutToolset("data", {sandbox, researchRoot: join(workspace, "research")}).tools);
+ const tools = trackScoutTools(scoutToolset("data", {sandbox, solutionsRoot: join(root, "solutions"), taskId: "fixture"}).tools);
  const faux = fauxProvider({provider: `scout-guard-${Math.random()}`, tokensPerSecond: 1_000_000});
  const runtime = await ModelRuntime.create({credentials: new InMemoryCredentialStore(), modelsPath: null, refreshOnCreate: false});
  runtime.registerNativeProvider(faux.provider);
  faux.setResponses(responses);
  const records: {eventType: string}[] = [];
  const factory = createPiChildFactory({cwd: workspace, agentDir: root, model: faux.getModel(), modelRuntime: runtime, prompts, sharedInstructions: [],
-  childInstructions: prompts.render("team.data", {taskId: "fixture", budget: String(budget.limit), dataPaths: "none"}),
+  childInstructions: prompts.render("team.data", {taskId: "fixture", budget: String(budget.limit), dataPaths: "none", resources: "- none"}),
   tools: tools.tools.map(tool => tool.name), customTools: tools.tools, extensionFactories: [budget.extension()], env: {}, inputs: [],
   observe: {identity: {}, telemetry: {failures: [], record: event => records.push(event), async close() {}}}, turnTimeoutMs: null});
  const child = await factory({logicalAgentId: "scout", parentAgentRunId: "lead", spawnToolCallId: "call"}, new AbortController().signal);
- const opening = prompts.render("team.start", {task: "task", unitIntro: "intro", question: "inspect", refs: "[]", shown: "0", omitted: "0", earlier: "none"});
+ const opening = prompts.render("team.start", {task: "task", question: "inspect", refs: "none", shown: "0", omitted: "0", earlier: "none"});
  return {child, tools, records, opening};
 }
 

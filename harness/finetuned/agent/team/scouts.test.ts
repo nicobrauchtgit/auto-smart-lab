@@ -10,12 +10,13 @@ import { parseHarnessConfig, HARNESS_CONFIG } from "../harness/config.js";
 const prompts = loadPromptSnapshot();
 const path = () => join(mkdtempSync(join(tmpdir(), "scouts-")), "journal.jsonl");
 
-test("blocking boundary returns only final bullets and repeat gets journal, task and unit", async () => {
+test("blocking boundary returns only final bullets and repeat gets journal, task and unit once", async () => {
  let calls = 0;
- const scope = createScouts({ prepare: async () => {}, prompts, taskId: "fixture", task: "TASK TEXT", unitIntro: "UNIT INTRO", dataPaths: "dev.zip", journalPath: path(), datasetSha256: "dataset", runId: "run", invocationId: "invoke",
+ // task.md as stream B writes it: the unit introduction, then the task text.
+ const scope = createScouts({ prepare: async () => {}, prompts, taskId: "fixture", task: "UNIT INTRO\n\nTASK TEXT", dataPaths: "dev.zip", resources: "- none", journalPath: path(), datasetSha256: "dataset", runId: "run", invocationId: "invoke",
   async run(input) {
    expect(input.toolCallId).toBe("call");
-   expect(input.opening.text).toContain("TASK TEXT"); expect(input.opening.text).toContain("UNIT INTRO");
+   expect(input.opening.text).toContain("TASK TEXT"); expect(input.opening.text.split("UNIT INTRO").length).toBe(2);
    if (calls++) expect(input.opening.text).toContain("sourced observation");
    return "Private preamble\n- sourced observation (profile.count)\nPrivate transcript";
   } });
@@ -24,9 +25,15 @@ test("blocking boundary returns only final bullets and repeat gets journal, task
  expect(JSON.stringify(result)).toContain("sourced observation"); expect(calls).toBe(2);
 });
 test("empty response always yields a factual bullet and validation fails closed", async () => {
- const scope = createScouts({ prepare: async () => {}, prompts, taskId: "fixture", task: "task", unitIntro: "intro", dataPaths: "dev", journalPath: path(), datasetSha256: "dataset", runId: "run", invocationId: "invoke", run: async () => "" });
+ let validationStarts = 0;
+ const scope = createScouts({ prepare: async () => {}, prompts, taskId: "fixture", task: "task", dataPaths: "dev", resources: "- none", journalPath: path(), datasetSha256: "dataset", runId: "run", invocationId: "invoke",
+  run: async input => { if (input.role === "validation") validationStarts++; return ""; } });
  expect(await scope.scout({role: "data", question: "inspect"})).toStartWith("- advice:");
- await expect(scope.scout({role: "validation", question: "check"})).rejects.toThrow("snapshot/check adapter");
+ // No experiment reference: refused before any scout starts.
+ await expect(scope.scout({role: "validation", question: "check"})).rejects.toThrow("exactly one measured trial");
+ // No trial records: the role fails; no session starts and live code is never used.
+ expect(await scope.scout({role: "validation", question: "check", refs: [{experiment: "exp-1"}]})).toContain("snapshot unavailable");
+ expect(validationStarts).toBe(0);
 });
 test("journal serializes contention, reports and repairs only incomplete tail", async () => {
  const journal = path();
@@ -66,7 +73,7 @@ test("real Pi guard blocks tool execution at cap, gives finish turn, and exclude
   },
   () => fauxAssistantMessage("- fact: observed sample (sample.txt)"),
  ]);
- const system = prompts.render("team.data", {taskId: "fixture", budget: "1", dataPaths: "sample.txt"});
+ const system = prompts.render("team.data", {taskId: "fixture", budget: "1", dataPaths: "sample.txt", resources: "- none"});
  const settingsManager = SettingsManager.inMemory();
  const resourceLoader = createPipelineResourceLoader({ cwd: root, agentDir: root, settingsManager, systemPrompt: system.text, extensionFactories: [budget.extension()] });
  await resourceLoader.reload();
@@ -119,12 +126,12 @@ test("scout child factory installs scoped tools and budget without generic child
  ]);
  const records: any[] = [];
  const factory = createPiChildFactory({cwd: root, agentDir: root, model: faux.getModel(), modelRuntime: runtime, prompts,
-  sharedInstructions: [], childInstructions: prompts.render("team.ideas", {taskId: "fixture", budget: "1", webSearches: "3"}),
+  sharedInstructions: [], childInstructions: prompts.render("team.ideas", {taskId: "fixture", budget: "1", webSearches: "3", resources: "- none"}),
   tools: ["fixture"], customTools: [fixture], extensionFactories: [budget.extension()], env: {}, inputs: [],
   observe: {identity: {}, telemetry: {failures: [], record: event => records.push(event), async close() {}}}});
  const child = await factory({logicalAgentId: "child", parentAgentRunId: "parent", spawnToolCallId: "call"}, new AbortController().signal);
  try {
-  const result = await child.prompt(prompts.render("team.start", {task: "task", unitIntro: "intro", question: "q", refs: "[]", shown: "0", omitted: "0", earlier: "none"}));
+  const result = await child.prompt(prompts.render("team.start", {task: "task", question: "q", refs: "none", shown: "0", omitted: "0", earlier: "none"}));
   expect(result).toBe("- observed fixture"); expect(executions).toBe(1); expect(budget.used).toBe(1);
   const snapshot = records.find(row => row.eventType === "prompt_snapshot");
   expect(snapshot.payload.system_prompt).not.toContain("SCOUT_FACTORY_EXCLUDED_MARKER");
@@ -133,30 +140,48 @@ test("scout child factory installs scoped tools and budget without generic child
  } finally {await child.close();}
 });
 
-test("search budgets and logs are session-local, cap network calls and sanitize failures", async () => {
- const { scoutSearch } = await import("./search.js");
- const original = globalThis.fetch;
+test("ideas search is B's session-local extension: three searches, one log per scout, no credential in logs", async () => {
+ const https = await import("node:https");
+ const { EventEmitter } = await import("node:events");
+ const { spyOn } = await import("bun:test");
+ const { scoutToolset } = await import("./runner.js");
+ const {mkdirSync, readdirSync, readFileSync} = await import("node:fs");
  let requests = 0;
- globalThis.fetch = (async () => {requests++; return new Response(JSON.stringify({results: [{title: "paper", url: "https://example.org/paper", content: "evidence"}]}), {status: 200});}) as unknown as typeof fetch;
- const root = mkdtempSync(join(tmpdir(), "scout-search-"));
- const first = scoutSearch({apiKey: "FIXTURE_CREDENTIAL", limit: 3, log: join(root, "first.jsonl")});
- const second = scoutSearch({apiKey: "FIXTURE_CREDENTIAL", limit: 3, log: join(root, "second.jsonl")});
- const call = (tool: typeof first) => tool.execute("id", {query: "paper"}, undefined, undefined, undefined as never);
+ // B's extension calls node:https; answer locally and restore afterwards.
+ const spy = spyOn(https, "request").mockImplementation(((_options: unknown, respond: (res: InstanceType<typeof EventEmitter>) => void) => {
+  requests++;
+  return Object.assign(new EventEmitter(), {setTimeout() {}, write() {}, end() {
+   const response = new EventEmitter(); respond(response);
+   response.emit("data", Buffer.from(JSON.stringify({results: [{title: "paper", url: "https://example.org/paper", content: "evidence"}]}))); response.emit("end");
+  }});
+ }) as never);
  try {
-  for (let i = 0; i < 5; i++) await call(first);
-  await call(second); expect(requests).toBe(4);
-  const {readFileSync} = await import("node:fs");
-  expect(readFileSync(join(root, "first.jsonl"), "utf8").trim().split("\n").length).toBe(3);
-  expect(readFileSync(join(root, "first.jsonl"), "utf8")).not.toContain("FIXTURE_CREDENTIAL");
-  globalThis.fetch = (async () => {throw new Error("RAW_PROVIDER_ERROR_WITH_CREDENTIAL");}) as unknown as typeof fetch;
-  expect(JSON.stringify(await call(second))).not.toContain("RAW_PROVIDER_ERROR");
- } finally {globalThis.fetch = original;}
+  const root = mkdtempSync(join(tmpdir(), "scout-search-"));
+  mkdirSync(join(root, "research"));
+  const sandbox = {executable: process.execPath, cwd: root, env: {}, args: () => [], mounts: [{source: root}]};
+  const view = () => scoutToolset("ideas", {sandbox, solutionsRoot: join(root, "solutions"), taskId: "fixture", searchEnv: {TAVILY_API_KEY: "FIXTURE_CREDENTIAL"}});
+  const search = (scout: ReturnType<typeof view>) => {
+   let tool: any;
+   expect(scout.extensionTools).toEqual(["web_search"]);
+   (scout.extensions[0] as {factory(pi: never): void}).factory({registerTool: (registered: unknown) => { tool = registered; }} as never);
+   return (query: string) => tool.execute("id", {query}, undefined, undefined, undefined);
+  };
+  const first = search(view()), second = search(view());
+  for (let i = 0; i < 3; i++) await first(`query ${i}`);
+  expect(JSON.stringify(await first("over budget"))).toContain("limit reached (3)");
+  await second("other scout"); expect(requests).toBe(4);
+  const logs = readdirSync(join(root, "research")).filter(name => name.startsWith("web-search-"));
+  expect(logs.length).toBe(2);
+  expect(logs.map(name => readFileSync(join(root, "research", name), "utf8").trim().split("\n").length).sort()).toEqual([1, 3]);
+  for (const name of logs) expect(readFileSync(join(root, "research", name), "utf8")).not.toContain("FIXTURE_CREDENTIAL");
+  expect(() => scoutToolset("ideas", {sandbox, solutionsRoot: join(root, "solutions"), taskId: "fixture", searchEnv: {}})).toThrow("search key");
+ } finally { spy.mockRestore(); }
 });
 
 
 test("all requested roles pass preflight before the first scout can start", async () => {
  let starts = 0;
- const scope = createScouts({prompts, taskId: "fixture", task: "task", unitIntro: "intro", dataPaths: "dev", journalPath: path(), datasetSha256: "data", runId: "run", invocationId: "invocation",
+ const scope = createScouts({prompts, taskId: "fixture", task: "task", dataPaths: "dev", resources: "- none", journalPath: path(), datasetSha256: "data", runId: "run", invocationId: "invocation",
   prepare: async roles => {expect(roles).toEqual(["data", "ideas"]); throw new Error("ideas missing prerequisite");},
   run: async () => {starts++; return "- result";}});
  await expect(scope.scout({role: ["data", "ideas"], question: "inspect"})).rejects.toThrow("missing prerequisite");
@@ -213,7 +238,7 @@ test("long final bullets retain their trailing evidence links", () => {
 });
 
 const scoutOptions = (overrides: Partial<Parameters<typeof createScouts>[0]> = {}): Parameters<typeof createScouts>[0] => ({
- prompts, taskId: "fixture", task: "task", unitIntro: "intro", dataPaths: "dev", journalPath: path(), datasetSha256: "data",
+ prompts, taskId: "fixture", task: "task", dataPaths: "dev", resources: "- none", journalPath: path(), datasetSha256: "data",
  runId: "run", invocationId: "invoke", prepare: async () => {}, run: async () => "- result", ...overrides});
 
 test("lead refs with extra keys are rejected at the tool boundary before any scout starts", async () => {
@@ -224,12 +249,14 @@ test("lead refs with extra keys are rejected at the tool boundary before any sco
  // Pi validates the schema before execute: extra keys never reach the service.
  expect(() => validateToolArguments(scope.tool as never, {type: "toolCall", id: "c", name: "scout", arguments: args} as never)).toThrow();
  expect(() => validateToolArguments(scope.tool as never, {type: "toolCall", id: "c", name: "scout", arguments: {...args, refs: [{file: "a.py", line: 0}]}} as never)).toThrow();
- expect(() => validateToolArguments(scope.tool as never, {type: "toolCall", id: "c", name: "scout", arguments: {role: "validation", question: "q"}} as never)).toThrow();
+ // Validation is in the schema; the service refuses it without exactly one trial reference.
+ expect(() => validateToolArguments(scope.tool as never, {type: "toolCall", id: "c", name: "scout", arguments: {role: ["data", "ideas", "validation"], question: "q", refs: [{experiment: "e1"}]}} as never)).not.toThrow();
+ await expect(scope.scout({role: "validation", question: "q", refs: [{experiment: "e1"}, {experiment: "e2"}]})).rejects.toThrow("exactly one measured trial");
  await expect(scope.tool.execute("c", args as never, undefined, undefined, undefined as never)).rejects.toThrow("Invalid scout request: refs[0]");
  await expect(scope.scout({role: "data", question: "q", refs: [{file: "a.py", line: 0}]})).rejects.toThrow("refs[0]");
  await expect(scope.scout({role: "data", question: " "})).rejects.toThrow("question");
  expect(prepared).toBe(0); expect(started).toBe(0);
- expect(scope.tool.description).toContain("validation scout is not available");
+ expect(scope.tool.description.replace(/\s+/g, " ")).toContain("validation checks one measured trial");
 });
 
 test("unparseable citations stay text and never cost the other bullets", async () => {
@@ -283,8 +310,9 @@ test("every role gets the shared label-suffix fact; validation is told it is not
  await createScouts(scoutOptions({async run(input) {seen.push(input.shared.text); return "- x";}})).scout({role: ["data", "ideas"], question: "q"});
  expect(seen.length).toBe(2);
  for (const raw of seen) {const text = raw.replace(/\s+/g, " "); expect(text).toContain("end in their label"); expect(text).toContain("`.x`"); expect(text).toContain("not leakage");}
- expect(prompts.render("team.validation", {taskId: "t", budget: "1"}).text).toContain("not a defect");
- expect(prompts.render("team.data", {taskId: "t", budget: "1", dataPaths: "d"}).text.replace(/\s+/g, " ")).not.toContain("end in their label");
+ const validation = prompts.render("team.validation", {taskId: "t", budget: "1", experiment: "e", commit: "c", checks: "/checks"}).text.replace(/\s+/g, " ");
+ expect(validation).toContain("Reading training labels from archive member names"); expect(validation).toContain("never a defect");
+ expect(prompts.render("team.data", {taskId: "t", budget: "1", dataPaths: "d", resources: "- none"}).text.replace(/\s+/g, " ")).not.toContain("end in their label");
 });
 
 test("a repeat call sees only a bounded view of this run's current findings", async () => {
@@ -315,7 +343,7 @@ test("status pages new entries and its cursor resumes after the last one returne
  expect((await api.status("task", second.cursor)).newEntries).toEqual([]);
 });
 
-test("scout citations resolve in the scout's folder; lead experiment refs stay off bullets and are pending", async () => {
+test("scout citations resolve in the scout's folder; lead experiment refs stay off bullets and unknown ones are unresolved", async () => {
  const {createFindings} = await import("./findings.js");
  const {mkdirSync} = await import("node:fs");
  const root = mkdtempSync(join(tmpdir(), "findings-roots-"));
@@ -330,13 +358,13 @@ test("scout citations resolve in the scout's folder; lead experiment refs stay o
  expect((await api.status("task")).staleRefs).toEqual([]);
  await api.add("task", {kind: "decision", author: {role: "lead", runId: "r", invocationId: "i"}, title: "chosen", text: "chosen", refs: [{experiment: "exp-1"}], datasetSha256: "d"});
  const status = await api.status("task");
- expect(status.staleRefs).toEqual([]); expect(status.pendingRefs).toEqual(["experiment:exp-1"]);
+ expect(status.staleRefs).toEqual([]); expect(status.unresolvedRefs).toEqual(["experiment:exp-1"]);
 });
 
 test("failed, guard-stopped and empty scouts are reported as such; harness lines are neither bullets nor findings", async () => {
  const journal = path();
- const scouts = (run: ScoutsOptions["run"]) => createScouts({prepare: async () => {}, prompts, taskId: "fixture", task: "task", unitIntro: "intro", dataPaths: "dev",
-  journalPath: journal, datasetSha256: "dataset", runId: "run", invocationId: "invoke", validationReady: true, run});
+ const scouts = (run: ScoutsOptions["run"]) => createScouts({prepare: async () => {}, prompts, taskId: "fixture", task: "task", dataPaths: "dev", resources: "- none",
+  journalPath: journal, datasetSha256: "dataset", runId: "run", invocationId: "invoke", run});
  // createScouts turns a backend exception (e.g. a failed model request) into an error line.
  const failed = await scouts(async () => { throw new Error("Scout session failed; inspect its observed run"); }).report({role: "data", question: "q"});
  expect(failed.text).toStartWith("- error: The data scout failed");

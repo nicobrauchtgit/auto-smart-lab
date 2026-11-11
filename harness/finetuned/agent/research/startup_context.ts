@@ -24,10 +24,7 @@ export const TRAINING_LABEL_FILES: Readonly<Record<string, string>> = {
 	spam3: "webspam-train.labels",
 };
 
-export interface TrainingLabelRow {
-	id: string;
-	label: 0 | 1;
-}
+import type { TrainingLabelRow } from "../team/contracts.js";
 
 export type TrainingLabels =
 	| { ok: true; rows: TrainingLabelRow[] }

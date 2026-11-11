@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { existsSync } from "node:fs";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { HARNESS_CONFIG } from "../harness/config.js";
@@ -8,7 +9,8 @@ import { REPO_ROOT, statePath } from "../paths.js";
 import { ScoutBudget } from "./budget.js";
 import { appendValidFindings, validRef } from "./journal.js";
 import { earlierFindings } from "./findings.js";
-import type { FindingRef, ScoutRole } from "./contracts.js";
+import type { FindingKind, FindingRef, ScoutRole, TrialSnapshot } from "./contracts.js";
+import { describeRefs, type TrialResolver } from "./trials.js";
 
 export interface ScoutRequest { role: ScoutRole | ScoutRole[]; question: string; refs?: FindingRef[] }
 export interface ScoutSessionInput {
@@ -16,6 +18,8 @@ export interface ScoutSessionInput {
  /** Instructions every scout role gets, before its role prompt. */
  shared: RenderedPrompt;
  system: RenderedPrompt; opening: RenderedPrompt; budget: ScoutBudget; signal?: AbortSignal;
+ /** Validation only: the resolved, verified snapshot of the trial under check. */
+ trial?: TrialSnapshot;
 }
 /**
  * How one role ended. completed: it returned bullets. empty: it finished
@@ -38,18 +42,28 @@ export function scoutOutcome(report: ScoutReport): { outcome: "success" | "empty
   reasons: report.roles.filter(role => role.reason).map(role => `${role.role} ${role.status}: ${role.reason}`),
  };
 }
-/** Final scout text; `root` is the scout's cwd, against which its file citations resolve. */
-export interface ScoutReply { text: string; root?: string; stopped?: string }
+/**
+ * Final scout text; `root` is the scout's cwd, against which its file
+ * citations resolve. `checks` lists the validation checks the harness ran in
+ * this session (paths relative to the shared solutions tree, with the hash of
+ * the bytes it ran).
+ */
+export interface ScoutReply { text: string; root?: string; stopped?: string; checks?: { path: string; sha256: string }[] }
 export interface ScoutsOptions {
- prompts: PromptSnapshot; taskId: string; task: string; unitIntro: string; dataPaths: string;
+ /** `task` is task.md as stream B wrote it: the unit introduction, then the task text. */
+ prompts: PromptSnapshot; taskId: string; task: string; dataPaths: string;
+ /** Staged course resources, one line each (team/workspace.ts). */
+ resources: string;
  journalPath: string; datasetSha256: string; runId: string; invocationId: string;
  /** State root that journaled file citations are stored relative to; default runs/finetuned. */
  citationBase?: string;
  /** Backend must isolate all tool traffic from the caller; only final text returns. */
  run(input: ScoutSessionInput): Promise<string | ScoutReply>;
  prepare(roles: readonly ScoutRole[], signal?: AbortSignal): Promise<void>;
- /** Stream B adapter must resolve immutable source and run checks against it. Absent until integration. */
- validationReady?: boolean;
+ /** Stream B's trial resolver for this task. Without it, validation fails closed and trial refs are unresolved. */
+ trials?: TrialResolver;
+ /** The shared solutions tree; validation writes checks to its `checks/<task>/`. */
+ solutionsRoot?: string;
  budgets?: Partial<Record<ScoutRole, number>>;
 }
 
@@ -103,6 +117,33 @@ export function finalBullets(text: string, fallback: string): string[] {
  return bullets.length ? bullets.map(([first, ...rest]) => [`- ${first}`, ...rest.map(line => `  ${line}`)].join("\n")) : [fallback.trim()];
 }
 
+/** Snapshot file and executed-check citations of one validation bullet, plus the trial itself. */
+export function validationRefs(text: string, trial: TrialSnapshot, options: { solutionsRoot?: string; checks?: readonly { path: string; sha256: string }[] } = {}): FindingRef[] {
+ const refs: FindingRef[] = [{ experiment: trial.experimentId }];
+ const snapshot = join(trial.sourceRoot, "solutions");
+ for (const match of text.matchAll(/`([^`\s]+)`/g)) {
+  const file = FILE_CITATION.exec(match[1]);
+  if (!file) continue;
+  const cited = options.solutionsRoot && isAbsolute(file[1]) ? relative(options.solutionsRoot, file[1]).split(sep).join("/") : file[1];
+  const check = options.checks?.find(row => row.path === cited);
+  if (check) { refs.push({ check: check.path, experiment: trial.experimentId, sha256: check.sha256 }); continue; }
+  const inside = relative(snapshot, resolve(snapshot, file[1])).split(sep).join("/");
+  if (!inside || inside.startsWith("..") || isAbsolute(inside) || !existsSync(join(snapshot, inside))) continue;
+  if (file[2] === undefined || Number(file[2]) >= 1) refs.push({ file: inside, line: Number(file[2] ?? 1), commit: trial.commit });
+ }
+ const unique = new Map(refs.filter(validRef).map(ref => [JSON.stringify(ref), ref]));
+ return [...unique.values()];
+}
+/** ok, fix and advice bullets journal as fact, defect and idea; anything else is not a validation finding. */
+export function validationKind(text: string): FindingKind | undefined {
+ const prefix = /^\W*(ok|fix|advice)\W*[:\u2014-]/i.exec(text)?.[1]?.toLowerCase();
+ return prefix === "ok" ? "fact" : prefix === "fix" ? "defect" : prefix === "advice" ? "idea" : undefined;
+}
+/** The one trial a validation request names, from `{experiment}` and `{check, experiment}` refs. */
+export function validationExperiments(refs: readonly FindingRef[] = []): string[] {
+ return [...new Set(refs.flatMap(ref => "experiment" in ref && ref.experiment ? [ref.experiment] : []))];
+}
+
 const ROLES: readonly ScoutRole[] = ["data", "ideas", "validation"];
 /** Validates lead input before any scout starts; the tool schema enforces the same shape. */
 export function scoutRequestProblem(request: unknown): string | undefined {
@@ -118,44 +159,59 @@ export function scoutRequestProblem(request: unknown): string | undefined {
   const bad = value.refs.findIndex(ref => !validRef(ref));
   if (bad >= 0) return `refs[${bad}] must be exactly one of {experiment}, {file, line>=1, commit?}, {check, sha256, experiment?}, {url}, {profile}, {entry}`;
  }
+ if (roles.includes("validation") && validationExperiments(value.refs as FindingRef[] | undefined).length !== 1)
+  return "validation needs exactly one measured trial: one {experiment} reference (or {check, experiment} references to the same trial)";
 }
 const clip = (value: string, length: number) => value.length > length ? `${value.slice(0, length - 1)}…` : value;
 
 export function createScouts(options: ScoutsOptions) {
- if (!options.task.trim() || !options.unitIntro.trim()) throw new Error("Scout requires task text and unit introduction");
+ if (!options.task.trim()) throw new Error("Scout requires task text (task.md with the unit introduction)");
  const citationBase = options.citationBase ?? statePath(REPO_ROOT);
  // Keep the requested scout roles sequential and journal observations before continuing.
  let tail: Promise<unknown> = Promise.resolve();
- const unavailable = "Validation scout unavailable: stream B trial snapshot/check adapter required; live source is never used";
  const execute = async (request: ScoutRequest, signal: AbortSignal | undefined, toolCallId: string): Promise<ScoutReport> => {
   const problem = scoutRequestProblem(request);
   if (problem) throw new Error(`Invalid scout request: ${problem}`);
   const roles = [...new Set(Array.isArray(request.role) ? request.role : [request.role])];
-  if (roles.includes("validation") && !options.validationReady) throw new Error(unavailable);
   await options.prepare(roles, signal);
   const shared = options.prompts.render("team.shared", {});
   const output: string[] = [];
   const outcomes: ScoutRoleReport[] = [];
+  const refs = await describeRefs(request.refs ?? [], options.trials);
+  const failed = (role: ScoutRole, error: unknown) => {
+   const reason = clip(error instanceof Error ? error.message : "unknown error", 200);
+   output.push(options.prompts.render("team.failed", { role, reason }).text.trim());
+   outcomes.push({ role, status: "failed", bullets: 0, reason });
+  };
   for (const role of roles) {
    signal?.throwIfAborted();
    const budget = new ScoutBudget(options.budgets?.[role] ?? HARNESS_CONFIG.team.scouts[role].maxToolCalls, options.prompts);
-   const system = role === "data" ? options.prompts.render("team.data", { taskId: options.taskId, budget: String(budget.limit), dataPaths: options.dataPaths })
-    : role === "ideas" ? options.prompts.render("team.ideas", { taskId: options.taskId, budget: String(budget.limit), webSearches: String(HARNESS_CONFIG.team.scouts.ideas.webSearches) })
-    : options.prompts.render("team.validation", { taskId: options.taskId, budget: String(budget.limit) });
+   // Validation inspects one verified snapshot; when it cannot be resolved, the role fails and never falls back to live code.
+   let trial: TrialSnapshot | undefined;
+   if (role === "validation") try {
+    if (!options.trials || !options.solutionsRoot) throw new Error("no trial records available; validation never uses live code");
+    trial = await options.trials.snapshot(validationExperiments(request.refs)[0]);
+   } catch (error) {
+    signal?.throwIfAborted();
+    failed(role, new Error(`snapshot unavailable: ${error instanceof Error ? error.message : "unknown error"}`));
+    continue;
+   }
+   const system = role === "data" ? options.prompts.render("team.data", { taskId: options.taskId, budget: String(budget.limit), dataPaths: options.dataPaths, resources: options.resources })
+    : role === "ideas" ? options.prompts.render("team.ideas", { taskId: options.taskId, budget: String(budget.limit), webSearches: String(HARNESS_CONFIG.team.scouts.ideas.webSearches), resources: options.resources })
+    : options.prompts.render("team.validation", { taskId: options.taskId, budget: String(budget.limit), experiment: trial!.experimentId, commit: trial!.commit,
+     checks: join(options.solutionsRoot!, "checks", options.taskId) });
    const earlier = await earlierFindings(options.journalPath, { runId: options.runId, datasetSha256: options.datasetSha256 });
-   const opening = options.prompts.render("team.start", { task: options.task, unitIntro: options.unitIntro, question: request.question,
-    refs: JSON.stringify(request.refs ?? []), shown: String(earlier.lines.length), omitted: String(earlier.omitted),
+   const opening = options.prompts.render("team.start", { task: options.task, question: request.question,
+    refs, shown: String(earlier.lines.length), omitted: String(earlier.omitted),
     earlier: earlier.lines.length ? earlier.lines.join("\n") : "none" });
    let reply: ScoutReply;
    try {
-    const result = await options.run({ role, toolCallId, shared, system, opening, budget, signal });
+    const result = await options.run({ role, toolCallId, shared, system, opening, budget, signal, ...trial ? { trial } : {} });
     reply = typeof result === "string" ? { text: result } : result;
    } catch (error) {
     signal?.throwIfAborted();
     // Earlier roles' bullets are already journaled; report this role and continue.
-    const reason = clip(error instanceof Error ? error.message : "unknown error", 200);
-    output.push(options.prompts.render("team.failed", { role, reason }).text.trim());
-    outcomes.push({ role, status: "failed", bullets: 0, reason });
+    failed(role, error);
     continue;
    }
    // Scout-written items only; the harness's stop or empty line is not a finding and is not journaled.
@@ -165,15 +221,19 @@ export function createScouts(options: ScoutsOptions) {
     output.push((reply.stopped ? options.prompts.render("team.stopped", { reason: reply.stopped }) : options.prompts.render("team.empty", {})).text.trim());
     continue;
    }
-   const { rejected } = await appendValidFindings(options.journalPath, bullets.map(bullet => {
+   // Validation bullets must say ok, fix or advice; others are returned but not journaled.
+   const unlabelled = role === "validation" ? bullets.filter(bullet => !validationKind(bullet.replace(/^- /, ""))) : [];
+   const { rejected } = await appendValidFindings(options.journalPath, bullets.filter(bullet => !unlabelled.includes(bullet)).map(bullet => {
     const prose = bullet.replace(/^- /, "");
     return {
-     kind: role === "ideas" ? "idea" as const : role === "validation" ? "decision" as const : "fact" as const,
+     kind: role === "ideas" ? "idea" as const : role === "validation" ? validationKind(prose)! : "fact" as const,
      author: { role, invocationId: options.invocationId, runId: options.runId },
      title: clip(prose.split("\n")[0].trim(), 100), text: clip(prose.split("\n").map(line => line.trim()).join(" "), 800),
-     refs: bulletRefs(bullet, { root: reply.root, base: citationBase }), datasetSha256: options.datasetSha256,
+     refs: trial ? validationRefs(bullet, trial, { solutionsRoot: options.solutionsRoot, checks: reply.checks }) : bulletRefs(bullet, { root: reply.root, base: citationBase }),
+     datasetSha256: options.datasetSha256,
     };
    }), signal);
+   rejected.push(...unlabelled.map(bullet => ({ index: -1, title: bullet.replace(/^- /, "").slice(0, 100), reason: "validation bullets start with ok, fix or advice" })));
    output.push(...bullets);
    if (rejected.length) output.push(options.prompts.render("team.rejected", { count: String(rejected.length),
     reasons: rejected.map(row => `"${clip(row.title, 40)}": ${row.reason}`).join("; ") }).text.trim());
@@ -187,11 +247,10 @@ export function createScouts(options: ScoutsOptions) {
   return pending;
  };
  const scout = async (request: ScoutRequest, signal?: AbortSignal, toolCallId?: string) => (await report(request, signal, toolCallId)).text;
- // Validation stays out of the lead's schema until stream B's snapshot adapter is wired.
- const role = Type.Union([Type.Literal("data"), Type.Literal("ideas")]);
+ const role = Type.Union([Type.Literal("data"), Type.Literal("ideas"), Type.Literal("validation")]);
  const strict = { additionalProperties: false } as const;
  const tool = defineTool({ name: "scout", label: "Scout", description: options.prompts.render("team.scout-tool", {}).text,
-  parameters: Type.Object({ role: Type.Union([role, Type.Array(role, { minItems: 1, maxItems: 2 })]), question: Type.String({ minLength: 1 }),
+  parameters: Type.Object({ role: Type.Union([role, Type.Array(role, { minItems: 1, maxItems: 3 })]), question: Type.String({ minLength: 1 }),
    refs: Type.Optional(Type.Array(Type.Union([
     Type.Object({ experiment: Type.String() }, strict), Type.Object({ file: Type.String(), line: Type.Integer({minimum: 1}), commit: Type.Optional(Type.String()) }, strict),
     Type.Object({ profile: Type.String() }, strict), Type.Object({ entry: Type.String() }, strict), Type.Object({ url: Type.String() }, strict),

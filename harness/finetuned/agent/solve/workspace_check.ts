@@ -3,8 +3,8 @@ import { realpathSync, statSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { join } from "node:path";
 import { projectPython } from "../pipeline/task_configuration.js";
-/** The agent-facing tool is defined once, in training/tools.ts. `blocking` lists findings that make a trial invalid. */
-export interface WorkspaceCheck { valid: boolean; errors: string[]; warnings: string[]; blocking: string[]; measurements: Record<string, number>; changedPaths: string[] }
+import type { WorkspaceCheck } from "../team/contracts.js";
+/** The agent-facing tool is defined once, in training/tools.ts. */
 export async function checkWorkspace(root: string, taskId: string, changedPaths: string[] = []): Promise<WorkspaceCheck> {
  root = realpathSync(root);
  if (!statSync(root).isDirectory()) throw new Error("Workspace root must be a directory");

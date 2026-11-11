@@ -57,7 +57,7 @@ async function scriptedChild(responses: Parameters<Awaited<ReturnType<typeof imp
   async execute() {executions.count++; return {content: [{type: "text" as const, text: "ran"}], details: {}};}});
  faux.setResponses(responses);
  const factory = createPiChildFactory({cwd: root, agentDir: root, model: faux.getModel(), modelRuntime: runtime, prompts,
-  sharedInstructions: [], childInstructions: prompts.render("team.data", {taskId: "fixture", budget: String(budget.limit), dataPaths: "none"}),
+  sharedInstructions: [], childInstructions: prompts.render("team.data", {taskId: "fixture", budget: String(budget.limit), dataPaths: "none", resources: "- none"}),
   tools: ["fixture"], customTools: [fixture], extensionFactories: [budget.extension()], env: {}, inputs: [],
   observe: {identity: {}, telemetry: {failures: [], record() {}, async close() {}}}, turnTimeoutMs: null});
  const child = await factory({logicalAgentId: "child", parentAgentRunId: "parent", spawnToolCallId: "call"}, new AbortController().signal);
@@ -73,7 +73,7 @@ test("a scripted Pi child that only emits malformed calls stops and still return
   fauxToolCall("no_such_tool", {}), fauxToolCall("fixture", {count: "not a number"})], {stopReason: "toolUse"});};
  const {child, executions} = await scriptedChild(Array.from({length: 50}, () => malformed), budget);
  const journal = join(mkdtempSync(join(tmpdir(), "scout-malformed-journal-")), "journal.jsonl");
- const scope = createScouts({prompts, taskId: "fixture", task: "task", unitIntro: "intro", dataPaths: "dev", journalPath: journal, datasetSha256: "data",
+ const scope = createScouts({prompts, taskId: "fixture", task: "task", dataPaths: "dev", resources: "- none", journalPath: journal, datasetSha256: "data",
   runId: "run", invocationId: "invoke", prepare: async () => {}, run: async input => child.prompt(input.opening)});
  try {
   const output = await scope.scout({role: "data", question: "inspect"});
@@ -98,7 +98,7 @@ for (const executionMode of ["parallel", "sequential"] as const) test(`a scripte
   () => fauxAssistantMessage(same(2), {stopReason: "toolUse"}),
   () => fauxAssistantMessage([fauxText("- fact: done"), ...same(1)], {stopReason: "toolUse"}),
  ], budget, {executionMode});
- const scope = createScouts({prompts, taskId: "fixture", task: "task", unitIntro: "intro", dataPaths: "dev", journalPath: join(mkdtempSync(join(tmpdir(), "scout-dup-")), "j.jsonl"),
+ const scope = createScouts({prompts, taskId: "fixture", task: "task", dataPaths: "dev", resources: "- none", journalPath: join(mkdtempSync(join(tmpdir(), "scout-dup-")), "j.jsonl"),
   datasetSha256: "data", runId: "run", invocationId: "invoke", prepare: async () => {}, run: async input => child.prompt(input.opening)});
  try {
   expect(await scope.scout({role: "data", question: "inspect"})).toBe("- fact: done");
@@ -111,7 +111,7 @@ test("a scripted Pi child without any text still yields an explicit bullet", asy
  const { fauxAssistantMessage, fauxToolCall } = await import("@earendil-works/pi-ai");
  const budget = new ScoutBudget(1, prompts);
  const {child} = await scriptedChild(Array.from({length: 20}, () => () => fauxAssistantMessage(fauxToolCall("no_such_tool", {}), {stopReason: "toolUse"})), budget);
- const scope = createScouts({prompts, taskId: "fixture", task: "task", unitIntro: "intro", dataPaths: "dev", journalPath: join(mkdtempSync(join(tmpdir(), "scout-empty-")), "j.jsonl"),
+ const scope = createScouts({prompts, taskId: "fixture", task: "task", dataPaths: "dev", resources: "- none", journalPath: join(mkdtempSync(join(tmpdir(), "scout-empty-")), "j.jsonl"),
   datasetSha256: "data", runId: "run", invocationId: "invoke", prepare: async () => {}, run: async input => child.prompt(input.opening)});
  try {
   expect(await scope.scout({role: "data", question: "inspect"})).toStartWith("- advice:");
@@ -134,7 +134,7 @@ test("stall guard aborts a session without progress and returns even if it never
 test("a hung scripted Pi child is stopped by the guard and the lead gets a stop bullet", async () => {
  const budget = new ScoutBudget(2, prompts);
  const {child} = await scriptedChild([() => new Promise(() => {})], budget);
- const scope = createScouts({prompts, taskId: "fixture", task: "task", unitIntro: "intro", dataPaths: "dev", journalPath: join(mkdtempSync(join(tmpdir(), "scout-hung-")), "j.jsonl"),
+ const scope = createScouts({prompts, taskId: "fixture", task: "task", dataPaths: "dev", resources: "- none", journalPath: join(mkdtempSync(join(tmpdir(), "scout-hung-")), "j.jsonl"),
   datasetSha256: "data", runId: "run", invocationId: "invoke", prepare: async () => {},
   async run(input) {
    const guarded = await guardScoutSession(child.prompt(input.opening), {abort: () => child.abort(), lastActivity: () => input.budget.lastActivity,

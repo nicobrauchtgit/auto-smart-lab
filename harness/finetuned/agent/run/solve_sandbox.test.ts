@@ -172,12 +172,16 @@ time.sleep(60)
 test("expert roles share the same tree while ideas remains read-only and validation requires a snapshot", async () => {
  const { expertSandbox } = await import("./sandbox.js");
  const f = fixture();
- const data = { ...f.workspace, profilePath: f.workspace.taskPath } as import("../solve/task_data.js").TaskData;
+ const data = { ...f.workspace, taskId: "fixture", profilePath: f.workspace.taskPath } as import("../team/contracts.js").TaskData;
+ const { scoutWorkspace } = await import("./sandbox.js");
  for (const role of ["lead", "data", "ideas"] as const) {
   const policy = expertSandbox(data, role, f.python);
   const solution = policy.mounts.find(mount => mount.source === data.solutionsRoot)!;
   expect(solution.writable).toBe(role !== "ideas");
   expect(policy.mounts.some(mount => f.hidden.includes(mount.source))).toBe(false);
+  // Scouts work in the task's scout folder; only the data scout's research/ is mounted writable for it.
+  expect(policy.cwd === scoutWorkspace(data)).toBe(role !== "lead");
+  expect(policy.mounts.some(mount => mount.writable && mount.source === join(scoutWorkspace(data), "research"))).toBe(role === "data");
  }
  expect(() => expertSandbox(data, "validation", f.python)).toThrow("snapshot");
 }, 30000);

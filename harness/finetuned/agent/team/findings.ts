@@ -5,30 +5,51 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { REPO_ROOT, statePath } from "../paths.js";
 import { appendFindings, readFindings, resolveFinding } from "./journal.js";
 import type { FindingEntry, FindingKind, FindingRef, FindingResolution, FindingsReader, FindingsStatus, TeamRole } from "./contracts.js";
+import { createTrialResolver, taskTrialRoots, trialBound, type TrialResolver } from "./trials.js";
 const kinds: FindingKind[] = ["fact", "idea", "result", "defect", "decision"];
 /** Contract page size: at most 12 new titles per status. */
 export const FINDINGS_PAGE = 12;
 function cursor(value: number) {if (!Number.isSafeInteger(value) || value < 0) throw new Error("Invalid findings cursor");}
 const escapes = (delta: string) => delta === ".." || delta.startsWith(`..${sep}`) || isAbsolute(delta);
-/** Status plus references that wait for stream B's experiment/snapshot resolver. */
-export type FindingsStatusView = FindingsStatus & { pendingRefs: string[] };
-export function createFindings(root = statePath(REPO_ROOT)) {
+/**
+ * Contract status plus experiment and commit-bound references this reader
+ * could not check (no trial record or repository). Stale references (record
+ * found, source missing or changed) are in `staleRefs`.
+ */
+export type FindingsStatusView = FindingsStatus & { unresolvedRefs: string[] };
+/**
+ * `trials` resolves experiment and commit-bound references for a task;
+ * default: stream B's resolver over the task's training roots and the shared
+ * solutions repository under `root`.
+ */
+export function createFindings(root = statePath(REPO_ROOT), options: { trials?: (taskId: string) => TrialResolver } = {}) {
  const base = resolve(root);
  const taskRoot = (taskId: string) => {
   if (!/^[a-zA-Z0-9_-]+$/.test(taskId)) throw new Error("Invalid findings task ID");
   return join(base, taskId);
  };
+ const resolvers = new Map<string, TrialResolver>();
+ const trials = (taskId: string) => {
+  if (!resolvers.has(taskId)) resolvers.set(taskId, options.trials?.(taskId) ?? createTrialResolver({roots: () => taskTrialRoots(base, taskId), solutionsRoot: join(base, "solutions")}));
+  return resolvers.get(taskId)!;
+ };
  const journal = (taskId: string) => join(taskRoot(taskId), "findings/journal.jsonl");
  /** Scout file and profile citations are stored relative to the state root (see bulletRefs). */
  const refStatus = async (taskId: string, refs: FindingRef[], entries: FindingEntry[]) => {
-  const missing: string[] = [], pending: string[] = [];
+  const missing: string[] = [], unresolved: string[] = [];
   for (const ref of refs) {
    if ("entry" in ref) {if (!entries.some(entry => entry.id === ref.entry)) missing.push(`entry:${ref.entry}`); continue;}
    if ("url" in ref) {if (!/^https?:\/\//.test(ref.url)) missing.push(`url:${ref.url}`); continue;} // No network claim.
-   // Experiment records and commit-bound sources need stream B's immutable snapshot resolver.
-   if ("experiment" in ref && !("check" in ref)) {pending.push(`experiment:${ref.experiment}`); continue;}
-   if ("commit" in ref && ref.commit) {pending.push(`file:${ref.file}@${ref.commit}`); continue;}
-   const value = "file" in ref ? ref.file : "check" in ref ? ref.check : ref.profile;
+   // Experiment records and commit-bound sources resolve through stream B's trial source service.
+   if (trialBound(ref)) {
+    const label = "file" in ref ? `file:${ref.file}@${ref.commit}` : `experiment:${(ref as {experiment: string}).experiment}`;
+    const state = await trials(taskId).status(ref);
+    if (state.status === "stale") missing.push(label);
+    else if (state.status === "unresolved") unresolved.push(label);
+    continue;
+   }
+   const value = "file" in ref ? ref.file : "check" in ref ? ref.check : "profile" in ref ? ref.profile : "";
+   if (!value) continue;
    const candidates = isAbsolute(value) ? [value] : "check" in ref ? [join(base, "solutions", value)] : [join(base, value), join(taskRoot(taskId), value)];
    let found = false;
    for (const candidate of candidates) {
@@ -43,7 +64,7 @@ export function createFindings(root = statePath(REPO_ROOT)) {
    }
    if (!found) missing.push(JSON.stringify(ref));
   }
-  return {staleRefs: [...new Set(missing)], pendingRefs: [...new Set(pending)]};
+  return {staleRefs: [...new Set(missing)], unresolvedRefs: [...new Set(unresolved)]};
  };
  const read = async (taskId: string, options: {since?: number; kinds?: FindingKind[]; limit?: number} = {}) => {
   cursor(options.since ?? 0);
@@ -55,7 +76,7 @@ export function createFindings(root = statePath(REPO_ROOT)) {
   const refs = await refStatus(taskId, entries.flatMap(entry => entry.refs), view.entries);
   return {entries, resolutions: selected.filter((row): row is FindingResolution => "status" in row),
    cursor: selected.length === limit ? selected.at(-1)!.cursor : view.cursor,
-   staleRefs: [...(view.incompleteTail ? ["incomplete-journal-tail"] : []), ...refs.staleRefs], pendingRefs: refs.pendingRefs};
+   staleRefs: [...(view.incompleteTail ? ["incomplete-journal-tail"] : []), ...refs.staleRefs], unresolvedRefs: refs.unresolvedRefs};
  };
  const status = async (taskId: string, since = 0): Promise<FindingsStatusView> => {
   cursor(since);
@@ -69,7 +90,7 @@ export function createFindings(root = statePath(REPO_ROOT)) {
   const refs = await refStatus(taskId, active.flatMap(row => row.refs), view.entries);
   // A truncated page ends at its last entry so the next status resumes after it.
   return {cursor: fresh.length > page.length ? page.at(-1)!.cursor : view.cursor, counts, newEntries: page.map(({id, title}) => ({id, title})),
-   staleRefs: [...(view.incompleteTail ? ["incomplete-journal-tail"] : []), ...refs.staleRefs], pendingRefs: refs.pendingRefs};
+   staleRefs: [...(view.incompleteTail ? ["incomplete-journal-tail"] : []), ...refs.staleRefs], unresolvedRefs: refs.unresolvedRefs};
  };
  return {read, status,
   add: async (taskId: string, entry: Omit<FindingEntry, "id" | "cursor">, signal?: AbortSignal) => (await appendFindings(journal(taskId), [entry], signal))[0],
@@ -80,7 +101,7 @@ export const findingsRead = (...args: Parameters<ReturnType<typeof createFinding
 export const findingsStatus = (...args: Parameters<ReturnType<typeof createFindings>["status"]>) => createFindings().status(...args);
 export const findingsAdd = (...args: Parameters<ReturnType<typeof createFindings>["add"]>) => createFindings().add(...args);
 export const findingsResolve = (...args: Parameters<ReturnType<typeof createFindings>["resolve"]>) => createFindings().resolve(...args);
-/** Read-only adapter; stream B can re-export this from workspace/findings_reader.ts. */
+/** Read-only adapter, re-exported by workspace/findings_reader.ts. */
 export function createFindingsReader(root: string): FindingsReader {return {status: createFindings(root).status};}
 
 /**
