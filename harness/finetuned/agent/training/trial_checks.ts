@@ -5,7 +5,7 @@ import { join, resolve, sep, basename } from "node:path";
 import { projectPython } from "../pipeline/task_configuration.js";
 import type { SolveSandbox } from "../run/solve_sandbox.js";
 import { resolveCommit, uncommittedFiles } from "./git.js";
-import type { TrialSnapshot } from "./trial_source.js";
+import type { TrialSnapshot } from "../team/contracts.js";
 
 const runner = `import os,sys
 from pathlib import Path

@@ -6,13 +6,13 @@ import {
 	createAgentSession, createBashToolDefinition, createEditToolDefinition,
 	createFindToolDefinition, createGrepToolDefinition, createLsToolDefinition,
 	createReadToolDefinition, createWriteToolDefinition, defineTool, SessionManager, SettingsManager,
-	type CreateAgentSessionOptions,
+	type CreateAgentSessionOptions, type ToolDefinition, type InlineExtension,
 } from "@earendil-works/pi-coding-agent";
 import { observeAgentSession, type AgentObservation } from "../observability.js";
 import type { SuppliedInput } from "../pipeline/types.js";
 import type { PromptSnapshot, RenderedPrompt } from "../prompts/loader.js";
 import { createPipelineResourceLoader } from "../run/session_resources.js";
-import type { ChildIdentity, ChildSessionFactory } from "./types.js";
+import type { ChildIdentity, ChildSession } from "./types.js";
 
 export const CHILD_TOOL_NAMES = ["read", "grep", "find", "ls", "bash", "write", "edit"] as const;
 export type ChildToolName = typeof CHILD_TOOL_NAMES[number];
@@ -31,8 +31,15 @@ export interface PiChildOptions {
 	inputs: readonly SuppliedInput[];
 	/** Obtain from context.report.observation(attempt). Caller retains sink ownership. */
 	observe: AgentObservation;
-	tools?: readonly ChildToolName[];
-	turnTimeoutMs?: number;
+	tools?: readonly string[];
+	/** Controller-supplied tools/guards; never model-selected capabilities. */
+	customTools?: readonly ToolDefinition[];
+	extensionFactories?: readonly InlineExtension[];
+	/** Names of tools the controller's `extensionFactories` register (e.g. web_search); allowed like custom tools. */
+	extensionTools?: readonly string[];
+	childInstructions?: RenderedPrompt;
+	/** null disables the legacy request wall timer for tool-budgeted scouts. */
+	turnTimeoutMs?: number | null;
 }
 
 /** Uses Pi's cancellation, streaming, and output truncation with a session-local environment. */
@@ -46,7 +53,7 @@ export function createChildBashTool(cwd: string, environment: Readonly<NodeJS.Pr
 
 /** No ambient project instructions, skills, extensions, or system-prompt additions. */
 export async function loadChildResources(options: {
-	cwd: string; agentDir: string; instructions: readonly RenderedPrompt[];
+	cwd: string; agentDir: string; instructions: readonly RenderedPrompt[]; extensionFactories?: readonly InlineExtension[];
 }) {
 	const settingsManager = SettingsManager.inMemory();
 	const systemPrompt = options.instructions.map(prompt => prompt.text).join("\n\n");
@@ -54,22 +61,32 @@ export async function loadChildResources(options: {
 		cwd: options.cwd, agentDir: options.agentDir, settingsManager,
 		systemPrompt, systemPromptOverride: () => systemPrompt,
 		appendSystemPromptOverride: () => [],
+		extensionFactories: [...(options.extensionFactories ?? [])],
 		noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true,
 	});
 	await resourceLoader.reload();
 	return { settingsManager, resourceLoader, systemPrompt };
 }
 
+export interface PiChildSession extends ChildSession {
+	/**
+	 * Forced close for a session that may never settle: disposes the Pi session
+	 * (aborting its tools) and releases its observer without waiting for the
+	 * active prompt. Later close() calls resolve immediately.
+	 */
+	terminate(): Promise<void>;
+}
+
 /** Each call creates one observed Pi session; follow-ups reuse that session. */
-export function createPiChildFactory(options: PiChildOptions): ChildSessionFactory {
+export function createPiChildFactory(options: PiChildOptions): (identity: ChildIdentity, signal: AbortSignal) => Promise<PiChildSession> {
 	const env = Object.freeze({ ...options.env });
 	const inputs = structuredClone(options.inputs);
-	const instructions = [...options.sharedInstructions, options.prompts.render("subagents.child", {})]
+	const instructions = [...options.sharedInstructions, (options.childInstructions ?? options.prompts.render("subagents.child", {}))]
 		.map(prompt => Object.freeze({ text: prompt.text, reference: Object.freeze({ ...prompt.reference }) }));
 	const toolNames = [...new Set(options.tools ?? CHILD_TOOL_NAMES)];
-	for (const name of toolNames) if (!CHILD_TOOL_NAMES.includes(name)) throw new Error(`Unsupported child tool: ${name}`);
-	const timeoutMs = options.turnTimeoutMs ?? HARNESS_CONFIG.subagents.turnTimeoutMs;
-	if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2_147_483_647) throw new Error("Invalid child turn timeout");
+	for (const name of toolNames) if (!(CHILD_TOOL_NAMES as readonly string[]).includes(name) && !options.customTools?.some(tool => tool.name === name) && !options.extensionTools?.includes(name)) throw new Error(`Unsupported child tool: ${name}`);
+	const timeoutMs = options.turnTimeoutMs === null ? null : options.turnTimeoutMs ?? HARNESS_CONFIG.subagents.turnTimeoutMs;
+	if (timeoutMs !== null && (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2_147_483_647)) throw new Error("Invalid child turn timeout");
 	const identity = { ...options.observe.identity };
 	const observe = { identity, telemetry: options.observe.telemetry };
 	// Snapshot declarative values; do not consult a mutable pipeline config on follow-up.
@@ -89,7 +106,7 @@ export function createPiChildFactory(options: PiChildOptions): ChildSessionFacto
 			prompts: options.prompts,
 			create: async () => {
 				signal.throwIfAborted();
-				const { settingsManager, resourceLoader, systemPrompt } = await loadChildResources({ cwd, agentDir, instructions });
+				const { settingsManager, resourceLoader, systemPrompt } = await loadChildResources({ cwd, agentDir, instructions, extensionFactories: options.extensionFactories });
 				signal.throwIfAborted();
 				const availableTools = [
 					defineTool(createReadToolDefinition(cwd)), defineTool(createGrepToolDefinition(cwd)), defineTool(createFindToolDefinition(cwd)),
@@ -99,11 +116,13 @@ export function createPiChildFactory(options: PiChildOptions): ChildSessionFacto
 				const { session } = await createAgentSession({
 					cwd, agentDir, model, modelRuntime, thinkingLevel, settingsManager, resourceLoader,
 					sessionManager: SessionManager.inMemory(cwd), tools: [...toolNames],
-					customTools: availableTools.filter(tool => toolNames.includes(tool.name as ChildToolName)),
+					customTools: [...new Map([...availableTools, ...(options.customTools ?? [])].map(tool => [tool.name, tool])).values()].filter(tool => toolNames.includes(tool.name)),
 				});
 				let observer: Awaited<ReturnType<typeof observeAgentSession>>;
 				try { observer = await observeAgentSession({ session, model: `${model.provider}/${model.id}`, ...observe, parentAgentRunId: child.parentAgentRunId }); }
 				catch (error) { session.dispose(); throw error; }
+				let disposed = false;
+				const dispose = () => { if (!disposed) { disposed = true; session.dispose(); } };
 				observer.record("subagent_link", { ...child });
 				observer.record("runtime_input", { type: "runtime_input", version: 1,
 					inputs, cwd, tools: toolNames, turnTimeoutMs: timeoutMs });
@@ -122,7 +141,9 @@ export function createPiChildFactory(options: PiChildOptions): ChildSessionFacto
 							});
 						}
 					},
-					async close() { try { await observer.close(); } finally { session.dispose(); } },
+					async close() { try { await observer.close(); } finally { dispose(); } },
+					// A stuck session may never become idle: dispose it before releasing the observer.
+					async terminate() { try { dispose(); } finally { await observer.close(); } },
 				};
 			},
 		});
@@ -138,7 +159,7 @@ export function createPiChildFactory(options: PiChildOptions): ChildSessionFacto
 				if (closing) throw new Error("Child session is closed");
 				signal.throwIfAborted();
 				let timedOut = false;
-				const timer = setTimeout(() => { timedOut = true; onAbort(); }, timeoutMs);
+				const timer = timeoutMs === null ? undefined : setTimeout(() => { timedOut = true; onAbort(); }, timeoutMs);
 				try {
 					const output = await logical.prompt(message);
 					signal.throwIfAborted();
@@ -151,6 +172,11 @@ export function createPiChildFactory(options: PiChildOptions): ChildSessionFacto
 				signal.removeEventListener("abort", onAbort);
 				await logical.close();
 			})(),
+			terminate: async () => {
+				closing ??= Promise.resolve();
+				signal.removeEventListener("abort", onAbort);
+				await logical.terminate();
+			},
 		};
 	};
 }

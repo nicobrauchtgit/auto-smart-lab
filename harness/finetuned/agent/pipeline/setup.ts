@@ -1,6 +1,6 @@
 /** Fail-fast prerequisites shared by pipeline and standalone stage execution. */
 import { checkSolveSandbox } from "../run/solve_sandbox.js";
-import { accessSync, constants, statSync, existsSync } from "node:fs";
+import { accessSync, constants, statSync, existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { initializeModel } from "../model_provider.js";
@@ -15,8 +15,9 @@ import { submissionSetupChecks, submissionRecoverySetupChecks } from "../submiss
 import type { Telemetry } from "../telemetry/runtime.js";
 import { ARM_ROOT, statePath } from "../paths.js";
 import { readCourseResources } from "../research/resources.js";
+import { readTaskData } from "../solve/task_data.js";
 
-export type SetupRequirement = "observability" | "model" | "python" | "task" | "training" | "refit" | "web-search" | "submission" | "submission-recovery" | "solve-isolation" | "confirmation" | "data-profile" | "course-resources";
+export type SetupRequirement = "scouts" | "trial-checks" | "observability" | "model" | "python" | "task" | "training" | "refit" | "web-search" | "submission" | "submission-recovery" | "solve-isolation" | "confirmation" | "data-profile" | "course-resources";
 export interface SetupCheck {
  id: string;
  phase: "local" | "remote";
@@ -99,10 +100,42 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
  executables?: { python?: string; git?: string; bwrap?: string };
  candidateProducedUpstream?: boolean; refitTrainingRoot?: string;
  submissionPolicy?: import("./types.js").StageInput["submissionPolicy"];
+ /**
+  * Scout journal, unit introduction, and the task text and profile scouts get
+  * from TaskData; default to the task's findings journal, its unit's
+  * unit-intro.md and the prepared task data.
+  */
+ scoutPaths?: { journal: string; unitIntro: string; task: string; profile: string };
 }): SetupCheck[] {
  const checks: SetupCheck[] = [];
  const add = (id: string, phase: SetupCheck["phase"], remedy: string, run: SetupCheck["run"]) => checks.push({ id, phase, remedy, run });
  const needs = new Set(requirements);
+ if (needs.has("scouts")) add("scout-prompts", "local", "Prepare the task data (task.md with the unit introduction at its top, and profile.json), restore agent/prompts/team and a non-empty unit-intro.md, and make the task findings destination writable; every scout requires the task text with the unit introduction, the profile and a durable findings journal.", () => {
+  const data = options.scoutPaths ? undefined : readTaskData(options.taskId, PROJECT_ROOT);
+  if (!options.scoutPaths && !data) throw new Error("Task data not prepared");
+  const paths = options.scoutPaths ?? { journal: statePath(PROJECT_ROOT, options.taskId, "findings", "journal.jsonl"),
+   unitIntro: join(dirname(resolveTask({taskId: options.taskId}).taskDir), "unit-intro.md"), task: data!.taskPath, profile: data!.profilePath };
+  checkEvidenceDestination(paths.journal);
+  for (const path of [paths.unitIntro, paths.task, paths.profile]) readable(path);
+  // Stream B puts the unit introduction at the top of task.md; scouts get it from there, once.
+  if (!readFileSync(paths.task, "utf8").startsWith(readFileSync(paths.unitIntro, "utf8").trim())) throw new Error("task.md lacks the unit introduction");
+  for (const id of ["team.shared", "team.empty", "team.finish", "team.scout-tool", "team.probe-question"] as const) options.prompts.render(id, {});
+  options.prompts.render("team.counter", {used: "0", budget: "1"});
+  options.prompts.render("team.stopped", {reason: "preflight"});
+  options.prompts.render("team.failed", {role: "data", reason: "preflight"});
+  options.prompts.render("team.rejected", {count: "0", reasons: "preflight"});
+  options.prompts.render("team.data", {taskId: options.taskId, budget: "1", dataPaths: "preflight", resources: "preflight"});
+  options.prompts.render("team.ideas", {taskId: options.taskId, budget: "1", webSearches: "3", resources: "preflight"});
+  options.prompts.render("team.start", {task: "preflight", question: "preflight", refs: "none", shown: "0", omitted: "0", earlier: "none"});
+ });
+ if (needs.has("trial-checks")) add("validation-trial-checks", "local", "Restore training/trial_source.ts, training/trial_checks.ts, evaluation/checks.ts and the validation prompts, and install git: the validation scout resolves measured trial snapshots with git worktrees and runs checks only against them.", () => {
+  for (const name of ["training/trial_source.ts", "training/trial_checks.ts", "evaluation/checks.ts", "workspace/trial_source.ts"]) readable(join(ARM_ROOT, "agent", name));
+  const result = spawnSync(options.executables?.git ?? "git", ["worktree", "-h"], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });
+  if (result.error || (result.status !== 0 && result.status !== 129)) throw new Error("git unavailable");
+  options.prompts.render("team.validation", {taskId: options.taskId, budget: "1", experiment: "preflight", commit: "preflight", checks: "preflight"});
+  options.prompts.render("team.check-tool", {});
+  options.prompts.render("team.probe-validation", {});
+ });
  if (needs.has("observability")) {
   add("langfuse-configuration", "local", "Set LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY and the HTTPS LANGFUSE_BASE_URL in the project .env; run ./dev setup and make the emergency trace destination writable.", () => {
    if (!options.telemetry) throw new Error("Missing shared telemetry runtime");

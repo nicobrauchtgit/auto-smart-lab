@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { createStratifiedFolds, recommendFolds, sealConfirmationSet } from "./folds.js";
-import type { TrainingLabelRow } from "../research/startup_context.js";
+import type { TrainingLabelRow } from "../team/contracts.js";
 
 function rows(count: number): TrainingLabelRow[] {
 	return Array.from({ length: count }, (_, index) => ({

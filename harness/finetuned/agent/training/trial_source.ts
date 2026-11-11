@@ -2,7 +2,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve, sep, dirname, basename } from "node:path";
 import { addWorktree, git, resolveCommit, uncommittedFiles } from "./git.js";
-export interface TrialSnapshot { experimentId: string; commit: string; tree: string; sourceRoot: string }
+import type { TrialSnapshot } from "../team/contracts.js";
 export async function resolveTrialSnapshot(root: string, experimentId: string): Promise<TrialSnapshot> {
  if (!/^[A-Za-z0-9_-]{1,64}$/.test(experimentId)) throw new Error("Unsafe experiment ID");
  const receipt = JSON.parse(readFileSync(join(root, experimentId, "recovery.json"), "utf8"));

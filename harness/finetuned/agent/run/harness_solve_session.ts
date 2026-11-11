@@ -108,7 +108,7 @@ export function primaryMetric(workspace: Pick<SolveWorkspace, "configuration">, 
 	return name ? { name: workspace.configuration.metric, value: metrics?.[name] } : { name: "none" };
 }
 
-function workerEnvironment(python: PythonEnvironment): Record<string, string> {
+export function workerEnvironment(python: PythonEnvironment): Record<string, string> {
 	const values: Record<string, string | undefined> = {
 		PATH: `${join(python.prefix, "bin")}${delimiter}${process.env.PATH ?? ""}`,
 		VENV_DIR: python.prefix,

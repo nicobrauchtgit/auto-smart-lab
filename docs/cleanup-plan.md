@@ -50,8 +50,8 @@ separate.
 | Integration gate | After P7a and P7b | spam1 → spam2 → spam3 offline: first trial ≤ 10 min, hand-over ≤ 45 min, spam1 CV balanced accuracy ≥ 0.994 (reference 0.9944–0.9954), no machine-at-risk stop, reader reused; then `code2` to hand-over |
 | P7c: beyond binary classification | After the gate | Withheld-family clustering confirmation; label-free unscored hand-over, then evidence labels ([contract](../harness/finetuned/docs/expert-team.md#7-p7c-verification-beyond-binary-classification)) |
 
-Open decision (v2 section 12): starting budgets until the scout budget test
-has run.
+Scout starting budgets are set from the P7a budget test: data 15, ideas 10,
+validation 10 (v2 section 3). The lead's 80 is exercised at the integration gate.
 
 ## Follow-ups and readiness limits
 

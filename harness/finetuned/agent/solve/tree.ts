@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync, existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { checkpoint, recoverFollowUp } from "../training/branches.js";
 import { ensureSolutionsRepository, git, uncommittedFiles } from "../training/git.js";
-export interface TreeState { commit: string; uncommittedFiles: string[]; moved: { from: string; to: string }[]; changedPaths: string[] }
+import type { TreeState } from "../team/contracts.js";
 function marker(root: string) { return join(git(root, ["rev-parse", "--absolute-git-dir"]).stdout.trim(), "code-work.json"); }
 export async function beginCodeWork(root: string, label: string): Promise<TreeState> {
  ensureSolutionsRepository(root);
