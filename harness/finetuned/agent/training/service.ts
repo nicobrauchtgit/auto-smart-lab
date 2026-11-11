@@ -775,7 +775,7 @@ export class TrainingService {
             ...(champion ? { champion: { experimentId: champion.experimentId, commit: champion.commit } } : {}),
         };
         atomicJson(join(directory, "recovery.json"), {
-            schemaVersion: 1, trial: record, budgetCharged: true, budgetUnit: id, budgetLimit: this.options.maxExperiments,
+            schemaVersion: 1, solutionsRoot: this.options.solutionsRoot, trial: record, budgetCharged: true, budgetUnit: id, budgetLimit: this.options.maxExperiments,
             taskId: this.options.taskId, rootSeed: this.options.rootSeed,
             datasetSha256: this.options.datasetSha256, dataHash: this.dataHash(),
             environmentFingerprint: this.options.environmentFingerprint ?? null,
