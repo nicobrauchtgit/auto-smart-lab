@@ -103,21 +103,16 @@ afterEach(async () => {
 });
 
 describe("starting without blocking", () => {
-	test("start returns while the fit is still running, and progress arrives before it exits", async () => {
-		const { supervisor, updates, root } = harness();
-		const started = supervisor.start(spec(root, "progress", ["10", "150"]));
-		// The whole point: the call returned with the process still alive.
-		expect(started.status).toBe("running");
-		expect(started.elapsedSeconds).toBeLessThan(1);
-
-		expect(await until(() => updates.some((update) => update.kind === "progress"))).toBe(true);
-		const duringFit = updates.filter((update) => update.kind === "progress");
-		expect(duringFit[0].view.status).toBe("running");
-		// Receiving everything at exit is the failure this asserts against.
-		expect(await until(() => updates.some((update) => update.kind === "exited"))).toBe(true);
-		expect(updates.findIndex((update) => update.kind === "progress"))
-			.toBeLessThan(updates.findIndex((update) => update.kind === "exited"));
-	}, 30_000);
+	test("healthy output is observable on request and wakes only at exit", async () => {
+        const { supervisor, updates, root } = harness();
+        const started = supervisor.start(spec(root, "progress", ["10", "150"]));
+        expect(started.status).toBe("running");
+        expect(await until(() => supervisor.status(started.id).linesEmitted > 0)).toBe(true);
+        expect(updates).toHaveLength(0);
+        expect(supervisor.output(started.id).text).toContain("seen=");
+        expect(await until(() => updates.some(update => update.kind === "exited"))).toBe(true);
+        expect(updates.map(update => update.kind)).toEqual(["exited"]);
+    }, 30_000);
 
 	test("the same fit inside a blocking call delivers nothing until it returns", async () => {
 		// The negative case, asserted so the non-blocking start cannot silently
@@ -164,6 +159,7 @@ describe("stopping the group", () => {
 		expect(await until(() => supervisor.status(view.id).linesEmitted > 0)).toBe(true);
 		// `n_jobs=-1` means joblib worker processes: killing only the parent
 		// orphans them to keep burning CPU into the next iteration.
+		expect(await until(() => (supervisor.status(view.id).processes ?? 0) >= 4)).toBe(true);
 		const pgid = supervisorPgid(supervisor, view.id);
 		const members = () => {
 			// `ps` exits nonzero on an empty group, which is the state being waited for.
@@ -245,7 +241,7 @@ describe("carrying the output out", () => {
 });
 
 describe("watching the process", () => {
-	test.skipIf(process.platform !== "darwin")("CPU, memory, and group size reach the agent", async () => {
+	test.skipIf(!["darwin", "linux"].includes(process.platform))("CPU, memory, and group size reach the agent", async () => {
 		const { supervisor, root } = harness();
 		const view = supervisor.start(spec(root, "noisy"));
 		// A rate needs two readings, so CPU appears one sample after memory does.
@@ -256,7 +252,7 @@ describe("watching the process", () => {
 		expect(status.cpuPercent).toBeGreaterThanOrEqual(0);
 	}, 30_000);
 
-	test.skipIf(process.platform !== "darwin")("a fit alive at idle CPU is reported stuck once its derived threshold passes", async () => {
+	test.skipIf(!["darwin", "linux"].includes(process.platform))("a fit alive at idle CPU is reported stuck once its derived threshold passes", async () => {
 		const { supervisor, updates, root } = harness({ importPreludeMs: 200, minStallMs: 500, stallGapMultiple: 2 });
 		const view = supervisor.start({ ...spec(root, "idle"), expectedGapMs: 250 });
 		expect(await until(() => updates.some((update) => update.kind === "stalled"))).toBe(true);

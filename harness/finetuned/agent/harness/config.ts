@@ -10,7 +10,7 @@ const fields = {
 	solve: ["maxIterations", "seed", "foldPolicy", "experimentUpdateIntervalSeconds", "idleWakeMs"],
 	holdout: ["targetSmallestClassRows", "minSmallestClassRows", "maxFraction", "groupFraction"],
 	search: ["confirmAboveSeconds", "overrunFactor", "maxSeconds", "validationTimeoutSeconds"],
-	supervisor: ["updateIntervalMs", "linesPerUpdate", "minStallMs", "stallGapMultiple", "importPreludeMs", "idleCpuPercent", "sampleIntervalMs", "maxConcurrent", "stopGraceMs"],
+	supervision: ["updateIntervalMs", "linesPerUpdate", "minStallMs", "stallGapMultiple", "importPreludeMs", "idleCpuPercent", "sampleIntervalMs", "maxConcurrent", "stopGraceMs", "outputCapBytes", "memoryReserveBytes", "swapFullSeconds"],
 	subagents: ["turnTimeoutMs", "waitTimeoutMs", "maxWaitTimeoutMs", "limits"],
 };
 function object(value: unknown, keys: readonly string[], name: string): Record<string, any> {
@@ -40,6 +40,7 @@ export function parseHarnessConfig(raw: unknown): HarnessConfig {
 			positive(block[key], `${section}.${key}`);
 		}
 	}
+	if (value.supervision.idleCpuPercent > 100) throw new Error("supervision.idleCpuPercent must be at most 100");
 	if (value.research.profileTextMinPercent > 100) throw new Error("research.profileTextMinPercent must be at most 100");
 	for (const key of ["maxFraction", "groupFraction"]) if (!(typeof value.holdout[key] === "number" && value.holdout[key] > 0 && value.holdout[key] < 0.5)) throw new Error(`Invalid holdout.${key}`);
 	if (value.holdout.minSmallestClassRows > value.holdout.targetSmallestClassRows) throw new Error("holdout minimum exceeds target");
@@ -56,7 +57,7 @@ export function parseHarnessConfig(raw: unknown): HarnessConfig {
 	const limits = object(value.subagents.limits, ["maxConcurrent", "maxChildren", "maxQueuedMessages", "maxMessageBytes", "maxResultBytes"], "subagents.limits");
 	for (const [key, count] of Object.entries(limits)) positive(count, key);
 	if (value.subagents.waitTimeoutMs > value.subagents.maxWaitTimeoutMs) throw new Error("Wait timeout exceeds maximum");
-	for (const timeout of [value.setup.timeoutMs, value.session.maxWallMs, value.session.stallMs, value.solve.idleWakeMs, value.subagents.turnTimeoutMs, value.subagents.maxWaitTimeoutMs]) {
+	for (const timeout of [value.supervision.sampleIntervalMs, value.supervision.stopGraceMs, value.setup.timeoutMs, value.session.maxWallMs, value.session.stallMs, value.solve.idleWakeMs, value.subagents.turnTimeoutMs, value.subagents.maxWaitTimeoutMs]) {
 		if (timeout > 2_147_483_647) throw new Error("Timeout exceeds timer range");
 	}
 	if (!Array.isArray(value.foldRecommendations) || !value.foldRecommendations.length) throw new Error("Missing fold recommendations");

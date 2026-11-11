@@ -13,6 +13,9 @@
  * already carries the shared identity.
  */
 
+import { HARNESS_CONFIG } from "../harness/config.js";
+import { machineProtection, type MachineProtection, type ProtectedWork } from "./protection.js";
+import { sampleMachine } from "./sampler.js";
 import { randomUUID } from "node:crypto";
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readSync, statSync, writeFileSync } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -38,6 +41,8 @@ export interface SupervisorOptions {
 	/** Lifecycle and decisions, mirrored under the shared pipeline identity. */
 	record?: (eventType: string, payload: Record<string, unknown>) => void;
 	limits?: Partial<SupervisorLimits>;
+	/** Test seam: production uses the shared machine arbiter. */
+	protection?: MachineProtection;
 	/** From `readPythonEnvironment()`. Recorded, not rebuilt. */
 	environmentFingerprint?: string;
 	pipelineRunId?: string;
@@ -67,6 +72,8 @@ interface Live {
 	logBytes: number;
 	stopping?: Promise<void>;
 	finished?: boolean;
+	protectedWork?: ProtectedWork;
+	unregister?: () => void;
 }
 
 export class ExperimentSupervisor {
@@ -147,6 +154,7 @@ export class ExperimentSupervisor {
 			gate: new UpdateGate(this.limits, startedAt, spec.expectedGapMs, this.options.memoryCeilingBytes),
 		};
 		this.live.set(id, entry);
+		this.protect(entry);
 		this.persist(entry);
 
 		this.drain(entry, child.stdout);
@@ -171,7 +179,7 @@ export class ExperimentSupervisor {
 			experiment_id: id, pid: record.pid, pgid, scope: spec.scope, hypothesis: spec.hypothesis,
 			argv: spec.argv, cwd: spec.cwd, expected_gap_ms: spec.expectedGapMs,
 			environment_fingerprint: record.environmentFingerprint,
-			sampling: sampleAvailable() ? "libproc" : "unavailable",
+			sampling: sampleAvailable() ? process.platform === "linux" ? "proc" : "libproc" : "unavailable",
 			directory,
 		});
 		return this.view(entry);
@@ -216,7 +224,7 @@ export class ExperimentSupervisor {
 		const entry = this.require(id);
 		const size = existsSync(entry.record.logPath) ? statSync(entry.record.logPath).size : 0;
 		const from = Math.max(0, Math.min(cursor, size));
-		const length = Math.min(maxBytes, size - from);
+		const length = Math.min(maxBytes, HARNESS_CONFIG.supervision.outputCapBytes, size - from);
 		if (length <= 0) return { text: "", cursor: size, remaining: 0 };
 		const buffer = Buffer.alloc(length);
 		const handle = openSync(entry.record.logPath, "r");
@@ -225,7 +233,11 @@ export class ExperimentSupervisor {
 		} finally {
 			closeSync(handle);
 		}
-		return { text: buffer.toString("utf8"), cursor: from + length, remaining: size - (from + length) };
+		const decoded = buffer.toString("utf8");
+        // Invalid/binary UTF-8 can expand to replacement characters on decode.
+        const text = Buffer.byteLength(decoded) <= length ? decoded
+            : Buffer.from(decoded).subarray(0, Math.max(0, length - 3)).toString("utf8");
+        return { text, cursor: from + length, remaining: size - (from + length) };
 	}
 
 	/** Stop everything still running. A detached process outliving the run is the failure mode. */
@@ -242,6 +254,7 @@ export class ExperimentSupervisor {
             stopReason: state.stopReason, logBytes: state.cursor ?? 0, lines: state.lines ?? 0, pending: [],
             gate: new UpdateGate(this.limits, startedAt, record.expectedGapMs, this.options.memoryCeilingBytes) };
         this.live.set(record.id, entry);
+        if (entry.status === "running") this.protect(entry);
         if (entry.status === "running") {
             entry.timer = setInterval(() => this.tick(entry), this.limits.sampleIntervalMs);
             entry.timer.unref?.();
@@ -281,7 +294,8 @@ export class ExperimentSupervisor {
         entry.logBytes += count;
         const lines = buffer.subarray(0, count).toString("utf8").split("\n").filter(Boolean);
         entry.lines += lines.length;
-        entry.pending.push(...lines);
+        entry.pending.push(...lines.map(line => line.slice(0, 300)));
+        entry.pending = entry.pending.slice(-this.limits.linesPerUpdate);
         if (lines.length) {
             entry.lastLine = lines.at(-1); entry.lastLineAt = Date.now(); entry.gate.observeLine(entry.lastLineAt);
         }
@@ -343,7 +357,29 @@ export class ExperimentSupervisor {
 		}
 	}
 
-	private tick(entry: Live): void {
+	private protect(entry: Live): void {
+        const work: ProtectedWork = { rssBytes: 0, peakBytes: 0, largestProcessBytes: 0,
+            refresh: () => {
+                const sample = sampleGroup(entry.record.pgid);
+                if (!sample) { work.rssBytes = 0; work.largestProcessBytes = 0; return; }
+                work.rssBytes = sample.rssBytes;
+                work.peakBytes = Math.max(work.peakBytes, work.rssBytes);
+                work.largestProcessBytes = sample.largestProcessBytes ?? sample.rssBytes;
+            },
+            stop: async peak => {
+                const note = `this experiment was too big for the machine; peak memory ${(peak / 1024 ** 2).toFixed(0)} MB`;
+                const update: Update = { kind: "machine-at-risk", id: entry.record.id, at: Date.now(), lines: [], view: this.view(entry), note };
+                this.options.record?.("experiment_machine_protection", { experiment_id: entry.record.id, peak_bytes: peak });
+                // Mark the durable stop before signalling so recovery will not restart it.
+                const stopped = this.stop(entry.record.id, note);
+                void Promise.resolve(this.options.deliver(renderUpdate(update), update)).catch(() => undefined);
+                await stopped;
+            } };
+        entry.protectedWork = work;
+        entry.unregister = (this.options.protection ?? machineProtection).register(work);
+    }
+
+    private tick(entry: Live): void {
         this.tail(entry);
         if (!entry.finished && !ownedProcessAlive(entry.identity) && !this.groupRunning(entry)) {
             this.finish(entry);
@@ -351,13 +387,17 @@ export class ExperimentSupervisor {
         }
 		if (entry.status === "running") {
 			entry.sample = sampleGroup(entry.record.pgid, entry.sample) ?? entry.sample;
+            entry.protectedWork?.refresh?.();
+            void (this.options.protection ?? machineProtection).check().catch(() => undefined);
 		}
 		const exited = entry.status !== "running";
 		const update = entry.gate.decide({
 			now: Date.now(), view: this.view(entry), sample: entry.sample, pending: entry.pending, exited,
+            projectedDurationMs: entry.record.projectedDurationMs, outputBytes: statSync(entry.record.logPath).size,
+            memoryLimitBytes: sampleMachine().totalBytes - HARNESS_CONFIG.supervision.memoryReserveBytes,
 		});
-		if (!update) return;
 		entry.pending = [];
+		if (!update) return;
 		this.options.record?.("experiment_update", {
 			experiment_id: entry.record.id, kind: update.kind, note: update.note,
 			elapsed_seconds: update.view.elapsedSeconds, cpu_percent: update.view.cpuPercent,
@@ -371,6 +411,7 @@ export class ExperimentSupervisor {
         if (entry.finished) return;
         if (this.groupRunning(entry)) return;
         this.tail(entry);
+        entry.unregister?.();
 		if (entry.timer) {
 			clearInterval(entry.timer);
 			entry.timer = undefined;

@@ -1,103 +1,60 @@
-# Experiment supervision
+# Supervision (stream A)
 
-The registered solve stage uses this module: `agent/training/index.ts` creates
-its scope with `createExperiments`, solve exposes the training versions of the
-`experiment_*` tools (`agent/training/tools.ts`), and refit starts workers
-through `ExperimentSupervisor` (`agent/refit/service.ts`). The generic tools in
-`tools.ts` remain opt-in for other callers. Agent shell commands are not
-observed by it; v2 plans that in its global supervision
-([expert-team-v2.md section 6](../../docs/expert-team-v2.md#6-global-supervision-of-tool-calls-and-trials)).
+`ExperimentSupervisor` samples trial process groups on Linux (`/proc`) and
+Darwin (libproc). `harness.config.json` has one validated `supervision` block.
+CPU is a percentage of one core; RSS and Linux I/O counters include children.
+Sampling is free. Healthy progress never wakes an agent; completion and each
+kind of finding do. Explicit status/output requests remain available.
 
-The design is [experiment-supervision.md](../../docs/experiment-supervision.md);
-the measurements behind its numbers are in
-[research/sklearn-observability/](../../docs/research/sklearn-observability/).
+Stuck (idle silence), stale (busy silence), flooding, runaway memory and an
+overrun beyond twice a supplied projection report once per process lifetime.
+Stale uses the same adaptive gap threshold as stuck. Shell projections use the
+median of the last 20 completed shell calls in that workspace, after three
+observations; trial callers can supply `projectedDurationMs`. Without measured
+history or a supplied projection there is no invented time-wasting verdict.
+Each report includes CPU, RSS, elapsed time and the complete log path.
 
-## Why it exists
+`MachineProtection` is shared across supervisors **in one harness process**.
+Below the RAM reserve it immediately chooses the owner of the largest live
+member process; swap must stay completely full for 15 seconds. A machine with
+no swap does not count as swap-full. It explicitly stops the owner's process
+group, records the stop reason and peak group RSS, informs that owner, and
+allows subsequent work. It does not depend on kernel OOM victim ordering.
+The existing cancellation/close and explicit agent stop APIs still work.
 
-In the Pi session model a tool call *is* ownership. A fit started inside one
-lives and dies inside it, and the agent reaches no model-call boundary until the
-call returns, so streaming output into it wakes nothing. A fit that converged at
-iteration 3 of a configured 500 burns the rest anyway.
+The log keeps all output. `output()` caps every read at 50 KiB by default;
+findings contain only a bounded tail. `createSupervisedBashTool(cwd, options)`
+provides a blocking SDK-compatible shell tool using the same supervisor and
+returns a capped response with the spill path. Its root must be writable and
+readable to the owning agent; pass sanitized session-local `env`, the owner's
+`deliver`, and the shared reporter `record` callback. Neither timeouts nor
+findings kill work; session cancellation and machine protection do.
 
-Here the agent holds an ID and the supervisor holds the process. Observation is
-what it delivers; not blocking is why it has to exist.
+## Integration hand-off
 
-This is the second of two layers, and the smaller one. The first is the agent
-writing a fit that emits anything at all -- a loop over folds or `partial_fit`
-batches with a labelled line per step -- which is runtime guidance in
-[`agent/prompts/solve/observable-fits.md`](../prompts/solve/observable-fits.md),
-not infrastructure. `MultinomialNB` inside a `Pipeline` emits nothing during
-`fit` because there is no intermediate state to emit, and no supervisor can
-change that.
+Harness training already launches through `ExperimentSupervisor`, so it gets
+these changes automatically. The shared preflight checks sampling, memory and
+process identities whenever model/training/refit or explicit `supervision`
+requirements are requested. No new credentials or Python packages are needed.
 
-## What is here
+The kickoff assigns `agent/run/**` to D and `agent/subagents/**` to C; stream A
+has not edited those files. Those owners must install `createSupervisedBashTool`
+in `run/session_runner.ts`, `subagents/pi.ts`, and the isolated solve bash path.
+Until then existing SDK bash calls are **not globally supervised**. A sandboxed
+worker's arbiter is a separate process: keep supervision in the parent harness,
+where it can sample host PIDs and coordinate shell work with trials. The current
+supervisor controls process groups; detached descendants which independently
+create a new session can escape signalling. Cross-harness-process arbitration
+and Darwin swap-full sampling remain limitations, not verified capabilities.
+The legacy solve-stage interval override is still accepted by its adapter,
+but this module ignores it and no longer emits routine progress.
 
-| File | What it does |
-| --- | --- |
-| `supervisor.ts` | Detached start, line drain to `runs/<task>/experiments/<id>/output.log`, sampling loop, process-group stop |
-| `sampler.ts` | CPU and RSS for a process group through libproc; Darwin only, returns no samples on Linux (`sampler.ts:31`) |
-| `updates.ts` | When to wake the agent, and the coalescer that bounds how often |
-| `tools.ts` | `experiment_start`, `experiment_status`, `experiment_output`, `experiment_stop` |
-| `index.ts` | The opt-in scope, and the single delivery channel |
+## Checks
 
-There is no `experiment_watch`. Push through the session covers the same need
-without a tool the agent sits in a loop calling; add one only if push delivery
-proves insufficient.
-
-The log file is the record. There is no event ledger and no typed event union:
-lifecycle and decisions are mirrored through `StageReporter.event`, which already
-carries the pipeline and invocation identity.
-
-## Things that cost a session to rediscover
-
-Each was measured on Darwin 25, Apple Silicon, scikit-learn 1.9.
-
-- `ps -o time,rss,vsz` fails with `requires entitlement`. CPU and memory come
-  from `proc_pidinfo` with `PROC_PIDTASKINFO`.
-- Its CPU fields are mach ticks, not nanoseconds. The timebase is 125/3, so
-  41.67 ns a tick. Read as nanoseconds, a pegged core reports 2.4% and every
-  healthy fit looks deadlocked.
-- `proc_listpgrppids` returns the **number of pids**, not a byte count. Treating
-  it as bytes leaves a one-process group reading as an empty one, which looks
-  exactly like a finished fit.
-- Enumerating the group with `ps -o pid= -g` costs 3.6 ms because it forks; the
-  libproc call costs under a microsecond. Sampling is free, so it runs at 250 ms
-  and waking does not.
-- Without `PYTHONUNBUFFERED=1` a child's stdout is block-buffered when it is not
-  a tty, so `verbose` output arrives in 8 KB chunks or at exit -- reproducing
-  the exact problem this module fixes.
-- `kill(-pgid)`, never `kill(pid)`. `n_jobs > 1` means joblib workers, and
-  killing the parent alone orphans them to burn CPU into the next trial.
-- `steer()` delivers after the current turn's tool calls finish. It cannot
-  interrupt a blocking call.
-
-## The stall rule is derived, not fixed
-
-The longest legitimate silence measured 6.2 s on `spam1` and 35.7 s on `spam2`,
-which holds 5.5x the text. A threshold tuned on the first fires constantly on the
-second; one tuned on the second sleeps through a real hang on the first. So the
-threshold comes from the pilot's measured gap when the caller supplies one
-(`expectedGapMs`), and otherwise from the gaps this run has already shown. The
-first gap is excluded: it is scikit-learn importing, 1.6 to 1.9 s warm and 8.6 s
-cold, and silent by nature.
-
-Silence alone is never a stall. A deliberately deadlocked trial sat at 0% CPU
-through 89.5 s of it; every working configuration sat between 56% and 105%, and
-at 310% under `n_jobs=4`. Silence *at idle CPU* is the stall.
-
-CPU proves liveness, not usefulness. A trial doing arithmetic that will be
-discarded reads 105% and is indistinguishable from productive work. Process
-telemetry rules out hangs; only the loss or validation series rules out waste.
-
-## Verification
-
-```bash
-./dev bun test agent/experiments
-```
-
-Every test spawns real processes and no test calls a model. The paid live check
-planned for the supervisor -- the
-agent stopping a fit on its own evidence, a fit surviving a model turn and a
-compaction, and trial results failing to promote a champion -- is not written
-yet. Until it has run against both corpora, treat the transport as tested and
-the agent's use of it as unestablished.
+Run `./dev bun test harness/finetuned/agent/experiments
+harness/finetuned/agent/harness/config.test.ts` (on one command line), then
+`./dev bun run typecheck`. Real scripts verify stuck/stale once-only reports,
+healthy silence, flooding/spill and process-group cleanup. Injected memory
+readings verify largest-owner selection, sustained swap pressure and a real
+process stop followed by a successful next trial, without exhausting the
+shared machine. Darwin-specific sampler checks skip on Linux.

@@ -30,6 +30,8 @@ export interface ExperimentSpec {
 	 * absent the supervisor calibrates from the gaps this run actually shows.
 	 */
 	expectedGapMs?: number;
+	/** Measured/projected cost, when available. */
+	projectedDurationMs?: number;
 }
 
 /** Everything recorded before the spawn, so a stray process is attributable later. */
@@ -55,6 +57,10 @@ export interface ResourceSample {
 	rssBytes: number;
 	/** Absent on the first sample: a rate needs two readings. */
 	cpuPercent?: number;
+	largestProcessBytes?: number;
+	readBytes?: number;
+	writeBytes?: number;
+	pids?: number[];
 }
 
 export interface ExperimentView {
@@ -79,7 +85,7 @@ export interface ExperimentView {
 }
 
 /** Why the supervisor woke the agent. Routine progress is coalesced; the rest jumps the queue. */
-export type UpdateKind = "progress" | "stalled" | "exited" | "diagnostic" | "memory";
+export type UpdateKind = "progress" | "stalled" | "exited" | "diagnostic" | "memory" | "stale" | "time-wasting" | "flooding" | "machine-at-risk";
 
 export interface Update {
 	kind: UpdateKind;
@@ -92,7 +98,7 @@ export interface Update {
 }
 
 export interface SupervisorLimits {
-	/** At most one routine wake per interval. 152 lines in 2.9 s is 52 a second. */
+	/** Legacy adapter setting; routine progress wakes are disabled. */
 	updateIntervalMs: number;
 	/** Lines carried on one update. The log holds the rest. */
 	linesPerUpdate: number;
@@ -109,9 +115,12 @@ export interface SupervisorLimits {
 	maxConcurrent: number;
 	/** Grace between the group's SIGTERM and its SIGKILL. */
 	stopGraceMs: number;
+	outputCapBytes: number;
+	memoryReserveBytes: number;
+	swapFullSeconds: number;
 }
 
-export const DEFAULT_LIMITS: Readonly<SupervisorLimits> = HARNESS_CONFIG.supervisor;
+export const DEFAULT_LIMITS: Readonly<SupervisorLimits> = HARNESS_CONFIG.supervision;
 
 /**
  * Output that should reach the agent ahead of routine progress.

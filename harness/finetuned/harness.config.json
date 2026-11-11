@@ -61,7 +61,7 @@
       "repeats": 1
     }
   ],
-  "supervisor": {
+  "supervision": {
     "updateIntervalMs": 5000,
     "linesPerUpdate": 5,
     "minStallMs": 15000,
@@ -70,7 +70,10 @@
     "idleCpuPercent": 5,
     "sampleIntervalMs": 250,
     "maxConcurrent": 2,
-    "stopGraceMs": 2000
+    "stopGraceMs": 2000,
+    "outputCapBytes": 51200,
+    "memoryReserveBytes": 1073741824,
+    "swapFullSeconds": 15
   },
   "subagents": {
     "turnTimeoutMs": 1800000,

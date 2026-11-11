@@ -1,4 +1,5 @@
 /** Fail-fast prerequisites shared by pipeline and standalone stage execution. */
+import { checkSupervision } from "../experiments/setup.js";
 import { checkSolveSandbox } from "../run/solve_sandbox.js";
 import { accessSync, constants, statSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -16,7 +17,7 @@ import type { Telemetry } from "../telemetry/runtime.js";
 import { ARM_ROOT, statePath } from "../paths.js";
 import { readCourseResources } from "../research/resources.js";
 
-export type SetupRequirement = "observability" | "model" | "python" | "task" | "training" | "refit" | "web-search" | "submission" | "submission-recovery" | "solve-isolation" | "confirmation" | "data-profile" | "course-resources";
+export type SetupRequirement = "supervision" | "observability" | "model" | "python" | "task" | "training" | "refit" | "web-search" | "submission" | "submission-recovery" | "solve-isolation" | "confirmation" | "data-profile" | "course-resources";
 export interface SetupCheck {
  id: string;
  phase: "local" | "remote";
@@ -103,6 +104,9 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
  const checks: SetupCheck[] = [];
  const add = (id: string, phase: SetupCheck["phase"], remedy: string, run: SetupCheck["run"]) => checks.push({ id, phase, remedy, run });
  const needs = new Set(requirements);
+ if (["supervision", "model", "training", "refit"].some(requirement => needs.has(requirement as SetupRequirement))) {
+  add("process-supervision", "local", "Enable readable own-user /proc stat, io, status and meminfo on Linux, or libproc on Darwin. Process birth identities and memory sampling are required before agent or trial execution.", checkSupervision);
+ }
  if (needs.has("observability")) {
   add("langfuse-configuration", "local", "Set LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY and the HTTPS LANGFUSE_BASE_URL in the project .env; run ./dev setup and make the emergency trace destination writable.", () => {
    if (!options.telemetry) throw new Error("Missing shared telemetry runtime");

@@ -1,18 +1,8 @@
-/**
- * When to wake the agent, and how often.
- *
- * Sampling is free and never spends a turn. A wake is a model call, billed in
- * tokens, so it comes from a rule over the samples rather than from a timer.
- * `SGDClassifier(verbose=1)` emits 152 lines in 2.9 s -- 52 a second -- and one
- * wake per line is unaffordable in both context and money.
- *
- * The stall rule is deliberately not a constant. The longest legitimate silence
- * measured 6.2 s on one corpus and 35.7 s on 5.5x the text: a threshold tuned on
- * the first fires constantly on the second, and one tuned on the second sleeps
- * through a real hang on the first. The threshold is derived from the pilot's
- * measured gap, or failing that from the gaps this run has already shown.
+/** Sampling never wakes a model. Only completion and once-per-kind findings do.
+ * Silence thresholds scale from observed output gaps or an earlier measured gap.
  */
 
+import { HARNESS_CONFIG } from "../harness/config.js";
 import { DIAGNOSTIC_PATTERN, type ExperimentView, type ResourceSample, type SupervisorLimits, type Update, type UpdateKind } from "./types.js";
 
 export interface GateInput {
@@ -23,12 +13,15 @@ export interface GateInput {
 	pending: string[];
 	/** Set once the process group is gone. */
 	exited?: boolean;
+	outputBytes?: number;
+	projectedDurationMs?: number;
+	memoryLimitBytes?: number;
 }
 
 export class UpdateGate {
 	private observedMaxGap = 0;
 	private lastLineAt: number | undefined;
-	private lastUpdateAt = 0;
+	private readonly reported = new Set<UpdateKind>();
 	private stallReported = false;
 	private memoryReported = false;
 	private exitReported = false;
@@ -54,7 +47,7 @@ export class UpdateGate {
 			this.observedMaxGap = Math.max(this.observedMaxGap, at - this.lastLineAt);
 		}
 		this.lastLineAt = at;
-		this.stallReported = false;
+
 	}
 
 	/** Silence past this, at idle CPU, is a stall. Derived, never fixed. */
@@ -70,7 +63,7 @@ export class UpdateGate {
 	decide(input: GateInput): Update | null {
 		const { now, pending } = input;
 		const emit = (kind: UpdateKind, note?: string): Update => {
-			this.lastUpdateAt = now;
+			this.reported.add(kind);
 			return {
 				kind, id: input.view.id, at: now, view: input.view,
 				lines: pending.slice(-this.limits.linesPerUpdate),
@@ -85,10 +78,11 @@ export class UpdateGate {
 			return emit("exited", `the process group is gone with exit code ${input.view.exitCode ?? "unknown"}`);
 		}
 		const diagnostic = pending.find((line) => DIAGNOSTIC_PATTERN.test(line));
-		if (diagnostic) return emit("diagnostic", "the trial's own output matched an error or warning pattern");
+		if (diagnostic && !this.reported.has("diagnostic")) return emit("diagnostic", "the trial's own output matched an error or warning pattern");
 
-		if (this.memoryCeilingBytes && input.sample && !this.memoryReported
-			&& input.sample.rssBytes >= this.memoryCeilingBytes) {
+		const ceiling = this.memoryCeilingBytes ?? (input.memoryLimitBytes ? input.memoryLimitBytes * 0.8 : undefined);
+		if (ceiling && input.sample && !this.memoryReported
+			&& input.sample.rssBytes >= ceiling) {
 			this.memoryReported = true;
 			return emit("memory", `resident memory reached ${(input.sample.rssBytes / 1024 ** 3).toFixed(1)} GB across ${input.sample.processes} process(es)`);
 		}
@@ -100,11 +94,17 @@ export class UpdateGate {
 				+ `past the ${(this.stallThresholdMs() / 1000).toFixed(1)} s threshold derived for this trial`);
 		}
 
-		// Routine progress. Healthy CPU with output still flowing is not news, so
-		// it produces at most one coalesced update per interval.
-		if (pending.length === 0) return null;
-		if (now - this.lastUpdateAt < this.limits.updateIntervalMs) return null;
-		return emit("progress");
+        if (!input.exited && input.sample?.cpuPercent !== undefined
+            && input.sample.cpuPercent >= this.limits.idleCpuPercent
+            && now - this.startedAt >= this.limits.importPreludeMs
+            && this.silenceMs(now) >= this.stallThresholdMs() && !this.reported.has("stale")) {
+            return emit("stale", "output stopped growing while CPU remains busy");
+        }
+        if (input.outputBytes !== undefined && input.outputBytes > HARNESS_CONFIG.supervision.outputCapBytes
+            && !this.reported.has("flooding")) return emit("flooding", "output exceeded the agent cap; read the full log for the remainder");
+        if (input.projectedDurationMs && now - this.startedAt > input.projectedDurationMs * 2
+            && !this.reported.has("time-wasting")) return emit("time-wasting", `elapsed time exceeds twice the ${input.projectedDurationMs / 1000} s projection`);
+        return null;
 	}
 
 	/**

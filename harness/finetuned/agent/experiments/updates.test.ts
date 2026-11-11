@@ -70,10 +70,10 @@ describe("stuck detection", () => {
 		expect(update?.note).toContain("0% CPU");
 	});
 
-	test("a silent fit pegged near 100% CPU is not", () => {
+	test("a silent busy fit is reported stale", () => {
 		// CPU proves liveness, not usefulness. Only the loss or validation series
 		// rules out waste, and that is the other layer.
-		expect(stalling().decide({ now: START + 60_000, view: view(), sample: sample(104), pending: [] })).toBeNull();
+		expect(stalling().decide({ now: START + 60_000, view: view(), sample: sample(104), pending: [] })?.kind).toBe("stale");
 	});
 
 	test("the import prelude is silent by nature and never reports", () => {
@@ -82,12 +82,12 @@ describe("stuck detection", () => {
 		expect(gate.decide({ now: START + 20_000, view: view(), sample: sample(0), pending: [] })?.kind).toBe("stalled");
 	});
 
-	test("a stall is reported once, and again only after new output and new silence", () => {
+	test("a stall is reported once even after more output", () => {
 		const gate = stalling();
 		expect(gate.decide({ now: START + 60_000, view: view(), sample: sample(0), pending: [] })?.kind).toBe("stalled");
 		expect(gate.decide({ now: START + 70_000, view: view(), sample: sample(0), pending: [] })).toBeNull();
 		gate.observeLine(START + 80_000);
-		expect(gate.decide({ now: START + 140_000, view: view(), sample: sample(0), pending: [] })?.kind).toBe("stalled");
+		expect(gate.decide({ now: START + 140_000, view: view(), sample: sample(0), pending: [] })).toBeNull();
 	});
 
 	test("sampling being unavailable never turns into a stall report", () => {
@@ -115,7 +115,7 @@ describe("the coalescer", () => {
 	test("carries the delta and the last few lines, not the whole tail", () => {
 		const gate = new UpdateGate(limits({ updateIntervalMs: 0, linesPerUpdate: 3 }), START, 5_000);
 		const pending = Array.from({ length: 40 }, (_, index) => `seen=${index}`);
-		const update = gate.decide({ now: START + 1_000, view: view(), sample: sample(90), pending });
+		const update = gate.decide({ now: START + 1_000, view: view(), sample: sample(90), pending, exited: true });
 		expect(update?.lines).toEqual(["seen=37", "seen=38", "seen=39"]);
 	});
 
@@ -166,7 +166,7 @@ test("an update reads as measurements and points at the full log", () => {
 	const update = gate.decide({
 		now: START + 1_000,
 		view: view({ cpuPercent: 310, rssMb: 5_782, processes: 5 }),
-		sample: sample(310), pending: ["epoch 2/8 train_loss=0.1020 val_bacc=0.9841"],
+		exited: true, sample: sample(310), pending: ["epoch 2/8 train_loss=0.1020 val_bacc=0.9841"],
 	})!;
 	const text = renderUpdate(update);
 	expect(text).toContain("cpu 310%");

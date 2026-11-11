@@ -13,6 +13,8 @@
  * fit looks deadlocked.
  */
 
+import { readFileSync, readdirSync } from "node:fs";
+import { freemem, totalmem } from "node:os";
 import { dlopen, FFIType, ptr } from "bun:ffi";
 import type { ResourceSample } from "./types.js";
 
@@ -93,7 +95,7 @@ export function libproc(): Libproc | null {
 }
 
 export function sampleAvailable(): boolean {
-	return libproc() !== null;
+	return process.platform === "linux" ? linuxProcesses().length > 0 : libproc() !== null;
 }
 
 /**
@@ -104,6 +106,7 @@ export function sampleAvailable(): boolean {
  * the group is empty, which is how the caller learns the fit is over.
  */
 export function sampleGroup(pgid: number, previous?: ResourceSample): ResourceSample | null {
+	if (process.platform === "linux") return sampleLinuxGroup(pgid, previous);
 	const library = libproc();
 	if (!library) return null;
 	const readings = library.groupPids(pgid).map((pid) => library.taskInfo(pid)).filter((entry) => entry !== null);
@@ -131,4 +134,63 @@ export function groupAlive(pgid: number): boolean {
 		}
 	}
 	return library.groupPids(pgid).length > 0;
+}
+
+
+export interface LinuxProcess {
+ pid: number; ppid: number; pgid: number; rssBytes: number; cpuSeconds: number;
+ readBytes: number; writeBytes: number;
+}
+// sysconf values are read once, without spawning a command on each sample.
+const linuxSystem = process.platform === "linux" ? dlopen("libc.so.6", {
+ sysconf: { args: [FFIType.i32], returns: FFIType.i64 },
+}) : undefined;
+const clockTicks = linuxSystem ? Number(linuxSystem.symbols.sysconf(2)) : 100;
+const pageBytes = linuxSystem ? Number(linuxSystem.symbols.sysconf(30)) : 4096;
+export function linuxProcesses(root = "/proc"): LinuxProcess[] {
+ const result: LinuxProcess[] = [];
+ for (const name of readdirSync(root)) {
+  if (!/^\d+$/.test(name)) continue;
+  try {
+   const stat = readFileSync(`${root}/${name}/stat`, "utf8");
+   const f = stat.slice(stat.lastIndexOf(")") + 2).trim().split(/\s+/);
+   if (["Z", "X"].includes(f[0])) continue;
+   let io = "";
+   try { io = readFileSync(`${root}/${name}/io`, "utf8"); } catch { /* own-user /proc may restrict I/O */ }
+   const counter = (key: string) => Number(io.match(new RegExp(`^${key}: (\\d+)`, "m"))?.[1] ?? 0);
+   result.push({ pid: Number(name), ppid: Number(f[1]), pgid: Number(f[2]),
+    cpuSeconds: (Number(f[11]) + Number(f[12])) / clockTicks,
+    rssBytes: Number(f[21]) * pageBytes, readBytes: counter("read_bytes"), writeBytes: counter("write_bytes") });
+  } catch { /* Processes can exit between directory enumeration and reading. */ }
+ }
+ return result;
+}
+export function sampleLinuxGroup(pgid: number, previous?: ResourceSample, root = "/proc"): ResourceSample | null {
+ const all = linuxProcesses(root);
+ const pids = new Set(all.filter(p => p.pgid === pgid).map(p => p.pid));
+ // Include descendants which made a new process group while their parent lives.
+ let changed = true;
+ while (changed) {
+  changed = false;
+  for (const p of all) if (pids.has(p.ppid) && !pids.has(p.pid)) { pids.add(p.pid); changed = true; }
+ }
+ const members = all.filter(p => pids.has(p.pid));
+ if (!members.length) return null;
+ const sample: ResourceSample = { at: Date.now(), processes: members.length, pids: [...pids],
+  largestProcessBytes: Math.max(...members.map(p => p.rssBytes)),
+  rssBytes: members.reduce((n, p) => n + p.rssBytes, 0), cpuSeconds: members.reduce((n, p) => n + p.cpuSeconds, 0),
+  readBytes: members.reduce((n, p) => n + p.readBytes, 0), writeBytes: members.reduce((n, p) => n + p.writeBytes, 0) };
+ if (previous) sample.cpuPercent = Math.max(0, cpuPercent(previous, sample) ?? 0);
+ return sample;
+}
+export interface MachineSample { availableBytes: number; totalBytes: number; swapTotalBytes: number; swapFreeBytes: number }
+export function sampleMachine(path = "/proc/meminfo"): MachineSample {
+ if (process.platform !== "linux") return { availableBytes: freemem(), totalBytes: totalmem(), swapTotalBytes: 0, swapFreeBytes: 0 };
+ const text = readFileSync(path, "utf8");
+ const bytes = (key: string) => {
+  const match = text.match(new RegExp(`^${key}:\\s+(\\d+) kB`, "m"));
+  if (!match) throw new Error(`Missing memory counter ${key}`);
+  return Number(match[1]) * 1024;
+ };
+ return { availableBytes: bytes("MemAvailable"), totalBytes: bytes("MemTotal"), swapTotalBytes: bytes("SwapTotal"), swapFreeBytes: bytes("SwapFree") };
 }

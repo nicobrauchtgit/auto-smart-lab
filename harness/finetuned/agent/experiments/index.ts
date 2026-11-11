@@ -97,3 +97,6 @@ export function createExperiments(options: Omit<SupervisorOptions, "deliver"> & 
 		},
 	};
 }
+
+export { createSupervisedBashTool } from "./bash.js";
+export { MachineProtection } from "./protection.js";

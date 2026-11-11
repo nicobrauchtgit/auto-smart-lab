@@ -24,7 +24,7 @@ function resolve(interval: number) {
 }
 
 test("consumers use the immutable central defaults", () => {
-	expect(supervisor).toBe(HARNESS_CONFIG.supervisor);
+	expect(supervisor).toBe(HARNESS_CONFIG.supervision);
 	expect(children).toBe(HARNESS_CONFIG.subagents.limits);
 	expect(SESSION_MAX_WALL_MS).toBe(HARNESS_CONFIG.session.maxWallMs);
 	expect(CONTEXT_HANDOFF_TOKENS).toBe(HARNESS_CONFIG.context.handoffTokens);
@@ -43,7 +43,7 @@ test("each run snapshot includes central settings and effective interval overrid
 test("invalid tuning values fail before starting sessions", () => {
 	for (const mutate of [
 		(value: any) => { value.context.handoffTokens = 0; },
-		(value: any) => { value.supervisor.sampleIntervalMs = -1; },
+		(value: any) => { value.supervision.sampleIntervalMs = -1; },
 		(value: any) => { value.session.maxWallMs = 3_000_000_000; },
 		(value: any) => { value.holdout.maxFraction = 0.7; },
 		(value: any) => { value.subagents.waitTimeoutMs = value.subagents.maxWaitTimeoutMs + 1; },
