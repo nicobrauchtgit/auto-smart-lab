@@ -98,8 +98,6 @@ export interface Update {
 }
 
 export interface SupervisorLimits {
-	/** Legacy adapter setting; routine progress wakes are disabled. */
-	updateIntervalMs: number;
 	/** Lines carried on one update. The log holds the rest. */
 	linesPerUpdate: number;
 	/** Silence below this never counts, whatever the derived threshold says. */

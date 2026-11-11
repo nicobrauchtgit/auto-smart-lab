@@ -48,8 +48,6 @@ export interface SolveOptions {
 	/** Root seed for the sealed draw and harness-owned training seed lineage. */
 	seed: number;
 	foldPolicy: "auto" | { folds: number; repeats: number };
-	/** Minimum seconds between routine training updates sent to the agent. */
-	experimentUpdateIntervalSeconds: number;
 }
 
 function parseFoldPolicy(raw: unknown): SolveOptions["foldPolicy"] {
@@ -82,7 +80,7 @@ export const solveStage: StageDefinition<SolveOptions> = {
 			throw new Error("solve options must be an object");
 		}
 		const options = (raw ?? {}) as Record<string, unknown>;
-		const known = new Set(["maxIterations", "seed", "foldPolicy", "experimentUpdateIntervalSeconds"]);
+		const known = new Set(["maxIterations", "seed", "foldPolicy"]);
 		const unknown = Object.keys(options).filter((key) => !known.has(key));
 		if (unknown.length > 0) throw new Error(`unknown solve options: ${unknown.join(", ")}`);
 
@@ -92,16 +90,11 @@ export const solveStage: StageDefinition<SolveOptions> = {
 		}
 		const seed = options.seed ?? HARNESS_CONFIG.solve.seed;
 		if (!Number.isInteger(seed)) throw new Error("solve.seed must be an integer");
-		const experimentUpdateIntervalSeconds = options.experimentUpdateIntervalSeconds ?? HARNESS_CONFIG.solve.experimentUpdateIntervalSeconds;
-		if (!Number.isInteger(experimentUpdateIntervalSeconds) || (experimentUpdateIntervalSeconds as number) < 1) {
-			throw new Error("solve.experimentUpdateIntervalSeconds must be a positive integer");
-		}
 
 		return {
 			maxIterations: maxIterations as number,
 			seed: seed as number,
 			foldPolicy: parseFoldPolicy(options.foldPolicy),
-			experimentUpdateIntervalSeconds: experimentUpdateIntervalSeconds as number,
 		};
 	},
 
@@ -124,7 +117,6 @@ export const solveStage: StageDefinition<SolveOptions> = {
 			maxTrials: context.options.maxIterations,
 			seed: context.options.seed,
 			foldPolicy: context.options.foldPolicy,
-			experimentUpdateIntervalSeconds: context.options.experimentUpdateIntervalSeconds,
 			upstream: context.input.upstream,
 			prompts: context.prompts,
  guidance: context.input.guidance, feedback: context.feedback,

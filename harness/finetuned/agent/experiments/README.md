@@ -46,8 +46,6 @@ where it can sample host PIDs and coordinate shell work with trials. The current
 supervisor controls process groups; detached descendants which independently
 create a new session can escape signalling. Cross-harness-process arbitration
 and Darwin swap-full sampling remain limitations, not verified capabilities.
-The legacy solve-stage interval override is still accepted by its adapter,
-but this module ignores it and no longer emits routine progress.
 
 ## Checks
 

@@ -105,7 +105,6 @@ describe("agent-driven harness solve session", () => {
 		const observed = reporter();
 		let closed = false;
 		let bound = false;
-		let updateIntervalMs: number | undefined;
 		const toolNames = ["experiment_start", "experiment_status", "experiment_output", "experiment_stop"];
 		const dependencies: Partial<HarnessSolveDependencies> = {
 			prepareWorkspace: () => workspace,
@@ -113,7 +112,7 @@ describe("agent-driven harness solve session", () => {
 			readPython: python,
 			createTraining: (options) => {
 				expect(options.root).toBe(join(workspace.root, "training", "stage-1"));
-				updateIntervalMs = options.limits?.updateIntervalMs;
+				expect(options.limits).toBeUndefined();
 				expect(typeof options.sandboxCommand).toBe("function");
 				expect(options.executionBoundaryFingerprint).toMatch(/^[a-f0-9]{64}$/);
 				return {
@@ -144,10 +143,8 @@ describe("agent-driven harness solve session", () => {
 			guidance: (() => { const body = { id: "solve-note", version: 1, stage: "solve" as const, taskId: "task", content: "SOLVE_GUIDANCE", evidence: [] }; return { ...body, contentSha256: guidanceHash(body) }; })(),
             runId: "stage-1", report: observed.report, dependencies,
 			upstream: [{ kind: "training_selected_result", path: join(prior.root, "selected-trial", "trial-result.json") }],
-			experimentUpdateIntervalSeconds: 45,
 		});
 		expect(bound).toBe(true);
-		expect(updateIntervalMs).toBe(45_000);
 		expect(closed).toBe(true);
 		expect(result.valid).toBe(false);
 		expect(result.stopReason).toBe("no_promotion");

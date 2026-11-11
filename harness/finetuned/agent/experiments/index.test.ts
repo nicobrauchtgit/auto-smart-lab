@@ -30,7 +30,7 @@ function scope(session?: Wakeable) {
 	const created = createExperiments({
 		root: join(root, "experiments"), env: { PATH: process.env.PATH ?? "" },
 		prompts, session, record: (type) => { events.push(type); },
-		limits: { sampleIntervalMs: 40, updateIntervalMs: 50 },
+		limits: { sampleIntervalMs: 40 },
 	});
 	scopes.push(created);
 	return { ...created, root, events, spec: {

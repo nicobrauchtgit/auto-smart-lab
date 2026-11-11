@@ -113,14 +113,14 @@ describe("the coalescer", () => {
 	});
 
 	test("carries the delta and the last few lines, not the whole tail", () => {
-		const gate = new UpdateGate(limits({ updateIntervalMs: 0, linesPerUpdate: 3 }), START, 5_000);
+		const gate = new UpdateGate(limits({ linesPerUpdate: 3 }), START, 5_000);
 		const pending = Array.from({ length: 40 }, (_, index) => `seen=${index}`);
 		const update = gate.decide({ now: START + 1_000, view: view(), sample: sample(90), pending, exited: true });
 		expect(update?.lines).toEqual(["seen=37", "seen=38", "seen=39"]);
 	});
 
 	test("healthy CPU with no new output produces no wake at all", () => {
-		const gate = new UpdateGate(limits({ updateIntervalMs: 0 }), START, 5_000);
+		const gate = new UpdateGate(limits(), START, 5_000);
 		gate.observeLine(START + 1_000);
 		expect(gate.decide({ now: START + 2_000, view: view(), sample: sample(97), pending: [] })).toBeNull();
 	});
@@ -162,7 +162,7 @@ describe("what jumps the queue", () => {
 });
 
 test("an update reads as measurements and points at the full log", () => {
-	const gate = new UpdateGate(limits({ updateIntervalMs: 0 }), START, 5_000);
+	const gate = new UpdateGate(limits(), START, 5_000);
 	const update = gate.decide({
 		now: START + 1_000,
 		view: view({ cpuPercent: 310, rssMb: 5_782, processes: 5 }),

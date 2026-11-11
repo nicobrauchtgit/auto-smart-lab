@@ -23,7 +23,7 @@ Secrets never go in these files: API keys live in the ignored `.env`
 | `pipeline.entryStage` | First stage of a run (`solve`). |
 | `pipeline.scheduling` | `"configured"`: the fixed chain from `entryStage` (solve → refit). The `"agent"` mode and its orchestrator were removed on 2026-11-11. |
 | `pipeline.stages.<stage>.enabled` | Makes a stage available. `submit` is registered but runs only under an explicit controller submission policy; a configured chain stops before it. |
-| `pipeline.stages.<stage>.options` | Per-stage overrides. Solve accepts `maxIterations`, `seed`, `foldPolicy` and `experimentUpdateIntervalSeconds`, overriding the `solve` section below. |
+| `pipeline.stages.<stage>.options` | Per-stage overrides. Solve accepts `maxIterations`, `seed` and `foldPolicy`, overriding the `solve` section below. |
 | `pipeline.tasks.<task>` | Typed task declaration: sample source, train/test archives, targets, metric, holdout and refit mode, submission format. |
 | `agent` | Pi working directory and agent directory. |
 
@@ -62,7 +62,6 @@ profile that v2's scouts will read.
 | `maxIterations` | 6 | Harness training trials the solve agent may start. |
 | `seed` | 13 | Root seed; the harness derives every fit's seed from it. |
 | `foldPolicy` | `"auto"` | `"auto"` uses `foldRecommendations`; or a fixed `{ "folds": n, "repeats": m }`. |
-| `experimentUpdateIntervalSeconds` | 30 | How often the agent is told about a running trial. |
 
 ### `holdout`: sealed confirmation split
 | Key | Default | Meaning |
@@ -88,7 +87,6 @@ is a suggestion to the agent, not a constraint.
 ### `supervisor`: training process observation
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `updateIntervalMs` | 5000 | At most one routine update to the agent per interval. |
 | `linesPerUpdate` | 5 | Output lines carried per update. |
 | `minStallMs` | 15000 | Training silence below this never counts as stalled. |
 | `stallGapMultiple` | 4 | Multiple of the observed output gap before silence counts. |

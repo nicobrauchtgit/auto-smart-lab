@@ -69,7 +69,7 @@ function makeSupervisor(root: string, limits: Record<string, unknown>) {
 		env: { PATH: process.env.PATH ?? "" },
 		deliver: (_text, update) => { updates.push(update); },
 		record: (type, payload) => { events.push({ type, payload }); },
-		limits: { sampleIntervalMs: 50, updateIntervalMs: 200, stopGraceMs: 200, ...limits },
+		limits: { sampleIntervalMs: 50, stopGraceMs: 200, ...limits },
 	});
 	supervisors.push(supervisor);
 	return { supervisor, updates, events, root };
@@ -218,7 +218,7 @@ describe("carrying the output out", () => {
 	}, 30_000);
 
 	test("stderr lands in the same record as stdout, and a traceback jumps the queue", async () => {
-		const { supervisor, updates, root } = harness({ updateIntervalMs: 60_000 });
+		const { supervisor, updates, root } = harness();
 		const view = supervisor.start(spec(root, "failing"));
 		expect(await until(() => supervisor.status(view.id).status === "exited")).toBe(true);
 		// A trial that dies immediately delivers its diagnostic with the exit
@@ -231,7 +231,7 @@ describe("carrying the output out", () => {
 	test("noisy output cannot flood the agent", async () => {
 		// 152 lines in about 2.9 s. One wake a line is unaffordable in both
 		// context and money; the log keeps the full sequence either way.
-		const { supervisor, updates, root } = harness({ updateIntervalMs: 1_000 });
+		const { supervisor, updates, root } = harness();
 		const view = supervisor.start(spec(root, "noisy"));
 		expect(await until(() => supervisor.status(view.id).status === "exited", 20_000)).toBe(true);
 		const lines = supervisor.status(view.id).linesEmitted;

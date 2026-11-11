@@ -12,7 +12,7 @@ function harness(project: ReturnType<typeof temporaryProject>, events: { type: s
 		root: join(project.root, "runs", "training"),
 		env: trainingEnvironment(),
 		record: (type, payload) => events.push({ type, payload }),
-		limits: { sampleIntervalMs: 25, updateIntervalMs: 100, stopGraceMs: 5_000 },
+		limits: { sampleIntervalMs: 25, stopGraceMs: 5_000 },
 		pipelineRunId: "pipeline-versioned", stageInvocationId: "invocation-versioned",
 		pythonExecutable: PYTHON, projectRoot: project.root, solutionsRoot: project.solutionsRoot,
 		taskId: "fixture", datasetSha256: project.datasetSha256, measurement: project.measurement, rootSeed: 13,

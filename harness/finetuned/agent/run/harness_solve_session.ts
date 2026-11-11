@@ -55,8 +55,6 @@ export interface RunHarnessSolveOptions {
 	maxTrials?: number;
 	seed?: number;
 	foldPolicy?: "auto" | { folds: number; repeats: number };
-	/** Minimum seconds between routine experiment updates. */
-	experimentUpdateIntervalSeconds?: number;
 	upstream?: StageArtifact[];
 	prompts?: PromptSnapshot;
 	report?: StageReporter;
@@ -271,8 +269,7 @@ export async function runHarnessSolveSession(
 		version: 1, defaults: HARNESS_CONFIG,
 		solve: { ...HARNESS_CONFIG.solve, maxIterations: options.maxTrials ?? HARNESS_CONFIG.solve.maxIterations,
 			seed: options.seed ?? HARNESS_CONFIG.solve.seed,
-			foldPolicy: options.foldPolicy ?? HARNESS_CONFIG.solve.foldPolicy,
-			experimentUpdateIntervalSeconds: options.experimentUpdateIntervalSeconds ?? HARNESS_CONFIG.solve.experimentUpdateIntervalSeconds },
+			foldPolicy: options.foldPolicy ?? HARNESS_CONFIG.solve.foldPolicy },
 		foldRecommendation: shape,
 	});
 	const training = dependencies.createTraining({
@@ -307,7 +304,6 @@ export async function runHarnessSolveSession(
 			champion_experiment_id: trial.champion?.experimentId, champion_commit: trial.champion?.commit,
 		}),
 		maxExperiments: options.maxTrials ?? HARNESS_CONFIG.solve.maxIterations,
-		limits: { updateIntervalMs: (options.experimentUpdateIntervalSeconds ?? HARNESS_CONFIG.solve.experimentUpdateIntervalSeconds) * 1_000 },
 		prompts,
 		...(options.signal ? { signal: options.signal } : {}),
 	});

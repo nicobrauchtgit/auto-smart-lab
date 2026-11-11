@@ -7,10 +7,10 @@ const fields = {
 	pipeline: ["maxStageInvocations"],
 	session: ["maxWallMs", "stallMs", "stallRetries"], context: ["handoffTokens", "maxHandoffBytes"],
 	research: ["profileTimeoutMs", "profileTextMinPercent"],
-	solve: ["maxIterations", "seed", "foldPolicy", "experimentUpdateIntervalSeconds", "idleWakeMs"],
+	solve: ["maxIterations", "seed", "foldPolicy", "idleWakeMs"],
 	holdout: ["targetSmallestClassRows", "minSmallestClassRows", "maxFraction", "groupFraction"],
 	search: ["confirmAboveSeconds", "overrunFactor", "maxSeconds", "validationTimeoutSeconds"],
-	supervision: ["updateIntervalMs", "linesPerUpdate", "minStallMs", "stallGapMultiple", "importPreludeMs", "idleCpuPercent", "sampleIntervalMs", "maxConcurrent", "stopGraceMs", "outputCapBytes", "memoryReserveBytes", "swapFullSeconds"],
+	supervision: ["linesPerUpdate", "minStallMs", "stallGapMultiple", "importPreludeMs", "idleCpuPercent", "sampleIntervalMs", "maxConcurrent", "stopGraceMs", "outputCapBytes", "memoryReserveBytes", "swapFullSeconds"],
 	subagents: ["turnTimeoutMs", "waitTimeoutMs", "maxWaitTimeoutMs", "limits"],
 };
 function object(value: unknown, keys: readonly string[], name: string): Record<string, any> {

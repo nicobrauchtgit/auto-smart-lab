@@ -24,7 +24,6 @@
     "maxIterations": 6,
     "seed": 13,
     "foldPolicy": "auto",
-    "experimentUpdateIntervalSeconds": 30,
     "idleWakeMs": 600000
   },
   "holdout": {
@@ -62,7 +61,6 @@
     }
   ],
   "supervision": {
-    "updateIntervalMs": 5000,
     "linesPerUpdate": 5,
     "minStallMs": 15000,
     "stallGapMultiple": 4,
