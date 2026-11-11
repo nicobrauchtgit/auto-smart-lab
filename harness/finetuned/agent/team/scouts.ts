@@ -58,11 +58,11 @@ export function createScouts(options: ScoutsOptions) {
     : options.prompts.render("team.validation", { taskId: options.taskId, budget: String(budget.limit) });
    const earlier = await readFindings(options.journalPath);
    const opening = options.prompts.render("team.start", { task: options.task, unitIntro: options.unitIntro, question: request.question,
-    refs: JSON.stringify(request.refs ?? []), earlier: JSON.stringify(earlier.entries) + (earlier.incompleteTail ? "\nIncomplete journal tail ignored." : "") });
+    refs: JSON.stringify(request.refs ?? []), earlier: JSON.stringify({entries: earlier.entries, resolutions: earlier.resolutions}) + (earlier.incompleteTail ? "\nIncomplete journal tail ignored." : "") });
    const text = await options.run({ role, toolCallId, system, opening, budget, signal });
    const bullets = finalBullets(text, options.prompts.render("team.empty", {}).text);
    await appendFindings(options.journalPath, bullets.map(bullet => ({
-    kind: role === "ideas" ? "idea" as const : role === "validation" ? "decision" as const : "fact" as const,
+    kind: role === "ideas" ? "idea" as const : role === "validation" ? (/^-\s*fix\b/i.test(bullet) && request.refs?.some(ref => "experiment" in ref || "check" in ref) ? "defect" as const : "decision" as const) : "fact" as const,
     author: { role, invocationId: options.invocationId, runId: options.runId }, title: bullet.slice(2, 102), text: bullet.slice(2),
     refs: [...(request.refs ?? []), ...bulletRefs(bullet)], datasetSha256: options.datasetSha256,
    })), signal);
@@ -79,7 +79,7 @@ export function createScouts(options: ScoutsOptions) {
  const tool = defineTool({ name: "scout", label: "Scout", description: options.prompts.render("team.scout-tool", {}).text,
   parameters: Type.Object({ role: Type.Union([role, Type.Array(role, { minItems: 1, maxItems: 3 })]), question: Type.String({ minLength: 1 }),
    refs: Type.Optional(Type.Array(Type.Union([
-    Type.Object({ experiment: Type.String() }), Type.Object({ file: Type.String(), line: Type.Integer(), commit: Type.Optional(Type.String()) }),
+    Type.Object({ experiment: Type.String() }), Type.Object({ file: Type.String(), line: Type.Integer({minimum: 1}), commit: Type.Optional(Type.String()) }),
     Type.Object({ profile: Type.String() }), Type.Object({ entry: Type.String() }), Type.Object({ url: Type.String() }),
     Type.Object({ check: Type.String(), sha256: Type.String(), experiment: Type.Optional(Type.String()) }),
    ]))) }),

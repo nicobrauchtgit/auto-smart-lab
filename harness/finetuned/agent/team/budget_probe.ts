@@ -66,7 +66,7 @@ const trace = await createPipelineTrace({taskId, pipelineRunId: runId, runsDir: 
 const reporter = trace.stage("solve", invocationId);
 let used = 0, blocked = 0;
 try {
- trace.event("pipeline_run_start", {kind: "scout_budget_probe", role, budget});
+ trace.event("pipeline_run_start", {kind: "scout_budget_probe", role, budget, configuration, datasetSha256: context.dataset.snapshot_sha256, promptSnapshot: prompts.fingerprint});
  const sandbox = prepareResearchSandbox(workspace, task.dir, readPythonEnvironment());
  const backend = createScoutRunner({prompts, sandbox, researchRoot: join(workspace, "research"), observe: reporter.observation(1),
   taskId, taskConfiguration: configuration, telemetry: trace.telemetry, record: reporter.event});

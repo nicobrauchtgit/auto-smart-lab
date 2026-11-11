@@ -103,8 +103,9 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
  const checks: SetupCheck[] = [];
  const add = (id: string, phase: SetupCheck["phase"], remedy: string, run: SetupCheck["run"]) => checks.push({ id, phase, remedy, run });
  const needs = new Set(requirements);
- if (needs.has("scouts")) add("scout-prompts", "local", "Restore agent/prompts/team and a non-empty unit-intro.md; every scout requires task text and the unit introduction.", () => {
+ if (needs.has("scouts")) add("scout-prompts", "local", "Restore agent/prompts/team and a non-empty unit-intro.md, and make the task findings destination writable; every scout requires task text, the unit introduction and a durable findings journal.", () => {
   const task = resolveTask({taskId: options.taskId});
+  checkEvidenceDestination(statePath(PROJECT_ROOT, options.taskId, "findings", "journal.jsonl"));
   readable(join(dirname(task.taskDir), "unit-intro.md"));
   options.prompts.render("team.data", {taskId: options.taskId, budget: "1", dataPaths: "preflight"});
   options.prompts.render("team.ideas", {taskId: options.taskId, budget: "1", webSearches: "3"});

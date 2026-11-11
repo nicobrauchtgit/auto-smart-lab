@@ -10,7 +10,8 @@ unit introduction through the run's immutable prompt snapshot.
 isolated filesystem tools. The controller supplies a sandbox containing only
 permitted development inputs, profile, course resources and the shared tree.
 Pass `prepare: runner.prepare` to `createScouts` so all requested roles are
-preflighted before any starts. Its cwd must have a dedicated `research/` folder (under the shared solutions
+preflighted before any starts. Create each scout cwd under `solutions/scratch/scouts/` in the shared tree,
+so its research scripts stay outside production module checks. Its cwd must have a dedicated `research/` folder (under the shared solutions
 research area); only that folder is writable for the data scout. Ideas has
 read-only tools and the existing scoped search extension, limited to three
 searches. The runner uses the shared preflight before starting its session.
@@ -28,8 +29,12 @@ no-evidence bullet. Exhaustion is not an artifact validation failure.
 tail, and the next writer removes only that tail under the lock. Complete
 malformed records fail. Scout entries are attributed observations/ideas, never
 harness-measured results. Structured request refs and recognized inline file,
-profile and URL citations are retained. Paged status/stale-ref resolution and
-harness result/resolution append adapters remain integration work.
+profile and URL citations are retained. The contract exports in `findings.ts` provide paged reads, status and
+author-only supersession events. Missing/changed local check references are
+reported, and experiment/commit-bound source references remain explicitly
+unresolved until stream B supplies its immutable snapshot adapter. Harness
+result appends require an authoritative measurement adapter; agent-written
+result entries are refused.
 
 Validation is deliberately unavailable until stream B's immutable trial
 snapshot/check adapter is merged. The service refuses the role by default;

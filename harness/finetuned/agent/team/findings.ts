@@ -1,0 +1,74 @@
+/** Read-only derived views and append adapters. Never executes agent code. */
+import { readFile, stat, realpath } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { REPO_ROOT, statePath } from "../paths.js";
+import { appendFindings, readFindings, resolveFinding } from "./journal.js";
+import type { FindingEntry, FindingKind, FindingRef, FindingResolution, FindingsReader, FindingsStatus, TeamRole } from "./contracts.js";
+const kinds: FindingKind[] = ["fact", "idea", "result", "defect", "decision"];
+function cursor(value: number) {if (!Number.isSafeInteger(value) || value < 0) throw new Error("Invalid findings cursor");}
+export function createFindings(root = statePath(REPO_ROOT)) {
+ const base = resolve(root);
+ const taskRoot = (taskId: string) => {
+  if (!/^[a-zA-Z0-9_-]+$/.test(taskId)) throw new Error("Invalid findings task ID");
+  return join(base, taskId);
+ };
+ const journal = (taskId: string) => join(taskRoot(taskId), "findings/journal.jsonl");
+ const stale = async (taskId: string, refs: FindingRef[], entries: FindingEntry[]) => {
+  const missing: string[] = [];
+  for (const ref of refs) {
+   if ("entry" in ref) {if (!entries.some(entry => entry.id === ref.entry)) missing.push(`entry:${ref.entry}`); continue;}
+   if ("url" in ref) {if (!/^https?:\/\//.test(ref.url)) missing.push(`url:${ref.url}`); continue;} // No network claim.
+   if ("experiment" in ref && !("check" in ref)) {missing.push(`unresolved-experiment:${ref.experiment}`); continue;}
+   const value = "file" in ref ? ref.file : "check" in ref ? ref.check : "profile" in ref ? ref.profile : "";
+   const candidates = isAbsolute(value) ? [value] : [join(taskRoot(taskId), value), join(base, "solutions", value)];
+   let found = false;
+   for (const candidate of candidates) {
+    const path = resolve(candidate), delta = relative(base, path);
+    if (delta === ".." || delta.startsWith(`..${sep}`) || isAbsolute(delta)) continue;
+    try {
+     const canonical = await realpath(path), canonicalDelta = relative(base, canonical);
+     if (canonicalDelta === ".." || canonicalDelta.startsWith(`..${sep}`) || isAbsolute(canonicalDelta)) continue;
+     if (!(await stat(path)).isFile()) continue;
+     if ("check" in ref && createHash("sha256").update(await readFile(path)).digest("hex") !== ref.sha256) continue;
+     // Commit-bound references require the snapshot adapter, never silently use live source.
+     if ("commit" in ref && ref.commit) continue;
+     found = true; break;
+    } catch (error: any) {if (error.code !== "ENOENT") throw error;}
+   }
+   if (!found) missing.push(JSON.stringify(ref));
+  }
+  return [...new Set(missing)];
+ };
+ const read = async (taskId: string, options: {since?: number; kinds?: FindingKind[]; limit?: number} = {}) => {
+  cursor(options.since ?? 0);
+  const limit = options.limit ?? 12;
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100 || options.kinds?.some(kind => !kinds.includes(kind))) throw new Error("Invalid findings filters");
+  const view = await readFindings(journal(taskId));
+  const selected = view.records.filter(row => row.cursor > (options.since ?? 0) && (!("kind" in row) || !options.kinds || options.kinds.includes(row.kind))).slice(0, limit);
+  const entries = selected.filter((row): row is FindingEntry => "kind" in row);
+  return {entries, resolutions: selected.filter((row): row is FindingResolution => "status" in row),
+   cursor: selected.at(-1)?.cursor ?? view.cursor,
+   staleRefs: [...(view.incompleteTail ? ["incomplete-journal-tail"] : []), ...await stale(taskId, entries.flatMap(entry => entry.refs), view.entries)]};
+ };
+ const status = async (taskId: string, since = 0): Promise<FindingsStatus> => {
+  cursor(since);
+  const view = await readFindings(journal(taskId));
+  const superseded = new Set(view.resolutions.map(row => row.id));
+  const active = view.entries.filter(row => !superseded.has(row.id));
+  const counts: FindingsStatus["counts"] = {};
+  for (const row of active) counts[row.kind] = (counts[row.kind] ?? 0) + 1;
+  return {cursor: view.cursor, counts, newEntries: active.filter(row => row.cursor > since).slice(0, 12).map(({id, title}) => ({id, title})),
+   staleRefs: [...(view.incompleteTail ? ["incomplete-journal-tail"] : []), ...await stale(taskId, active.flatMap(row => row.refs), view.entries)]};
+ };
+ return {read, status,
+  add: async (taskId: string, entry: Omit<FindingEntry, "id" | "cursor">, signal?: AbortSignal) => (await appendFindings(journal(taskId), [entry], signal))[0],
+  resolve: (taskId: string, event: Omit<FindingResolution, "cursor">, actor: TeamRole, signal?: AbortSignal) => resolveFinding(journal(taskId), event, actor, signal),
+ };
+}
+export const findingsRead = (...args: Parameters<ReturnType<typeof createFindings>["read"]>) => createFindings().read(...args);
+export const findingsStatus = (...args: Parameters<ReturnType<typeof createFindings>["status"]>) => createFindings().status(...args);
+export const findingsAdd = (...args: Parameters<ReturnType<typeof createFindings>["add"]>) => createFindings().add(...args);
+export const findingsResolve = (...args: Parameters<ReturnType<typeof createFindings>["resolve"]>) => createFindings().resolve(...args);
+/** Read-only adapter; stream B can re-export this from workspace/findings_reader.ts. */
+export function createFindingsReader(root: string): FindingsReader {return {status: createFindings(root).status};}

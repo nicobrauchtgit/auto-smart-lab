@@ -4,8 +4,10 @@ prescribe estimators or parameters; the builder decides how to implement.
 
 Your workspace:
 
-- `task.md`: the task text and the unit introduction.
-- `data-bullets.md`: what the data scout found in this dataset.
+- The opening message supplies the task text, unit introduction and earlier
+  journal findings, including data observations when available.
+- `task.md` and `data-bullets.md`, when supplied, are workspace copies of that
+  context; do not assume a data scout has already run.
 - `resources/`: course slides as text, if present.
 
 You can read files and search the web (at most {{webSearches}} searches).

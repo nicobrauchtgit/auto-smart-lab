@@ -169,3 +169,44 @@ test("all requested roles pass preflight before the first scout can start", asyn
  await expect(scope.scout({role: ["data", "ideas"], question: "inspect"})).rejects.toThrow("missing prerequisite");
  expect(starts).toBe(0);
 });
+
+test("findings views page cursors, retain supersessions, and report torn or changed references", async () => {
+ const {createFindings, createFindingsReader} = await import("./findings.js");
+ const root = mkdtempSync(join(tmpdir(), "findings-view-"));
+ const api = createFindings(root);
+ const entry = {kind: "fact" as const, author: {role: "data" as const, runId: "r", invocationId: "i"}, title: "observation", text: "attributed", refs: [{file: "missing.py", line: 1}], datasetSha256: "dataset"};
+ expect((await api.status("task")).cursor).toBe(0);
+ const first = await api.add("task", entry);
+ const second = await api.add("task", {...entry, title: "replacement"});
+ await expect(api.resolve("task", {id: first.id, status: "superseded"}, "ideas")).rejects.toThrow("author");
+ await api.resolve("task", {id: first.id, status: "superseded", supersededBy: second.id}, "data");
+ const page = await api.read("task", {limit: 1});
+ expect(page.cursor).toBe(1); expect(page.entries.length).toBe(1); expect(page.staleRefs.length).toBe(1);
+ const rest = await api.read("task", {since: page.cursor});
+ expect(rest.entries.length).toBe(1); expect(rest.resolutions.length).toBe(1); expect(rest.cursor).toBe(3);
+ const status = await createFindingsReader(root).status("task");
+ expect(status.counts.fact).toBe(1); expect(status.newEntries[0].id).toBe(second.id);
+ await expect(api.read("task", {since: -1})).rejects.toThrow("cursor");
+ await expect(api.read("../outside")).rejects.toThrow("task ID");
+ const {appendFileSync} = await import("node:fs");
+ appendFileSync(join(root, "task/findings/journal.jsonl"), '{"partial":');
+ expect((await api.status("task")).staleRefs).toContain("incomplete-journal-tail");
+ await api.add("task", entry); expect((await api.read("task")).cursor).toBe(4);
+});
+
+test("changed check hashes are stale without rewriting the original finding", async () => {
+ const {createFindings} = await import("./findings.js");
+ const {createHash} = await import("node:crypto");
+ const {mkdirSync} = await import("node:fs");
+ const root = mkdtempSync(join(tmpdir(), "findings-check-"));
+ mkdirSync(join(root, "solutions"));
+ const check = join(root, "solutions/check.py");
+ writeFileSync(check, "original");
+ const api = createFindings(root);
+ const entry = await api.add("task", {kind: "fact", author: {role: "data", runId: "run", invocationId: "invoke"}, title: "check", text: "observed",
+  refs: [{check: "check.py", sha256: createHash("sha256").update("original").digest("hex")}], datasetSha256: "dataset"});
+ expect((await api.status("task")).staleRefs).toEqual([]);
+ writeFileSync(check, "changed");
+ expect((await api.status("task")).staleRefs.length).toBe(1);
+ expect((await api.read("task")).entries[0]).toEqual(entry);
+});

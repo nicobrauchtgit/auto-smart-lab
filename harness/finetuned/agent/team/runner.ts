@@ -47,7 +47,8 @@ export function createScoutRunner(options: {
   const model = await initializeModel({config: pipeline.config});
   const python = preparePythonEnvironment(options.prompts, readPythonEnvironment());
   const factory = createPiChildFactory({cwd: sandbox.cwd, agentDir: pipeline.agentDir, ...model, prompts: options.prompts,
-   sharedInstructions: [python.prompt], childInstructions: input.system, inputs: [python.input], env: {...process.env, ...python.env},
+   sharedInstructions: [python.prompt], childInstructions: input.system, inputs: [python.input, {kind: "scout_configuration", version: 1, delivery: "initial_prompt", status: "available",
+    taskId: options.taskId, configuration: options.taskConfiguration, role: input.role, toolBudget: input.budget.limit}], env: {...process.env, ...python.env},
    tools: tools.map(tool => tool.name), customTools: tools, extensionFactories: [input.budget.extension()],
    observe: options.observe, turnTimeoutMs: null});
   options.record("scout_session_start", {role: input.role, budget: input.budget.limit});

@@ -11,3 +11,4 @@ export type FindingEntry = {
 export type FindingResolution = { cursor: number; id: string; status: "superseded"; supersededBy?: string };
 export type FindingsStatus = { cursor: number; counts: Partial<Record<FindingKind, number>>;
  newEntries: { id: string; title: string }[]; staleRefs: string[] };
+export interface FindingsReader { status(taskId: string, cursor?: number): Promise<FindingsStatus> }
