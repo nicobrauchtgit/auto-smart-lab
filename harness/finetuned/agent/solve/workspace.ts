@@ -11,7 +11,7 @@
  * split cannot be scored locally.
  */
 
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, renameSync, statfsSync, statSync, openSync, readSync, closeSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { basename, join, relative } from "node:path";
 
@@ -113,6 +113,13 @@ function describeTargets(configuration: TaskConfiguration, devIds: string[], tar
 		summary: `Families: ${counts.size}; largest ${sizes[0]} rows, smallest ${sizes.at(-1)} rows, ${sizes.filter(size => size === 1).length} singleton families. ${sealedGroups ?? 0} further families are sealed.` };
 }
 
+function hashFile(path: string): ReturnType<typeof createHash> {
+ const hash = createHash("sha256"), fd = openSync(path, "r"), buffer = Buffer.alloc(1024 * 1024);
+ try { let count; while ((count = readSync(fd, buffer, 0, buffer.length, null))) hash.update(buffer.subarray(0, count)); }
+ finally { closeSync(fd); }
+ return hash;
+}
+
 export function prepareSolveWorkspace(taskId: string, options: PrepareOptions = {}): SolveWorkspace {
 	const configuration = resolveTaskConfiguration(taskId, options.configuration).configuration;
 	const projectRoot = options.projectRoot ?? PROJECT_ROOT;
@@ -121,23 +128,46 @@ export function prepareSolveWorkspace(taskId: string, options: PrepareOptions = 
 	const python = options.pythonExecutable ?? projectPython();
 	const train = archiveRows(python, paths.trainZip, paths.targetsPath, configuration.targets.kind, configuration.samples.source);
 	const targets = new Map<string, string | number>(train.targets ? train.ids.map((id, index) => [id, train.targets![index]]) : []);
-	const originalDatasetHash = createHash("sha256").update(readFileSync(paths.trainZip))
+	const originalDatasetHash = hashFile(paths.trainZip)
         .update(JSON.stringify([...targets.entries()].sort(([a], [b]) => a.localeCompare(b)))).digest("hex");
     const holdoutSeedPlan = createSeedPlan({ rootSeed: options.seed ?? HARNESS_CONFIG.solve.seed,
         taskId, datasetSha256: originalDatasetHash, experimentId: "holdout-split" });
-    const split = seal(configuration, train.ids, targets, { ...options, seed: holdoutSeedPlan.sealedSeed });
+    const dataRoot = statePath(projectRoot, taskId, "data");
+    const sealedRoot = join(dataRoot, "sealed");
+    mkdirSync(sealedRoot, { recursive: true });
+    const lock = join(sealedRoot, "prepare.lock");
+    try { mkdirSync(lock); } catch { throw new Error("Task preparation is locked; wait for its owner or repair an interrupted preparation lock"); }
+    try {
+    const declarationPath = join(sealedRoot, "split.json");
+    const declaration = { taskId, originalDatasetHash, configuration, rootSeed: options.seed ?? HARNESS_CONFIG.solve.seed, policy: options.holdoutPolicy ?? null };
+    let split: ReturnType<typeof seal>;
+    if (existsSync(declarationPath)) {
+        let stored;
+        try { stored = JSON.parse(readFileSync(declarationPath, "utf8")); } catch { throw new Error("Corrupt task split; repair task state, never redraw it"); }
+        if (stored.sha256 !== createHash("sha256").update(JSON.stringify(stored.split)).digest("hex")) throw new Error("Corrupt task split hash; repair task state");
+        if (!stored.split?.devIds || !stored.split?.sealedIds || !stored.declaration) throw new Error("Incomplete task split; repair task state");
+        const differences = Object.keys(declaration).filter(key => JSON.stringify(stored.declaration[key]) !== JSON.stringify(declaration[key as keyof typeof declaration]));
+        if (differences.length) throw new Error(`Task split declaration changed: ${differences.join(", ")}; previously exposed rows must not become sealed. Explicit task-state reset required.`);
+        split = stored.split;
+    } else {
+        const disk = statfsSync(dataRoot);
+        if (disk.bavail * disk.bsize < 1.2 * statSync(paths.trainZip).size + 1_000_000_000) throw new Error("Task preparation requires 1.2 times the archive plus 1 GB free disk space");
+        split = seal(configuration, train.ids, targets, { ...options, seed: holdoutSeedPlan.sealedSeed });
+        writeFileSync(`${declarationPath}.tmp`, JSON.stringify({ declaration, split, sha256: createHash("sha256").update(JSON.stringify(split)).digest("hex") }));
+        renameSync(`${declarationPath}.tmp`, declarationPath);
+    }
 
 	const root = statePath(projectRoot, taskId, "solve");
-	const dataOut = join(root, "data");
+	const dataOut = dataRoot;
 	for (const directory of [root, dataOut, ...(configuration.selection ? [join(root, "agent")] : [])]) mkdirSync(directory, { recursive: true });
 	const { solutionsRoot, entrypointPath } = prepareSolutionsWorkspace(projectRoot, taskId);
 	const taskPath = join(root, "task.md");
 	const prompt = readFileSync(join(taskDir, "prompt.md"), "utf8");
 	writeFileSync(taskPath, prompt.endsWith("\n") ? prompt : `${prompt}\n`);
 	// Harness-only. The agent is never pointed at this and never needs it.
-	const sealedPath = join(dataOut, "sealed_ids.txt");
+	const sealedPath = join(sealedRoot, "sealed_ids.txt");
 	writeFileSync(sealedPath, split.sealedIds.length ? `${split.sealedIds.join("\n")}\n` : "");
-    writeFileSync(join(dataOut, "holdout.json"), JSON.stringify({ ...split, devIds: undefined, holdoutSeedPlan }) + "\n");
+    writeFileSync(join(sealedRoot, "holdout.json"), JSON.stringify({ ...split, devIds: undefined, holdoutSeedPlan }) + "\n");
 	const devZip = configuration.samples.source === "zip_members"
         ? writeDevelopmentZip(paths.trainZip, dataOut, split.devIds)
         : join(dataOut, `development-${basename(paths.trainZip)}`);
@@ -156,7 +186,7 @@ export function prepareSolveWorkspace(taskId: string, options: PrepareOptions = 
 			: { kind: "anomaly_detection", execution: configuration.execution, sampleManifestPath, ...configuration.anomaly!, ...(configuration.selection ? { selection: configuration.selection, evidence: { path: join(root, "agent", "evidence.json"), source: "agent_provided" as const } } : {}) };
 	const described = describeTargets(configuration, split.devIds, targets, relative(projectRoot, sampleManifestPath), split.sealedGroups);
 	const groups = configuration.targets.kind === "families" ? new Set(split.devIds.map(id => targets.get(id))).size : undefined;
-	return {
+	const workspace: SolveWorkspace = {
 		root, solutionsRoot, entrypointPath, taskPath, configuration,
         originalTargetsPath: paths.targetsPath, holdoutSeedPlan,
 		sampleManifestPath, measurement,
@@ -172,7 +202,11 @@ export function prepareSolveWorkspace(taskId: string, options: PrepareOptions = 
 		rowCount: split.devIds.length,
 		targets: described.targets,
 		targetSummary: described.summary,
-	};
+    };
+    writeFileSync(join(sealedRoot, "task-data.json.tmp"), JSON.stringify(workspace));
+    renameSync(join(sealedRoot, "task-data.json.tmp"), join(sealedRoot, "task-data.json"));
+    return workspace;
+    } finally { rmSync(lock, { recursive: true, force: true }); }
 }
 
 /**
@@ -187,10 +221,13 @@ function writeDevelopmentZip(trainZip: string, dataOut: string, devIds: readonly
 	const target = join(dataOut, basename(trainZip).replace(/\.zip$/, "-dev.zip"));
 	const listing = join(dataOut, "development_members.txt");
 	writeFileSync(listing, `${devIds.join("\n")}\n`);
-	rmSync(target, { force: true });
+	if (existsSync(target)) return target;
+	const temporary = `${target}.tmp.zip`;
+	rmSync(temporary, { force: true });
 	// `zip --copy` transfers members between archives without inflating them.
-	execFileSync("zip", ["--quiet", "--copy", trainZip, "--out", target, "--names-stdin"],
+	execFileSync("zip", ["--quiet", "--copy", trainZip, "--out", temporary, "--names-stdin"],
 		{ input: `${devIds.join("\n")}\n`, maxBuffer: 64 * 1024 * 1024 });
+	renameSync(temporary, target);
 	rmSync(listing, { force: true });
 	return target;
 }
