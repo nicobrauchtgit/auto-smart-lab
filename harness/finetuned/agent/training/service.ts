@@ -14,14 +14,16 @@ import { assertDevelopmentCandidate, isTerminalCandidate, selectionClaimAsync } 
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, openSync, readSync, closeSync } from "node:fs";
-import { mkdir, rename, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rename, rm, unlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { atomicJson, claimWorkspace, liveGroup, ownedProcessAlive, type ProcessIdentity } from "../experiments/ownership.js";
 import type { ExperimentRecord } from "../experiments/types.js";
 import type { ExperimentSupervisor } from "../experiments/supervisor.js";
-import { ExperimentRequestError, validateExperimentRequest } from "./contract.js";
+import { ExperimentRequestError, preview, validateExperimentRequest } from "./contract.js";
+import type { PromptSnapshot } from "../prompts/loader.js";
 import {
 	addWorktree,
 	git,
@@ -98,6 +100,8 @@ export interface TrainingServiceOptions {
 	executionBoundaryFingerprint?: string;
 	/** The Python lock that identifies the training framework; defaults to `<projectRoot>/uv.lock`. */
 	lockPath?: string;
+	/** The run's prompt snapshot, for agent-facing smoke feedback. */
+	prompts?: PromptSnapshot;
 }
 
 export interface StartedTrainingExperiment {
@@ -611,31 +615,76 @@ export class TrainingService {
     }
     get taskKind() { return this.options.measurement?.kind; }
 
-    /** Cheap explicit execution; never reserves a trial or consumes its budget. */
-    async smoke(raw: unknown): Promise<{ passed: boolean; budgetConsumed: false; issues: unknown[] }> {
+    /**
+     * Cheap explicit execution; never reserves a trial or consumes its budget.
+     * The pipeline always runs; workspace_check findings are reported beside
+     * it and only findings that make a trial invalid block. Work lives
+     * outside the trial root, so an interrupted smoke never looks like a trial.
+     */
+    async smoke(raw: unknown): Promise<{ passed: boolean; budgetConsumed: false; issues: unknown[]; notice?: string; workspace?: Record<string, unknown> }> {
         const parsed = validateExperimentRequest(raw);
         if (!parsed.request) return { passed: false, budgetConsumed: false, issues: parsed.issues };
         const checked = this.sourceIssues(parsed.request);
         if (checked.issues.length || !checked.source || !this.options.solutionsRoot) return { passed: false, budgetConsumed: false, issues: checked.issues };
+        const solutionsRoot = this.options.solutionsRoot;
+        const prompts = this.options.prompts ?? (await import("../prompts/loader.js")).loadPromptSnapshot();
         const { checkWorkspace } = await import("../solve/workspace_check.js");
-        const workspace = await checkWorkspace(this.options.solutionsRoot, this.options.taskId);
-        if (!workspace.valid) return { passed: false, budgetConsumed: false, issues: workspace.errors };
-        const directory = join(this.options.trainingRoot, `smoke-${randomUUID()}`);
-        const sourceRoot = join(directory, "source");
-        const worktree = join(sourceRoot, relative(this.options.projectRoot, this.options.solutionsRoot));
-        addWorktree(this.options.solutionsRoot, worktree, checked.source.commit);
+        let workspace: Record<string, unknown>;
+        let blocking: ValidationIssue[] = [];
         try {
+            const found = await checkWorkspace(solutionsRoot, this.options.taskId);
+            workspace = { valid: found.valid, errors: found.errors, warnings: found.warnings, blocking: found.blocking,
+                ...(found.errors.length || found.warnings.length ? { note: prompts.render("training.smoke-workspace", {}).text } : {}) };
+            blocking = found.blocking.map(problem => ({ path: "workspace", problem, received: problem, expected: "regular files inside solutions/", hint: prompts.render("training.smoke-workspace", {}).text }));
+        } catch (error) {
+            workspace = { valid: false, errors: [error instanceof Error ? error.message : String(error)], warnings: [], blocking: [] };
+        }
+        const directory = await mkdtemp(join(tmpdir(), "smartlab-smoke-"));
+        const sourceRoot = join(directory, "source");
+        const worktree = join(sourceRoot, relative(this.options.projectRoot, solutionsRoot));
+        // Worktree changes are serialised with trial starts on the shared repository.
+        const serialised = <T>(work: () => T | Promise<T>): Promise<T> => {
+            const next = this.starting.then(async () => { const release = await selectionClaimAsync(solutionsRoot); try { return await work(); } finally { release(); } });
+            this.starting = next.catch(() => undefined);
+            return next;
+        };
+        let added = false;
+        try {
+            await serialised(() => { addWorktree(solutionsRoot, worktree, checked.source!.commit); added = true; });
             const { readTaskData } = await import("../solve/task_data.js");
             const { repoRootOf } = await import("../paths.js");
-            const data = readTaskData(this.options.taskId, repoRootOf(this.options.solutionsRoot));
+            const data = readTaskData(this.options.taskId, repoRootOf(solutionsRoot));
             const scriptPath = join(PYTHON_ROOT, "smoke.py");
+            let notice: string | undefined;
+            const request = parsed.request;
             const issues = await runPipelineValidation({ pythonExecutable: this.options.pythonExecutable, scriptPath,
                 command: this.options.sandboxCommand?.([this.options.pythonExecutable, scriptPath], { directory, sourceRoots: [sourceRoot] }),
-                sourceRoot, request: parsed.request, measurement: this.checkMeasurement(), testZip: data?.testZip, sampleSource: data?.configuration.samples.source, env: this.options.env,
-                cwd: this.options.projectRoot, timeoutMs: this.settings.validationTimeoutSeconds * 1000 });
-            this.options.record?.("training_smoke_completed", { passed: !issues.length, source: checked.source, budget_consumed: false });
-            return { passed: !issues.length, budgetConsumed: false, issues };
-        } finally { removeWorktree(this.options.solutionsRoot, worktree); await rm(directory, { recursive: true, force: true }); }
+                sourceRoot, request, measurement: this.checkMeasurement(), testZip: data?.testZip, sampleSource: data?.configuration.samples.source, env: this.options.env,
+                cwd: this.options.projectRoot, timeoutMs: this.settings.validationTimeoutSeconds * 1000,
+                interpret: (output) => {
+                    const value = output as { passed?: unknown; phase?: string; error?: { type?: string; message?: string }; traceback?: string; sample?: { trainRows?: number }; largerSample?: { passed?: boolean; trainRows?: number }; sampleSensitive?: boolean; developmentRows?: number };
+                    if (typeof value?.passed !== "boolean") return undefined;
+                    const error = `${value.error?.type ?? "Error"}: ${value.error?.message ?? ""}`;
+                    if (value.passed) {
+                        if (value.sampleSensitive) notice = prompts.render("training.smoke-sample-sensitive", { phase: String(value.phase), smallRows: String(value.sample?.trainRows), largerRows: String(value.largerSample?.trainRows), error }).text;
+                        return [];
+                    }
+                    const sampleNote = value.largerSample ? prompts.render("training.smoke-sample-defect", { largerRows: String(value.largerSample.trainRows) }).text
+                        : prompts.render("training.smoke-sample-unchecked", {}).text;
+                    return [{ path: "pipeline", problem: `smoke failed in the ${value.phase ?? "unknown"} step: ${error}`.slice(0, 2_000), received: preview(request.pipeline),
+                        expected: "a fit on a development sample and finite, row-aligned predictions of the task's kind",
+                        hint: prompts.render("training.smoke-failed", { phase: String(value.phase ?? "unknown"), trainRows: String(value.sample?.trainRows ?? "unknown"),
+                            developmentRows: String(value.developmentRows ?? "unknown"), sampleNote }).text,
+                        ...(value.traceback ? { message: value.traceback } : {}) }];
+                } });
+            const all = [...issues, ...blocking];
+            this.options.record?.("training_smoke_completed", { passed: !all.length, source: checked.source, budget_consumed: false,
+                sample_sensitive: notice !== undefined, workspace_errors: (workspace.errors as unknown[]).length, workspace_blocking: blocking.length });
+            return { passed: !all.length, budgetConsumed: false, issues: all, ...(notice ? { notice } : {}), workspace };
+        } finally {
+            if (added) await serialised(() => removeWorktree(solutionsRoot, worktree)).catch(() => undefined);
+            await rm(directory, { recursive: true, force: true });
+        }
     }
 
 	/** Persist identity and inputs before spawning the harness-owned worker. */

@@ -555,7 +555,9 @@ export async function collectTrainingResults(root: string): Promise<TrainingColl
 		return { trials: [], valid: false, errors, artifacts: [] };
 	}
 
-	const directories = entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort();
+	// `smoke-*` directories are work left by an interrupted trial_smoke of older
+	// versions; smoke never reserves a trial, so they are not evidence.
+	const directories = entries.filter((entry) => entry.isDirectory() && !entry.name.startsWith("smoke-")).map((entry) => entry.name).sort();
 	const trials: TrainingTrialResult[] = [];
 	for (const experimentId of directories) {
 		trials.push(await collectTrial(join(trainingRoot, experimentId), experimentId));

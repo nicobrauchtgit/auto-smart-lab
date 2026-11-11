@@ -7,14 +7,15 @@ import json
 import sys
 from pathlib import Path
 root = Path(sys.argv[1]).resolve()
-errors, warnings, bodies = [], [], {}
+errors, warnings, bodies, blocking = [], [], {}, []
 index = (root / 'INDEX.md').read_text() if (root / 'INDEX.md').exists() else ''
 files = [p for p in root.rglob('*.py') if not any(x in p.relative_to(root).parts for x in ('scratch', '.git', '__pycache__'))]
 imports, loaders = 0, 0
 for path in files:
     name = path.relative_to(root).as_posix()
     if path.is_symlink() or not path.resolve().is_relative_to(root):
-        errors.append(f'{name}: unsafe source path'); continue
+        # Symlinked or escaping sources cannot be frozen for a trial or refit.
+        errors.append(f'{name}: unsafe source path'); blocking.append(f'{name}: unsafe source path'); continue
     if name.split('/')[0] not in ('tasks', 'lib', 'checks', 'research'):
         errors.append(f'{name}: stray Python')
     if name not in index: errors.append(f'{name}: missing index entry')
@@ -38,4 +39,4 @@ for path in files:
 import re
 for name in re.findall(r'`([^`]+\.py)`', index):
     if not (root / name).is_file(): errors.append(f'{name}: indexed path does not exist')
-print(json.dumps(dict(valid=not errors, errors=errors, warnings=warnings, measurements=dict(pythonFiles=len(files), imports=imports, archiveLoaders=loaders))))
+print(json.dumps(dict(valid=not errors, errors=errors, warnings=warnings, blocking=blocking, measurements=dict(pythonFiles=len(files), imports=imports, archiveLoaders=loaders))))

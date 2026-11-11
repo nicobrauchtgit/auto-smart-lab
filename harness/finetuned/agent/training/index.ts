@@ -74,6 +74,7 @@ export function createHarnessTraining(options: HarnessTrainingOptions) {
 		sandboxCommand: options.sandboxCommand,
 		executionBoundaryFingerprint: options.executionBoundaryFingerprint,
 		lockPath: options.lockPath,
+		prompts: options.prompts,
 	});
 	const tools = createHarnessTrainingTools(service, processScope.supervisor, options.prompts);
 	const toolPrompts = ([service.taskKind ? `training.start-${service.taskKind}` as const : "training.start-tool", "training.smoke-tool", "training.workspace-check-tool", "training.status-tool", "training.output-tool", "training.stop-tool",
