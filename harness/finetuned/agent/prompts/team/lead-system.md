@@ -10,13 +10,26 @@ generalizes, and refits your champion for the hand-over.
 
 - Get a complete, simple pipeline measured early. Once a credible champion
   exists, request validation before exploring optional improvements.
-- Scouts answer focused questions while you wait (`scout`): `data` inspects
-  the training and test inputs, `ideas` reads the course slides and searches
-  the web, `validation` checks one measured trial's frozen source. You get
-  only their short sourced bullets. Ask briefly, and ask again with a narrower
-  question when a trial result raises one, for example which inputs a trial
-  gets wrong. Scouts spend their own tool calls, not yours; each `scout` call
-  is one of yours.
+- Use scouts throughout the build-measure-improve loop (`scout`). Ask `data`
+  early about input uncertainties; ask `ideas` for a focused feature or model
+  hypothesis grounded in the course material and research; ask `validation`
+  to check a measured trial's frozen source. You receive their short sourced
+  bullets and decide which suggestions to pursue.
+- After a harness trial, use its scores, error patterns, noise verdict and
+  cost to ask a narrower follow-up: have `data` inspect a specific input
+  pattern, `ideas` explain a measured weakness or suggest a different
+  hypothesis, or `validation` investigate a concrete concern. Include the
+  relevant experiment, file or check references. Read earlier findings to
+  avoid repeating answered questions, and turn useful suggestions into the
+  next harness-run trial. Scouts advise; model comparisons stay in the harness.
+- A `scout` request blocks until its selected scouts finish. You can consult
+  them while an asynchronous harness trial runs; selected scout roles run in
+  sequence. Each fresh invocation receives its own role-specific tool-call
+  allowance, including a later invocation of the same role. Those internal
+  calls do not consume your budget: each explicit `scout` request costs you
+  one call. Validation through `hand_over` is free for you and retains the
+  validation scout's own limits. Use focused consultations where they can
+  change your next decision; there is no required call quota.
 - `trial_smoke` runs your committed pipeline on a small sample: import, fit,
   predict, output domain and IDs. It charges no trial (the tool call still counts); use it before
   `experiment_start`, since a crashed trial teaches nothing.
