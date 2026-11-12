@@ -11,11 +11,18 @@
  * The log file is the record. There is no event ledger and no typed event union:
  * lifecycle and decisions are mirrored through `StageReporter.event`, which
  * already carries the shared identity.
+ *
+ * An experiment's directory (log, launcher status, state, record) belongs to
+ * the harness: owners place it outside every mount a supervised command can
+ * write. The log is opened once, never through a symlink, and read only
+ * through that descriptor; status and state are read without following a
+ * symlink. An agent that needs the log as a file gets a copy (`spill`), which
+ * is never read back.
  */
 
 import { machineProtection, type MachineProtection, type ProtectedWork } from "./protection.js";
 import { randomUUID } from "node:crypto";
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, lstatSync, mkdirSync, rmSync, writeSync } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
 import { join } from "node:path";
 
@@ -33,6 +40,7 @@ import {
 } from "./sampler.js";
 import { decodePrefix, fileSize, readRange, readTail } from "./text.js";
 import { COMMAND_STATUS_FILE, commandEnded, launchArgv, readCommandStatus, type CommandStatus } from "./launcher.js";
+import { openLog, readRecordJson, writeCopy } from "./safe_files.js";
 import {
 	DEFAULT_LIMITS, MIN_OUTPUT_BYTES,
 	type ExperimentRecord, type ExperimentSpec, type ExperimentStatus, type ExperimentView,
@@ -73,6 +81,14 @@ export interface SupervisorOptions {
 	onFinished?: (id: string, view: ExperimentView) => void | Promise<void>;
 	/** Test seam for signal delivery: production uses `process.kill`. */
 	kill?: (pid: number, signal: NodeJS.Signals) => void;
+	/**
+	 * Where the agent reads each run's full output: a copy at
+	 * `<directory>/<id>.log`, written from the harness's own descriptor when the
+	 * owner releases the run and again when it finishes. `base` is a directory
+	 * the agent cannot replace (a mount root); every component below it must be
+	 * a real directory. Views then name the copy, never the harness's log.
+	 */
+	spill?: { base: string; directory: string };
 }
 
 /** What a reattached supervisor restores, in addition to the caller's view of the run. */
@@ -173,12 +189,20 @@ interface Live {
 	groupHeld: boolean;
 	/** The command's own end (not its tree's): from the launcher's status file, or the child's exit without one. */
 	command?: CommandStatus;
+	/** The log, opened once without following a symlink; every read and write goes through it. */
+	logFd?: number;
+	/** The owner has read its result (`release`): the descriptor closes once the run is finished. */
+	released?: boolean;
+	/** The agent's copy of the log, when the owner configured one. */
+	spillPath?: string;
 }
 
 /** Where the command itself stands, apart from processes it left behind. */
 export interface CommandExit { ended: boolean; exitCode?: number; signal?: string }
 
 const memberKey = (identity: ProcessIdentity) => `${identity.pid}:${identity.birth}`;
+/** Whether anything, a symlink included, is at `path`. */
+const present = (path: string) => { try { lstatSync(path); return true; } catch { return false; } };
 
 export class ExperimentSupervisor {
 	readonly limits: SupervisorLimits;
@@ -224,6 +248,7 @@ export class ExperimentSupervisor {
 		if (this.live.get(id)?.status === "running") throw new Error(`experiment ${id} already exists and is running`);
 		const directory = retainedDirectory ?? join(this.options.root, id);
 		mkdirSync(directory, { recursive: true });
+		if (lstatSync(directory).isSymbolicLink()) throw new Error(`experiment directory is a symlink: ${directory}`);
 		const logPath = join(directory, "output.log");
 		// A retained directory may hold the status of an earlier attempt.
 		const statusPath = join(directory, COMMAND_STATUS_FILE);
@@ -232,23 +257,29 @@ export class ExperimentSupervisor {
 		// descendant of the group leader, so any later scan finds it through parent
 		// links, however soon its own parent exited.
 		const launch = launchArgv(statusPath, spec.argv);
-		const logFd = openSync(logPath, "a", 0o600);
+		// Kept for the life of the run: the harness never reopens the log by path.
+		const logFd = openLog(logPath);
 
-		const child = spawn(launch.argv[0], launch.argv.slice(1), {
-			cwd: spec.cwd,
-			// Its own process group. `n_jobs > 1` means joblib workers, and killing
-			// only the parent orphans them to burn CPU into the next iteration.
-			detached: true,
-			stdio: ["ignore", logFd, logFd],
-			env: {
-				...this.options.env,
-				// Without this a child's stdout is block-buffered when it is not a
-				// tty, so `verbose` output arrives in 8 KB chunks or at exit --
-				// reproducing the exact problem this module exists to fix.
-				PYTHONUNBUFFERED: "1",
-			},
-		});
-		closeSync(logFd);
+		let child: ChildProcess;
+		try {
+			child = spawn(launch.argv[0], launch.argv.slice(1), {
+				cwd: spec.cwd,
+				// Its own process group. `n_jobs > 1` means joblib workers, and killing
+				// only the parent orphans them to burn CPU into the next iteration.
+				detached: true,
+				stdio: ["ignore", logFd, logFd],
+				env: {
+					...this.options.env,
+					// Without this a child's stdout is block-buffered when it is not a
+					// tty, so `verbose` output arrives in 8 KB chunks or at exit --
+					// reproducing the exact problem this module exists to fix.
+					PYTHONUNBUFFERED: "1",
+				},
+			});
+		} catch (error) {
+			closeSync(logFd);
+			throw error;
+		}
 		const pgid = child.pid ?? 0;
 		const record: ExperimentRecord = {
 			...spec, id, pid: child.pid ?? 0, pgid,
@@ -259,13 +290,13 @@ export class ExperimentSupervisor {
 			stageInvocationId: this.options.stageInvocationId,
 			requestedByToolCallId,
 		};
-		writeFileSync(join(directory, "experiment.json"), `${JSON.stringify(record, null, 2)}\n`);
+		atomicJson(join(directory, "experiment.json"), record);
 
 		const startedAt = Date.now();
 		const entry: Live = {
 			record, child, identity: processIdentity(pgid), startedAt, status: "running", lines: 0, pending: [], recent: [],
-			logBytes: fileSize(logPath), gate: this.gate(startedAt, spec.expectedGapMs),
-			members: new Map(), groupHeld: pgid > 0,
+			logBytes: fileSize(logFd), gate: this.gate(startedAt, spec.expectedGapMs),
+			members: new Map(), groupHeld: pgid > 0, logFd, spillPath: this.spillPath(id),
 		};
 		this.live.set(id, entry);
 		this.protect(entry);
@@ -431,13 +462,13 @@ export class ExperimentSupervisor {
 			throw new RangeError(`maxBytes must be an integer of at least ${MIN_OUTPUT_BYTES}`);
 		}
 		const entry = this.require(id);
-		const size = fileSize(entry.record.logPath);
+		const size = fileSize(entry.logFd);
 		const from = Math.max(0, Math.min(cursor, size));
 		const cap = Math.min(maxBytes, this.limits.outputCapBytes);
 		const length = Math.min(cap, size - from);
 		if (length <= 0) return { text: "", cursor: size, remaining: 0 };
 		let buffer: Buffer;
-		try { buffer = readRange(entry.record.logPath, from, length); }
+		try { buffer = readRange(entry.logFd, from, length); }
 		catch { return { text: "", cursor: from, remaining: size - from }; }
 		let { text, bytes } = decodePrefix(buffer, cap);
 		// Only a character still being written may wait for its remaining bytes.
@@ -451,16 +482,51 @@ export class ExperimentSupervisor {
 		return { text, cursor: from + bytes, remaining: size - (from + bytes) };
 	}
 
-	/** The end of the log within `maxBytes`, for a blocking call's result. */
+	/** The end of the log within `maxBytes`, for a blocking call's result. `logPath` is where the agent reads the full log. */
 	tail(id: string, maxBytes: number): { text: string; omittedBytes: number; logPath: string } {
 		const entry = this.require(id);
-		return { ...readTail(entry.record.logPath, Math.min(maxBytes, this.limits.outputCapBytes)), logPath: entry.record.logPath };
+		return { ...readTail(entry.logFd, Math.min(maxBytes, this.limits.outputCapBytes)), logPath: this.view(entry).logPath };
+	}
+
+	/**
+	 * The owner has what it needs from this run (a shell call's result): write
+	 * the agent's copy now, and close the log once the run is finished (at once
+	 * when it already is). A run still running is copied again when it ends.
+	 */
+	release(id: string): void {
+		const entry = this.require(id);
+		entry.released = true;
+		this.spill(entry);
+		if (entry.finished) this.closeLog(entry);
 	}
 
 	/** Stop everything still running. A detached process outliving the run is the failure mode. */
 	async close(): Promise<void> {
 		this.closed = true;
 		await Promise.all([...this.live.keys()].map((id) => this.stop(id, "supervisor closed").catch(() => undefined)));
+		for (const entry of this.live.values()) if (entry.finished) this.closeLog(entry);
+	}
+
+	private spillPath(id: string): string | undefined {
+		const spill = this.options.spill;
+		return spill ? join(spill.directory, `${id}.log`) : undefined;
+	}
+
+	/** Copy the log, from the harness's descriptor, to where the agent reads it. Failures are recorded, never thrown. */
+	private spill(entry: Live): void {
+		const spill = this.options.spill;
+		if (!spill || entry.logFd === undefined) return;
+		try { writeCopy(spill.base, spill.directory, `${entry.record.id}.log`, entry.logFd); }
+		catch (error) {
+			this.options.record?.("experiment_spill_failed", { experiment_id: entry.record.id,
+				error: (error instanceof Error ? error.message : String(error)).slice(0, 300) });
+		}
+	}
+
+	private closeLog(entry: Live): void {
+		if (entry.logFd === undefined) return;
+		try { closeSync(entry.logFd); } catch { /* already closed */ }
+		entry.logFd = undefined;
 	}
 
 	/** Reattach logs, liveness polling and control without spawning anything. */
@@ -472,10 +538,11 @@ export class ExperimentSupervisor {
 		const statePath = join(record.directory, "supervisor-state.json");
 		const malformed: string[] = [];
 		let persisted: { gate?: Partial<GateState>; members?: ProcessIdentity[] } = {};
-		if (existsSync(statePath)) {
-			let value: unknown;
-			try { value = JSON.parse(readFileSync(statePath, "utf8")); } catch { malformed.push("supervisor-state.json"); }
-			if (value !== undefined) {
+		if (present(statePath)) {
+			// Never through a symlink: a replaced state file counts as malformed.
+			const value = readRecordJson(statePath);
+			if (value === undefined) malformed.push("supervisor-state.json");
+			else {
 				const restored = restoredState(value);
 				persisted = restored.state;
 				malformed.push(...restored.malformed.map((field) => `supervisor-state.json:${field}`));
@@ -483,6 +550,9 @@ export class ExperimentSupervisor {
 		}
 		const given = restoredState({ gate: state.gate, members: state.members });
 		malformed.push(...given.malformed.map((field) => `caller:${field}`));
+		// The log, opened once like a started run's. A symlink there is refused: the run reattaches without output.
+		let logFd: number | undefined;
+		try { logFd = openLog(record.logPath); } catch { malformed.push("output.log"); }
 		if (malformed.length) this.options.record?.("experiment_state_malformed", { experiment_id: record.id, fields: malformed });
 		const gate = this.gate(startedAt, record.expectedGapMs);
 		gate.restore(given.state.gate ?? persisted.gate);
@@ -492,7 +562,7 @@ export class ExperimentSupervisor {
 			gate, lastLineAt: gate.lastOutputAt,
 			members: new Map(members.map((member) => [memberKey(member), member])),
 			// The group is verifiably ours only while its recorded leader is alive.
-			groupHeld: ownedProcessAlive(state.identity) };
+			groupHeld: ownedProcessAlive(state.identity), logFd, spillPath: this.spillPath(record.id) };
 		this.live.set(record.id, entry);
 		if (entry.status === "running") {
 			this.protect(entry);
@@ -620,10 +690,10 @@ export class ExperimentSupervisor {
 	}
 
 	private readChunk(entry: Live, final: boolean): boolean {
-		const size = fileSize(entry.record.logPath);
+		const size = fileSize(entry.logFd);
 		if (size <= entry.logBytes) return false;
 		let buffer: Buffer;
-		try { buffer = readRange(entry.record.logPath, entry.logBytes, Math.min(size - entry.logBytes, 65536)); }
+		try { buffer = readRange(entry.logFd, entry.logBytes, Math.min(size - entry.logBytes, 65536)); }
 		catch { return false; }
 		const end = buffer.lastIndexOf(0x0a) + 1;
 		const consumed = end > 0 ? end : buffer.length >= 65536 || final ? buffer.length : 0;
@@ -677,7 +747,7 @@ export class ExperimentSupervisor {
 		const encoded = `${text}\n`;
 		entry.logBytes += Buffer.byteLength(encoded);
 		try {
-			appendFileSync(entry.record.logPath, encoded);
+			if (entry.logFd !== undefined) writeSync(entry.logFd, encoded);
 		} catch {
 			// A log write that fails must not stop ingestion or kill the fit.
 		}
@@ -774,7 +844,7 @@ export class ExperimentSupervisor {
 		const update = entry.gate.decide({
 			now: Date.now(), view: this.view(entry), sample: entry.sample,
 			pending: entry.pending, recent: entry.recent, exited: entry.status !== "running",
-			projectedDurationMs: entry.record.projectedDurationMs, outputBytes: fileSize(entry.record.logPath),
+			projectedDurationMs: entry.record.projectedDurationMs, outputBytes: fileSize(entry.logFd),
 			...(machine ? { machine: { availableBytes: machine.availableBytes, reserveBytes: this.protection.reserveBytes } } : {}),
 		});
 		entry.pending = [];
@@ -821,6 +891,9 @@ export class ExperimentSupervisor {
 		entry.finished = true;
 		this.persist(entry);
 		this.evaluate(entry);
+		// A released run (its call already returned) gets its final copy; nothing reads the log after that.
+		if (entry.released) this.spill(entry);
+		if (entry.released || this.closed) this.closeLog(entry);
 		this.options.record?.("experiment_finished", {
 			experiment_id: entry.record.id, status: entry.status, exit_code: entry.exitCode,
 			stop_reason: entry.stopReason, lines_emitted: entry.lines,
@@ -851,7 +924,8 @@ export class ExperimentSupervisor {
 			stalled: entry.status === "running"
 				&& entry.gate.silenceMs(now) >= entry.gate.stallThresholdMs()
 				&& (entry.sample?.cpuPercent ?? 100) < this.limits.idleCpuPercent,
-			logPath: entry.record.logPath,
+			// Where the agent reads the full log: its copy when there is one, never the harness's log otherwise.
+			logPath: entry.spillPath ?? entry.record.logPath,
 		};
 	}
 }

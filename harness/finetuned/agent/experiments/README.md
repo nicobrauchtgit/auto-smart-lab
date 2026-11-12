@@ -118,8 +118,7 @@ are stopped when the owning session ends (`closeAgentShells`, or the tool's
 result says so. Findings raised while a call runs are delivered through the
 owner's `deliver` (`steer` on a running session), so they reach the agent
 right after the result; findings before a session is bound join its next
-turn. No exit or diagnostic update is added on top of a result. Its root must
-be writable and readable to the owning agent; pass sanitized session-local
+turn. No exit or diagnostic update is added on top of a result. Its authoritative root stays outside sandbox writable mounts; pass sanitized session-local
 `env`, the owner's `deliver`, and the shared reporter `record` callback.
 Findings never kill work; `timeout`, session cancellation and machine
 protection do. In a sandbox nothing outlives the call: bubblewrap's PID 1
@@ -142,9 +141,12 @@ solve session and every expert role (`isolatedSolveTools` in
 `run/solve_sandbox.ts`, which `run/sandbox.ts` role policies use). In a sandbox
 the supervised process is the bubblewrap launcher with the command inside, so
 the mount, PID and user boundary is unchanged while the harness samples and
-signals host PIDs and shares machine protection with trials. Full output goes
-to `.shell-calls/` in the first writable mount (the agent's workspace), or to
-`runs/finetuned/shell-calls/` for host shells. A tool is made before its
+signals host PIDs and shares machine protection with trials. Sandboxed calls retain authoritative logs, `command.json`, `experiment.json`
+and supervisor state outside all writable mounts. The solve runner uses its
+harness-owned `shell-calls/`; other sandboxed callers default to a private host
+temporary directory. An agent-readable copy goes to `.shell-calls/<id>.log`
+in the first writable mount. The supervisor never reads that copy. Host shells
+use `runs/finetuned/shell-calls/` and retain their existing unrestricted access. A tool is made before its
 session exists; `runSession` and the subagent factory bind every tool they
 hand to a session (`bindAgentShells`, again for a replacement session), and
 refuse a `bash` tool from anywhere else (`assertSupervisedBash`). They
@@ -187,3 +189,49 @@ verifies reaped-children CPU; an attached log verifies byte-exact UTF-8 reads. I
 readings verify largest-owner selection, sustained swap pressure and a real
 process stop followed by a successful next trial, without exhausting the
 shared machine. Darwin-specific sampler checks skip on Linux.
+
+## Log integrity (2026-11-12)
+
+Live output, tails and finding excerpts use the descriptor opened before launch,
+with `O_NOFOLLOW` and a regular-file check. Recovery opens logs and small records
+without following final symlinks. Replaced state is reported malformed. Agent
+copies use fresh files and atomic rename under directory descriptors pinned one
+component at a time, preventing ancestor symlink swaps. Failed copies emit
+`experiment_spill_failed`; they never cause the harness to read the destination.
+Copies are bounded to the source size at the start of copying.
+
+Training stores supervisor files, recovery metadata and trusted runner receipts
+in `<training root>/.supervision/<id>/`, outside the worker's trial mount.
+Confirmation and refit use separate `.supervision` trees beside their candidate
+directories. Legacy worker-writable recovery records require inspection and
+explicit migration; they are not silently trusted for a new launch.
+Validation checks retain host logs in private temporary directories and return
+bounded output captured from pipes; scratch logs are disposable copies.
+Default temporary log directories are retained for inspection; automatic cleanup
+is not implemented. Unsandboxed host shells and terminal refit retain their
+existing host privileges; relocating their logs is not a filesystem sandbox.
+Darwin descriptor-relative copy behavior is not measured by the Linux tests.
+
+`log_symlinks.test.ts`, `run/agent_shell.test.ts`, `run/solve_sandbox.test.ts`
+and `training/trial_checks.test.ts` exercise harmless host markers, swapped logs,
+status/state symlinks, copied-log symlinks and scratch-directory replacement.
+No real withheld labels are used. These are local security regressions, not an
+integration-gate run or proof against arbitrary malicious model code.
+
+Local verification on Linux, 2026-11-12:
+
+- `./dev bun run test:fast`: 541 passed, 4 skipped, 0 failed (74 files).
+- Focused refit/service, training/recovery and confirmation/service: 36 passed,
+  0 failed (353.33 s).
+- Focused log-symlink, trial-source/checks, solve-session and scout-integration
+  checks: 24 passed, 0 failed. After adding the authoritative check-log path,
+  trial checks passed again (4 tests); log-symlink checks passed again (4 tests).
+- The broader supervision/harness/sandbox/scout run passed 128 tests, skipped
+  2 Darwin checks and failed one busy-silence timing assertion under concurrent
+  service-test load. Its whole `regressions_round2.test.ts` file then passed
+  all 11 tests; the serial fast suite also passed it. An earlier concurrent
+  fast run hit a 5 s training-test timeout; the serial rerun passed unchanged.
+- `./dev bun run typecheck` and `git diff --check` passed.
+
+The full approximately 16-minute suite and the v2 task integration gate were
+not run for this security commit; the full suite remains required before merge.

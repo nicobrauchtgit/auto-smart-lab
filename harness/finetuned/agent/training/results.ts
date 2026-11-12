@@ -1,10 +1,24 @@
 import { createHash } from "node:crypto";
-import { readdir, readFile } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
+import { closeSync, readFileSync } from "node:fs";
+import { lstat, readdir, readFile } from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
 
 import { parseExperimentRequest } from "./contract.js";
 import { deriveTrialSeed, parseSeedPlan, type SeedPlanV1 } from "./seeds.js";
 import type { ExperimentRequest } from "./types.js";
+import { openRegular } from "../experiments/safe_files.js";
+
+/**
+ * Where a trial's supervision files live (log, launcher status, supervisor
+ * state, process record): beside the trial, in `<training root>/.supervision/<id>`,
+ * never inside the trial directory, which the worker's sandbox mounts
+ * writable. A worker that could replace its own log with a symlink would
+ * otherwise make the harness read a host file the sandbox does not mount.
+ */
+export const SUPERVISION_DIRECTORY = ".supervision";
+export function trialSupervisionDirectory(trialDirectory: string): string {
+	return join(dirname(trialDirectory), SUPERVISION_DIRECTORY, basename(trialDirectory));
+}
 
 const REQUIRED_ARTIFACTS = [
 	["training_seed_plan", "seed-plan.json"],
@@ -139,9 +153,8 @@ function error(
 function parseJson(text: string, file: string, experimentId: string, errors: TrainingResultError[]): unknown | undefined {
 	try {
 		return JSON.parse(text);
-	} catch (cause) {
-		const detail = cause instanceof Error ? cause.message : String(cause);
-		error(errors, experimentId, "invalid_json", `${file} is not valid JSON: ${detail}`, file);
+	} catch {
+		error(errors, experimentId, "invalid_json", `${file} is not valid JSON`, file);
 		return undefined;
 	}
 }
@@ -197,7 +210,14 @@ async function collectTrial(directory: string, experimentId: string): Promise<Tr
 	): Promise<Buffer | undefined> => {
 		const path = join(directory, file);
 		try {
-			const bytes = await readFile(path);
+			const fd = openRegular(path);
+			if (fd === undefined) {
+				// Preserve missing-file handling, but never reopen a refused path.
+				await lstat(path);
+				throw new Error("artifact must be a readable regular file without symlinks");
+			}
+			let bytes: Buffer;
+			try { bytes = readFileSync(fd); } finally { closeSync(fd); }
 			if (requiredArtifact !== undefined) {
 				artifacts.push({
 					kind: requiredArtifact,
@@ -561,7 +581,8 @@ export async function collectTrainingResults(root: string): Promise<TrainingColl
 
 	// `smoke-*` directories are work left by an interrupted trial_smoke of older
 	// versions; smoke never reserves a trial, so they are not evidence.
-	const directories = entries.filter((entry) => entry.isDirectory() && !entry.name.startsWith("smoke-")).map((entry) => entry.name).sort();
+	// `.supervision` holds the harness's own records of the trials' processes.
+	const directories = entries.filter((entry) => entry.isDirectory() && !entry.name.startsWith("smoke-") && !entry.name.startsWith(".")).map((entry) => entry.name).sort();
 	const trials: TrainingTrialResult[] = [];
 	for (const experimentId of directories) {
 		const directory = join(trainingRoot, experimentId);

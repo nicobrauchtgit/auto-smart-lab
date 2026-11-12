@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, readdirSync, lstatSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { ensureSolutionsRepository, git, addWorktree, resolveCommit } from "./git.js";
@@ -108,4 +108,41 @@ while True:
   while (pids.some(alive) && Date.now() < until) await Bun.sleep(25);
   for (const pid of pids) expect(alive(pid)).toBe(false);
  } finally { rmSync(root, { recursive: true, force: true }); }
+}, 30_000);
+
+
+test("validation check output ignores host-file symlinks and a swapped scratch directory", async () => {
+ const root = mkdtempSync(join(tmpdir(), "check-log-swap-"));
+ const live = join(root, "live", "solutions"), frozen = join(root, "snapshot", "solutions");
+ const host = join(root, "host"); mkdirSync(host);
+ const marker = "HARMLESS_HOST_MARKER_validation_symlink";
+ const secret = join(host, "marker.txt"); writeFileSync(secret, marker);
+ try {
+  ensureSolutionsRepository(live);
+  writeFileSync(join(live, "model.py"), "value = True\n");
+  git(live, ["add", "-A"]); git(live, ["commit", "-qm", "measured"]);
+  const source = resolveCommit(live, "HEAD")!; addWorktree(live, frozen, source.commit);
+  mkdirSync(join(live, "checks"));
+  const outputRoot = join(live, "scratch", "validation", "swap");
+  const check = join(live, "checks", "swap.py");
+  writeFileSync(check, `import os
+from pathlib import Path
+p = Path(${JSON.stringify(outputRoot)})
+p.mkdir(parents=True, exist_ok=True)
+(p / "0.log").symlink_to(${JSON.stringify(secret)})
+print("REAL_CHECK_OUTPUT", flush=True)
+p.rename(str(p) + "-moved")
+p.symlink_to(${JSON.stringify(host)})
+`);
+  const result = await runTrialChecks({experimentId: "swap", commit: source.commit, tree: source.tree, sourceRoot: dirname(frozen)}, [check],
+   {executable: "env", cwd: live, mounts: [{source: dirname(frozen)}, {source: live, writable: true}], env: {...process.env} as Record<string,string>, args: command => command});
+  expect(result.passed).toBe(true);
+  expect(result.checks[0].output).toContain("REAL_CHECK_OUTPUT");
+  expect(readFileSync(result.checks[0].logPath, "utf8")).toBe("REAL_CHECK_OUTPUT\n");
+  expect(result.checks[0].logPath.startsWith(live)).toBe(false);
+  expect(JSON.stringify(result)).not.toContain(marker);
+  expect(readFileSync(secret, "utf8")).toBe(marker);
+  expect(readdirSync(host)).toEqual(["marker.txt"]);
+  expect(lstatSync(outputRoot).isSymbolicLink()).toBe(true);
+ } finally { rmSync(root, {recursive: true, force: true}); }
 }, 30_000);

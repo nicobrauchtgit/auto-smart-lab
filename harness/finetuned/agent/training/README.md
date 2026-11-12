@@ -33,3 +33,19 @@ This supports partial labels on existing development IDs. Generated challenge
 populations, immutable generated image assets, source-image grouping and the
 single-image-population task adapter remain unimplemented. Nothing in these
 checks verifies agent label correctness or establishes official task accuracy.
+
+
+## Trusted supervision records
+
+Trial `output.log`, `command.json`, `experiment.json`, `supervisor-state.json`,
+`recovery.json` and runner ownership/runtime/exit receipts live in
+`<training root>/.supervision/<experiment>/`. The worker's writable mount is
+only `<training root>/<experiment>/`. Source recovery, terminal refit and
+scout references resolve the trusted recovery receipt from the new location.
+Legacy worker-writable recovery records require inspection before migration;
+they are refused rather than automatically promoted to trusted state.
+
+Validation checks retain authoritative logs outside writable mounts and expose
+scratch copies plus bounded pipe-captured output. See
+[supervision log integrity](../experiments/README.md#log-integrity-2026-11-12)
+for descriptor handling, marker regressions and limitations.

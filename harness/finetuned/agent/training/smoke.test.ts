@@ -1,3 +1,4 @@
+import { trialSupervisionDirectory } from "../training/results.js";
 import { test, expect } from "bun:test";
 import { writeFileSync, rmSync, existsSync, readdirSync, readFileSync, mkdirSync, symlinkSync } from "node:fs";
 import { git, uncommittedFiles } from "./git.js";
@@ -61,7 +62,7 @@ test("concurrent smoke runs and experiment_start on the same tree keep each othe
   const [first, started, second] = await Promise.all([training.service.smoke(raw), training.service.start(raw), training.service.smoke(raw)]);
   expect(first.passed).toBe(true); expect(second.passed).toBe(true);
   expect(first.issues).toEqual([]); expect(second.issues).toEqual([]);
-  const trial = JSON.parse(readFileSync(join(started.directory, "recovery.json"), "utf8")).trial;
+  const trial = JSON.parse(readFileSync(join(trialSupervisionDirectory(started.directory), "recovery.json"), "utf8")).trial;
   expect(trial.source.commit).toBe(project.head);
   expect(await until(() => training.supervisor.status(started.id).status !== "running", 60_000)).toBe(true);
   const result = JSON.parse(readFileSync(join(started.directory, "trial-result.json"), "utf8"));

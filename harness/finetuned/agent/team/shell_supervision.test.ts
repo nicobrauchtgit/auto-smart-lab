@@ -1,3 +1,4 @@
+import { trialSupervisionDirectory } from "../training/results.js";
 /**
  * Stream A's shell supervision under stream C's scouts: every scout bash call
  * is a supervised call bound to its own scout session, the budget still counts
@@ -57,7 +58,8 @@ async function validationFixture() {
  const measured = resolveCommit(live, "HEAD")!;
  const trials = join(state, "fixture/solve/training/run-1");
  mkdirSync(join(trials, "exp-1"), {recursive: true});
- writeFileSync(join(trials, "exp-1", "recovery.json"), JSON.stringify({trial: {id: "exp-1", source: {commit: measured.commit, tree: measured.tree}, worktrees: [join(trials, "exp-1", "solutions")]}, solutionsRoot: live}));
+ mkdirSync(trialSupervisionDirectory(join(trials, "exp-1")), {recursive: true});
+ writeFileSync(join(trialSupervisionDirectory(join(trials, "exp-1")), "recovery.json"), JSON.stringify({trial: {id: "exp-1", source: {commit: measured.commit, tree: measured.tree}, worktrees: [join(trials, "exp-1", "solutions")]}, solutionsRoot: live}));
  const solve = join(state, "fixture/solve"), dataRoot = join(state, "fixture/data");
  mkdirSync(join(solve, "agent"), {recursive: true}); mkdirSync(dataRoot, {recursive: true});
  for (const [path, text] of [[join(solve, "task.md"), "UNIT INTRO\n\nTASK TEXT\n"], [join(dataRoot, "profile.json"), '{"rowCount": 2}\n'],
@@ -74,25 +76,27 @@ async function scoutView(role: Extract<ScoutRole, "data" | "validation">) {
  if (role === "validation") {
   const f = await validationFixture();
   const view = scoutToolset("validation", {sandbox: f.sandbox, solutionsRoot: f.live, taskId: "fixture", trial: f.trial});
-  return {view, live: f.live, logRoot: join(f.live, "scratch/validation/exp-1/shell-calls"),
+  return {view, live: f.live, spill: {base: f.live, directory: join(f.live, "scratch/validation/exp-1/shell-calls")},
    system: prompts.render("team.validation", {taskId: "fixture", budget: "5", experiment: "exp-1", commit: f.trial.commit, checks: "none"})};
  }
  const root = realpathSync(mkdtempSync(join(tmpdir(), "scout-shell-")));
  const workspace = join(root, "workspace"), task = join(root, "task");
  mkdirSync(join(workspace, "research"), {recursive: true}); mkdirSync(task);
  const view = scoutToolset("data", {sandbox: prepareResearchSandbox(workspace, task, readPythonEnvironment(false)), solutionsRoot: join(root, "solutions"), taskId: "fixture"});
- return {view, live: undefined, logRoot: join(workspace, "research/.shell-calls"),
+ return {view, live: undefined, spill: {base: join(workspace, "research"), directory: join(workspace, "research/.shell-calls")},
   system: prompts.render("team.data", {taskId: "fixture", budget: "5", dataPaths: "none", resources: "- none"})};
 }
 
 /**
  * A scout session as `createScoutRunner` starts one: the role's tools (bash
- * rebuilt from the same sandbox and log root, with fast stall limits), tracked,
+ * rebuilt from the same sandbox and copy folder, with fast stall limits and a
+ * harness-owned log root the test can read), tracked,
  * in an observed Pi child with the scout budget, on a scripted provider.
  */
 async function scoutSession(role: Extract<ScoutRole, "data" | "validation">, responses: FauxResponseStep[], budget: ScoutBudget, signal = new AbortController().signal) {
- const {view, logRoot, system, live} = await scoutView(role);
- const fast = agentBashTool({...sandboxShell(view.sandbox, logRoot), limits: FAST});
+ const {view, spill, system, live} = await scoutView(role);
+ const logRoot = realpathSync(mkdtempSync(join(tmpdir(), "scout-shell-logs-")));
+ const fast = agentBashTool({...sandboxShell(view.sandbox, {root: logRoot, spill}), limits: FAST});
  const tools = trackScoutTools(replaceToolsByName<ToolDefinition>(view.tools, [fast]));
  const faux = fauxProvider({provider: `scout-shell-${Math.random()}`, tokensPerSecond: 1_000_000});
  const runtime = await ModelRuntime.create({credentials: new InMemoryCredentialStore(), modelsPath: null, refreshOnCreate: false});
@@ -104,7 +108,7 @@ async function scoutSession(role: Extract<ScoutRole, "data" | "validation">, res
   tools: tools.tools.map(tool => tool.name), customTools: tools.tools, extensionFactories: [budget.extension()], env: {}, inputs: [],
   observe: {identity: {}, telemetry: {failures: [], record: event => records.push(event as never), async close() {}}}, turnTimeoutMs: null});
  const child = await factory({logicalAgentId: `scout-${role}`, parentAgentRunId: "lead", spawnToolCallId: "call"}, signal);
- return {child, tools, records, logRoot, live};
+ return {child, tools, records, logRoot, live, spill};
 }
 
 sandboxed("every scout with bash gets the supervised agent shell, and tracking keeps it supervised", async () => {
@@ -128,8 +132,12 @@ sandboxed("the validation scout's shell output stays out of the solutions reposi
  const bash = view.tools.find(tool => tool.name === "bash")!;
  const result = await bash.execute("call", {command: "cat tasks/model.py"}, undefined, undefined, undefined as never);
  expect((result.content[0] as {text: string}).text).toContain("VALUE = 1");
- const records = shellRecords(join(live, "scratch/validation/exp-1/shell-calls"));
- expect(records.length).toBe(1);
+ // The scout reads a copy of the call's output beside its check logs; the supervision records are not there.
+ const copies = join(live, "scratch/validation/exp-1/shell-calls");
+ const logs = readdirSync(copies);
+ expect(logs).toEqual([expect.stringMatching(/^bash-[0-9a-f]{8}\.log$/)]);
+ expect(readFileSync(join(copies, logs[0]), "utf8")).toContain("VALUE = 1");
+ expect(shellRecords(copies)).toEqual([]);
  // Its one writable mount (checks/<task>) gets nothing; scratch/ is ignored, so the tree a trial commits is clean.
  expect(existsSync(join(live, "checks/fixture/.shell-calls"))).toBe(false);
  expect(spawnSync("git", ["status", "--porcelain"], {cwd: live, encoding: "utf8"}).stdout).toBe("");

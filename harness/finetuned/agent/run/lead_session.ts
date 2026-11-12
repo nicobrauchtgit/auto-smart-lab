@@ -39,6 +39,8 @@ import { createTrialResolver, taskTrialRoots } from "../team/trials.js";
 import { stageScoutInputs } from "../team/workspace.js";
 import { collectTrainingResults, createGitHistoryGuard, createHarnessTraining, ensureSolutionsRepository, type TrainingCollection } from "../training/index.js";
 import { championSelection, championTag } from "../training/development_selection.js";
+import { trialSupervisionDirectory } from "../training/results.js";
+import { readRecord } from "../experiments/safe_files.js";
 import { selectionSummary } from "../training/selection_summary.js";
 import { finishFollowUp, recoverFollowUp, startFollowUp } from "../training/branches.js";
 import { GIT_BLOCK_PROMPT_IDS } from "../training/git_guard.js";
@@ -87,12 +89,15 @@ export function recoveryTrainingRoot(parent: string, runId: string): string {
   const root = join(parent, rootName);
   if (!statSync(root).isDirectory()) continue;
   for (const id of readdirSync(root)) {
-   const path = join(root, id, "recovery.json");
-   if (!existsSync(path)) continue;
+   const path = join(trialSupervisionDirectory(join(root, id)), "recovery.json");
+   if (!existsSync(path)) {
+    if (existsSync(join(root, id, "recovery.json"))) throw new Error(`Legacy worker-writable recovery record at ${join(root, id)}; inspect before migration.`);
+    continue;
+   }
    try {
-    const meta = JSON.parse(readFileSync(path, "utf8"));
-    const read = (name: string) => existsSync(join(root, id, name)) ? JSON.parse(readFileSync(join(root, id, name), "utf8")) : {};
-    if (meta.lifecycle === "active" && !read("supervisor-state.json").stopReason && !read("search-report.json").stopReason) candidates.push(root);
+    const meta = JSON.parse(readRecord(path) ?? "");
+    const read = (name: string) => existsSync(join(root, id, name)) ? JSON.parse(readRecord(join(root, id, name)) ?? "") : {};
+    if (meta.lifecycle === "active" && !JSON.parse(readRecord(join(trialSupervisionDirectory(join(root, id)), "supervisor-state.json")) ?? "{}").stopReason && !read("search-report.json").stopReason) candidates.push(root);
    } catch { throw new Error(`Corrupt recovery state at ${path}; restore it before restarting the lead.`); }
   }
  }
@@ -569,7 +574,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
     prompts, system, prompt: [opening.text, shared.text, isolation.text].join("\n\n"), promptReferences,
     feedback: options.feedback, reportInput: report ? input => report.input(input) : undefined, model: options.model,
     cwd: PROJECT_ROOT, env: { SOLVE_WORKSPACE: agentRoot }, pythonSessionId, tools: [],
-    customTools: [...training.tools, ...isolatedSolveTools(sandbox), environmentTool, scoutTool, handOverTool],
+    customTools: [...training.tools, ...isolatedSolveTools(sandbox, { root: join(data.root, "shell-calls") }), environmentTool, scoutTool, handOverTool],
     wakeTarget: session => { inbox.bind(session); return inbox; },
     onSessionReady: (session, ids) => { training!.bindSession(session); if (ids.agentRunId) leadAgentRunId = ids.agentRunId; },
     // A replacement session after a context handoff starts from the harness's record.

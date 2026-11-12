@@ -30,8 +30,11 @@ PR_SET_CHILD_SUBREAPER = 36
 
 
 def write_status(path, value):
-    temporary = f"{path}.{os.getpid()}.tmp"
-    with open(temporary, "w", encoding="utf-8") as handle:
+    # A fresh file, never through a symlink; the rename replaces whatever is at
+    # the path instead of writing through it.
+    temporary = f"{path}.{os.getpid()}.{os.urandom(6).hex()}.tmp"
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
         json.dump(value, handle)
     os.replace(temporary, path)
 

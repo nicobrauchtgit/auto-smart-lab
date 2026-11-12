@@ -7,11 +7,18 @@
  * Either way no byte is silently lost and the text fits the cap.
  */
 
-import { closeSync, openSync, readSync, statSync } from "node:fs";
+import { fstatSync, readSync } from "node:fs";
 
-/** Size of a file, or 0 when it is missing or unreadable. Never throws. */
-export function fileSize(path: string): number {
-	try { return statSync(path).size; } catch { return 0; }
+/*
+ * Every read here goes through a file descriptor the harness opened itself
+ * (`safe_files.ts`), never by reopening a path: a log in a directory another
+ * process can write may have been replaced by a symlink to any host file.
+ */
+
+/** Size of an open file, or 0 without one. Never throws. */
+export function fileSize(fd: number | undefined): number {
+	if (fd === undefined) return 0;
+	try { return fstatSync(fd).size; } catch { return 0; }
 }
 
 /** Bytes at the end that begin a character whose remaining bytes are not in the buffer. */
@@ -62,23 +69,24 @@ export function decodeSuffix(buffer: Uint8Array, maxBytes: number): { text: stri
 	}
 }
 
-export function readRange(path: string, from: number, length: number): Buffer {
+/** Up to `length` bytes at `from`, read from the open file. */
+export function readRange(fd: number | undefined, from: number, length: number): Buffer {
 	const buffer = Buffer.alloc(Math.max(0, length));
-	if (length <= 0) return buffer;
-	const handle = openSync(path, "r");
-	try {
-		const count = readSync(handle, buffer, 0, length, from);
-		return buffer.subarray(0, count);
-	} finally {
-		closeSync(handle);
+	if (length <= 0 || fd === undefined) return buffer.subarray(0, 0);
+	let count = 0;
+	while (count < length) {
+		const read = readSync(fd, buffer, count, length - count, from + count);
+		if (read === 0) break;
+		count += read;
 	}
+	return buffer.subarray(0, count);
 }
 
 /** The end of a log within `maxBytes`, and how many earlier bytes were left out. */
-export function readTail(path: string, maxBytes: number): { text: string; omittedBytes: number } {
-	const size = fileSize(path);
+export function readTail(fd: number | undefined, maxBytes: number): { text: string; omittedBytes: number } {
+	const size = fileSize(fd);
 	const length = Math.min(size, Math.max(0, maxBytes));
 	if (length === 0) return { text: "", omittedBytes: size };
-	const { text, bytes } = decodeSuffix(readRange(path, size - length, length), maxBytes);
+	const { text, bytes } = decodeSuffix(readRange(fd, size - length, length), maxBytes);
 	return { text, omittedBytes: size - bytes };
 }

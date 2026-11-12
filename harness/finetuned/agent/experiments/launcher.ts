@@ -15,12 +15,13 @@
  * being tracked. Darwin has no subreaper; there the process group is followed.
  */
 import { spawnSync } from "node:child_process";
-import { accessSync, constants, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { ARM_ROOT } from "../paths.js";
+import { readRecordJson } from "./safe_files.js";
 
 export const REAPER_SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "reaper.py");
 /** Name of the status file in each experiment directory. */
@@ -46,10 +47,9 @@ export function launchArgv(statusPath: string, argv: readonly string[]): { argv:
 /** What the reaper recorded about the command: its PID, and its exit once it ended. */
 export interface CommandStatus { pid: number; exitCode?: number; signal?: string }
 
-/** The status file, validated; undefined while absent, partial or malformed. */
+/** The status file, validated; undefined while absent, partial, malformed or a symlink (never followed). */
 export function readCommandStatus(path: string): CommandStatus | undefined {
-	let value: unknown;
-	try { value = JSON.parse(readFileSync(path, "utf8")); } catch { return undefined; }
+	const value = readRecordJson(path);
 	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
 	const { pid, exitCode, signal } = value as Record<string, unknown>;
 	if (!Number.isSafeInteger(pid) || (pid as number) <= 0) return undefined;

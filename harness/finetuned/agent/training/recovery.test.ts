@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { availableParallelism } from "node:os";
 import { createHarnessTraining } from "./index.js";
@@ -10,8 +10,9 @@ import { atomicJson, claimWorkspace, processIdentity, ownedProcessAlive, liveGro
 import { removeWorktree, tagCommit } from "./git.js";
 import { temporaryProject, commitAll, trainingEnvironment, PYTHON, WORKER, PROJECT_ROOT, until } from "./testing.js";
 import { recoveryTrainingRoot } from "../run/harness_solve_session.js";
+import { trialSupervisionDirectory } from "./results.js";
 
-const read = (directory: string, name: string) => JSON.parse(readFileSync(join(directory, name), "utf8"));
+const read = (directory: string, name: string) => JSON.parse(readFileSync(join((name.startsWith("worker-") || name === "recovery.json") ? trialSupervisionDirectory(directory) : directory, name), "utf8"));
 const request = (search = true, delay = 0.3) => ({ schemaVersion: 2, hypothesis: "recovery fixture",
  pipeline: { module: "solutions/tasks/fixture.py", factory: "build_pipeline", parameters: { delay } },
  cv: { kind: "builtin", scheme: "stratified_kfold", folds: 3, repeats: 1 }, scope: { kind: "promotion" },
@@ -53,7 +54,7 @@ test("restart reattaches quiet live worker without duplicate, preserves log curs
  let training: ReturnType<typeof createHarnessTraining> | undefined;
  try {
   expect(await until(() => existsSync(join(started.directory, "single-checkpoint.json")))).toBe(true);
-  const owner = read(started.directory, "worker-owner.json"); const cursor = read(started.directory, "supervisor-state.json").cursor;
+  const owner = read(started.directory, "worker-owner.json"); const cursor = read(trialSupervisionDirectory(started.directory), "supervisor-state.json").cursor;
   await crash(child);
   const events: any[] = [];
   training = createHarnessTraining({ ...opts, pipelineRunId: "recovery-run", stageInvocationId: "recovery-invocation", prompts: loadPromptSnapshot(), record: (type, payload) => events.push({ type, ...payload }) });
@@ -137,8 +138,8 @@ for (const [name, state, result, report, lifecycle] of [
  ["service close", {}, {}, {}, "service_closed"],
 ] as const) test(`${name} does not automatically restart`, async () => {
  const f = await durableFixture(); const dir = f.started.directory;
- atomicJson(join(dir, "supervisor-state.json"), state); atomicJson(join(dir, "trial-result.json"), result); atomicJson(join(dir, "search-report.json"), report);
- atomicJson(join(dir, "recovery.json"), { ...read(dir, "recovery.json"), lifecycle });
+ mkdirSync(trialSupervisionDirectory(dir), { recursive: true }); atomicJson(join(trialSupervisionDirectory(dir), "supervisor-state.json"), state); atomicJson(join(dir, "trial-result.json"), result); atomicJson(join(dir, "search-report.json"), report);
+ atomicJson(join(trialSupervisionDirectory(dir), "recovery.json"), { ...read(dir, "recovery.json"), lifecycle });
  const service = f.make(); try { await service.ready(); expect(f.starts).toBe(1); } finally { await service.close(); }
 }, 30_000); // Fixture and restart each run real Python metadata checks.
 
@@ -156,8 +157,8 @@ for (const field of ["data", "invocation", "dependency", "metadata"] as const) t
  const f = await durableFixture(); const dir = f.started.directory;
  if (field === "data") writeFileSync(f.project.sampleManifestPath, readFileSync(f.project.sampleManifestPath, "utf8") + " ");
  if (field === "invocation") writeFileSync(join(dir, "invocation.json"), "{}");
- if (field === "dependency") atomicJson(join(dir, "recovery.json"), { ...read(dir, "recovery.json"), environmentFingerprint: "different" });
- if (field === "metadata") writeFileSync(join(dir, "recovery.json"), "broken json");
+ if (field === "dependency") atomicJson(join(trialSupervisionDirectory(dir), "recovery.json"), { ...read(dir, "recovery.json"), environmentFingerprint: "different" });
+ if (field === "metadata") writeFileSync(join(trialSupervisionDirectory(dir), "recovery.json"), "broken json");
  const service = f.make(); try { if (field === "metadata") await expect(service.ready()).rejects.toThrow("Corrupt"); else await service.ready(); expect(f.starts).toBe(1); } finally { await service.close(); }
 });
 test("two attempts bound recovery across restarts without extra experiment budget", async () => {
@@ -215,7 +216,7 @@ test("a live group with unverifiable/reused leader blocks recovery and is never 
  try {
   expect(await until(() => !!processIdentity(child.pid!))).toBe(true);
   const identity = processIdentity(child.pid!)!;
-  atomicJson(join(f.started.directory, "supervisor-state.json"), { identity: { ...identity, birth: identity.birth + "-reused" }, status: "running" });
+  atomicJson(join(trialSupervisionDirectory(f.started.directory), "supervisor-state.json"), { identity: { ...identity, birth: identity.birth + "-reused" }, status: "running" });
   await service.ready(); expect(f.starts).toBe(1); expect(ownedProcessAlive(identity)).toBe(true);
   await service.close(); expect(ownedProcessAlive(identity)).toBe(true);
  } finally { child.kill("SIGKILL"); (service as any).releaseClaims(); }

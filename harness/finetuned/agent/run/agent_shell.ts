@@ -22,13 +22,15 @@
  * the brand cannot be forged onto a raw shell.
  */
 
-import { accessSync, constants } from "node:fs";
+import { accessSync, constants, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 
 import { createSupervisedBashTool } from "../experiments/bash.js";
 import { wake, type Wakeable } from "../experiments/index.js";
 import type { MachineProtection } from "../experiments/protection.js";
+import { within } from "../experiments/safe_files.js";
 import type { SupervisorLimits, Update } from "../experiments/types.js";
 import type { PromptSnapshot } from "../prompts/loader.js";
 import { STATE_ROOT } from "../paths.js";
@@ -41,8 +43,14 @@ export const HOST_SHELL_LOG_ROOT = join(STATE_ROOT, "shell-calls");
 export interface AgentShell {
 	/** Host path the command runs in (the same path inside a sandbox). */
 	cwd: string;
-	/** Host directory for each call's full output; the owner's read tool must reach it. */
+	/**
+	 * Host directory for each call's log, launcher status and state: harness-owned.
+	 * For a sandboxed shell it is outside every writable mount of the sandbox, so
+	 * the command cannot replace what the harness reads.
+	 */
 	logRoot: string;
+	/** Where the agent reads each call's full output, when it cannot read `logRoot`: a copy, never read back. */
+	spill?: { base: string; directory: string };
 	/** Environment of the supervised process. A sandbox sets its own inside. */
 	env: Record<string, string>;
 	/** The supervised process for one command. */
@@ -93,25 +101,54 @@ export function hostShell(cwd: string, env: Readonly<Record<string, string | und
 	return { cwd, logRoot, env: frozen, argv: (command) => [bash, "-c", command] };
 }
 
-/** First writable directory of a sandbox: the agent's own workspace, which its read tool reaches. */
-function sandboxLogRoot(policy: SolveSandbox): string {
+/** Default agent copy of a sandboxed shell's output: `.shell-calls` in the first writable mount, which its read tool reaches. */
+function sandboxSpill(policy: SolveSandbox): { base: string; directory: string } {
 	const writable = policy.mounts.find((mount) => mount.writable);
 	if (!writable) throw new Error("A sandboxed shell needs a writable workspace for its output");
-	return join(writable.source, ".shell-calls");
+	return { base: writable.source, directory: join(writable.source, ".shell-calls") };
+}
+
+/**
+ * Refuse a log root a sandboxed command could write: inside a writable mount,
+ * or holding one. A command that can replace its own log with a symlink could
+ * otherwise make the harness read a host file the sandbox does not mount.
+ */
+export function assertHarnessOwnedRoot(root: string, policy: Pick<SolveSandbox, "mounts">): string {
+	for (const mount of policy.mounts.filter((mount) => mount.writable)) {
+		if (within(root, mount.source) || within(mount.source, root)) {
+			throw new Error(`Shell log root ${root} overlaps the sandbox's writable mount ${mount.source}; keep it harness-owned`);
+		}
+	}
+	return root;
+}
+
+/** Where a sandboxed shell keeps its logs, and where the agent reads its copy. */
+export interface SandboxShellLogs {
+	/** Harness-owned log root; default: a private temporary directory. Never inside a writable mount. */
+	root?: string;
+	/** The agent's copy; default: `.shell-calls` in the first writable mount. */
+	spill?: { base: string; directory: string };
 }
 
 /**
  * A shell inside the sandbox. The supervised process is the sandbox launcher
  * with the command inside it, so sampling, stops and machine protection act on
  * the sandboxed processes and the mount, PID and user boundary is unchanged.
+ * Its logs stay outside the sandbox; the agent reads a copy of each.
  */
-export function sandboxShell(policy: SolveSandbox, logRoot?: string): AgentShell {
+export function sandboxShell(policy: SolveSandbox, logs: SandboxShellLogs = {}): AgentShell {
 	// Resolved at the first call, so building a session's tools never touches the filesystem.
 	let inside: SolveSandbox | undefined;
+	let root = logs.root;
+	let spill = logs.spill;
 	const bash = bashOn(policy.env.PATH);
 	return {
 		cwd: policy.cwd, env: {},
-		get logRoot() { return logRoot ??= sandboxLogRoot(policy); },
+		get logRoot() {
+			root ??= mkdtempSync(join(tmpdir(), "agent-shell-"));
+			return assertHarnessOwnedRoot(root, policy);
+		},
+		get spill() { return spill ??= sandboxSpill(policy); },
 		argv: (command) => {
 			// Unbuffered Python inside, so output timing reaches the supervisor as it happens.
 			inside ??= sandboxPolicy({ mounts: policy.mounts, cwd: policy.cwd, env: { ...policy.env, PYTHONUNBUFFERED: "1" }, bwrap: policy.executable });
@@ -126,6 +163,7 @@ export function agentBashTool(shell: AgentShell): ToolDefinition {
 	const options = {
 		// Read when each call starts, like the owner below.
 		get root() { return shell.logRoot; },
+		get spill() { return shell.spill; },
 		env: shell.env, argv: shell.argv,
 		...(shell.protection ? { protection: shell.protection } : {}),
 		...(shell.limits ? { limits: shell.limits } : {}),

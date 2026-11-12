@@ -134,12 +134,13 @@ test("binary output still advances and fits the cap; boundaries hold at both end
 	expect(cursor).toBe(binary.length);
 });
 
-test("a re-attached run whose log is gone is polled without throwing", async () => {
+test("a re-attached run whose log path is removed keeps its output and is polled without throwing", async () => {
 	const root = workspace("gone-");
 	const { owner, logPath } = attached(root, "line\n", "running");
 	rmSync(logPath);
-	await Bun.sleep(150); // several ticks with the log missing
-	expect(owner.output("fixture").text).toBe("");
+	await Bun.sleep(150); // several ticks with the path missing
+	// The log is the descriptor the supervisor opened at attach, not the path.
+	expect(owner.output("fixture").text).toBe("line\n");
 	expect(owner.status("fixture").status).toBe("exited");
 });
 
