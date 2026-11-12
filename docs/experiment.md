@@ -85,7 +85,7 @@ These are part of what is compared. Do not equalize them; report them with resul
 | --- | --- | --- |
 | Instructions | Environment and protocol facts only, no coaching | Authored prompts per stage, with coaching |
 | Course slides | Same PDFs/text copies in a read-only snapshot; `read_challenge` lists paths and hashes | None for now: research, which received the slides, was removed on 2026-11-11; v2's scouts will receive them (P7a) |
-| Stages | One solver session, then a deterministic check | One solve session with harness-run trials, then one refit as the hand-over (until v2's lead agent replaces it) |
+| Stages | One solver session, then a deterministic check | One lead session with harness trials and blocking scouts, then validated terminal refit |
 | Who trains | The agent runs its own code | The harness runs the agent's pipeline and owns folds, seeds and promotion |
 | Labels | All labels visible to the agent | A sealed split stays hidden until the terminal refit |
 | Budgets | 30-minute sessions, 3 failed sessions per task | 6 trials per solve session, stall detection |

@@ -32,10 +32,10 @@ runs count as evidence for this repository but not as general findings.
 
 The LLM orchestrator, the research and evaluate stages, the knowledge store and
 the filename-leakage canary were removed on 2026-11-11 to clear the ground for
-v2. What remains runs as a configured chain through
-`agent/pipeline/executor.ts`: solve (one agent session with harness-owned
-trials), then refit; submit stays registered but runs only under an explicit
-controller submission policy. Follow
+v2. The finetuned entry is one lead session through
+`agent/pipeline/executor.ts`, with harness-owned trials and blocking scouts.
+The lead validates its champion before deterministic terminal refit; standalone
+refit and explicit-policy submit remain registered. Follow
 [the pipeline integration contract](harness/finetuned/docs/pipeline-integration.md)
 when changing it.
 

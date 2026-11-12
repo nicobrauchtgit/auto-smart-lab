@@ -10,13 +10,13 @@ Auto SmartLab is an experimental autonomous machine-learning pipeline for the [S
 
 **Plan.** The accepted design is [expert-team-v2.md](docs/expert-team-v2.md) (2026-11-11): one lead agent drives the run, calls blocking scouts for data, ideas and validation, and measures every pipeline with harness-run trials. There is no LLM orchestrator and no fixed stage chain. The work queue is [docs/cleanup-plan.md](../../docs/cleanup-plan.md).
 
-**Current code.** The old orchestrator, research and evaluate stages, knowledge store and leakage canary were removed on 2026-11-11 to clear the ground for v2. What remains is a configured chain:
-
-```text
-resolve task -> solve (one agent session, harness-owned trials) -> refit (hand-over) [-> submit, explicit policy only]
-```
-
-Solve and refit run through the shared pipeline executor. Every tuning value (limits, timeouts, seeds, folds) lives in `harness.config.json` and `pipeline.config.json`; [the configuration reference](docs/configuration.md) explains each key. The rest of this README describes the current code.
+**Current code (Stream D, pending independent review).** One lead stage drives
+harness trials and blocking scouts, then validates the champion snapshot and
+runs deterministic terminal refit. The solve stage/CLI are retired. Both the
+pipeline and standalone `lead-stage` use whole-chain preflight and shared
+telemetry. See [lead execution and limits](agent/run/README.md). No paid v2
+integration gate has run; the next authorized run is unit 1 on both arms only
+after review, merge and a green suite. Uploads still require explicit policy.
 
 ## The experiment
 
@@ -39,22 +39,22 @@ Start with [the work queue](../../docs/cleanup-plan.md) and [expert-team-v2.md](
 | Area | Status |
 | --- | --- |
 | Task resolution and unit fetching | Implemented |
-| Solve stage | Registered, instrumented, and enabled |
+| Lead stage | Registered; harness trials, blocking scouts, durable progress and validated hand-over |
 | Submission stage | Registered; explicit controller upload policy required |
 | Langfuse Cloud observability | Shared pipeline and standalone instrumentation |
 | Emergency JSONL trace | Failure-only; healthy runs create no mirror |
-| Optional subagent sessions | Implemented and tested in isolation, not enabled in the pipeline; base for v2's scouts |
-| Live experiment supervision | Harness-owned processes, progress and recovery; the process sampler returns no samples on Linux |
+| Blocking scouts | Data, ideas and validation, with independent sessions and call budgets |
+| Live experiment supervision | Linux sampler, process ownership, recovery and wake on news |
 | Terminal refit | Registered and deterministic |
 | Blocking controller waits and budget-end hand-over | Implemented; recovery retains refit ownership and actual trial accounting |
-| Global supervision of agent shell calls and machine-protection stop | Planned in v2 section 6 (P6) |
-| Lead agent with blocking scouts (v2) | Accepted design; implementation planned in P6/P7 |
+| Global supervision of agent shell calls and machine-protection stop | Implemented by Stream A; security fixes retained |
+| Live task integration gate | Not run; accuracy, latency and reuse remain unmeasured |
 
-The configured chain is solve → refit and stops before submission.
+The lead stage owns terminal refit and has no automatic successor.
 
 ## Pipeline architecture
 
-Current code. v2 replaces the remaining solve → refit chain with the lead agent in P7 ([expert-team-v2.md section 11](docs/expert-team-v2.md#11-packages)); the executor's lifecycle, validation and telemetry rules below still apply until then.
+The executor lifecycle, validation and telemetry rules below apply to the lead. Older solve/refit examples describe the retired chain; use `lead-stage` for current execution.
 
 The pipeline separates model judgment from execution and validation. The agent can decide what to explore and what model to build, but it cannot declare a stage successful by saying that its work is complete.
 
@@ -289,7 +289,7 @@ The main command uses `agent/pipeline/executor.ts` for every registered stage. I
 The standalone commands below still use the same stage executor:
 
 ```bash
-./dev bun run solve-stage -- spam1 --iterations 3
+./dev bun run lead-stage -- spam1
 ```
 
 Each execution prints its Langfuse Cloud trace link. Stage lifecycle, typed inputs,

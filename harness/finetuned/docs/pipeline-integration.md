@@ -1,6 +1,6 @@
 # Pipeline integration and observability
 
-> Superseded by [expert-team-v2.md](expert-team-v2.md) when P7 lands. The orchestrator, the research and evaluate stages, the knowledge store and the leakage canary were removed on 2026-11-11; this page describes the remaining solve → refit chain.
+> Stream D registers `lead` as the finetuned entry and retires the solve stage/CLI. The lead owns terminal refit after validation; generic executor lifecycle/preflight/telemetry rules below remain applicable. Older solve-chain examples are historical. See [lead execution](../agent/run/README.md) and [v2](expert-team-v2.md).
 
 Updated 2026-11-11. Solve, terminal refit and policy-controlled submission are
 registered. Langfuse Cloud replaces the custom
