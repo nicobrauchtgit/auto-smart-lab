@@ -83,7 +83,7 @@ export class ScoutBudget {
   return { block: true, reason: this.prompts.render(this.finish, {}).text };
  }
  /** No further tool calls (the work was handed over): later ones are removed and the agent loop ends with its text. */
- end(): void { this.ended = true; }
+ end(): void { this.ended = true; this.decisions.clear(); }
  get exhausted(): boolean { return this.used >= this.limit; }
  counter(): string {
   return this.prompts.render("team.counter", { used: String(this.used), budget: String(this.limit) }).text.trim()

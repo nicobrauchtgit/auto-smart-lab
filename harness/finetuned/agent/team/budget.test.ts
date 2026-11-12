@@ -145,3 +145,12 @@ test("a hung scripted Pi child is stopped by the guard and the lead gets a stop 
  expect(output).toContain("The harness stopped this scout (no progress for 0 min)");
  await child.terminate();
 });
+
+test('handover revokes calls already admitted later in the same message', () => {
+ const budget = new ScoutBudget(80, prompts);
+ budget.assistant({role:'assistant',content:[call('handover'),call('late-trial')]});
+ expect(budget.admit('handover')).toBeUndefined();
+ budget.end();
+ expect(budget.admit('late-trial')?.block).toBe(true);
+ expect(budget.used).toBe(2);
+});
