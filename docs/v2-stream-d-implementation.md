@@ -102,3 +102,86 @@ After independent blocking-only review, merge D and retain the green-suite
 gate. The parent's next authorized task is **unit 1 on both harnesses**,
 monitored every **10 minutes**. This supersedes the original finetuned-only
 immediate gate. No paid runs were started here, and uploads remain unauthorized.
+
+## Blocking-review fixes after `c0b6f5f` (2026-11-12)
+
+The fresh independent blocking review of `c0b6f5f` found three blockers. Code
+commit `cd452ffede8affca75aee2f187e699d990e8b34e` addresses them; the earlier
+"final code revision" and green-suite claims above are historical evidence,
+not review clearance for this revision. D remains unmerged, based on parent
+`53d673d`. A fresh independent blocking re-review is still required.
+
+- **P1, fresh preflight:** scout prompt/source checks no longer read persisted
+  TaskData before the lead prepares it. They validate the task prompt, nonempty
+  unit introduction, journal destination and typed prompt rendering. Whole-chain
+  task/archive/dependency checks remain. Lead explicitly declares data-profile
+  preparation prerequisites. Every production scout runner now requires explicit
+  materialized task/profile paths; a separate `scout-materialized-inputs` check
+  validates those after preparation, without reusing the source-check cache ID.
+  Regressions exercise local prerequisites on spam1–3, fresh pipeline execution
+  and standalone setup-only execution without creating TaskData, plus missing
+  profile/introduction/journal failures before a scout session.
+- **P1, handover ordering:** `hand_over` declares Pi's `executionMode:
+  "sequential"`. In the installed SDK, a sequential tool makes its entire
+  assistant-message batch execute in order, including admission hooks. Accepted
+  handover therefore clears later admissions before they are consumed. A real
+  scripted Pi session uses the actual lead handover tool followed by training
+  and file mutation calls: neither later tool executes, refit runs once, all
+  three emitted calls stay charged and every result carries the 3-of-80 counter.
+- **P2, completed recovery:** harness-training readiness replays finalized,
+  nonrunning recovered trials through the completion callback, deduplicating
+  equivalent notifications within the owner. Lead persists a feedback receipt
+  with each terminal status, waits for recovery feedback before building its
+  opening context and reconciles the authoritative champion tag. A later resumed
+  trial with a changed status can still produce new feedback. Repeated lead
+  resume preserves the call budget, trial row, noise verdict and counted Ladder
+  summary without repeated completion news or confirmation. No raw holdout
+  score or scout transcript enters that context. A real tiny-training restart
+  regression covers terminal discovery, repeated readiness/resume and refusal
+  to spend another trial budget unit.
+
+The supplied `/tmp/stream-d-parallel-review.ts` and
+`/tmp/stream-d-recovery-review.ts` were inspected. Their failure mechanisms are
+covered by repository regressions; the ad hoc parallel fixture itself does not
+use the production handover tool and must declare the scheduling barrier to
+represent the fixed behavior. No paid runs, real-label probes, uploads, pushes,
+merges or child agents were used. The pre-existing dirty Python changes journal
+was preserved and excluded from the code commit.
+
+Validation results for this revision are recorded below after serial execution.
+
+Checks on final code `cd452ff` (no concurrent test suites):
+
+- Focused recovery/lead/setup/scout checks initially passed **51 tests** in
+  155.52 s (`/tmp/stream-d-blockers-focused.log`). Additional lead and local
+  setup checks passed **24 tests** in 4.84 s
+  (`/tmp/stream-d-blockers-focused-final.log`); fresh executor/standalone
+  preflight checks passed **12 tests** in 789 ms
+  (`/tmp/stream-d-blockers-preflight.log`). These focused runs preceded final
+  test-only strengthening; the final suites below include all regressions.
+- Final `./dev bun run test:fast`: **539 pass, 2 skip, 0 fail**, 541 tests
+  across 72 files, 107.25 s (`/tmp/stream-d-blockers-fast-final.log`).
+- Then `./dev bun run typecheck`: passed
+  (`/tmp/stream-d-blockers-typecheck-final.log`).
+- Then full `./dev bun test`: **666 pass, 2 skip, 0 fail**, 668 tests across
+  91 files, 918.74 s (`/tmp/stream-d-blockers-full-final.log`). The skips
+  are Darwin libproc tests on Linux.
+- `git diff --check`: passed. No minimal-arm changes. Only the supplied dirty
+  runtime Python journal remains outside the implementation/documentation
+  commits.
+
+A development-only test fixture initially threw while constructing the scout
+facade, before its intended cancellation assertion; the fixture was corrected
+and rerun. An initial fast run also passed (539/2/0, 107.57 s); the final fast
+run above follows the last test/interface edits. Neither earlier run replaces
+final-suite evidence. Source-preflight integration tests substitute an inert
+stage body and scope requirements to local scout checks; they do not claim
+live provider/Langfuse access or an end-to-end paid lead run.
+
+**Review status:** all three reported blockers have implementation fixes and
+regressions; no fresh independent blocking re-review has run on `cd452ff`.
+Parent integration must wait for that re-review. No merge, launch or push was
+performed. P7c, missing automatic result-kind findings-journal appends and the
+process-local validation verdict cache remain limitations, as do the absence
+of paid latency/quality measurements and the existing host/platform boundary
+limits documented above.
