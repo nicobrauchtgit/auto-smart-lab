@@ -655,3 +655,15 @@ and cancellation cancel outstanding consultations and await session/supervised
 shell cleanup. The budget-end path cancels rather than waiting for findings.
 Pending consultations are process-local; a resumed lead has none pending,
 retains its scout-call counter and durable journal, and receives a resume note.
+
+### Scout discovery decision — 2026-11-12 (user decision)
+
+Give the lead three concise on-demand skills describing data, ideas and
+validation scouts, their visibility, evidence references, useful moments and
+costs. Pi receives only these explicit skills; ambient skill/context discovery
+stays disabled. Bodies come from the registered prompt snapshot, are staged in
+a harness-owned read-only lead mount, and carry prompt IDs and content hashes
+in attempt/observability records. Scouts receive no skills. Add one coaching
+note: a data or ideas consultation before the first pipeline is often worth it,
+since asynchronous answers arrive during workspace setup. This is optional
+finetuned coaching, not a consultation quota. No minimal-arm change.

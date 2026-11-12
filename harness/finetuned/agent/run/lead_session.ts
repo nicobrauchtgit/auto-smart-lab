@@ -17,6 +17,7 @@ import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type InlineExtension, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 
 import { prepareLeadPrompts } from "../prompts/lead.js";
+import { stageScoutSkills } from "../prompts/scout_skills.js";
 export { taskContract } from "../prompts/lead.js";
 import { HARNESS_CONFIG } from "../harness/config.js";
 import { ARM_ROOT, statePath } from "../paths.js";
@@ -316,6 +317,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
  const foldPolicy = options.foldPolicy ?? HARNESS_CONFIG.solve.foldPolicy;
  const shape = foldPolicy !== "auto" ? foldPolicy : { folds: data.recommendation.folds, repeats: data.recommendation.repeats };
  const python = deps.readPython();
+ const scoutSkills = stageScoutSkills(prompts, data.root);
  const sandbox = deps.sandbox(data, python);
  const agentRoot = join(data.root, "agent");
  mkdirSync(agentRoot, { recursive: true });
@@ -623,7 +625,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
    foldRecommendation: `${shape.folds}-fold ${data.recommendation.scheme}, ${shape.repeats} repeat(s)`, budget: limit,
    resources: "", followUp: followUpNote?.text, resume: resume?.text, guidance: options.guidance });
   const system = opening.system;
-  const promptReferences = [...opening.promptReferences, shared.reference, isolation.reference, environmentToolPrompt.reference,
+  const promptReferences = [...opening.promptReferences, ...scoutSkills.references, shared.reference, isolation.reference, environmentToolPrompt.reference,
    ...(followUpNote ? [followUpNote.reference] : []), ...(resume ? [resume.reference] : []),
    prompts.render("team.lead-checkpoint", { progress: renderProgress(prompts, progress).text }).reference, ...training.toolPrompts, ...GIT_BLOCK_PROMPT_IDS.map(id => prompts.render(id, {}).reference)];
   let generations = 0;
@@ -648,7 +650,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
    prompt_snapshot_sha256: prompts.fingerprint, prompts: promptReferences });
   try {
    const { agentRunId } = await deps.runAgentSession({
-    prompts, system, prompt: [opening.prompt, shared.text, isolation.text].join("\n\n"), promptReferences,
+    prompts, system, skills: scoutSkills.skills, prompt: [opening.prompt, shared.text, isolation.text].join("\n\n"), promptReferences,
     feedback: options.feedback, reportInput: report ? input => report.input(input) : undefined, model: options.model,
     cwd: PROJECT_ROOT, env: { SOLVE_WORKSPACE: agentRoot }, pythonSessionId, tools: [],
     customTools: [...training.tools, ...isolatedSolveTools(sandbox, { root: join(data.root, "shell-calls") }), environmentTool, scoutTool, handOverTool],

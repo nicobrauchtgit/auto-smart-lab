@@ -53,6 +53,13 @@ for(const verdict of ['ok','fix','failed','empty','unmeasured'] as const) test(`
  createTraining:()=>({ready:async()=>{},close:async()=>{},tools:[],toolPrompts:[],service:{describe:()=>({})},supervisor:{list:()=>[]},bindSession:()=>{}} as any),
  scouts:()=>({tool:{name:'scout'} as any,report:async()=>{validations++;return {text:verdict==='ok'?'- ok: frozen trial [experiment: measured]':verdict==='fix'?'- fix: broken feature [experiment: measured]':'', roles:[{role:'validation',status:verdict==='ok'||verdict==='fix'?'completed':verdict==='unmeasured'?'failed':verdict,bullets:1}]};}}),
  runAgentSession:async options=>{
+ expect(options.skills?.map(skill=>skill.name)).toEqual(['scout-data','scout-ideas','scout-validation']);
+ for(const skill of options.skills!) {
+  expect(readFileSync(skill.filePath,'utf8')).toContain(`# ${skill.name === 'scout-data' ? 'Data' : skill.name === 'scout-ideas' ? 'Ideas' : 'Validation'} scout`);
+ }
+ for(const id of ['team.skill-data','team.skill-ideas','team.skill-validation']) {
+  expect(options.promptReferences.find(ref=>ref.id===id)?.rendered_sha256).toMatch(/^[a-f0-9]{64}$/);
+ }
  expect(options.prompt).toContain('UNIT INTRO MARKER');expect(options.prompt).toContain('EXPLICIT TASK MARKER');
  expect(options.prompt).not.toContain('PRIVATE SCOUT TRANSCRIPT');
  if(verdict==='fix') {
@@ -249,3 +256,63 @@ for (const mode of ['news','finalize','budget','abort'] as const) test(`asynchro
  expect(scope!.pending).toBe(0);if(mode!=='news')expect(stopped).toBe(true);
  }finally{f.close();}
 });
+
+test('lead on-demand skill metadata is assembled, bodies are sandbox-readable, scouts exclude ambient and lead skills', async()=>{
+ const {createAgentSession, SessionManager, SettingsManager}=await import('@earendil-works/pi-coding-agent');
+ const {stageScoutSkills}=await import('../prompts/scout_skills.js');
+ const {createPipelineResourceLoader}=await import('./session_resources.js');
+ const {loadChildResources}=await import('../subagents/pi.js');
+ const {expertSandbox}=await import('./sandbox.js');
+ const {isolatedSolveTools}=await import('./solve_sandbox.js');
+ const {readPythonEnvironment}=await import('./python_environment.js');
+ const {sessionToolAllowlist}=await import('./session_runner.js');
+ const f=fixture(); let session:any;
+ try {
+  const cwd=join(f.root,'repo'), agentDir=join(f.root,'home-agent');
+  const marker='AMBIENT_SCOUT_SKILL_MUST_NOT_LOAD';
+  for(const directory of [join(cwd,'.pi','skills','ambient'),join(agentDir,'skills','ambient')]) {
+   mkdirSync(directory,{recursive:true});
+   writeFileSync(join(directory,'SKILL.md'),`---\nname: ambient\ndescription: ${marker}\n---\n${marker}`);
+  }
+  writeFileSync(join(cwd,'AGENTS.md'),'LEAD_DEVELOPMENT_MARKER_MUST_NOT_LOAD');
+  const staged=stageScoutSkills(prompts,f.root), settingsManager=SettingsManager.inMemory();
+  const data={...f.data,taskId:'spam1',testZip:f.data.devZip,profilePath:join(f.root,'profile.json')};
+  writeFileSync(data.profilePath,'{}');
+  const python=readPythonEnvironment();
+  const lead=expertSandbox(data,'lead',python);
+  const tools=isolatedSolveTools(lead);
+  const system=prompts.render('team.lead-system',{taskId:'spam1',budget:'80'}).text;
+  const resourceLoader=createPipelineResourceLoader({cwd,agentDir,settingsManager,systemPrompt:system,
+   // Even explicit ambient paths and a caller override cannot broaden the allowlist.
+   noSkills:false,additionalSkillPaths:[join(agentDir,'skills')],
+   skillsOverride:()=>({skills:[],diagnostics:[]})},staged.skills);
+  await resourceLoader.reload();
+  ({session}=await createAgentSession({cwd,agentDir,settingsManager,resourceLoader,tools:sessionToolAllowlist([],tools),customTools:tools,sessionManager:SessionManager.inMemory(cwd)}));
+  expect(session.systemPrompt).not.toContain(marker);
+  expect(session.systemPrompt).not.toContain('LEAD_DEVELOPMENT_MARKER_MUST_NOT_LOAD');
+  for(const skill of staged.skills) {
+   expect(session.systemPrompt).toContain(skill.name);
+   expect(session.systemPrompt).toContain(skill.description.replaceAll("'",'&apos;'));
+   expect(session.systemPrompt).toContain(skill.filePath);
+  }
+  expect(session.systemPrompt).not.toContain('Prefer several narrow questions');
+  expect(lead.mounts.find(m=>m.source===join(f.root,'lead-skills'))?.writable).toBeUndefined();
+  for(const skill of staged.skills) {
+   const output=await tools.find(t=>t.name==='read')!.execute('skill-read',{path:skill.filePath},undefined,undefined,undefined as never);
+   expect(JSON.stringify(output)).toContain(`# ${skill.name==='scout-data'?'Data':skill.name==='scout-ideas'?'Ideas':'Validation'} scout`);
+   await expect(tools.find(t=>t.name==='write')!.execute('skill-write',{path:skill.filePath,content:'changed'},undefined,undefined,undefined as never)).rejects.toThrow();
+  }
+  for(const role of ['data','ideas','validation'] as const) {
+   const child=await loadChildResources({cwd,agentDir,instructions:[prompts.render('team.shared',{})]});
+   expect(child.resourceLoader.getSkills().skills).toEqual([]);
+   expect(child.resourceLoader.getAgentsFiles().agentsFiles).toEqual([]);
+   const childSession=await createAgentSession({cwd,agentDir,settingsManager:child.settingsManager,resourceLoader:child.resourceLoader,tools:['read'],sessionManager:SessionManager.inMemory(cwd)});
+   try {expect(childSession.session.systemPrompt).not.toContain('scout-data');expect(childSession.session.systemPrompt).not.toContain(marker);} finally {childSession.session.dispose();}
+   if(role!=='validation') {
+    const scout=expertSandbox(data,role,python);
+    expect(scout.mounts.some(m=>m.source===join(f.root,'lead-skills'))).toBe(false);
+    await expect(isolatedSolveTools(scout).find(t=>t.name==='read')!.execute('hidden-skill',{path:staged.skills[0].filePath},undefined,undefined,undefined as never)).rejects.toThrow();
+   }
+  }
+ }finally{session?.dispose();f.close();}
+}, 30_000);

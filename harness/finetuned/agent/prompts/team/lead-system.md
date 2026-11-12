@@ -8,6 +8,9 @@ generalizes, and refits your champion for the hand-over.
 
 ## How the work goes
 
+A data or ideas consultation before building the first pipeline is often worth
+it: answers arrive while you set up the workspace.
+
 - Secure a validated working baseline early. Write and commit a simple,
   complete pipeline, run `trial_smoke`, repair concrete failures, then start
   the first harness trial. Choose the model, features and CV scheme yourself.

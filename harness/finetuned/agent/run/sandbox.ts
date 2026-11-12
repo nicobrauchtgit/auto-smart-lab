@@ -13,6 +13,8 @@ export function expertSandbox(data: TaskData, role: TeamRole, python: PythonEnvi
  const base = prepareSolveSandbox(data, python);
  const mounts = base.mounts.map(mount => ({ ...mount, ...(realpathSync(mount.source) === realpathSync(data.solutionsRoot) && role === "ideas" ? { writable: false } : {}) }));
  if (existsSync(data.profilePath)) mounts.push({ source: data.profilePath });
+ // Only the lead can read its explicitly staged skill bodies through sandbox tools.
+ if (role === "lead" && existsSync(join(data.root, "lead-skills"))) mounts.push({ source: join(data.root, "lead-skills") });
  const env = { ...base.env };
  // Data and ideas scouts work in the task's scout folder; its research/ is writable for the data scout.
  const cwd = role === "data" || role === "ideas" ? scoutWorkspace(data) : base.cwd;

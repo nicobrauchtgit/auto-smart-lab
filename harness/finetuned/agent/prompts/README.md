@@ -55,3 +55,20 @@ separate live factual message template. Neither edits prompts at runtime. Note
 hashes and artifact snapshots use supplied-input metadata, while template and
 rendered hashes keep their prompt identities. See the pipeline integration guide
 for provenance, bounds, feedback receipt semantics and deterministic-stage refusal.
+
+## Lead scout skills (2026-11-12)
+
+`team.skill-data`, `team.skill-ideas` and `team.skill-validation` register the
+Markdown skills in `team/skills/`. Only the lead receives them: Pi includes their
+names, descriptions and paths in its system prompt and reads bodies on demand
+through the lead's sandboxed `read` tool. `scout_skills.ts` renders the run's
+immutable prompt snapshot into a harness-owned `lead-skills/<fingerprint>/`
+directory outside writable agent/solutions folders; the lead mounts it read-only.
+Scouts do not mount it. Skill prompt references (template and rendered hashes)
+join the attempt references and observed prompt snapshots, including Langfuse.
+
+The shared resource loader keeps `noSkills: true` and overrides the resulting
+skill list with only the explicit supplied skills (empty for scouts and other
+sessions). Repository/home skills, configured paths, context files and ambient
+extensions remain excluded. The lead prompt also advises that consulting data
+or ideas before the first pipeline is often useful; consultation remains optional.
