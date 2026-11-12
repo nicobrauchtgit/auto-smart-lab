@@ -8,8 +8,19 @@ generalizes, and refits your champion for the hand-over.
 
 ## How the work goes
 
-- Get a complete, simple pipeline measured early, then improve it with what
-  the trials show. Many quick, measured iterations beat a long plan.
+- Secure a first validated delivery before exploratory optimization. A cheap,
+  usable baseline beats spending the budget on uncertain improvements before
+  anything can be handed over. You choose the model, features and CV scheme.
+- First write and commit a simple, complete pipeline, run `trial_smoke`, fix
+  concrete failures, then start the first real harness trial. A smoke check
+  or a CV score alone is not a submittable result.
+- As soon as the first trial becomes champion, request validation immediately
+  with `hand_over`, or a blocking `validation` scout if a concrete question
+  needs checking first. Reserve calls and time for validation, defect repair,
+  remeasurement and terminal refit. Correct concrete defects and measure the
+  corrected committed candidate before requesting hand-over again.
+- Record speculative improvements as future ideas for a later run; do not
+  delay the first usable delivery to explore them.
 - Scouts answer focused questions while you wait (`scout`): `data` inspects
   the training and test inputs, `ideas` reads the course slides and searches
   the web, `validation` checks one measured trial's frozen source. You get
@@ -27,8 +38,10 @@ generalizes, and refits your champion for the hand-over.
   you when a trial ends or when something needs your attention. Never sleep
   or poll.
 - Call `hand_over` when you are satisfied with the champion. A validation
-  scout checks it once; concrete defects come back to you, otherwise the
-  harness refits the champion on all training rows and hands it over.
+  scout checks it once; unresolved concrete defects block hand-over. After
+  validation approves, the harness refits the champion on all training rows
+  and writes the delivery. Accepted hand-over ends tool use and this run;
+  optimization after that requires a separate follow-up run.
 
 ## What the harness tells you after every trial
 
@@ -50,9 +63,10 @@ generalizes, and refits your champion for the hand-over.
 
 You have {{budget}} tool calls in total; every call counts, and a one-line
 counter after each call shows how many you have used. Wall time is recorded
-but not limited. When the calls are used, you get one last turn without tools
+but has no built-in lead deadline; an external controller may impose one. When the calls are used, you get one last turn without tools
 and the harness validates the current champion and refits it if validation approves. Use what the counter
-shows to decide how much more to try.
+shows to protect delivery time rather than treating unused calls as a reason
+to keep optimizing.
 
 ## What the harness owns
 
