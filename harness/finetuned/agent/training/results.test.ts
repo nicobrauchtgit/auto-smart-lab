@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -121,6 +121,37 @@ async function writeTrial(root: string, id: string, options: TrialFixtureOptions
 }
 
 describe("collectTrainingResults", () => {
+	test("refuses worker-planted artifact symlinks without returning host contents or hashes", async () => {
+		const root = await mkdtemp(join(tmpdir(), "artifact-symlink-"));
+		try {
+			const marker = "HARMLESS_HOST_MARKER_plain_text";
+			const host = join(root, "host-marker.txt");
+			await writeFile(host, marker);
+			for (const file of ["request.json", "invocation.json", "seed-plan.json", "fold-manifest.json", "fold-results.jsonl", "oof_predictions.csv", "metrics.json", "trial-result.json"]) {
+				const training = join(root, file);
+				const directory = await writeTrial(training, "trial");
+				await rm(join(directory, file));
+				await symlink(host, join(directory, file));
+				const collection = await collectTrainingResults(training);
+				expect(collection.valid).toBe(false);
+				expect(collection.errors.some(error => error.file === file && error.code === "unreadable_file")).toBe(true);
+				expect(JSON.stringify(collection)).not.toContain(marker);
+				expect(collection.artifacts.some(artifact => artifact.sha256 === digest(marker))).toBe(false);
+			}
+		} finally { await rm(root, { recursive: true, force: true }); }
+	});
+
+	test("JSON parse diagnostics never echo artifact contents", async () => {
+		const root = await mkdtemp(join(tmpdir(), "artifact-json-"));
+		try {
+			const directory = await writeTrial(root, "trial");
+			await writeFile(join(directory, "metrics.json"), "HARMLESS_PRIVATE_PARSE_MARKER");
+			const collection = await collectTrainingResults(root);
+			expect(collection.errors.some(error => error.code === "invalid_json")).toBe(true);
+			expect(JSON.stringify(collection.errors)).not.toContain("HARMLESS_PRIVATE_PARSE_MARKER");
+		} finally { await rm(root, { recursive: true, force: true }); }
+	});
+
 	test("keeps pilots visible and selects nothing by raw score", async () => {
 		const root = await mkdtemp(join(tmpdir(), "training-results-"));
 		await writeTrial(root, "pilot", { scope: "pilot", score: 1, promotionEligible: false });
