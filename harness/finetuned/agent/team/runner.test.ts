@@ -121,20 +121,22 @@ async function watchSessions<T>(body: (life: {disposed: AgentSession[]; unsubscr
  try { return await body(life); } finally { Object.assign(proto, original); }
 }
 
-test("a hung provider: the guard stops the scout, disposes its session, releases its observer and leaves no tool process", async () => {
+for (const stop of ["guard", "abort"] as const) test(`a hung provider: ${stop} disposes its session, releases its observer and leaves no tool process`, async () => {
  await watchSessions(async life => {
   const { fauxAssistantMessage, fauxToolCall } = await import("@earendil-works/pi-ai");
   const budget = new ScoutBudget(5, prompts);
   const marker = `scout-hung-provider-${process.pid}-${Date.now()}`;
+  const controller = new AbortController();
   let reached = false;
   const {child, tools, records, opening} = await sandboxedScout([
    () => fauxAssistantMessage(fauxToolCall("bash", {command: `echo ${marker}`}), {stopReason: "toolUse"}),
    // The provider never answers, even after abort.
-   () => { reached = true; return new Promise(() => {}); },
+   () => { reached = true; if (stop === "abort") controller.abort(); return new Promise(() => {}); },
   ], budget);
-  const result = await runScoutSession(child, opening, {lastActivity: () => reached ? budget.lastActivity : Date.now(), tools, killMs: 5_000,
+  const result = await runScoutSession(child, opening, {lastActivity: () => reached ? budget.lastActivity : Date.now(), tools, killMs: 5_000, signal: controller.signal,
    guard: {stallMs: 300, wallMs: 20_000, pollMs: 20, settleMs: 50}});
-  expect("stopped" in result && result.stopped).toBe("stall");
+  if (stop === "guard") expect("stopped" in result && result.stopped).toBe("stall");
+  else expect("error" in result).toBe(true);
   expect(result.cleanup).toEqual({forced: true, terminated: true, toolsLeft: 0});
   expect(budget.used).toBe(1); expect(reached).toBe(true);
   // Disposed once, with no session listener (the observer's) left.
@@ -148,7 +150,7 @@ test("a hung provider: the guard stops the scout, disposes its session, releases
  });
 });
 
-test("a hung sandboxed bash command: the guard kills its whole process tree before the lead gets its stop bullet", async () => {
+for (const stop of ["guard", "abort"] as const) test(`a hung sandboxed bash command: ${stop} kills its whole process tree before returning`, async () => {
  await watchSessions(async life => {
   const { fauxAssistantMessage, fauxToolCall, fauxText } = await import("@earendil-works/pi-ai");
   const budget = new ScoutBudget(5, prompts);
@@ -159,13 +161,15 @@ test("a hung sandboxed bash command: the guard kills its whole process tree befo
    () => fauxAssistantMessage(fauxText("- fact: not reached")),
   ], budget);
   // Silent until the sleep is seen running, then stalled.
+  const controller = new AbortController();
   let seen = false;
-  const watch = setInterval(() => { if (processesWith(`sleep\0${marker}`).length) seen = true; }, 20);
+  const watch = setInterval(() => { if (processesWith(`sleep\0${marker}`).length) { seen = true; if (stop === "abort") controller.abort(); } }, 20);
   try {
-   const result = await runScoutSession(child, opening, {lastActivity: () => seen ? 0 : Date.now(), tools, killMs: 5_000,
+   const result = await runScoutSession(child, opening, {lastActivity: () => seen && stop === "guard" ? 0 : Date.now(), tools, killMs: 5_000, signal: controller.signal,
     guard: {stallMs: 200, wallMs: 20_000, pollMs: 20, settleMs: 50}});
    expect(seen).toBe(true);
-   expect("stopped" in result && result.stopped).toBe("stall");
+   if (stop === "guard") expect("stopped" in result && result.stopped).toBe("stall");
+   else expect("error" in result).toBe(true);
    expect(result.cleanup).toEqual({forced: true, terminated: true, toolsLeft: 0});
    expect(life.disposed.length).toBe(1);
    expect(processesWith(marker)).toEqual([]);

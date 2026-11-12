@@ -33,14 +33,14 @@ runs count as evidence for this repository but not as general findings.
 The LLM orchestrator, the research and evaluate stages, the knowledge store and
 the filename-leakage canary were removed on 2026-11-11 to clear the ground for
 v2. The finetuned entry is one lead session through
-`agent/pipeline/executor.ts`, with harness-owned trials and blocking scouts.
+`agent/pipeline/executor.ts`, with harness-owned trials and asynchronous scouts.
 The lead validates its champion before deterministic terminal refit; standalone
 refit and explicit-policy submit remain registered. Follow
 [the pipeline integration contract](harness/finetuned/docs/pipeline-integration.md)
 when changing it.
 
 New work follows expert-team-v2.md: one lead agent drives the run and calls
-blocking scouts (data, ideas, validation); there is no LLM orchestrator and no
+asynchronous scouts (data, ideas, validation); there is no LLM orchestrator and no
 fixed stage chain. The agent's pipeline is any object with `fit`/`predict`
 (`fit_predict` for batch clustering), declared in `solutions/tasks/<id>.py`
 under `runs/finetuned/solutions/`. The agent chooses features, estimator,

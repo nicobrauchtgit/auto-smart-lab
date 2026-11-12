@@ -169,13 +169,13 @@ export function createScoutRunner(options: {
    extensionTools: view.extensionTools,
    // The budget bounds turns and calls; guardScoutSession detects stuck sessions.
    observe: options.observe, turnTimeoutMs: null});
-  options.record("scout_session_start", {role: input.role, budget: input.budget.limit, maxTurns: input.budget.maxTurns,
+  options.record("scout_session_start", {role: input.role, tool_call_id: input.toolCallId, budget: input.budget.limit, maxTurns: input.budget.maxTurns,
    cwd: sandbox.cwd, writable: sandbox.mounts.filter(mount => mount.writable).map(mount => mount.source), ...(input.trial ? {experiment_id: input.trial.experimentId} : {})});
   const child = await factory({logicalAgentId: randomUUID(), parentAgentRunId: (typeof options.parentAgentRunId === "function" ? options.parentAgentRunId() : options.parentAgentRunId) ?? options.observe.identity.stageInvocationId ?? "scout-probe", spawnToolCallId: input.toolCallId}, signal);
-  const result = await runScoutSession(child, input.opening, {lastActivity: () => input.budget.lastActivity, guard: HARNESS_CONFIG.team.scoutGuard, tools: tracked});
-  const outcome = "value" in result ? (input.budget.stopped ? `success:${input.budget.stopped}-limit` : "success")
+  const result = await runScoutSession(child, input.opening, {lastActivity: () => input.budget.lastActivity, guard: HARNESS_CONFIG.team.scoutGuard, tools: tracked, signal});
+  const outcome = signal.aborted ? "stopped:cancelled" : "value" in result ? (input.budget.stopped ? `success:${input.budget.stopped}-limit` : "success")
    : "stopped" in result ? `stopped:${result.stopped}` : "failure";
-  options.record("scout_session_end", {role: input.role, used: input.budget.used, attempted: input.budget.attempted,
+  options.record("scout_session_end", {role: input.role, tool_call_id: input.toolCallId, used: input.budget.used, attempted: input.budget.attempted,
    blocked: input.budget.blocked, turns: input.budget.turns, outcome, ...result.cleanup});
   const ran = checks ? {checks: [...checks.ran]} : {};
   if ("value" in result) return {text: result.value, root: sandbox.cwd, ...ran};
@@ -229,16 +229,24 @@ export type TrackedScoutTools = ReturnType<typeof trackScoutTools>;
  * aborted and awaited (at most `killMs`). `cleanup` reports what remained.
  */
 export async function runScoutSession(child: Pick<PiChildSession, "prompt" | "abort" | "close" | "terminate">, opening: RenderedPrompt, options: {
- lastActivity(): number; tools: TrackedScoutTools; killMs?: number;
+ lastActivity(): number; tools: TrackedScoutTools; killMs?: number; signal?: AbortSignal;
  guard: { stallMs: number; wallMs: number; pollMs?: number; settleMs?: number };
 }): Promise<({ value: string } | { stopped: "stall" | "wall" } | { error: unknown }) & { cleanup: { forced: boolean; toolsLeft: number; terminated: boolean } }> {
  const killMs = options.killMs ?? 10_000;
  let result: { value: string } | { stopped: "stall" | "wall" } | { error: unknown };
+ const cancelled = new AbortController();
+ const abort = () => { void child.abort().catch(() => undefined); cancelled.abort(); };
+ options.signal?.addEventListener("abort", abort, { once: true });
+ if (options.signal?.aborted) abort();
  try {
-  const guarded = await guardScoutSession(child.prompt(opening), {abort: () => child.abort(), lastActivity: options.lastActivity, ...options.guard});
+  const guarded = await guardScoutSession(Promise.race([child.prompt(opening), new Promise<never>((_, reject) => {
+   const stop = () => reject(new Error("Scout cancelled"));
+   if (cancelled.signal.aborted) stop(); else cancelled.signal.addEventListener("abort", stop, { once: true });
+  })]), {abort: () => child.abort(), lastActivity: options.lastActivity, ...options.guard});
   result = guarded.stopped ? {stopped: guarded.stopped} : {value: guarded.value};
  } catch (error) { result = {error}; }
- const forced = "stopped" in result;
+ options.signal?.removeEventListener("abort", abort);
+ const forced = "stopped" in result || cancelled.signal.aborted;
  let terminated = true;
  if (forced) {
   let timer: ReturnType<typeof setTimeout> | undefined;

@@ -1,11 +1,13 @@
-# Blocking scouts
+# Asynchronous scouts
 
 `createScouts` exposes `scout({role, question, refs})` and its lead-facing Pi
-tool. Lead input is validated before any scout starts: the tool schema rejects
+tool. The programmatic `scout()` and `report()` helpers remain synchronous
+for probes and hand-over validation. Lead input is validated before any scout starts: the tool schema rejects
 extra keys (`additionalProperties: false`), and the service checks the same
-shape for programmatic calls, with a clear error. Multiple roles run
-sequentially and return only final bullet text. If a later role fails, the
-earlier roles' bullets are still returned (and journaled), followed by an
+shape for programmatic calls, with a clear error. The lead tool returns a consultation ID immediately. Multiple roles and
+consultations run in parallel under a FIFO session cap (default 3). Only final
+bullets and status lines are delivered as inbox news, waking a waiting lead. If a role fails, the
+other roles' bullets are still returned (and journaled), followed by an
 error line for the failed role. The backend has its own observed context;
 neither tool events nor intermediate assistant messages are forwarded.
 
@@ -45,7 +47,8 @@ The runner uses the shared preflight before starting its session; pass
 `scoutPaths` when the journal, unit introduction, task text or profile are not
 the task defaults, and `setup` to share passed checks with an earlier
 preflight. Call `scoutRequirements(role)` when declaring the encompassing lead
-stage's whole-chain setup requirements. Role calls are serial. Child
+stage's whole-chain setup requirements. Background role calls share the concurrency cap; synchronous `report()`
+(including hand-over validation) bypasses it. Child
 environments and search counters/logs are session-local; no scout changes
 process.env.
 
@@ -80,7 +83,9 @@ started when its command ends, and the child's `close()` and `terminate()`
 also close its shells, so no process of the scout's bash tool survives. The
 other sandboxed tools SIGKILL their bubblewrap worker. `scout_session_end`
 records the cleanup. The lead then gets a
-stop line. The service normalizes the final reply to bullets (bulleted or
+stop line. Finalized hand-over, budget exhaustion and session end cancel
+outstanding consultations and await cleanup. Pending work is process-local
+and is not restored on resume; journaled findings and scoutCalls survive. The service normalizes the final reply to bullets (bulleted or
 numbered items with their indented continuation lines); an empty reply yields
 an explicit no-evidence line. Error, stop and no-evidence lines are harness
 text: they are not journaled, and `report()` returns each role's status

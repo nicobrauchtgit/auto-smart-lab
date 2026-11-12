@@ -29,8 +29,10 @@ generalizes, and refits your champion for the hand-over.
   relevant experiment, file or check references. Read earlier findings to
   avoid repeating answered questions, and turn useful suggestions into the
   next harness-run trial. Scouts advise; model comparisons stay in the harness.
-- A `scout` request blocks until its selected scouts finish; selected scout
-  roles run in sequence. Each fresh invocation receives its own role-specific tool-call
+- A `scout` request returns immediately with a consultation ID and roles.
+  Roles run in parallel under a shared cap; excess roles queue FIFO. Final
+  bullets and failure/stopped/empty lines arrive as news and wake you. You
+  may keep working or end your turn to wait. Each fresh invocation receives its own role-specific tool-call
   allowance, including a later invocation of the same role. Those internal
   calls do not consume your budget: each explicit `scout` request costs you
   one call. Validation through `hand_over` is free for you and retains the

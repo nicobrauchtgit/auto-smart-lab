@@ -101,7 +101,7 @@ test('interrupted lead resumes the same training root and budget, compacts from 
   const tool=options.customTools.find((tool:any)=>tool.name==='scout');
   const reply=await tool.execute('scout-call',{role:'data',question:'inspect'},undefined,undefined,undefined);
   const leadContext=JSON.stringify(reply);
-  expect(leadContext).toContain('sourced final observation');expect(leadContext).not.toContain('PRIVATE');
+  expect(leadContext).toContain('Consultation');expect(leadContext).not.toContain('PRIVATE');
  }
  activeController.abort();return {output:'interrupted',agentRunId:'fixture'};
  }};
@@ -200,5 +200,52 @@ test('checkpoint retries transient failure, persists first baseline through rest
   const baseline=first.progress.baseline;expect(baseline?.commit).toBe(f.commit);expect(first.progress.budget.used).toBe(1);
   active=new AbortController();const second=await runLeadSession('spam1',{taskConfiguration:spamConfiguration(),progressPath:path,signal:active.signal,dependencies});
   expect(second.resumed).toBe(true);expect(second.progress.baseline).toEqual(baseline);expect(second.progress.budget.used).toBe(2);expect(validations).toBe(2);expect(refits).toBe(0);expect(confirmations).toBe(0);
+ }finally{f.close();}
+});
+
+for (const mode of ['news','finalize','budget','abort'] as const) test(`asynchronous consultations in lead lifecycle: ${mode}`, async()=>{
+ const {createScouts}=await import('../team/scouts.js');
+ const f=fixture(), controller=new AbortController();let scope:ReturnType<typeof createScouts>;let started=false,stopped=false, delivered=false;
+ let release!:(value:string)=>void;const result=new Promise<string>(accept=>{release=accept;});
+ try {
+ await runLeadSession('spam1',{taskConfiguration:spamConfiguration(),maxToolCalls:mode==='budget'?1:80,signal:controller.signal,progressPath:join(f.root,'lead/PROGRESS.json'),dependencies:{
+ verifiedCandidate:async()=>({experimentId:'measured',commit:f.commit,tree:'tree',sourceRoot:f.root}),
+ prepareData:()=>f.data,readPython:()=>({prefix:f.root,executable:'/bin/false',fingerprint:'f'} as any),sandbox:()=>({executable:'/bin/false',cwd:f.root,mounts:[],env:{},agentRoot:join(f.root,'agent')} as any),
+ prepareRepository:()=>({initialized:false,head:f.commit,branch:'master'}),environmentTool:()=>({name:'python_environment'} as any),
+ createTraining:()=>({ready:async()=>{},close:async()=>{},tools:[],toolPrompts:[],service:{describe:()=>({})},supervisor:{list:()=>[]},bindSession:()=>{}} as any),
+ scouts:context=>{
+  scope=createScouts({prompts,taskId:'spam1',task:'task',dataPaths:'dev',resources:'none',journalPath:join(f.root,'journal.jsonl'),datasetSha256:'d'.repeat(64),runId:'run',invocationId:'invocation',signal:context.signal,
+   news:async(...args)=>{delivered=true;await context.news(...args);},prepare:async()=>{},maxConcurrent:1,
+   trials:{status:async()=>({status:'resolved'}),snapshot:async()=>({experimentId:'measured',commit:f.commit,tree:'tree',sourceRoot:f.root})} as any,solutionsRoot:f.solutionsRoot,
+   run:async input=>{
+    if(input.role==='validation')return '- ok: frozen snapshot';
+    started=true;input.signal!.addEventListener('abort',()=>{stopped=true;release('');},{once:true});return result;
+   }});return scope;
+ },pollMs:1,
+ runAgentSession:async options=>{
+  const handlers:any={};for(const extension of options.extensionFactories??[]){const factory=typeof extension==='function'?extension:(extension as any).factory;factory({on:(name:string,fn:any)=>{(handlers[name]??=[]).push(fn);}});}
+  const scout=options.customTools!.find(tool=>tool.name==='scout')!;
+  await scout.execute('scout',{role:'data',question:'inspect'},undefined,undefined,undefined as never);
+  for(let i=0;i<100&&!started;i++)await new Promise<void>(accept=>setImmediate(accept));expect(started).toBe(true);
+  if(mode==='news'){
+   let idleReturned=false;const waiting=options.continueWhenIdle!().then(value=>{idleReturned=true;return value;});
+   await new Promise(accept=>setTimeout(accept,10));expect(idleReturned).toBe(false);
+   release('PRIVATE TRANSCRIPT\n- sourced news\nPRIVATE OUTPUT');const news=await waiting;
+   expect(news!.text).toContain('sourced news');expect(news!.text).not.toContain('PRIVATE');expect(delivered).toBe(true);
+   controller.abort();
+  }else if(mode==='finalize'){
+   const handover=options.customTools!.find(tool=>tool.name==='hand_over')!;
+   await handover.execute('handover',{reason:'ready',finalize:true},undefined,undefined,undefined as never);
+   expect(stopped).toBe(true);expect(scope.pending).toBe(0);
+  }else if(mode==='abort')controller.abort();
+  if(mode==='budget'){
+   for(const fn of handlers.message_end??[])await fn({message:{role:'assistant',content:[{type:'toolCall',id:'scout',name:'scout'}]}});
+   expect(await options.continueWhenIdle!()).toBeUndefined();
+  }
+  // Returning represents budget/session end; outstanding scouts must be cancelled.
+  return {output:'done',agentRunId:'fixture'} as any;
+ },refit:async()=>({artifacts:[],validation:{valid:true,errors:[]}}),collectResults:async()=>({valid:false,trials:[],artifacts:[],errors:[]}) as any,
+ }});
+ expect(scope!.pending).toBe(0);if(mode!=='news')expect(stopped).toBe(true);
  }finally{f.close();}
 });

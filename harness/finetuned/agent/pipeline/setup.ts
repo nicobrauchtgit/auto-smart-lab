@@ -128,6 +128,8 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
   for (const path of [paths.unitIntro, paths.task]) readable(path);
   if (!readFileSync(paths.unitIntro, "utf8").trim()) throw new Error("Empty unit introduction");
   for (const id of ["team.shared", "team.empty", "team.finish", "team.scout-tool", "team.probe-question"] as const) options.prompts.render(id, {});
+  options.prompts.render("team.scout-started", {id: "preflight", roles: "data"});
+  options.prompts.render("team.lead-scout-news", {id: "preflight", roles: "data", statuses: "data: completed", bullets: "preflight"});
   options.prompts.render("team.counter", {used: "0", budget: "1"});
   options.prompts.render("team.stopped", {reason: "preflight"});
   options.prompts.render("team.failed", {role: "data", reason: "preflight"});

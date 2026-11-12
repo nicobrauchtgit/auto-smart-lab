@@ -37,11 +37,12 @@ export function parseHarnessConfig(raw: unknown): HarnessConfig {
 	for (const key of ["stallMs", "wallMs"]) { positive(guard[key], `team.scoutGuard.${key}`); if (guard[key] > 2_147_483_647) throw new Error("Timeout exceeds timer range"); }
 	if (guard.stallMs > guard.wallMs) throw new Error("team.scoutGuard.stallMs exceeds wallMs");
 	positive(object(team.lead, ["maxToolCalls"], "team.lead").maxToolCalls, "team.lead.maxToolCalls");
-	const scouts = object(team.scouts, ["data", "ideas", "validation"], "team.scouts");
+	const scouts = object(team.scouts, ["data", "ideas", "validation", "maxConcurrent"], "team.scouts");
 	for (const role of ["data", "ideas", "validation"]) {
 		const scout = object(scouts[role], role === "ideas" ? ["maxToolCalls", "webSearches"] : ["maxToolCalls"], `team.${role}`);
 		positive(scout.maxToolCalls, `team.${role}.maxToolCalls`);
 	}
+	positive(scouts.maxConcurrent, "team.scouts.maxConcurrent");
 	positive(scouts.ideas.webSearches, "team.ideas.webSearches");
 	if (scouts.ideas.webSearches > 3 || team.budgetCounter !== "every_call" || team.holdoutFeedback !== "ladder") throw new Error("Invalid team policy");
 	if (value.version !== 1) throw new Error("Unsupported harness version");

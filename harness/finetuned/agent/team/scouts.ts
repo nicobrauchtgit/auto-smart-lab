@@ -64,6 +64,11 @@ export interface ScoutsOptions {
  trials?: TrialResolver;
  /** The shared solutions tree; validation writes checks to its `checks/<task>/`. */
  solutionsRoot?: string;
+ /** Run lifetime, independent of the immediately returning tool invocation. */
+ signal?: AbortSignal;
+ maxConcurrent?: number;
+ news?(id: string, roles: ScoutRole[], report: ScoutReport): Promise<void>;
+ record?(event: string, payload: Record<string, unknown>): void;
  budgets?: Partial<Record<ScoutRole, number>>;
 }
 
@@ -172,8 +177,7 @@ const clip = (value: string, length: number) => value.length > length ? `${value
 export function createScouts(options: ScoutsOptions) {
  if (!options.task.trim()) throw new Error("Scout requires task text (task.md with the unit introduction)");
  const citationBase = options.citationBase ?? statePath(REPO_ROOT);
- // Keep the requested scout roles sequential and journal observations before continuing.
- let tail: Promise<unknown> = Promise.resolve();
+
  const execute = async (request: ScoutRequest, signal: AbortSignal | undefined, toolCallId: string): Promise<ScoutReport> => {
   const problem = scoutRequestProblem(request);
   if (problem) throw new Error(`Invalid scout request: ${problem}`);
@@ -212,6 +216,7 @@ export function createScouts(options: ScoutsOptions) {
    let reply: ScoutReply;
    try {
     const result = await options.run({ role, toolCallId, shared, system, opening, budget, signal, ...trial ? { trial } : {} });
+    signal?.throwIfAborted();
     reply = typeof result === "string" ? { text: result } : result;
    } catch (error) {
     signal?.throwIfAborted();
@@ -246,12 +251,63 @@ export function createScouts(options: ScoutsOptions) {
   return { text: output.join("\n"), roles: outcomes };
  };
  /** Lead-facing text plus each role's outcome, for callers that must tell completed scouts from failed or stopped ones. */
- const report = (request: ScoutRequest, signal?: AbortSignal, toolCallId: string = randomUUID()): Promise<ScoutReport> => {
-  const pending = tail.then(() => execute(request, signal, toolCallId));
-  tail = pending.catch(() => undefined);
-  return pending;
+ const report = async (request: ScoutRequest, signal?: AbortSignal, toolCallId: string = randomUUID()): Promise<ScoutReport> => {
+  const problem = scoutRequestProblem(request);
+  if (problem) throw new Error(`Invalid scout request: ${problem}`);
+  const roles = [...new Set(Array.isArray(request.role) ? request.role : [request.role])];
+  // Synchronous control-path validation is exempt from the background cap.
+  await options.prepare(roles, signal);
+  return Promise.all(roles.map(role => execute({ ...request, role }, signal, toolCallId))).then(reports => ({
+   text: reports.map(report => report.text).join("\n"), roles: reports.flatMap(report => report.roles),
+  }));
  };
  const scout = async (request: ScoutRequest, signal?: AbortSignal, toolCallId?: string) => (await report(request, signal, toolCallId)).text;
+ let closed = false;
+ const consultations = new Map<string, { controller: AbortController; done: Promise<void> }>();
+ const cap = options.maxConcurrent ?? HARNESS_CONFIG.team.scouts.maxConcurrent;
+ if (!Number.isSafeInteger(cap) || cap < 1) throw new Error("Invalid scout concurrency cap");
+ let active = 0;
+ const queue: (() => void)[] = [];
+ const slot = async (signal: AbortSignal, work: () => Promise<ScoutReport>) => {
+  await new Promise<void>(accept => {
+   const start = () => { active++; accept(); };
+   if (active < cap) start(); else queue.push(start);
+  });
+  try { signal.throwIfAborted(); return await work(); }
+  finally { active--; queue.shift()?.(); }
+ };
+ const start = (request: ScoutRequest, toolCallId: string) => {
+  const problem = scoutRequestProblem(request);
+  if (problem) throw new Error(`Invalid scout request: ${problem}`);
+  if (closed) throw new Error("Scout consultations are closed");
+  options.signal?.throwIfAborted();
+  const id = randomUUID(), started = Date.now();
+  const roles = [...new Set(Array.isArray(request.role) ? request.role : [request.role])];
+  const controller = new AbortController();
+  const signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
+  options.record?.("scout_consultation_started", { consultation_id: id, tool_call_id: toolCallId, roles });
+  // Preflight the entire consultation before starting any of its sessions.
+  const ready = Promise.resolve().then(() => options.prepare(roles, signal));
+  void ready.catch(() => undefined);
+  const done = Promise.all(roles.map(role => slot(signal, async () => { await ready; return execute({ ...request, role }, signal, toolCallId); })
+   .catch(error => ({ text: (signal.aborted ? options.prompts.render("team.stopped", { reason: `${role}: consultation cancelled` }) : options.prompts.render("team.failed", { role, reason: clip(error instanceof Error ? error.message : "unknown error", 200) })).text.trim(),
+    roles: [{ role, status: signal.aborted ? "stopped" as const : "failed" as const, bullets: 0, reason: signal.aborted ? "cancelled" : "session failed" }] }))))
+   .then(async reports => {
+    const report = { text: reports.map(report => report.text).join("\n"), roles: reports.flatMap(report => report.roles) };
+    options.record?.(signal.aborted ? "scout_consultation_cancelled" : "scout_consultation_finished",
+     { consultation_id: id, roles, statuses: report.roles, duration_ms: Date.now() - started });
+    await options.news?.(id, roles, report);
+   }).catch(error => { options.record?.("scout_consultation_delivery_failed", { consultation_id: id, message: String(error) }); })
+   .finally(() => { consultations.delete(id); });
+  consultations.set(id, { controller, done });
+  return options.prompts.render("team.scout-started", { id, roles: roles.join(", ") }).text.trim();
+ };
+ const cancel = async () => {
+  closed = true;
+  const pending = [...consultations.values()];
+  for (const item of pending) item.controller.abort();
+  await Promise.all(pending.map(item => item.done));
+ };
  const role = Type.Union([Type.Literal("data"), Type.Literal("ideas"), Type.Literal("validation")]);
  const strict = { additionalProperties: false } as const;
  const tool = defineTool({ name: "scout", label: "Scout", description: options.prompts.render("team.scout-tool", {}).text,
@@ -261,7 +317,7 @@ export function createScouts(options: ScoutsOptions) {
     Type.Object({ profile: Type.String() }, strict), Type.Object({ entry: Type.String() }, strict), Type.Object({ url: Type.String() }, strict),
     Type.Object({ check: Type.String(), sha256: Type.String(), experiment: Type.Optional(Type.String()) }, strict),
    ]))) }, strict),
-  async execute(id, args, signal) { return { content: [{ type: "text", text: await scout(args, signal, id) }], details: {} }; },
+  async execute(id, args) { return { content: [{ type: "text", text: start(args, id) }], details: {} }; },
  });
- return { scout, report, tool };
+ return { scout, report, tool, cancel, get pending() { return consultations.size; } };
 }

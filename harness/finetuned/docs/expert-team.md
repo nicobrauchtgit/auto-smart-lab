@@ -287,7 +287,7 @@ the sandbox, solve and subagent rows still apply.
 | `pipeline/run_{research,solve,evaluate}.ts` and three CLIs | `research_cli.ts:44`, `solve_cli.ts:9`, `evaluate_cli.ts:2`, root `package.json:9,15-16` script entries (script names are authoritative if lines move). |
 | `prompts/{research,solve}.ts` | `research_cli.ts:5`, `run/{research_session.ts:28,harness_solve_session.ts:13}`, `pipeline/guidance.test.ts:11-12`, `context/session.test.ts:230-231`, `prompts/loader.test.ts:10-11`. |
 | prompt research/subagents folders and context probes | `prompts/registry.ts:29-30,38-49,73-78` and remaining research IDs; `prompts/loader.test.ts`; sandbox/boundary prompt-path fixtures (`run/research_sandbox.test.ts:32`, `experiment/minimal.test.ts:31,76`). |
-| `agent/subagents/` | **Not deleted** (decision of 2026-11-11): it is the base for the blocking scouts (v2 P7a). Its consumers `context/session.test.ts:8-9`, `knowledge/session.test.ts:7`, `harness/config.test.ts:8` and its config section and prompt IDs change only as the scout work requires. |
+| `agent/subagents/` | **Not deleted** (decision of 2026-11-11): it is the base for the asynchronous scouts (v2 P7a). Its consumers `context/session.test.ts:8-9`, `knowledge/session.test.ts:7`, `harness/config.test.ts:8` and its config section and prompt IDs change only as the scout work requires. |
 | `copyResearch` | `solve/workspace.ts:147,213`, `solve/research_copy.test.ts:6,19,35`; retire together with brief consumers/validator. |
 
 ## 7. P7c: verification beyond binary classification
@@ -365,3 +365,8 @@ tolerances must be typed configuration with defaults recorded in receipts.
 Remaining choices that need an explicit configuration decision: the minimum
 evidence-negative count, scalar tolerances and cluster noise-label convention
 for each task; this design does not infer them from absent task instructions.
+
+The 2026-11-12 user decision makes lead-facing scouts asynchronous: parallel
+roles under a FIFO cap of three, final-bullet inbox news, cancellation on
+finalized hand-over or session end, and synchronous hand-over validation exempt
+from the cap. See [the v2 decision](expert-team-v2.md#2026-11-12-user-decision-asynchronous-scouts).

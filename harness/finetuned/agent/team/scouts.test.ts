@@ -10,17 +10,17 @@ import { parseHarnessConfig, HARNESS_CONFIG } from "../harness/config.js";
 const prompts = loadPromptSnapshot();
 const path = () => join(mkdtempSync(join(tmpdir(), "scouts-")), "journal.jsonl");
 
-test("blocking boundary returns only final bullets and repeat gets journal, task and unit once", async () => {
+test("synchronous report returns only final bullets and repeat gets journal, task and unit once", async () => {
  let calls = 0;
  // task.md as stream B writes it: the unit introduction, then the task text.
  const scope = createScouts({ prepare: async () => {}, prompts, taskId: "fixture", task: "UNIT INTRO\n\nTASK TEXT", dataPaths: "dev.zip", resources: "- none", journalPath: path(), datasetSha256: "dataset", runId: "run", invocationId: "invoke",
   async run(input) {
    expect(input.toolCallId).toBe("call");
    expect(input.opening.text).toContain("TASK TEXT"); expect(input.opening.text.split("UNIT INTRO").length).toBe(2);
-   if (calls++) expect(input.opening.text).toContain("sourced observation");
+   calls++;
    return "Private preamble\n- sourced observation (profile.count)\nPrivate transcript";
   } });
- const result = await scope.tool.execute("call", {role: ["data", "ideas"], question: "inspect"}, undefined, undefined, undefined as never);
+ const result = await scope.report({role: ["data", "ideas"], question: "inspect"}, undefined, "call");
  expect(JSON.stringify(result)).not.toContain("Private");
  expect(JSON.stringify(result)).toContain("sourced observation"); expect(calls).toBe(2);
 });
@@ -407,4 +407,63 @@ test("failed, guard-stopped and empty scouts are reported as such; harness lines
 
  // Only scout-written bullets were journaled.
  expect((await readFindings(journal)).entries.map(entry => entry.title)).toEqual(["fact: one", "fact: two", "fact: three"]);
+});
+
+const deferred = <T,>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(accept => {resolve = accept;}); return {promise, resolve}; };
+const tick = () => new Promise<void>(resolve => setImmediate(resolve));
+async function until(check: () => boolean) { for(let i=0;i<2000 && !check();i++) await new Promise(accept=>setTimeout(accept,1)); expect(check()).toBe(true); }
+const callScout = (scope: ReturnType<typeof createScouts>, role: "data" | "ideas" | ("data" | "ideas")[], question = "inspect") => scope.tool.execute("call", {role,question}, undefined,undefined,undefined as never);
+
+test("tool returns immediately, roles run concurrently, and only bullets wake the inbox; one budget call", async () => {
+ const {LeadInbox} = await import('../run/lead_session.js');
+ const inbox = new LeadInbox(), finish = deferred<string>(); const started:string[]=[];
+ const scope=createScouts(scoutOptions({run:async input=>{started.push(input.role); return finish.promise;},
+  news:async(id,roles,report)=>inbox.steer(prompts.render('team.lead-scout-news',{id,roles:roles.join(', '),statuses:report.roles.map(row=>`${row.role}: ${row.status}`).join('; '),bullets:report.text}).text)}));
+ const budget=new ScoutBudget(10,prompts);budget.assistant({role:'assistant',content:[{type:'toolCall',id:'call',name:'scout'}]});
+ expect(budget.admit('call','scout')).toBeUndefined();
+ const toolController=new AbortController();
+ const reply=await scope.tool.execute('call',{role:['data','ideas'],question:'inspect'},toolController.signal,undefined,undefined as never);toolController.abort();expect(JSON.stringify(reply)).toContain('Consultation');
+ expect(scope.pending).toBe(1);expect(inbox.size).toBe(0);
+ await until(()=>started.length===2);expect(started).toEqual(['data','ideas']);
+ const waiting=inbox.wait(1000);finish.resolve('PRIVATE TRANSCRIPT\n- final sourced bullet\nPRIVATE TOOL OUTPUT');await waiting;
+ const news=inbox.take().join('\n');expect(news).toContain('final sourced bullet');expect(news).not.toContain('PRIVATE');
+ await until(()=>scope.pending===0);expect(budget.used).toBe(1);
+});
+
+test("cap queues FIFO across consultations; synchronous validation bypasses saturation", async () => {
+ const releases=[deferred<string>(),deferred<string>(),deferred<string>()];const started:string[]=[];
+ const scope=createScouts(scoutOptions({maxConcurrent:1,solutionsRoot:'/fixture',trials:{status:async()=>({status:'resolved'}),snapshot:async()=>({experimentId:'exp',commit:'commit',sourceRoot:'/fixture',tree:'tree'})} as any,
+  run:async input=>{if(input.role==='validation')return '- ok: snapshot checked';const index=started.length;started.push(input.opening.text);return releases[index].promise;}}));
+ await callScout(scope,['data','ideas'],'first');await callScout(scope,'data','second');
+ await until(()=>started.length===1);
+ const validation=await scope.report({role:'validation',question:'check',refs:[{experiment:'exp'}]});
+ expect(validation.roles[0].status).toBe('completed');expect(started.length).toBe(1);
+ releases[0].resolve('- one');await until(()=>started.length===2);expect(started[1]).toContain('first');
+ releases[1].resolve('- two');await until(()=>started.length===3);expect(started[2]).toContain('second');
+ releases[2].resolve('- three');await until(()=>scope.pending===0);
+});
+for(const mode of ['cancel','abort'] as const)test(`${mode} stops running and queued consultations and records their lifecycle`,async()=>{
+ const controller=new AbortController();const events:{event:string,payload:any}[]=[];let started=0,stopped=0;const reports:any[]=[];
+ const scope=createScouts(scoutOptions({maxConcurrent:1,signal:controller.signal,record:(event,payload)=>events.push({event,payload}),news:async(_id,_roles,report)=>{reports.push(report);},
+ run:async input=>{started++;return new Promise<string>((resolve,reject)=>input.signal!.addEventListener('abort',()=>{stopped++;if(mode==='abort')resolve('');else reject(new Error('cancelled'));},{once:true}));}}));
+ await callScout(scope,['data','ideas']);await until(()=>started===1);
+ if(mode==='abort')controller.abort();await scope.cancel();
+ expect(scope.pending).toBe(0);expect(started).toBe(1);expect(stopped).toBe(1);
+ expect(events.map(row=>row.event)).toEqual(['scout_consultation_started','scout_consultation_cancelled']);
+ expect(events[1].payload.duration_ms).toBeGreaterThanOrEqual(0);expect(reports[0].roles.map((role:any)=>role.status)).toEqual(['stopped','stopped']);
+});
+
+test('scout concurrency cap rejects nonpositive or fractional values',()=>{
+ for(const value of [0,-1,1.5]){const config=structuredClone(HARNESS_CONFIG);config.team.scouts.maxConcurrent=value;expect(()=>parseHarnessConfig(config)).toThrow('positive integer');}
+});
+
+test('completed consultation steers news into a running lead and records role outcomes',async()=>{
+ const {LeadInbox}=await import('../run/lead_session.js');const steered:string[]=[];const events:{event:string,payload:any}[]=[];
+ const inbox=new LeadInbox({isStreaming:true,steer:async text=>{steered.push(text);},sendCustomMessage:async()=>{}});
+ const scope=createScouts(scoutOptions({run:async()=> 'PRIVATE\n- final finding\nPRIVATE',record:(event,payload)=>events.push({event,payload}),
+  news:async(id,roles,report)=>inbox.steer(prompts.render('team.lead-scout-news',{id,roles:roles.join(', '),statuses:report.roles.map(row=>`${row.role}: ${row.status}`).join('; '),bullets:report.text}).text)}));
+ await callScout(scope,'data');await until(()=>scope.pending===0);
+ expect(inbox.size).toBe(0);expect(steered[0]).toContain('final finding');expect(steered[0]).not.toContain('PRIVATE');
+ expect(events.map(row=>row.event)).toEqual(['scout_consultation_started','scout_consultation_finished']);
+ expect(events[1].payload.statuses).toEqual([{role:'data',status:'completed',bullets:1}]);
 });

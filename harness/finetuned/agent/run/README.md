@@ -3,7 +3,12 @@
 `lead_session.ts` is the finetuned entry point. `pipeline/stages/lead.ts`
 uses the shared executor, preflight and Langfuse reporter. `lead-stage` runs
 that same path standalone. The lead controls harness trials (`trial_smoke`
-included), blocking scouts and supervised shell tools. Terminal refit runs
+included), asynchronous scouts and supervised shell tools. Scout requests return
+a consultation ID immediately; final-bullet inbox news wakes the lead. Pending
+consultations keep an idle lead waiting and are cancelled on finalized hand-over
+or session end (including budget exhaustion). Synchronous hand-over validation
+bypasses the background session cap. Pending consultations are not recovered
+after a process restart; durable findings and call counts remain. Terminal refit runs
 inside the lead stage after validation; standalone refit remains registered.
 The solve stage and solve CLI are retired.
 

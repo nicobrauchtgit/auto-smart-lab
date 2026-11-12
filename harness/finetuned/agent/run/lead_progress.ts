@@ -58,6 +58,8 @@ export interface LeadProgress {
  trials: LeadTrialRecord[];
  holdout: LeadHoldoutRecord[];
  budget: { limit: number; used: number };
+ /** Durable call counter only. Pending consultations belong to the current
+  * process and are deliberately not restored after a restart. */
  scoutCalls: number;
  phase?: "baseline" | "improvement";
  baseline?: { experimentId: string; commit: string; receiptKey: string; at: string };

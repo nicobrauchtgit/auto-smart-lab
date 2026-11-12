@@ -3,7 +3,7 @@
  * drives a task from the first look at the data to the hand-over.
  *
  * The harness here only serves tools and guards: harness-owned trials with
- * `trial_smoke` and live observation, blocking scouts, the supervised bash,
+ * `trial_smoke` and live observation, asynchronous scouts, the supervised bash,
  * trial feedback after every trial (folds, noise verdict, the Ladder holdout
  * check on a new champion), the lead's tool-call budget with its counter and
  * finish-up turn, `hand_over` with one validation scout, the budget-end
@@ -147,11 +147,15 @@ export class LeadInbox implements Wakeable {
 
 export interface LeadScouts {
  tool: ToolDefinition;
+ readonly pending?: number;
+ cancel?(): Promise<void>;
  report(request: ScoutRequest, signal?: AbortSignal, toolCallId?: string): Promise<ScoutReport>;
 }
 export interface LeadScoutContext {
  data: TaskData; python: PythonEnvironment; runId: string; invocationId: string;
  parentAgentRunId(): string | undefined;
+ signal?: AbortSignal;
+ news(id: string, roles: string[], report: ScoutReport): Promise<void>;
 }
 export interface LeadRefitInput {
  taskId: string; configuration: TaskConfiguration; experimentId: string; reviewPath: string;
@@ -237,7 +241,7 @@ const DEFAULT_DEPENDENCIES: LeadDependencies = {
  pollMs: 5_000,
 };
 
-/** Production scouts for the lead: stream C's blocking scouts on stream B's task data. */
+/** Production scouts for the lead: stream C's asynchronous scouts on stream B's task data. */
 export function productionScouts(options: { prompts: PromptSnapshot; taskId: string; configuration: TaskConfiguration; report: StageReporter;
  setup: { session: SetupSession; telemetry: Telemetry } }) {
  return (context: LeadScoutContext): LeadScouts => {
@@ -253,7 +257,7 @@ export function productionScouts(options: { prompts: PromptSnapshot; taskId: str
    dataPaths: inputs.dataPaths, resources: inputs.resources, journalPath: statePath(PROJECT_ROOT, options.taskId, "findings", "journal.jsonl"),
    datasetSha256: context.data.datasetSha256, runId: context.runId, invocationId: context.invocationId,
    trials: createTrialResolver({ roots: () => taskTrialRoots(statePath(PROJECT_ROOT), options.taskId), solutionsRoot: context.data.solutionsRoot }),
-   solutionsRoot: context.data.solutionsRoot, prepare: runner.prepare, run: runner });
+   solutionsRoot: context.data.solutionsRoot, prepare: runner.prepare, run: runner, signal: context.signal, news: context.news, record: options.report.event });
  };
 }
 
@@ -480,7 +484,8 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
  // ---- hand-over ----
  const reviewPath = join(dirname(progressPath), runId, "hand-over-review.json");
  let scouts: LeadScouts | undefined;
- const scoutContext: LeadScoutContext = { data, python, runId, invocationId, parentAgentRunId: () => leadAgentRunId };
+ const scoutContext: LeadScoutContext = { data, python, runId, invocationId, parentAgentRunId: () => leadAgentRunId, signal: options.signal,
+  news: async (id, roles, report) => { await inbox.steer(prompts.render("team.lead-scout-news", { id, roles: roles.join(", "), statuses: report.roles.map(row => `${row.role}: ${row.status}${row.reason ? ` (${row.reason})` : ""}`).join("; "), bullets: report.text }).text); } };
  const getScouts = () => scouts ??= deps.scouts(scoutContext);
  const checkIdentity = () => {
   const root = join(data.solutionsRoot, "checks", taskId);
@@ -567,6 +572,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
    if (!validationPassed(validation)) return reply(prompts.render("team.lead-handover-fix", { experiment: champion.experimentId, bullets: validation.fix.length ? validation.fix.map(row => `- ${row}`).join("\n") : `status: ${validation.status}; labelled findings: ${validation.ok.length + validation.advice.length}` }).text);
    if (!args.finalize) return reply(prompts.render("team.lead-checkpoint", { progress: renderProgress(prompts, progress).text }).text);
    accept("lead", args.reason, champion.experimentId, validation);
+   await scouts?.cancel?.();
    budget.end();
    return reply(prompts.render("team.lead-handover-accepted", { experiment: champion.experimentId, holdout: holdoutUsed(),
     validation: validation.fix.length ? `${validation.fix.length} open defect(s) recorded` : validation.status }).text);
@@ -627,7 +633,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
     if (budget.exhausted) { endReason = "budget"; return undefined; }
     const news = inbox.take();
     if (news.length) return prompts.render("team.lead-news", { news: news.join("\n\n") });
-    if (!runningTrials().length && composing === 0) {
+    if (!runningTrials().length && composing === 0 && !scouts?.pending) {
      if (++idleStreak > 2) { endReason = "lead_idle"; record("lead_idle_end", { idle_prompts: idleStreak - 1 }); return undefined; }
      const champion = championOf(data.solutionsRoot, taskId);
      return prompts.render("team.lead-idle", { champion: champion ? `${champion.experimentId}${champion.score !== undefined ? `, ${champion.score.toFixed(4)}` : ""}` : "none yet" });
@@ -660,7 +666,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
    sessionError = error instanceof Error ? error.message : String(error);
    endReason = "agent_failed";
    record("agent_attempt_error", { attempt: 1, message: sessionError });
-  } finally { clearInterval(questionTimer); }
+  } finally { clearInterval(questionTimer); await scouts?.cancel?.(); }
   progress.budget.used = budget.used;
   save();
  }

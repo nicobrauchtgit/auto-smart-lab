@@ -140,9 +140,9 @@ The harness has two jobs, and neither is to constrain what the agent builds:
    builder receives only their bullet lists, not their transcripts.
 
 One **lead agent** (the builder) drives the whole run. Scouts for data, ideas
-and validation are **subagents the lead calls**; the lead is blocked until
-they answer. The harness is a set of tools and guards around the lead, not a
-pipeline of stages. This keeps the user's decisions (four kinds of expertise,
+and validation are **subagents the lead calls**; the lead receives their final
+bullets asynchronously as inbox news. The harness is a set of tools and guards
+around the lead, not a pipeline of stages. This keeps the user's decisions (four kinds of expertise,
 what/why research, one shared tree, harness-run trials as the measurement, no
 polling, observed tool calls) and removes the fixed relay that the evidence
 and our run both show to be the bottleneck.
@@ -155,7 +155,7 @@ harness (code, no model)
   └─ start the lead, then only serve tools and guard budgets
 
 lead agent (drives everything)
-  ├─ may call scouts at any time, blocked while they run:
+  ├─ may call scouts at any time, continuing work or ending its turn to wait:
   │    data scout · idea scout · validation scout  (several at once allowed)
   ├─ writes the pipeline, smoke-checks it, starts harness trials
   ├─ watches trials live when it wants; is woken when a trial ends or misbehaves
@@ -331,6 +331,7 @@ replacing today's `research`, `solve` and `orchestrator` budget keys:
 "team": {
   "lead":   { "maxToolCalls": 80 },
   "scouts": {
+    "maxConcurrent": 3,
     "data":       { "maxToolCalls": 15 },
     "ideas":      { "maxToolCalls": 10, "webSearches": 3 },
     "validation": { "maxToolCalls": 10 }
@@ -533,11 +534,11 @@ and one prompt per stream.
   no trial.
 
 ### P7a — lead and scouts
-- Build the blocking scouts on `agent/subagents/` (parent/child Pi sessions
+- Build the asynchronous scouts on `agent/subagents/` (parent/child Pi sessions
   with a bounded final reply; [README](../agent/subagents/README.md)). It is
   the base, not deleted; v1's plan to delete it is withdrawn.
 - Lead session with compaction and resume from `PROGRESS.json`.
-- `scout({role, question, refs})`, blocking, several roles per call allowed;
+- `scout({role, question, refs})`, asynchronous, several roles per call allowed;
   tool-call budgets with a counter after every call and a finish-up turn;
   bullets with a source each, no quota; journal append.
 - Scout budget test: each scout alone on spam1–3 and `code2` with 10 and 20
@@ -572,8 +573,8 @@ and one prompt per stream.
 
 Taken with the user on 2026-11-11:
 
-- One lead agent drives; scouts are blocking subagents; no LLM orchestrator
-  and no fixed stage pipeline.
+- One lead agent drives; scouts were blocking subagents (superseded by the
+  2026-11-12 decision below); no LLM orchestrator and no fixed stage pipeline.
 - Scouts return bullets without a quota, under tool-call budgets.
 - Holdout feedback uses the Ladder on new champions.
 - Budgets are tool calls for every agent; wall time only detects stalls and is
@@ -590,7 +591,7 @@ Taken with the user on 2026-11-11:
 - Every agent gets the task text and the unit introduction.
 - More iterations over more upfront research: short scout runs first, then
   targeted new scout calls guided by trial results.
-- `agent/subagents/` is the base for the blocking scouts.
+- `agent/subagents/` is the base for the asynchronous scouts.
 - Scout starting budgets data 15, ideas 10, validation 10, from the P7a scout
   budget test (section 3). The lead's 80 is exercised at the integration gate.
 
@@ -634,3 +635,23 @@ Preprints (no venue found):
   Research*, 2026: <https://arxiv.org/abs/2603.29632>
 - Liu et al., *Budget-Aware Tool-Use Enables Effective Agent Scaling* (BATS),
   2025: <https://arxiv.org/abs/2511.17006>
+
+## 2026-11-12 user decision: asynchronous scouts
+
+In our measured spam1 run, a data+ideas consultation took about 12 minutes
+while the lead was blocked. The lead reported using rare, broad consultations
+because of that delay and said asynchronous delivery would allow narrow
+questions while continuing work. This is evidence about this repository's run,
+not a general research finding. The user decided to make consultations
+asynchronous, with parallel roles and multiple simultaneous consultations.
+
+The scout tool returns a consultation ID in one charged call. A FIFO queue
+caps background scout sessions at `team.scouts.maxConcurrent` (default 3).
+Only final bullets and role failure/stopped/empty lines reach the lead through
+its inbox; news wakes a waiting lead. Ending a turn waits while consultations
+remain pending. Synchronous hand-over validation bypasses the background cap,
+so it cannot be starved. Finalized hand-over, budget-end hand-over, session end
+and cancellation cancel outstanding consultations and await session/supervised
+shell cleanup. The budget-end path cancels rather than waiting for findings.
+Pending consultations are process-local; a resumed lead has none pending,
+retains its scout-call counter and durable journal, and receives a resume note.

@@ -9,3 +9,5 @@ Trials listed there are already charged and measured; their results stand and
 need no rerun. A trial still running continues under the harness. Inspect the
 `solutions/` git history and the trials with `experiment_status`, then go on
 from where the record ends.
+
+Scout consultations from the previous process are no longer pending; only journaled findings survive a restart.
