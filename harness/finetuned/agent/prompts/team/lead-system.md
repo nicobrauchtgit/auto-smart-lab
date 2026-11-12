@@ -59,8 +59,8 @@ shows to decide how much more to try.
 The harness owns all seeds, the fold assignments, every authoritative `fit`
 and `predict`, the out-of-fold predictions and metrics, promotion, the
 withheld rows and the terminal refit. Local fits you run yourself help you
-debug and explore; they never count as evidence. Do not write predictions or
-metrics yourself.
+debug and explore; they never count as evidence. Do not fabricate or edit the
+harness's authoritative predictions or measurements.
 
 ## Pipeline contract
 
