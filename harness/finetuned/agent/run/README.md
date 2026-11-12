@@ -66,8 +66,10 @@ This checkpoint changes neither training populations nor withheld-label
 visibility; it needs no baseline refit. Terminal refit uses all training rows,
 never test labels, under the existing controller boundaries.
 
-Limits: no paid v2 task integration gate has run. Wall-time/accuracy targets
-are unmeasured. Validation detects only defects it observes; a completed scout
+Limits: no paid task run has exercised this checkpoint revision. Earlier v2
+baseline runs failed their delivery/time gates; their evidence remains in
+`docs/experiments/v2-unit1-2026-11-12.md`. This revision's wall-time/accuracy
+targets are unmeasured. Validation detects only defects it observes; a completed scout
 is not proof of model correctness. Clustering
 confirmation and label-free hand-over retain the P7c limitations. Host shells
 and terminal refit retain the documented privileges; filesystem isolation is
@@ -100,3 +102,17 @@ copies are private to this worktree, with course files copied and individual
 unit directories linked and used only as read-only test inputs. No canonical dependencies or
 prior trial evidence were changed. Generated Python manager audit records are
 excluded from the commit.
+
+Independent review of `1d3ff9b` found a blocking free-call admission bypass:
+a malformed hand_over rejected by Pi could donate its unused admission to a
+different tool with the same call ID. Admissions now bind both the ID and
+tool name. Real Pi parallel/sequential regressions cover rejection followed
+by a blocked mutation and a valid free checkpoint. Parent's focused budget
+and lead tests pass 28/28; the independent repro now reports zero mutations
+at 80/80 on both SDK paths. Typecheck and whitespace checks pass.
+
+The review's full suite on `1d3ff9b` had 668 pass, 2 skip, 5 disk-prerequisite
+failures; rerunning affected files with RAM-backed TMPDIR passed 7/7. This is
+not a green full-suite result. Fresh independent review and a serial full
+suite with private TMPDIR remain required on the admission-fix commit before
+integration. No paid run or merge has followed these fixes.

@@ -183,7 +183,7 @@ test('checkpoint retries transient failure, persists first baseline through rest
   const handlers:any={};for(const extension of opts.extensionFactories)extension.factory({on:(name:string,fn:any)=>{(handlers[name]??=[]).push(fn);}});
   const handover=opts.customTools.find((t:any)=>t.name==='hand_over');
   const emit=async(content:any[])=>{for(const fn of handlers.message_end??[])await fn({message:{role:'assistant',content}});};
-  const admit=async(id:string)=>{for(const fn of handlers.tool_call??[])expect(await fn({toolCallId:id})).toBeUndefined();};
+  const admit=async(id:string,toolName='hand_over')=>{for(const fn of handlers.tool_call??[])expect(await fn({toolCallId:id,toolName})).toBeUndefined();};
   if(session++===0) {
    await emit([{type:'toolCall',id:'free',name:'hand_over'}]);await admit('free');
    expect(JSON.stringify(await handover.execute('free',{reason:'ready'}))).toContain('not approved');
@@ -192,7 +192,7 @@ test('checkpoint retries transient failure, persists first baseline through rest
    expect(JSON.stringify(await handover.execute('free',{reason:'ready'}))).toContain('Continue improving');}
   expect(refits).toBe(0);
   expect(opts.sessionContext()).toBe('');expect(opts.sessionContext()).toContain('Goal phase: improvement');
-  await emit([{type:'toolCall',id:'work',name:'experiment_start'}]);await admit('work');
+  await emit([{type:'toolCall',id:'work',name:'experiment_start'}]);await admit('work','experiment_start');
   active.abort();return {output:'interrupted',agentRunId:'fixture'};
  }};
  try {

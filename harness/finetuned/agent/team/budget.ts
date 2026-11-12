@@ -5,6 +5,7 @@ type Content = { type: string; id?: string; name?: string };
 type AnyMessage = { role: string; content?: unknown; stopReason?: string };
 const toolCalls = (message: AnyMessage) => Array.isArray(message.content)
  ? (message.content as Content[]).filter(part => part.type === "toolCall") : [];
+const admissionKey = (id: string, name: string) => JSON.stringify([id, name]);
 
 /**
  * Counts every tool call the model emits, at the assistant message, before Pi
@@ -34,7 +35,7 @@ export class ScoutBudget {
  /** Epoch milliseconds of the last session event; read by the stall guard. */
  lastActivity = Date.now();
  readonly maxTurns: number;
- /** Admit/block decision per call of the latest assistant message, queued by ID in call order. */
+ /** Admissions are bound to both ID and tool name; rejected calls cannot donate a free control admission to another tool. */
  private decisions = new Map<string, boolean[]>();
  private overBudgetTurns = 0;
  private ended = false;
@@ -74,16 +75,19 @@ export class ScoutBudget {
   for (const call of calls) {
    const admitted = (free(call) || this.used < this.limit) && typeof call.id === "string";
    if (admitted && !free(call)) { this.used++; this.onCharge?.(this.used); } else if (!admitted) this.blocked++;
-   if (typeof call.id === "string") this.decisions.set(call.id, [...this.decisions.get(call.id) ?? [], admitted]);
+   if (typeof call.id === "string" && typeof call.name === "string") {
+    const key = admissionKey(call.id, call.name);
+    this.decisions.set(key, [...this.decisions.get(key) ?? [], admitted]);
+   }
   }
  }
  /**
   * Pi's pre-execution hook, called once per call in message order on both its
-  * sequential and parallel paths. Consumes one decision of that ID: a repeated
-  * ID gets its next occurrence's decision, and an ID with none left is blocked.
+  * sequential and parallel paths. Consumes one decision for that ID and tool:
+  * a repeated pair gets its next decision, and a pair with none left is blocked.
   */
- admit(toolCallId: string): { block: true; reason: string } | undefined {
-  if (this.decisions.get(toolCallId)?.shift()) return;
+ admit(toolCallId: string, toolName: string): { block: true; reason: string } | undefined {
+  if (this.decisions.get(admissionKey(toolCallId, toolName))?.shift()) return;
   return { block: true, reason: this.prompts.render(this.finish, {}).text };
  }
  /** No further tool calls (the work was handed over): later ones are removed and the agent loop ends with its text. */
@@ -97,7 +101,7 @@ export class ScoutBudget {
   return { name: "scout-budget", factory: pi => {
    const touch = () => { this.lastActivity = Date.now(); };
    for (const event of ["turn_start", "message_start", "message_update", "tool_execution_start", "tool_execution_update", "tool_execution_end"] as const) pi.on(event as "turn_start", touch);
-   pi.on("tool_call", event => this.admit(event.toolCallId));
+   pi.on("tool_call", event => this.admit(event.toolCallId, event.toolName));
    // Every tool result, including Pi's own rejections, carries the counter.
    pi.on("message_end", event => {
     touch();
