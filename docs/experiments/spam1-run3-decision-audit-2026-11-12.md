@@ -120,3 +120,29 @@ history; Langfuse scout/tool/cancellation events and captured model-request
 inputs; original one-shot monitoring outputs. Private confirmation values and
 withheld labels are deliberately omitted. No development test suite was run
 for this documentation-only audit.
+
+## Requested retrospective question (16:20 UTC)
+
+The user subsequently authorized asking the lead why it ran the local sweep.
+The original session cannot literally be resumed: `session_runner.ts` uses
+`SessionManager.inMemory`, and the cancelled session was disposed. Later
+model-request payload snapshots are truncated. The original system prompt
+and the lead's ended user/tool-result messages were recovered from Langfuse;
+this is partial reconstructed context, not an intact conversation continuation.
+
+Two bounded diagnostic attempts used the configured offline
+`qwen3.8-flash-next-a5b` model through the observed session runner, with all
+tools disabled and no training restart. The first used the recovered context;
+the second supplied a smaller relevant slice and the exact offending command.
+Both reached their 120-second cancellation bounds without returning an answer.
+The second records one model request, trace
+`63d7bd5d0d63b0ba17496d459e9c3446`; telemetry was not degraded. No further
+attempt was made. There is no model-provided explanation to report.
+
+Diagnostic inputs, script and failure receipt are preserved under
+`runs/finetuned/diagnostics/sweep-explanation-20261112/`, outside the archived
+experiment. The question explicitly distinguished allowed bounded diagnosis
+from prohibited multi-candidate comparison. The factual sequence is a search
+cost-policy stop, a five-candidate local comparison, and a narrower harness
+request. Cost avoidance or misclassification as diagnosis are plausible
+explanations, but neither is established as the agent's actual motive.
