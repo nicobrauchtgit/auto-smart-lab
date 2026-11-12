@@ -60,9 +60,10 @@ test("a run that replaces its log, launcher status and state with symlinks to a 
 		limits: { sampleIntervalMs: 25, stopGraceMs: 100 }, spill: { base: copies, directory: copies } });
 	supervisors.push(owner);
 	const directory = join(root, "swap");
-	// The command knows exactly where its files are and replaces each of them.
+	// Replace atomically: the supervisor legitimately rewrites its state while sampling.
+	// A separate rm/ln pair races that write and can fail before planting the attack.
 	const swap = ["output.log", COMMAND_STATUS_FILE, "supervisor-state.json", "experiment.json"]
-		.map((name) => `rm -f '${join(directory, name)}'; ln -s '${secret}' '${join(directory, name)}'`).join("; ");
+		.map((name) => `ln -s '${secret}' '${join(directory, name)}.attack'; mv -f '${join(directory, name)}.attack' '${join(directory, name)}'`).join("; ");
 	owner.start({ argv: ["bash", "-c", `echo before-swap; ${swap}; echo swapped; sleep 0.3; echo after-swap`],
 		cwd: root, hypothesis: "swap its logs", scope: "fixture" }, undefined, "swap");
 	await until(() => owner.status("swap").status !== "running");
