@@ -1,7 +1,7 @@
 This task is anomaly detection without training targets. The required
 entrypoint is `solutions/tasks/{{taskId}}.py`; create it if it does not exist.
-It must expose `build_pipeline()` returning your real, unfitted scikit-learn
-estimator over a pandas frame with `id` and `input` columns. Each `input` is an
+It must expose `build_pipeline()` returning a fresh, unfitted object over a
+pandas frame with `id` and `input` columns. Each `input` is an
 ZIP descriptor `{"archive": <absolute archive path>, "member": <member name>}`
 or a TCP descriptor `{"pcap": <absolute capture path>, "packetIndices": <indices>,
 "source": {"ip": <address>, "port": <port>}, "destination": {"ip": <address>,

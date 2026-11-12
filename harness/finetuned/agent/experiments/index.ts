@@ -54,6 +54,12 @@ export function createExperiments(options: Omit<SupervisorOptions, "deliver"> & 
 	prompts: PromptSnapshot;
 	session?: Wakeable;
 	signal?: AbortSignal;
+	/**
+	 * False when the owner sends its own message when a run ends (the lead's
+	 * trial feedback), so the bare exit note would only repeat it. Findings
+	 * during the run are delivered either way.
+	 */
+	deliverExits?: boolean;
 }) {
 	options.signal?.throwIfAborted();
 	let session = options.session;
@@ -65,6 +71,7 @@ export function createExperiments(options: Omit<SupervisorOptions, "deliver"> & 
 
 	/** Through `wake` once a session is bound; queued for the opening turn before that. */
 	async function deliver(text: string, update: Update): Promise<void> {
+		if (update.kind === "exited" && options.deliverExits === false) return;
 		if (!session) {
 			pending.push({ text, update });
             if (pending.length > 100) pending.shift();

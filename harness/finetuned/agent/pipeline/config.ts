@@ -43,9 +43,9 @@ export interface ResolvedPipelineConfig {
 
 const DEFAULT_SETTINGS: PipelineSettings = {
 	version: 1,
-	entryStage: "solve",
+	entryStage: "lead",
 	scheduling: "configured",
-	stages: { solve: { enabled: true, options: {} } },
+	stages: { lead: { enabled: true, options: {} } },
 };
 
 function canonical(value: unknown): unknown {
@@ -75,7 +75,7 @@ export function resolvePipelineSettings(config: PipelineConfig): ResolvedPipelin
 	const warnings: string[] = [];
 	const raw = (config as PipelineConfig & { pipeline?: unknown }).pipeline;
 	if (raw === undefined) {
-		warnings.push("pipeline.config.json has no `pipeline` block; using the solve-only default");
+		warnings.push("pipeline.config.json has no `pipeline` block; using the lead-only default");
 	} else if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
 		throw new Error("`pipeline` must be an object in pipeline.config.json");
 	}

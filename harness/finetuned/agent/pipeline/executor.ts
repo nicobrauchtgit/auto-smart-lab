@@ -89,6 +89,7 @@ export async function invokeStage(options: InvokeStageOptions): Promise<StageInv
 async function executeStage(options: InvokeStageOptions, invocationId: string,
  report: ReturnType<PipelineTrace["stage"]>, feedback: InvocationFeedback): Promise<StageInvocation> {
 	const { config, trace, input } = options;
+	const setupSession = options.setupSession ?? new SetupSession();
 
 	const settings = config.settings.stages[options.stage];
 	if (!settings?.enabled) {
@@ -174,8 +175,10 @@ async function executeStage(options: InvokeStageOptions, invocationId: string,
                 content_sha256: input.guidance.contentSha256, snapshot_sha256: createHash("sha256").update(snapshot).digest("hex"), note_id: input.guidance.id, note_version: input.guidance.version,
                 stage: input.guidance.stage, task_id: input.taskId, author: input.guidance.author, evidence: input.guidance.evidence });
         }
-		await (options.setupSession ?? new SetupSession()).check(
-			setupChecks(["observability", ...(options.mode === "reconcile" ? stage.recoverySetupRequirements ?? [] : stage.setupRequirements ?? [])], { telemetry: trace.telemetry, taskId: input.taskId, taskConfiguration: input.taskConfiguration, model: input.model, configPath: options.configPath, prompts, submissionPolicy: input.submissionPolicy, refitTrainingRoot: options.stage === "refit" ? (effective as { trainingRoot?: string })?.trainingRoot : undefined }),
+		await setupSession.check(
+			setupChecks(["observability", ...(options.mode === "reconcile" ? stage.recoverySetupRequirements ?? [] : stage.setupRequirements ?? [])], { telemetry: trace.telemetry, taskId: input.taskId, taskConfiguration: input.taskConfiguration, model: input.model, configPath: options.configPath, prompts, submissionPolicy: input.submissionPolicy,
+				// The lead produces the champion its own terminal refit uses.
+				candidateProducedUpstream: options.stage === "lead", refitTrainingRoot: options.stage === "refit" ? (effective as { trainingRoot?: string })?.trainingRoot : undefined }),
 			options.signal ?? new AbortController().signal, report.event,
 		);
 		stage.checkInput(input);
@@ -195,7 +198,7 @@ async function executeStage(options: InvokeStageOptions, invocationId: string,
 		const runner = options.mode === "reconcile" ? stage.reconcile : stage.run;
 		if (!runner) throw new Error(`Stage ${options.stage} has no registered reconciliation path`);
 		const result = await runner({ input, options: effective, report, feedback, signal: controller.signal,
-			prompts: options.prompts! });
+			prompts: options.prompts!, setup: { session: setupSession, telemetry: trace.telemetry } });
         if (controller.signal.aborted) return finish("cancelled", { artifacts: result.artifacts, validation: result.validation, attempts: result.attempts, summary: result.summary });
 		const attempts = result.attempts ?? 0;
 		if (result.summary) report.event("stage_summary", result.summary);
@@ -322,7 +325,7 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
 		}
 		await setupSession.check(setupChecks(["observability", ...planned.flatMap(name => [...(getStage(name).setupRequirements ?? [])])], { telemetry: trace.telemetry,
 			taskId: options.taskId, taskConfiguration: taskConfiguration.configuration, model: options.model, configPath: options.configPath, prompts,
-            candidateProducedUpstream: planned.includes("solve"), refitTrainingRoot: (options.optionOverrides?.refit as { trainingRoot?: string })?.trainingRoot ?? (resolved.effectiveOptions.refit as { trainingRoot?: string })?.trainingRoot,
+            candidateProducedUpstream: planned.includes("lead"), refitTrainingRoot: (options.optionOverrides?.refit as { trainingRoot?: string })?.trainingRoot ?? (resolved.effectiveOptions.refit as { trainingRoot?: string })?.trainingRoot,
 		}), options.signal ?? new AbortController().signal, trace.event);
 		if (trace.degraded()) console.warn("[setup] Langfuse delivery degraded; emergency recording is active.");
 		let next: StageName | undefined = options.checkSetupOnly ? undefined : planned[0];

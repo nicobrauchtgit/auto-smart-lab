@@ -1,10 +1,10 @@
 {
   "pipeline": {
     "version": 1,
-    "entryStage": "solve",
+    "entryStage": "lead",
     "scheduling": "configured",
     "stages": {
-      "solve": {
+      "lead": {
         "enabled": true,
         "options": {}
       },

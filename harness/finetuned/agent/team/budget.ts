@@ -29,15 +29,24 @@ export class ScoutBudget {
  /** Calls beyond the budget, blocked or removed. */
  blocked = 0;
  turns = 0;
- stopped?: "budget" | "turns";
+ stopped?: "budget" | "turns" | "ended";
  /** Epoch milliseconds of the last session event; read by the stall guard. */
  lastActivity = Date.now();
  readonly maxTurns: number;
  /** Admit/block decision per call of the latest assistant message, queued by ID in call order. */
  private decisions = new Map<string, boolean[]>();
  private overBudgetTurns = 0;
- constructor(readonly limit: number, private prompts: PromptSnapshot, options: { maxTurns?: number } = {}) {
+ private ended = false;
+ /** What a blocked call and the spent counter tell the agent: write its final answer now. */
+ private readonly finish: "team.finish" | "team.lead-finish";
+ /**
+  * `used` continues a resumed run from the calls it already used; `finishPrompt`
+  * is the finish-up instruction (the lead's differs from the scouts').
+  */
+ constructor(readonly limit: number, private prompts: PromptSnapshot, options: { maxTurns?: number; finishPrompt?: "team.finish" | "team.lead-finish"; used?: number } = {}) {
   if (!Number.isSafeInteger(limit) || limit < 1) throw new Error("Invalid scout budget");
+  this.finish = options.finishPrompt ?? "team.finish";
+  this.used = Math.min(limit, Math.max(0, Math.floor(options.used ?? 0)));
   this.maxTurns = options.maxTurns ?? limit + 2;
   if (!Number.isSafeInteger(this.maxTurns) || this.maxTurns < 1) throw new Error("Invalid scout turn limit");
  }
@@ -50,9 +59,9 @@ export class ScoutBudget {
   if (!calls.length) return;
   this.attempted += calls.length;
   const overBudget = this.used >= this.limit;
-  if (this.turns >= this.maxTurns || (overBudget && this.overBudgetTurns >= 1)) {
+  if (this.ended || this.turns >= this.maxTurns || (overBudget && this.overBudgetTurns >= 1)) {
    this.blocked += calls.length;
-   this.stopped = overBudget ? "budget" : "turns";
+   this.stopped = this.ended ? "ended" : overBudget ? "budget" : "turns";
    return { ...message, content: (message.content as Content[]).filter(part => part.type !== "toolCall"), stopReason: "stop" };
   }
   if (overBudget) this.overBudgetTurns++;
@@ -69,11 +78,14 @@ export class ScoutBudget {
   */
  admit(toolCallId: string): { block: true; reason: string } | undefined {
   if (this.decisions.get(toolCallId)?.shift()) return;
-  return { block: true, reason: this.prompts.render("team.finish", {}).text };
+  return { block: true, reason: this.prompts.render(this.finish, {}).text };
  }
+ /** No further tool calls (the work was handed over): later ones are removed and the agent loop ends with its text. */
+ end(): void { this.ended = true; }
+ get exhausted(): boolean { return this.used >= this.limit; }
  counter(): string {
   return this.prompts.render("team.counter", { used: String(this.used), budget: String(this.limit) }).text.trim()
-   + (this.used >= this.limit ? ` ${this.prompts.render("team.finish", {}).text.trim()}` : "");
+   + (this.used >= this.limit && !this.ended ? ` ${this.prompts.render(this.finish, {}).text.trim()}` : "");
  }
  extension(): InlineExtension {
   return { name: "scout-budget", factory: pi => {

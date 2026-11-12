@@ -21,10 +21,8 @@
     "profileTextMinPercent": 90
   },
   "solve": {
-    "maxIterations": 6,
     "seed": 13,
-    "foldPolicy": "auto",
-    "idleWakeMs": 600000
+    "foldPolicy": "auto"
   },
   "holdout": {
     "targetSmallestClassRows": 200,

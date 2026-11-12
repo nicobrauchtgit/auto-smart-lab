@@ -84,6 +84,8 @@ export interface ExperimentView {
 	secondsSinceOutput?: number;
 	cpuPercent?: number;
 	rssMb?: number;
+	/** Largest resident memory sampled over the run's lifetime. */
+	peakRssMb?: number;
 	processes?: number;
 	/** Set once the run has been quiet past its derived threshold at idle CPU. */
 	stalled?: boolean;

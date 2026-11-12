@@ -1,6 +1,6 @@
 /** A solve-session scope for harness-owned training. */
 
-import { createExperiments, type Wakeable } from "../experiments/index.js";
+import { createExperiments, type ExperimentView, type Wakeable } from "../experiments/index.js";
 import type { SupervisorOptions } from "../experiments/supervisor.js";
 import type { PromptSnapshot } from "../prompts/loader.js";
 import { sanitizeTrainingEnvironment } from "./environment.js";
@@ -21,6 +21,14 @@ export interface HarnessTrainingOptions extends Omit<SupervisorOptions, "deliver
 	prompts: PromptSnapshot;
 	session?: Wakeable;
 	signal?: AbortSignal;
+	/**
+	 * Called once a finished worker is finalized (champion tagging done), so
+	 * the owner can tell its agent the result. Not called when the worker was
+	 * recovered and runs again.
+	 */
+	onTrialFinished?: (id: string, view: ExperimentView) => void | Promise<void>;
+	/** False when `onTrialFinished` sends the owner's own message; see createExperiments. */
+	deliverExits?: boolean;
 }
 
 export function createHarnessTraining(options: HarnessTrainingOptions) {
@@ -33,7 +41,14 @@ export function createHarnessTraining(options: HarnessTrainingOptions) {
 	const processScope = createExperiments({
 		root: options.root,
 		env,
-		onFinished: (id, view) => { service?.recordDuration(id, view); return service?.workerFinished(id); },
+		onFinished: async (id, view) => {
+			service?.recordDuration(id, view);
+			await service?.workerFinished(id);
+			// A recovered worker runs again; it reports when that run ends.
+			if (processScope.supervisor.status(id).status === "running") return;
+			await options.onTrialFinished?.(id, view);
+		},
+		deliverExits: options.deliverExits,
 		record: options.record,
 		limits: options.limits,
 		environmentFingerprint: options.environmentFingerprint,

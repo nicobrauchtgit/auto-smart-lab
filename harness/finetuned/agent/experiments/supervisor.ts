@@ -846,6 +846,7 @@ export class ExperimentSupervisor {
 			secondsSinceOutput: entry.lastLineAt ? (now - entry.lastLineAt) / 1000 : undefined,
 			cpuPercent: entry.sample?.cpuPercent,
 			rssMb: entry.sample ? entry.sample.rssBytes / 1024 ** 2 : undefined,
+			...(entry.protectedWork?.peakBytes ? { peakRssMb: entry.protectedWork.peakBytes / 1024 ** 2 } : {}),
 			processes: entry.sample?.processes,
 			stalled: entry.status === "running"
 				&& entry.gate.silenceMs(now) >= entry.gate.stallThresholdMs()

@@ -7,7 +7,7 @@ const fields = {
 	pipeline: ["maxStageInvocations"],
 	session: ["maxWallMs", "stallMs", "stallRetries"], context: ["handoffTokens", "maxHandoffBytes"],
 	research: ["profileTimeoutMs", "profileTextMinPercent"],
-	solve: ["maxIterations", "seed", "foldPolicy", "idleWakeMs"],
+	solve: ["seed", "foldPolicy"],
 	holdout: ["targetSmallestClassRows", "minSmallestClassRows", "maxFraction", "groupFraction"],
 	search: ["confirmAboveSeconds", "overrunFactor", "maxSeconds", "validationTimeoutSeconds"],
 	supervision: ["linesPerUpdate", "minStallMs", "stallGapMultiple", "importPreludeMs", "idleCpuPercent", "sampleIntervalMs", "maxConcurrent", "stopGraceMs", "outputCapBytes", "memoryReserveBytes", "swapFullSeconds", "overrunMultiple", "overrunMinMs", "busySilenceCeilingMs"],
@@ -71,7 +71,7 @@ export function parseHarnessConfig(raw: unknown): HarnessConfig {
 	const limits = object(value.subagents.limits, ["maxConcurrent", "maxChildren", "maxQueuedMessages", "maxMessageBytes", "maxResultBytes"], "subagents.limits");
 	for (const [key, count] of Object.entries(limits)) positive(count, key);
 	if (value.subagents.waitTimeoutMs > value.subagents.maxWaitTimeoutMs) throw new Error("Wait timeout exceeds maximum");
-	for (const timeout of [value.supervision.sampleIntervalMs, value.supervision.stopGraceMs, value.setup.timeoutMs, value.session.maxWallMs, value.session.stallMs, value.solve.idleWakeMs, value.subagents.turnTimeoutMs, value.subagents.maxWaitTimeoutMs]) {
+	for (const timeout of [value.supervision.sampleIntervalMs, value.supervision.stopGraceMs, value.setup.timeoutMs, value.session.maxWallMs, value.session.stallMs, value.subagents.turnTimeoutMs, value.subagents.maxWaitTimeoutMs]) {
 		if (timeout > 2_147_483_647) throw new Error("Timeout exceeds timer range");
 	}
 	if (!Array.isArray(value.foldRecommendations) || !value.foldRecommendations.length) throw new Error("Missing fold recommendations");

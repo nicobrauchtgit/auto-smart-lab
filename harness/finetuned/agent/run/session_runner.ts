@@ -36,8 +36,16 @@ import type { SuppliedInput } from "../pipeline/types.js";
 export const SESSION_MAX_WALL_MS = HARNESS_CONFIG.session.maxWallMs;
 
 export interface RunSessionOptions {
-	/** Fresh controller state queued at every physical session construction. */
+	/** Fresh controller state queued at every physical session construction; empty text queues nothing. */
 	sessionContext?: () => string;
+	/**
+	 * Where shell findings and services bound in `onSessionReady` deliver: the
+	 * logical session itself by default. A caller that waits for news between
+	 * turns wraps it to see what arrives while the agent is idle.
+	 */
+	wakeTarget?: (session: Wakeable) => Wakeable;
+	/** Test seam: the model to run instead of the configured one. */
+	resolveModel?: () => Promise<Awaited<ReturnType<typeof initializeModel>>>;
 	prompts: PromptSnapshot;
  feedback?: InvocationFeedback;
 	reportInput?: (input: SuppliedInput) => void;
@@ -166,7 +174,7 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 
 		await resourceLoader.reload();
 
-		const { modelId, modelRuntime, model } = await initializeModel({
+		const { modelId, modelRuntime, model } = options.resolveModel ? await options.resolveModel() : await initializeModel({
 			config: pipeline.config,
 			model: requestedModel,
 		});
@@ -177,6 +185,7 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 			stallObservability?.("model_stall", { silent_ms: silentMs, stall_ms: stallMs });
 			void physical?.abort();
 		});
+		let target: Wakeable | undefined;
 		const logical: SmartContextSession = new SmartContextSession({
 			prompts: options.prompts,
 			create: async (opening) => {
@@ -215,9 +224,11 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 					observability?.record("harness_configuration", { version: 1, settings: HARNESS_CONFIG,
 						model: { id: modelId, contextWindow: model.contextWindow, maxTokens: model.maxTokens } });
 					// Shell findings go to this session, under its observability identity.
-					bindAgentShells(customTools, { session: logical, record: observability?.record, prompts: options.prompts });
-					await options.onSessionReady?.(logical, { agentRunId: observability?.agentRunId, piSessionId: session.sessionId });
-					if (options.sessionContext) await logical.steer(options.sessionContext());
+					target ??= options.wakeTarget ? options.wakeTarget(logical) : logical;
+					bindAgentShells(customTools, { session: target, record: observability?.record, prompts: options.prompts });
+					await options.onSessionReady?.(target, { agentRunId: observability?.agentRunId, piSessionId: session.sessionId });
+					const context = options.sessionContext?.();
+					if (context?.trim()) await logical.steer(context);
 				} catch (error) {
 					try { await observability?.close(); } finally { session.dispose(); }
 					throw error;

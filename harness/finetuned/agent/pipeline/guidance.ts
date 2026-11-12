@@ -30,7 +30,7 @@ function text(value: unknown, limit = 256) {
 export function validateGuidance<T extends StageGuidance | StageFeedback>(raw: T, stage: StageName, taskId: string, catalog: StageArtifact[], feedback = false): T {
  if (Buffer.byteLength(JSON.stringify(raw) ?? "") > 24576) throw new Error("Oversized guidance/feedback note");
  object(raw, ["id", "version", "stage", "taskId", "content", "objective", "author", "evidence", "contentSha256"].filter(k => !feedback || !["version", "objective"].includes(k)));
- if (!["solve"].includes(stage)) throw new Error("Guidance/feedback unsupported for deterministic stage");
+ if (!["lead"].includes(stage)) throw new Error("Guidance/feedback unsupported for deterministic stage");
  if (raw.stage !== stage || raw.taskId !== taskId) throw new Error("Wrong guidance stage/task binding");
  text(raw.id); text(raw.taskId); text(raw.content, 8192);
  if (!feedback && (!Number.isSafeInteger((raw as StageGuidance).version) || (raw as StageGuidance).version < 1)) throw new Error("Invalid guidance version");

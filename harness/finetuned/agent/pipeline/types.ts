@@ -13,7 +13,7 @@ import type { AgentObservation, TelemetryIdentity } from "../observability.js";
 import type { PromptSnapshot } from "../prompts/loader.js";
 import type { TaskConfiguration } from "./task_configuration.js";
 
-export type StageName = "solve" | "refit" | "submit";
+export type StageName = "lead" | "refit" | "submit";
 
 export type StageOutcome = "success" | "failure" | "cancelled";
 
@@ -80,6 +80,8 @@ export interface StageReporter {
 }
 
 export interface StageContext<Options> {
+	/** Setup checks this run already passed and its telemetry, for checks a stage runs itself (the lead's scouts). */
+	setup?: { session: import("./setup.js").SetupSession; telemetry: import("../telemetry/runtime.js").Telemetry };
 	prompts: PromptSnapshot;
 	feedback?: InvocationFeedback;
 	input: StageInput;
