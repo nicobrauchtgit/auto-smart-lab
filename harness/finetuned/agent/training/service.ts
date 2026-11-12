@@ -23,9 +23,10 @@ import { atomicJson, claimWorkspace, liveGroup, ownedProcessAlive, type ProcessI
 import type { ExperimentRecord, ExperimentView } from "../experiments/types.js";
 import type { ExperimentSupervisor } from "../experiments/supervisor.js";
 import { ExperimentRequestError, preview, validateExperimentRequest } from "./contract.js";
-import type { PromptSnapshot } from "../prompts/loader.js";
+import { loadPromptSnapshot, type PromptSnapshot } from "../prompts/loader.js";
 import {
 	addWorktree,
+	committedSymlinks,
 	git,
 	isRepositoryRoot,
 	removeWorktree,
@@ -542,6 +543,16 @@ export class TrainingService {
 		return [...(this.options.allowedModuleRoots ?? ["solutions"])];
 	}
 
+	/** New API paths match INDEX.md; persisted worker paths retain their historical base. */
+	private resolveRequestModules(request: ExperimentRequest): ExperimentRequest {
+		if (!this.options.solutionsRoot) return request;
+		const prefix = relative(this.options.projectRoot, this.options.solutionsRoot).split(sep).join("/");
+		if (!prefix) return request;
+		const module = (path: string) => path.startsWith(`${prefix}/`) ? path : `${prefix}/${path}`;
+		return { ...request, pipeline: { ...request.pipeline, module: module(request.pipeline.module) },
+			cv: request.cv.kind === "factory" ? { ...request.cv, module: module(request.cv.module) } : request.cv };
+	}
+
 	/** Every module must live under an allowed root and exist in the code the trial will run. */
 	private moduleIssues(request: ExperimentRequest, source: SourceIdentity | undefined): ValidationIssue[] {
 		const issues: ValidationIssue[] = [];
@@ -565,7 +576,9 @@ export class TrainingService {
 				if (git(this.options.solutionsRoot, ["cat-file", "-e", `${source.commit}:${inside}`]).status !== 0) {
 					issues.push({ path, problem: `does not exist in commit ${source.commit.slice(0, 12)}`, received: module,
 						expected: "a file committed at the requested commit",
-						hint: `Commit it (git -C ${roots[0]} add ${inside} && git -C ${roots[0]} commit -m "<idea>"), or check the path and commit.` });
+						hint: (this.options.prompts ?? loadPromptSnapshot()).render("training.module-path-hint", {
+							root: this.options.solutionsRoot, path: inside, example: `tasks/${this.options.taskId}.py`,
+						}).text });
 				}
 			} else if (!existsSync(absolute)) {
 				issues.push({ path, problem: "does not exist", received: relative(this.options.projectRoot, absolute),
@@ -597,6 +610,11 @@ export class TrainingService {
 			issues.push({ path: "commit", problem: "no such commit", received: requested,
 				expected: `a revision that exists in ${name}/`,
 				hint: `Use HEAD, a branch from git -C ${name} branch, or a hash from git -C ${name} log --oneline.` });
+		}
+		if (source) for (const path of committedSymlinks(root, source.commit)) {
+			issues.push({ path: "source", problem: "unsafe source path: committed symlink cannot be frozen for terminal delivery",
+				received: path, expected: "a committed source tree containing no symlinks",
+				hint: (this.options.prompts ?? loadPromptSnapshot()).render("training.source-symlink", { path, commit: source.commit }).text });
 		}
 		return { source, issues };
 	}
@@ -661,7 +679,9 @@ export class TrainingService {
     async smoke(raw: unknown): Promise<{ passed: boolean; budgetConsumed: false; issues: unknown[]; notice?: string; workspace?: Record<string, unknown> }> {
         const parsed = validateExperimentRequest(raw);
         if (!parsed.request) return { passed: false, budgetConsumed: false, issues: parsed.issues };
-        const checked = this.sourceIssues(parsed.request);
+        const request = this.resolveRequestModules(parsed.request);
+        const checked = this.sourceIssues(request);
+        checked.issues.push(...this.moduleIssues(request, checked.source));
         if (checked.issues.length || !checked.source || !this.options.solutionsRoot) return { passed: false, budgetConsumed: false, issues: checked.issues };
         const solutionsRoot = this.options.solutionsRoot;
         const prompts = this.options.prompts ?? (await import("../prompts/loader.js")).loadPromptSnapshot();
@@ -693,7 +713,6 @@ export class TrainingService {
             const data = readTaskData(this.options.taskId, repoRootOf(solutionsRoot));
             const scriptPath = join(PYTHON_ROOT, "smoke.py");
             let notice: string | undefined;
-            const request = parsed.request;
             const issues = await runPipelineValidation({ pythonExecutable: this.options.pythonExecutable, scriptPath,
                 command: this.options.sandboxCommand?.([this.options.pythonExecutable, scriptPath], { directory, sourceRoots: [sourceRoot] }),
                 sourceRoot, request, measurement: this.checkMeasurement(), testZip: data?.testZip, sampleSource: data?.configuration.samples.source, env: this.options.env,
@@ -737,7 +756,7 @@ export class TrainingService {
 			this.options.record?.("training_request_rejected", { layer: "structure", issues: structural.issues, tool_call_id: requestedByToolCallId });
 			throw new ExperimentRequestError(structural.issues);
 		}
-		const request = structural.request;
+		const request = this.resolveRequestModules(structural.request);
 		let measurement = this.checkMeasurement();
         if (measurement?.kind === "anomaly_detection" && measurement.selection && !measurement.evidence)
             throw new Error("Explicit evidence selection requires an evidence path and source before trial acceptance");

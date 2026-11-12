@@ -7,7 +7,7 @@ import { dirname, join, resolve } from "node:path";
 import { atomicJson, claimWorkspace, liveGroup, ownedProcessAlive } from "../experiments/ownership.js";
 import { readRecord } from "../experiments/safe_files.js";
 import { ExperimentSupervisor } from "../experiments/supervisor.js";
-import { addWorktree, git, resolveCommit, tagMessage, uncommittedFiles } from "../training/git.js";
+import { addWorktree, committedSymlinks, git, resolveCommit, tagMessage, uncommittedFiles } from "../training/git.js";
 import { collectTrainingResults, trialSupervisionDirectory } from "../training/results.js";
 import { championTag } from "../training/development_selection.js";
 import { deriveTrialSeed, parseSeedPlan } from "../training/seeds.js";
@@ -140,7 +140,7 @@ export async function inspectRefitCandidate(options: RefitOptions): Promise<Refi
  const source = trial.invocation.source as { commit: string; tree: string; repository: string } | undefined;
  const resolved = resolveCommit(options.solutionsRoot, tag.commit);
  if (!source || !resolved || source.commit !== tag.commit || source.tree !== resolved.tree || resolve(source.repository) !== resolve(options.solutionsRoot)) throw new Error("Champion source integrity failed");
- if (git(options.solutionsRoot, ["ls-tree", "-r", tag.commit]).stdout.split("\n").some(line => line.startsWith("120000"))) throw new Error("Frozen source cannot contain symlinks");
+ if (committedSymlinks(options.solutionsRoot, tag.commit).length) throw new Error("Frozen source cannot contain symlinks");
  const recoveryPath = join(trialSupervisionDirectory(trial.directory), "recovery.json");
  const recovery = json(recoveryPath);
  const dependencies = runtimeDependencyHash(options);

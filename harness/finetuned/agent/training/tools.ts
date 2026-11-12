@@ -32,6 +32,7 @@ export function createHarnessTrainingTools(
 	prompts: PromptSnapshot,
 ) {
 	const id = Type.String({ minLength: 1, maxLength: 64 });
+	const contract = prompts.render("training.request-contract", {}).text;
 	const result = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value) }], details: {} });
 	return [
         defineTool({ name: "workspace_check", label: "Check shared workspace",
@@ -40,7 +41,7 @@ export function createHarnessTrainingTools(
             async execute() { return result(await service.workspaceCheck()); },
         }),
         defineTool({ name: "trial_smoke", label: "Smoke check pipeline",
-            description: prompts.render("training.smoke-tool", {}).text,
+            description: `${prompts.render("training.smoke-tool", {}).text}\n\n${contract}`,
             parameters: Type.Object({ request: json }),
             async execute(_id, args, signal) { signal?.throwIfAborted(); return result(await service.smoke(args.request)); },
         }),
@@ -55,7 +56,7 @@ export function createHarnessTrainingTools(
         }),
 		defineTool({
 			name: "experiment_start", label: "Start training experiment",
-			description: prompts.render(service.taskKind ? `training.start-${service.taskKind}` : "training.start-tool", {}).text,
+			description: `${prompts.render(service.taskKind ? `training.start-${service.taskKind}` : "training.start-tool", {}).text}\n\n${contract}`,
 			// Deliberately loose: the harness validates every field itself so all
 			// problems come back together in one documented shape.
 			parameters: Type.Object({

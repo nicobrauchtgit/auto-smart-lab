@@ -69,7 +69,7 @@ one or two sentences; longer text is truncated rather than rejected.
 
 A built-in CV request supports stratified_kfold, kfold, or group_kfold (whole
 families/groups held out, when supplied by the task). A factory CV request points to
-your project-relative Python module and factory, allowing grouped, temporal, or
+your solutions-repository-relative Python module and factory, allowing grouped, temporal, or
 other custom splitting logic without changing the harness.
 
 Use schemaVersion 2 for versioned experiments and search. `solutions/` is an

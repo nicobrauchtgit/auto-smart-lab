@@ -96,7 +96,10 @@ predictions or measurements.
 
 ## Pipeline contract
 
-`experiment_start` names a module under `solutions/` and a factory. The
+`experiment_start` and `trial_smoke` name a module relative to the shared
+`solutions/` repository and a factory: for `solutions/tasks/{{taskId}}.py`,
+send `pipeline.module: "tasks/{{taskId}}.py"`, the same spelling as INDEX.md.
+Factory `cv.module` uses that same base, regardless of shell cwd. The
 factory returns a fresh, unfitted object with the methods the task contract in
 the opening message requires. It may take no arguments or one context
 dictionary with `parameters` and the harness-supplied `seed`. The harness

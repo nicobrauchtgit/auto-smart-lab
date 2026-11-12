@@ -49,3 +49,43 @@ Validation checks retain authoritative logs outside writable mounts and expose
 scratch copies plus bounded pipe-captured output. See
 [supervision log integrity](../experiments/README.md#log-integrity-2026-11-12)
 for descriptor handling, marker regressions and limitations.
+
+## Module paths and source eligibility
+
+With a shared solutions repository configured, `pipeline.module` and a factory
+`cv.module` are relative to that repository, just like `INDEX.md` entries.
+For `runs/finetuned/solutions/tasks/spam1.py`, send `tasks/spam1.py` to both
+`trial_smoke` and `experiment_start`, independently of shell cwd. The previous
+project-relative `solutions/tasks/spam1.py` spelling remains accepted. New
+requests resolve once into the existing worker/replay representation; stored
+trial requests, measurements and champion identities are not migrated.
+
+Smoke and trial admission both validate module existence in the requested Git
+commit before running Python, and path errors identify the shared repository
+root, resolved repository-relative path and expected request spelling. Custom
+CV modules use the same convention. Unversioned programmatic services retain
+their project-relative module roots.
+
+Both entry points inspect that committed tree for all symlinks, including
+directory links and files without Python extensions, using the same Git-tree
+check as terminal refit. Ineligible source is rejected before fitting or trial
+budget charge. Removing a link only from live HEAD cannot make an older
+measured source eligible: commit, smoke-check and measure the corrected
+revision. Terminal refit keeps its own defensive eligibility check.
+
+This corrects the interface failure observed in the
+[second spam1 diagnostic](../../../../docs/experiments/spam1-live-tool-choice-repeat-2026-11-12.md).
+It changes source admission and request guidance, not model design, promotion
+statistics, dataset boundaries or the agent's available training libraries.
+
+Local verification, 2026-11-12: serial `./dev bun run test:fast` passed 575 tests
+with 2 existing libproc skips and no failures (130.28 s). Real smoke/versioned
+worker checks passed 6 tests, including solutions-relative custom CV; terminal
+refit checks passed 7. Typecheck and whitespace checks passed. Logs are in
+`runs/launches/2026-11-12-interface-fix-checks/`.
+
+An earlier fast invocation used a temporary root under `/home` and overlapped
+the refit checks: its sandbox `/home`-absence assertion failed and one Git test
+exceeded five seconds. The serial rerun used disk-backed `/tmp` and passed
+without changing those tests. No new model task run or merge was performed;
+the full suite remains required before merging.

@@ -61,6 +61,12 @@ function gitOrThrow(repository: string, args: readonly string[]): string {
 	return result.stdout;
 }
 
+/** Inspect the immutable tree, including directory links and links without .py suffixes. */
+export function committedSymlinks(repository: string, commit: string): string[] {
+	return gitOrThrow(repository, ["ls-tree", "-r", "-z", commit]).split("\0")
+		.filter(entry => entry.startsWith("120000 ")).map(entry => entry.slice(entry.indexOf("\t") + 1));
+}
+
 /** True only when `path` is itself a repository root, never a subdirectory of the project repository. */
 export function isRepositoryRoot(path: string): boolean {
 	if (!existsSync(path)) return false;

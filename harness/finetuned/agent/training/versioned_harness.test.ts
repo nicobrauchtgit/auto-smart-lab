@@ -24,6 +24,25 @@ function events(directory: string): Record<string, any>[] {
 	return readFileSync(join(directory, "events.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
 }
 
+test("solutions-relative pipeline and CV modules replay from the immutable worker source", async () => {
+	const project = temporaryProject("relative-modules-");
+	writeFileSync(join(project.solutionsRoot, "split.py"), "from sklearn.model_selection import KFold\ndef make_cv(context):\n return KFold(n_splits=2, shuffle=True, random_state=context['seed'])\n");
+	commitAll(project.solutionsRoot, "Custom splitter");
+	const training = harness(project, []);
+	try {
+		const started = await training.service.start({ schemaVersion: 2, hypothesis: "resolve both module bases consistently",
+			pipeline: { module: "tasks/fixture.py", factory: "build_pipeline" },
+			cv: { kind: "factory", module: "split.py", factory: "make_cv", repeats: 1 }, scope: { kind: "pilot", maxRows: 60 } });
+		expect(started.request.pipeline.module).toBe("solutions/tasks/fixture.py");
+		expect(started.request.cv).toMatchObject({ module: "solutions/split.py" });
+		expect(await until(() => training.supervisor.status(started.id).status !== "running", 60_000)).toBe(true);
+		await training.service.finalize(started.id);
+		const result = JSON.parse(readFileSync(join(started.directory, "trial-result.json"), "utf8"));
+		expect(result.status).toBe("completed");
+		expect(result.completedFolds).toBe(2);
+	} finally { await training.close(); }
+}, 90_000);
+
 test("a branch switch during a run does not change the code it executes, including joblib workers", async () => {
 	const project = temporaryProject("versioned-switch-");
 	git(project.solutionsRoot, ["switch", "--quiet", "-c", "broken"]);

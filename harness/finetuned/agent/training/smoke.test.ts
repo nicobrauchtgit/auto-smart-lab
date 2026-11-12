@@ -16,7 +16,7 @@ test("broken fit fails smoke with traceback and no charged or launched trial", a
  commitAll(project.solutionsRoot, "Broken fit fixture");
  const training = createHarnessTraining({ root: join(project.root, "training"), env: trainingEnvironment(), record() {}, pythonExecutable: PYTHON, projectRoot: project.root, solutionsRoot: project.solutionsRoot, taskId: "fixture", datasetSha256: project.datasetSha256, measurement: project.measurement, rootSeed: 13, zipPath: project.zipPath, labelsPath: project.labelsPath, prompts: loadPromptSnapshot(), workerPath: WORKER, maxExperiments: 1 });
  try {
-  const raw = { schemaVersion: 2, hypothesis: "test smoke", pipeline: { module: "solutions/tasks/fixture.py", factory: "build_pipeline" }, cv: { kind: "builtin", scheme: "stratified_kfold", folds: 3, repeats: 1 }, scope: { kind: "promotion" } };
+  const raw = { schemaVersion: 2, hypothesis: "test smoke", pipeline: { module: "tasks/fixture.py", factory: "build_pipeline" }, cv: { kind: "builtin", scheme: "stratified_kfold", folds: 3, repeats: 1 }, scope: { kind: "promotion" } };
   const first = await training.service.smoke(raw);
   expect(first.passed).toBe(false);
   expect(first.budgetConsumed).toBe(false);
@@ -59,7 +59,8 @@ test("concurrent smoke runs and experiment_start on the same tree keep each othe
  try {
   const raw = { schemaVersion: 2, hypothesis: "race smoke and start", pipeline: { module: "solutions/tasks/fixture.py", factory: "build_pipeline" }, cv: { kind: "builtin", scheme: "stratified_kfold", folds: 3, repeats: 1 }, scope: { kind: "promotion" } };
   // All three race for the shared repository's worktree list in one tick.
-  const [first, started, second] = await Promise.all([training.service.smoke(raw), training.service.start(raw), training.service.smoke(raw)]);
+  const canonical = { ...raw, pipeline: { ...raw.pipeline, module: "tasks/fixture.py" } };
+  const [first, started, second] = await Promise.all([training.service.smoke(raw), training.service.start(raw), training.service.smoke(canonical)]);
   expect(first.passed).toBe(true); expect(second.passed).toBe(true);
   expect(first.issues).toEqual([]); expect(second.issues).toEqual([]);
   const trial = JSON.parse(readFileSync(join(trialSupervisionDirectory(started.directory), "recovery.json"), "utf8")).trial;

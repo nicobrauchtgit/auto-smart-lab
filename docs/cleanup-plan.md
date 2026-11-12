@@ -29,6 +29,19 @@ The same change fixes validation snapshot mounts when task state is symlinked;
 it does not broaden scout access. API and label-safety correction are in the
 [lead execution contract](../harness/finetuned/agent/run/README.md).
 
+**Training interface correction (2026-11-12).** The second
+[live tool-choice diagnostic](experiments/spam1-live-tool-choice-repeat-2026-11-12.md)
+exposed ambiguous module roots and a symlink accepted for measurement but
+rejected at terminal freeze. New smoke/trial requests now accept solutions-
+repository-relative pipeline and CV module paths, matching INDEX.md, while
+preserving legacy project-relative requests and recorded worker paths. Smoke
+shares module validation with trial admission. Both reject symlinks in the
+requested commit before fitting, using the same Git-tree check as refit.
+Tool descriptions share explicit path, CV-field and source-eligibility guidance.
+See [training API](../harness/finetuned/agent/training/README.md#module-paths-and-source-eligibility).
+This correction has local regression coverage, not a new live task-run result;
+the multi-task integration gate remains open.
+
 Both arms receive the user-supplied spam slides as checksummed, read-only course
 resources with page-labelled text copies ([course resources](../resources/README.md)).
 No modelling hints were added to the minimal solver's instructions.

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readdirSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, symlinkSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -38,6 +38,59 @@ const request = (extra: Record<string, unknown> = {}) => ({
 	cv: { kind: "builtin", scheme: "stratified_kfold", folds: 2, repeats: 1 },
 	scope: { kind: "pilot" },
 	...extra,
+});
+
+test("smoke and trial reject the same missing module with its solutions root and retry spelling", async () => {
+	const project = temporaryProject("module-feedback-");
+	const supervisor = fakeSupervisor();
+	const training = service(project, supervisor);
+	const raw = request({ pipeline: { module: "tasks/missing.py", factory: "build_pipeline" } });
+	const smoke = await training.smoke(raw);
+	let rejection: any;
+	await training.start(raw).catch(error => { rejection = error; });
+	expect(smoke.passed).toBe(false);
+	expect(smoke.issues).toEqual(rejection.issues);
+	const issue = rejection.issues[0];
+	expect(issue.path).toBe("pipeline.module");
+	expect(issue.hint).toContain(project.solutionsRoot);
+	expect(issue.hint).toContain("tasks/missing.py");
+	expect(issue.hint).toContain("tasks/fixture.py");
+	expect(supervisor.started).toHaveLength(0);
+});
+
+test("a measured revision with directory or non-Python symlinks is rejected before smoke, validation or budget charge", async () => {
+	const project = temporaryProject("source-eligibility-");
+	symlinkSync(".", join(project.solutionsRoot, "solutions"));
+	symlinkSync("features.py", join(project.solutionsRoot, "notes-link"));
+	commitAll(project.solutionsRoot, "Ineligible immutable source");
+	const bad = resolveCommit(project.solutionsRoot, "HEAD")!.commit;
+	// Reproduce the observed live repair: HEAD is clean, but an older requested
+	// revision still contains links. Admission must inspect the requested tree.
+	unlinkSync(join(project.solutionsRoot, "solutions"));
+	unlinkSync(join(project.solutionsRoot, "notes-link"));
+	commitAll(project.solutionsRoot, "Remove links from live source");
+	const supervisor = fakeSupervisor();
+	let validations = 0;
+	const training = new TrainingService({ supervisor, pythonExecutable: "python", projectRoot: project.root,
+		trainingRoot: join(project.root, "training"), taskId: "fixture", datasetSha256: project.datasetSha256,
+		measurement: project.measurement, rootSeed: 13, solutionsRoot: project.solutionsRoot, maxExperiments: 1,
+		validatePipeline: async () => { validations++; return []; } });
+	const raw = request({ commit: bad });
+	const smoke = await training.smoke(raw);
+	let rejection: any;
+	await training.start(raw).catch(error => { rejection = error; });
+	expect(smoke.passed).toBe(false);
+	expect(smoke.issues).toEqual(rejection.issues);
+	expect(rejection.issues.map((issue: any) => issue.received).sort()).toEqual(["notes-link", "solutions"]);
+	expect(rejection.issues[0].hint).toContain(bad);
+	expect(rejection.issues[0].hint).toContain("measure");
+	expect(supervisor.started).toHaveLength(0);
+	expect(validations).toBe(0);
+	// The one available trial is still usable on the corrected commit.
+	const started = await training.start(request({ pipeline: { module: "tasks/fixture.py", factory: "build_pipeline" } }));
+	expect(started.source!.commit).toBe(resolveCommit(project.solutionsRoot, "HEAD")!.commit);
+	expect(supervisor.started).toHaveLength(1);
+	expect(validations).toBe(1);
 });
 
 describe("solutions repository", () => {
