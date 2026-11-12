@@ -112,3 +112,55 @@ test('interrupted lead resumes the same training root and budget, compacts from 
  expect(second.resumed).toBe(true);expect(second.progress.runId).toBe('original');expect(roots[1]).toBe(roots[0]);expect(starts).toBe(1);expect(second.progress.budget.used).toBe(1);
  }finally{f.close();}
 });
+
+test('real Pi parallel batch uses hand_over as a barrier and blocks later training and mutations', async () => {
+ const { fauxProvider, InMemoryCredentialStore, Type, fauxAssistantMessage, fauxToolCall, fauxText } = await import('@earendil-works/pi-ai');
+ const { ModelRuntime, defineTool } = await import('@earendil-works/pi-coding-agent');
+ const { createPiChildFactory } = await import('../subagents/pi.js');
+ const f=fixture(); const events:string[]=[]; const counters:string[]=[]; let refits=0;
+ try {
+ const faux=fauxProvider({provider:'lead-barrier-fixture',tokensPerSecond:1000000});
+ const runtime=await ModelRuntime.create({credentials:new InMemoryCredentialStore(),modelsPath:null,refreshOnCreate:false});
+ runtime.registerNativeProvider(faux.provider);
+ const result=await runLeadSession('spam1',{taskConfiguration:spamConfiguration(),progressPath:join(f.root,'lead/PROGRESS.json'),dependencies:{
+ prepareData:()=>f.data,readPython:()=>({prefix:f.root,executable:'/bin/false',fingerprint:'f'} as any),sandbox:()=>({executable:'/bin/false',cwd:f.root,mounts:[],env:{},agentRoot:join(f.root,'agent')} as any),
+ prepareRepository:()=>({initialized:false,head:f.commit,branch:'master'}),environmentTool:()=>({name:'python_environment'} as any),
+ createTraining:()=>({ready:async()=>{},close:async()=>{},tools:[],toolPrompts:[],service:{describe:()=>({})},supervisor:{list:()=>[]},bindSession:()=>{}} as any),
+ scouts:()=>({tool:{name:'scout'} as any,report:async()=>{events.push('validation');return {text:'- ok: measured snapshot [experiment: measured]',roles:[{role:'validation',status:'completed',bullets:1}]};}}),
+ runAgentSession:async options=>{
+ const late=['start_training','write'].map(name=>defineTool({name,label:name,description:'fixture',parameters:Type.Object({}),async execute(){events.push(name);writeFileSync(join(f.root,'late-mutation'),'bad');return {content:[{type:'text',text:'ran'}],details:{}};}}));
+ const tools=[options.customTools!.find(tool=>tool.name==='hand_over')!,...late];
+ expect(tools[0].executionMode).toBe('sequential');
+ faux.setResponses([()=>fauxAssistantMessage([fauxToolCall('hand_over',{reason:'ready'}),fauxToolCall('start_training',{}),fauxToolCall('write',{})],{stopReason:'toolUse'}),()=>fauxAssistantMessage([fauxText('done')])]);
+ const child=await createPiChildFactory({cwd:f.root,agentDir:f.root,model:faux.getModel(),modelRuntime:runtime,prompts,sharedInstructions:[],childInstructions:prompts.render('team.shared',{}),customTools:tools,tools:tools.map(t=>t.name),extensionFactories:[...options.extensionFactories??[],{name:'capture-counters',factory:(pi:any)=>{pi.on('message_end',(event:any)=>{if(event.message.role==='toolResult')counters.push(JSON.stringify(event.message.content));});}}],env:{},inputs:[],observe:{identity:{},telemetry:{failures:[],record(){},async close(){}}} as any,turnTimeoutMs:null})({logicalAgentId:'lead',parentAgentRunId:'parent',spawnToolCallId:'call'},new AbortController().signal);
+ try {await child.prompt(prompts.render('team.probe-question',{}));} finally {await child.close();}
+ return {output:'done',agentRunId:'fixture'} as any;
+ },
+ refit:async()=>{events.push('refit');refits++;return {artifacts:[],validation:{valid:true,errors:[]}};},collectResults:async()=>({valid:false,trials:[],artifacts:[],errors:[]}) as any,
+ }});
+ expect(events).toEqual(['validation','refit']);expect(refits).toBe(1);expect(result.valid).toBe(true);
+ // Admission charges emitted calls even when acceptance subsequently blocks execution.
+ expect(result.progress.budget.used).toBe(3);
+ expect(counters).toHaveLength(3);for(const text of counters)expect(text).toContain('3 of 80');
+ expect((await import('node:fs')).existsSync(join(f.root,'late-mutation'))).toBe(false);
+ } finally {f.close();}
+},30000);
+
+test('resume reconciles completion gap, authoritative champion and noise once with restricted holdout feedback', async()=>{
+ const f=fixture();const path=join(f.root,'lead/PROGRESS.json');let feedback=0,confirmations=0;let finished:any;let active=new AbortController();
+ const progress:LeadProgress={schemaVersion:1,taskId:'spam1',datasetSha256:undefined,runId:'original',trainingRoot:join(f.root,'training'),status:'running',startedAt:new Date().toISOString(),sessions:[],champion:{experimentId:'obsolete'},trials:[{experimentId:'measured',hypothesis:'recovered trial',status:'running',startedAt:new Date().toISOString()}],holdout:[],budget:{limit:80,used:7},scoutCalls:0};
+ writeProgress(path,progress);
+ f.data.holdoutSeedPlan={};f.data.split.sealedIds=['sealed'];
+ const view:any={id:'measured',status:'exited',elapsedSeconds:1};
+ const dependencies:any={prepareData:()=>f.data,readPython:()=>({prefix:f.root,executable:'/bin/false',fingerprint:'f'}),sandbox:()=>({executable:'/bin/false',cwd:f.root,mounts:[],env:{},agentRoot:join(f.root,'agent')}),prepareRepository:()=>({initialized:false,head:f.commit,branch:'master'}),environmentTool:()=>({name:'python_environment'}),
+ createTraining:(opts:any)=>{finished=opts.onTrialFinished;return {ready:async()=>{await finished('measured',view);await finished('measured',view);},close:async()=>{},tools:[],toolPrompts:[],service:{describe:()=>({status:'completed',balancedAccuracy:1,noiseVerdict:'clear improvement',championComparison:{status:'completed'},foldScores:[{metrics:{balancedAccuracy:1}}]})},supervisor:{list:()=>[view]},bindSession:()=>{}};},
+ confirm:async()=>{confirmations++;return {summary:{status:'completed',verdict:'no significant improvement',queryCount:1},privateScore:0.123456,scoutTranscript:'PRIVATE SCOUT'};},
+ scouts:()=>({tool:{name:'scout'},report:async()=>{throw Error('cancelled lead must not validate');}}),refit:async()=>{throw Error('cancelled lead must not refit');},collectResults:async()=>({valid:false,trials:[],artifacts:[],errors:[]}),
+ runAgentSession:async(opts:any)=>{expect(opts.prompt).toContain('clear improvement');expect(opts.prompt).toContain('measured (1.0000)');expect(opts.prompt).not.toContain('0.123456');expect(opts.prompt).not.toContain('PRIVATE SCOUT');active.abort();return {output:'cancelled',agentRunId:'fixture'};}};
+ try {for(let resume=0;resume<2;resume++) {
+ active=new AbortController();
+ const result=await runLeadSession('spam1',{taskConfiguration:spamConfiguration(),progressPath:path,signal:active.signal,dependencies,report:{event:(type:string)=>{if(type==='lead_trial_feedback')feedback++;},input(){},agentIdentity(){return {};},observation(){return {};} } as any});
+ expect(result.progress.trials).toHaveLength(1);expect(result.progress.trials[0].status).toBe('completed');expect(result.progress.trials[0].feedbackRecorded).toBe(true);expect(result.progress.champion?.experimentId).toBe('measured');expect(result.progress.budget.used).toBe(7);expect(result.progress.holdout).toHaveLength(1);
+ } expect(feedback).toBe(1);expect(confirmations).toBe(1);
+ }finally{f.close();}
+});

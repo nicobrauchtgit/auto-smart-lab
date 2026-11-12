@@ -165,6 +165,7 @@ test("the runner builds a fresh sandbox for every call from that call's trial", 
  const calls: [string, string | undefined][] = [];
  const runner = createScoutRunner({prompts, taskId: "fixture", taskConfiguration: {samples: {source: "zip_members"}} as never, telemetry: {} as never, record() {},
   observe: {identity: {}, telemetry: {failures: [], record() {}, async close() {}}}, solutionsRoot: f.live,
+  scoutPaths: {journal: "fixture", unitIntro: "fixture", task: "fixture", profile: "fixture"},
   setup: {check: async () => {}} as never,
   sandbox(role, trial) { calls.push([role, trial?.experimentId]); throw new Error("stop before any model call"); }});
  const input = (trial: TrialSnapshot): ScoutSessionInput => ({role: "validation", toolCallId: "call", trial, budget: new ScoutBudget(1, prompts),
@@ -224,7 +225,7 @@ test("missing validation or task-data prerequisites stop every scout before its 
  const events: string[] = [];
  await expect(new SetupSession().check(setupChecks(["trial-checks"], {taskId: "fixture", prompts, executables: {git: "/nonexistent/git"}}),
   new AbortController().signal, event => events.push(event))).rejects.toThrow("validation-trial-checks");
- // Without scoutPaths, scouts need the task's prepared data (task.md with the unit introduction, profile).
+ // Source preflight still refuses an unknown task before preparation.
  await expect(new SetupSession().check(setupChecks(["scouts"], {taskId: "no-such-task-prepared", prompts}),
   new AbortController().signal, () => {})).rejects.toThrow("scout-prompts");
  expect(events).toContain("setup_finished");

@@ -229,3 +229,22 @@ test("evidence setup checks a writable destination before execution and permits 
  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+
+test('lead local prerequisites validate source inputs without creating TaskData', async () => {
+ const { leadStage } = await import('./stages/lead.js');
+ const { statePath } = await import('../paths.js');
+ const { PROJECT_ROOT } = await import('./resolve_task.js');
+ const { existsSync } = await import('node:fs');
+ // Both executor preflight and standalone --check-setup use this requirements
+ // union. Exercise its scout local check on every fresh spam task; no agent,
+ // split preparation, credential or service probe is involved.
+ for (const taskId of ['spam1','spam2','spam3']) {
+  const split=statePath(PROJECT_ROOT,taskId,'data','sealed','split.json');
+  const before=existsSync(split);
+   const checks=setupChecks(leadStage.setupRequirements!,{taskId,prompts:loadPromptSnapshot(),taskConfiguration:spamConfiguration()});
+   expect(checks.some(c=>c.id==='task:'+taskId)).toBe(true);
+   expect(checks.some(c=>c.id==='data-profile')).toBe(true);
+   await new SetupSession().check(checks.filter(c=>c.id==='scout-prompts'),signal(),()=>{});
+  expect(existsSync(split)).toBe(before);
+ }
+});

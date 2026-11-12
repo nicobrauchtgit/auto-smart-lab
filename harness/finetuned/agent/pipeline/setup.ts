@@ -17,7 +17,6 @@ import { submissionSetupChecks, submissionRecoverySetupChecks } from "../submiss
 import type { Telemetry } from "../telemetry/runtime.js";
 import { ARM_ROOT, statePath } from "../paths.js";
 import { readCourseResources } from "../research/resources.js";
-import { readTaskData } from "../solve/task_data.js";
 
 export type SetupRequirement = "supervision" | "scouts" | "trial-checks" | "observability" | "model" | "python" | "task" | "training" | "refit" | "web-search" | "submission" | "submission-recovery" | "solve-isolation" | "confirmation" | "data-profile" | "course-resources";
 export interface SetupCheck {
@@ -106,8 +105,8 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
  submissionPolicy?: import("./types.js").StageInput["submissionPolicy"];
  /**
   * Scout journal, unit introduction, and the task text and profile scouts get
-  * from TaskData; default to the task's findings journal, its unit's
-  * unit-intro.md and the prepared task data.
+  * from TaskData at runtime. Without these, preflight checks source task
+  * text, the unit introduction and the default findings destination.
   */
  scoutPaths?: { journal: string; unitIntro: string; task: string; profile: string };
 }): SetupCheck[] {
@@ -119,15 +118,15 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
   // Every trial and agent shell call runs under the child subreaper, so nothing it leaves behind escapes supervision.
   add("supervision-launcher", "local", "Run ./dev setup so the project Python exists (the supervision launcher uses its standard library only), on a Linux kernel that allows prctl(PR_SET_CHILD_SUBREAPER); it needs no privileges.", () => checkReaper(options.executables?.python));
  }
- if (needs.has("scouts")) add("scout-prompts", "local", "Prepare the task data (task.md with the unit introduction at its top, and profile.json), restore agent/prompts/team and a non-empty unit-intro.md, and make the task findings destination writable; every scout requires the task text with the unit introduction, the profile and a durable findings journal.", () => {
-  const data = options.scoutPaths ? undefined : readTaskData(options.taskId, PROJECT_ROOT);
-  if (!options.scoutPaths && !data) throw new Error("Task data not prepared");
+ if (needs.has("scouts")) add("scout-prompts", "local", "Restore the task prompt, agent/prompts/team and a non-empty unit-intro.md, and make the task findings destination writable; prepared scout artifacts are checked separately after task preparation.", () => {
+  // Preflight validates source inputs, not artifacts created after preflight.
+  // Runtime scout callers can additionally validate their materialized inputs.
+  const task = options.scoutPaths ? undefined : resolveTask({ taskId: options.taskId });
   const paths = options.scoutPaths ?? { journal: statePath(PROJECT_ROOT, options.taskId, "findings", "journal.jsonl"),
-   unitIntro: join(dirname(resolveTask({taskId: options.taskId}).taskDir), "unit-intro.md"), task: data!.taskPath, profile: data!.profilePath };
+   unitIntro: join(dirname(task!.taskDir), "unit-intro.md"), task: join(task!.taskDir, "prompt.md") };
   checkEvidenceDestination(paths.journal);
-  for (const path of [paths.unitIntro, paths.task, paths.profile]) readable(path);
-  // Stream B puts the unit introduction at the top of task.md; scouts get it from there, once.
-  if (!readFileSync(paths.task, "utf8").startsWith(readFileSync(paths.unitIntro, "utf8").trim())) throw new Error("task.md lacks the unit introduction");
+  for (const path of [paths.unitIntro, paths.task]) readable(path);
+  if (!readFileSync(paths.unitIntro, "utf8").trim()) throw new Error("Empty unit introduction");
   for (const id of ["team.shared", "team.empty", "team.finish", "team.scout-tool", "team.probe-question"] as const) options.prompts.render(id, {});
   options.prompts.render("team.counter", {used: "0", budget: "1"});
   options.prompts.render("team.stopped", {reason: "preflight"});
@@ -136,6 +135,13 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
   options.prompts.render("team.data", {taskId: options.taskId, budget: "1", dataPaths: "preflight", resources: "preflight"});
   options.prompts.render("team.ideas", {taskId: options.taskId, budget: "1", webSearches: "3", resources: "preflight"});
   options.prompts.render("team.start", {task: "preflight", question: "preflight", refs: "none", shown: "0", omitted: "0", earlier: "none"});
+ });
+ if (needs.has("scouts") && options.scoutPaths) add("scout-materialized-inputs", "local", "Restore prepared task.md with the unit introduction, profile.json and the writable findings destination before starting a scout.", () => {
+  const paths = options.scoutPaths!;
+  for (const path of [paths.unitIntro, paths.task, paths.profile]) readable(path);
+  checkEvidenceDestination(paths.journal);
+  const intro = readFileSync(paths.unitIntro, "utf8").trim();
+  if (!intro || !readFileSync(paths.task, "utf8").startsWith(intro)) throw new Error("task.md lacks the unit introduction");
  });
  if (needs.has("trial-checks")) add("validation-trial-checks", "local", "Restore training/trial_source.ts, training/trial_checks.ts, evaluation/checks.ts and the validation prompts, and install git: the validation scout resolves measured trial snapshots with git worktrees and runs checks only against them.", () => {
   for (const name of ["training/trial_source.ts", "training/trial_checks.ts", "evaluation/checks.ts", "workspace/trial_source.ts"]) readable(join(ARM_ROOT, "agent", name));

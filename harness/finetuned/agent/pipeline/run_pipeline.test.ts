@@ -280,3 +280,20 @@ test("invalid guidance prevents every stage before any session, including setup-
   configPath: configFile(runsDir, { lead: { enabled: true }, refit: { enabled: true } }) })).rejects.toThrow(/binding/);
  expect(ran).toBe(0);
 });
+
+test('fresh pipeline and standalone check-setup pass scout source checks before TaskData exists', async()=>{
+ const { runLeadStage }=await import('./run_lead.js');
+ const { readTaskData }=await import('../solve/task_data.js');
+ for(const taskId of ['spam1','spam2','spam3']) {
+  expect(readTaskData(taskId)).toBeUndefined();
+  let ran=0;
+  STAGE_REGISTRY.lead={...stage('lead',undefined,async()=>{ran++;return {artifacts:[]};}),setupRequirements:['scouts']};
+  const runsDir=workspace();const configPath=configFile(runsDir,{lead:{enabled:true}});
+  const config=JSON.parse(readFileSync(configPath,'utf8'));config.pipeline.tasks={[taskId]:spamConfiguration()};writeFileSync(configPath,JSON.stringify(config));
+  const result=await runPipeline({telemetry:telemetryForDirectory(runsDir),taskId,runsDir,configPath});
+  expect(result.outcome).toBe('success');expect(ran).toBe(1);
+  const checked=await runLeadStage({telemetry:telemetryForDirectory(runsDir),taskId,runsDir,configPath,checkSetupOnly:true});
+  expect(checked.outcome).toBe('success');expect(checked.invocations).toHaveLength(0);expect(ran).toBe(1);
+  expect(readTaskData(taskId)).toBeUndefined();
+ }
+});

@@ -29,20 +29,20 @@ test("scout-prompts preflight blocks every scout on missing inputs, a task.md wi
  const journal = join(root, "task/findings/journal.jsonl");
 
  const missing = scoutsBehindSetup({journal, unitIntro: join(root, "missing/unit-intro.md"), task, profile});
- await expect(missing.scope.scout({role: ["data", "ideas"], question: "q"})).rejects.toThrow("scout-prompts");
+ await expect(missing.scope.scout({role: ["data", "ideas"], question: "q"})).rejects.toThrow(/scout-(prompts|materialized-inputs)/);
  expect(missing.starts.count).toBe(0);
 
  const noProfile = scoutsBehindSetup({journal, unitIntro, task, profile: join(root, "missing.json")});
- await expect(noProfile.scope.scout({role: "data", question: "q"})).rejects.toThrow("scout-prompts");
+ await expect(noProfile.scope.scout({role: "data", question: "q"})).rejects.toThrow(/scout-(prompts|materialized-inputs)/);
  const bare = join(root, "bare-task.md"); writeFileSync(bare, "Task text only\n");
  const noIntro = scoutsBehindSetup({journal, unitIntro, task: bare, profile});
- await expect(noIntro.scope.scout({role: "data", question: "q"})).rejects.toThrow("scout-prompts");
+ await expect(noIntro.scope.scout({role: "data", question: "q"})).rejects.toThrow(/scout-(prompts|materialized-inputs)/);
  expect(noProfile.starts.count + noIntro.starts.count).toBe(0);
 
  const locked = join(root, "locked"); mkdirSync(locked); chmodSync(locked, 0o500);
  try {
   const unwritable = scoutsBehindSetup({journal: join(locked, "journal.jsonl"), unitIntro, task, profile});
-  await expect(unwritable.scope.scout({role: "data", question: "q"})).rejects.toThrow("scout-prompts");
+  await expect(unwritable.scope.scout({role: "data", question: "q"})).rejects.toThrow(/scout-(prompts|materialized-inputs)/);
   expect(unwritable.starts.count).toBe(0);
  } finally {chmodSync(locked, 0o700);}
 

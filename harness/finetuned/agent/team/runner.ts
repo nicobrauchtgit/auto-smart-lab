@@ -138,7 +138,7 @@ export function createScoutRunner(options: {
  observe: AgentObservation;
  parentAgentRunId?: string | (() => string);
  /** Where this run's journal, unit introduction and task text live, when not the task defaults. */
- scoutPaths?: { journal: string; unitIntro: string; task: string; profile: string };
+ scoutPaths: { journal: string; unitIntro: string; task: string; profile: string };
  /** Share passed setup checks with an earlier preflight of the same run. */
  setup?: SetupSession;
 }) {

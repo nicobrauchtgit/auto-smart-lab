@@ -35,7 +35,7 @@ function parseFoldPolicy(raw: unknown): LeadOptions["foldPolicy"] {
 }
 
 /** Everything the lead, its scouts, its holdout checks and the terminal refit need, checked before the lead starts. */
-export const LEAD_SETUP_REQUIREMENTS = [...new Set(["observability", "model", "python", "task", "training", "solve-isolation", "confirmation", "refit",
+export const LEAD_SETUP_REQUIREMENTS = [...new Set(["observability", "model", "python", "task", "data-profile", "training", "solve-isolation", "confirmation", "refit",
  ...scoutRequirements("data"), ...scoutRequirements("ideas"), ...scoutRequirements("validation")] as const)];
 
 export const leadStage: StageDefinition<LeadOptions> = {

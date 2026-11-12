@@ -22,6 +22,8 @@ export interface LeadTrialRecord {
  becameChampion?: boolean;
  startedAt: string;
  finishedAt?: string;
+ /** Completion feedback persisted; suppress duplicate news on resume. */
+ feedbackRecorded?: boolean;
 }
 export interface LeadHoldoutRecord {
  experimentId: string;

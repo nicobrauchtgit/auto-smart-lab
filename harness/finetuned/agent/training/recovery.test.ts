@@ -290,3 +290,20 @@ test.skipIf(availableParallelism() < 2)("a killed fold process interrupts the tr
   await expect(training.service.start(request(false))).rejects.toThrow("budget exhausted");
  } finally { await training.close(); }
 }, 60000);
+
+test('completed recovery replays finalized feedback once per owner without another trial charge', async () => {
+ const project=temporaryProject('recovery-feedback-gap-'); const opts={...options(project),prompts:loadPromptSnapshot()};
+ let count=0; let training=createHarnessTraining(opts);
+ try {
+  await training.ready(); const started=await training.service.start(request(false,0));
+  expect(await until(()=>training.service.describe(started.id)?.status==='completed')).toBe(true);
+  await training.close();
+  for(let resume=0;resume<2;resume++) {
+   training=createHarnessTraining({...opts,onTrialFinished(id,view){expect(id).toBe(started.id);expect(view.status).not.toBe('running');expect(training.service.describe(id)?.status).toBe('completed');count++;}});
+   await training.ready(); await training.ready();
+   expect(count).toBe(resume+1);
+   await expect(training.service.start(request(false,0))).rejects.toThrow('budget exhausted');
+   await training.close();
+  }
+ } finally {await training.close();rmSync(project.root,{recursive:true,force:true});}
+},30000);

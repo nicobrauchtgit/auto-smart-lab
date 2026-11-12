@@ -233,6 +233,8 @@ export function productionScouts(options: { prompts: PromptSnapshot; taskId: str
   const inputs = stageScoutInputs(context.data, readCourseResources(task.unitSlug));
   const runner = createScoutRunner({ prompts: options.prompts, taskId: options.taskId, taskConfiguration: options.configuration,
    telemetry: options.setup.telemetry, record: options.report.event, setup: options.setup.session,
+   scoutPaths: { journal: statePath(PROJECT_ROOT, options.taskId, "findings", "journal.jsonl"),
+    unitIntro: join(dirname(task.taskDir), "unit-intro.md"), task: context.data.taskPath, profile: context.data.profilePath },
    sandbox: (role, trial) => expertSandbox(context.data, role, context.python, trial), solutionsRoot: context.data.solutionsRoot,
    observe: options.report.observation(1), parentAgentRunId: () => context.parentAgentRunId() ?? context.invocationId });
   return createScouts({ prompts: options.prompts, taskId: options.taskId, task: readFileSync(context.data.taskPath, "utf8"),
@@ -379,6 +381,10 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
   composing++;
   const work = feedbackChain.then(async () => {
    const described = (training?.service.describe(id) ?? {}) as Record<string, any>;
+   const prior = progress.trials.find(row => row.experimentId === id);
+   // Completion feedback is durable. Replay only the interruption gap; the
+   // authoritative champion is reconciled separately even for known results.
+   if (prior?.feedbackRecorded && prior.status === String(described.status ?? view.status)) return;
    const before = progress.champion?.experimentId;
    const champion = championOf(data.solutionsRoot, taskId);
    const key = metricKey(configuration);
@@ -391,7 +397,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
    const comparison = described.championComparison as { status?: string } | undefined;
    if (comparison?.status === "completed") trial.verdict = String(described.noiseVerdict);
    const isNew = champion?.experimentId === id && before !== id;
-   trial.becameChampion = isNew;
+   trial.becameChampion = trial.becameChampion || isNew;
    if (champion) progress.champion = { experimentId: champion.experimentId, commit: champion.commit, ...(champion.score !== undefined ? { score: champion.score } : {}) };
    streak = isNew ? 0 : trial.status === "completed" ? streak + 1 : streak;
    let holdout = prompts.render("team.lead-holdout-none", {}).text;
@@ -408,6 +414,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
    const text = prompts.render("team.lead-trial", { experiment: id, status, hypothesis: trial.hypothesis || "(none)", folds: folds(described), verdict,
     champion: champion ? `${champion.experimentId}${isNew ? " (this trial, new)" : ""}${champion.score !== undefined ? `, ${champion.score.toFixed(4)}` : ""}` : "none yet",
     holdout, cost, streak: String(streak), budget: `${budget.used} of ${budget.limit} used` }).text;
+   trial.feedbackRecorded = true;
    save();
    record("lead_trial_feedback", { experiment_id: id, status: trial.status, score: trial.score, became_champion: isNew, champion: champion?.experimentId, streak, text });
    await inbox.steer(text);
@@ -439,7 +446,13 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
   onTrialFinished: trialFinished, deliverExits: false,
   maxExperiments: limit, prompts, ...(options.signal ? { signal: options.signal } : {}),
  });
- try { await training.ready?.(); }
+ try {
+  await training.ready?.();
+  await feedbackChain;
+  // The current tag wins over stale PROGRESS after recovered finalization.
+  progress.champion = championOf(data.solutionsRoot, taskId);
+  save();
+ }
  catch (error) { await training.close(); throw error; }
 
  // ---- hand-over ----
@@ -480,7 +493,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
   await feedbackChain;
  };
  const holdoutUsed = () => `${Math.max(0, ...progress.holdout.map(row => row.queryCount ?? 0))}`;
- const handOverTool = defineTool({ name: "hand_over", label: "Hand over", description: prompts.render("team.lead-handover-tool", {}).text,
+ const handOverTool = defineTool({ executionMode: "sequential", name: "hand_over", label: "Hand over", description: prompts.render("team.lead-handover-tool", {}).text,
   parameters: Type.Object({ reason: Type.String({ minLength: 1, maxLength: 1000 }) }, { additionalProperties: false }),
   async execute(toolCallId, args, signal) {
    const reply = (text: string) => ({ content: [{ type: "text" as const, text }], details: {} });

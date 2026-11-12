@@ -22,9 +22,10 @@ export interface HarnessTrainingOptions extends Omit<SupervisorOptions, "deliver
 	session?: Wakeable;
 	signal?: AbortSignal;
 	/**
-	 * Called once a finished worker is finalized (champion tagging done), so
+	 * Called after a finished worker is finalized (champion tagging done), so
 	 * the owner can tell its agent the result. Not called when the worker was
-	 * recovered and runs again.
+	 * recovered and runs again. Terminal discovery replays this callback once
+	 * per owner; owners persist their feedback receipt for restart deduplication.
 	 */
 	onTrialFinished?: (id: string, view: ExperimentView) => void | Promise<void>;
 	/** False when `onTrialFinished` sends the owner's own message; see createExperiments. */
@@ -32,12 +33,21 @@ export interface HarnessTrainingOptions extends Omit<SupervisorOptions, "deliver
 }
 
 export function createHarnessTraining(options: HarnessTrainingOptions) {
+ let service: TrainingService | undefined;
+ const finished = new Set<string>();
+ const notifyFinished = async (id: string, view: ExperimentView) => {
+  const result = service?.describe(id);
+  const key = JSON.stringify([id, view.status, result?.status, result?.completedFolds, result?.requestedFolds]);
+  if (finished.has(key)) return;
+  finished.add(key);
+  try { await options.onTrialFinished?.(id, view); }
+  catch (error) { finished.delete(key); throw error; }
+ };
 	const env = sanitizeTrainingEnvironment(options.env, {
 		pipelineRunId: options.pipelineRunId,
 		stageInvocationId: options.stageInvocationId,
 	});
 	// The supervisor exists before the service; finalization binds late.
-	let service: TrainingService | undefined;
 	const processScope = createExperiments({
 		root: options.root,
 		env,
@@ -46,7 +56,7 @@ export function createHarnessTraining(options: HarnessTrainingOptions) {
 			await service?.workerFinished(id);
 			// A recovered worker runs again; it reports when that run ends.
 			if (processScope.supervisor.status(id).status === "running") return;
-			await options.onTrialFinished?.(id, view);
+			await notifyFinished(id, view);
 		},
 		deliverExits: options.deliverExits,
 		record: options.record,
@@ -98,7 +108,16 @@ export function createHarnessTraining(options: HarnessTrainingOptions) {
 	const trainingService = service;
 	return {
 		service: trainingService,
-        ready: () => trainingService.ready(),
+        ready: async () => {
+   await trainingService.ready();
+   // Discovery finalizes terminal workers without a new process exit event.
+   // Replay their finalized state to the owner, once per service instance.
+   for (const view of processScope.supervisor.list()) {
+    if (view.status === "running") continue;
+    await trainingService.finalize(view.id);
+    await notifyFinished(view.id, view);
+   }
+  },
 		supervisor: processScope.supervisor,
 		tools,
 		toolPrompts,
