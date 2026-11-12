@@ -1,6 +1,6 @@
 # Current state and work queue
 
-Updated 2026-11-12 (reviewed integration and worktree cleanup). This file owns the active queue. The design is
+Updated 2026-11-12 (spam1 test runs, async scouts, scout skills). This file owns the active queue. The design is
 [expert-team-v2.md](../harness/finetuned/docs/expert-team-v2.md) (accepted
 2026-11-11); its contract appendix is
 [expert-team.md](../harness/finetuned/docs/expert-team.md). Superseded plans,
@@ -41,6 +41,26 @@ design is being replaced; finetuned spam3 never ran. Its report is
 spam1 result (9 h 06 min to hand-over against 15–46 min for minimal) is the
 main evidence for v2 (section 1 there).
 
+**Spam1 test runs (2026-11-12, finetuned, 1 h cap each, cancelled at the cap).**
+Unmeasured development runs, not gate results; state archived under
+`runs/archives/2026-11-12T*-spam1-run{1,2,3}*`.
+
+| Run | Harness | First trial | First CV | Best champion CV / holdout | Best unpromotable | Hand-over |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | blocking scouts (cancelled at 24 min for run 2) | 8.9 min | 0.9831 | 0.9831 / 0.9825 | none | none |
+| 2 | + operator questions | 9.6 min | 0.9728 | 0.9941 / 0.9950 | 0.9944 (search, `acknowledgement_required`) | none |
+| 3 | + async parallel scouts, scout skills | 15.9 min | 0.9939 | 0.9939 / 0.9925 | 0.9954 (search, `acknowledgement_required`) | none |
+
+In run 3 the lead consulted data and ideas before its first pipeline; its first
+model came close to target, at the cost of about six minutes to first trial. Asked live
+(operator channel, run 2), the lead said blocking scouts made it consult rarely
+and broadly; it named no imagined deadline. Merged on `v2-clean-slate`: `2a7ad1f`
+disk-backed per-command sandbox `/tmp`, `c385553` operator questions
+(`agent/run/ask_lead.ts`), `7361f2b`, `93e004c` async parallel scouts (blocking
+review: one finding, fixed in `7ea542b`; the fix is not re-reviewed), `7500809` scout skills,
+`4a3a2b6` signal deaths through the scratch wrapper. Full suite after `4a3a2b6`:
+700 pass, 0 fail, 702 tests. Open, user decision: F9 and F10 below.
+
 Offline runs fetch nothing and hand over one validated refit for manual
 submission. Configured chains stop before submit. Data access and successful
 evaluation do not authorize uploads. Keep development and official scores
@@ -79,6 +99,8 @@ Resolve each before claiming its capability or experiment ready.
 | F2: measured protocol | Arm comparisons need defined conditions | Agree repetitions, sequential/parallel execution, reset policy and memory across tasks; pass both preflights before measured runs |
 | F3: task coverage and access | Share access does not establish labels, decryption or output contracts | Inventory cloud tasks 01–05, obtain secrets securely, verify instructions/archive identity/labels/CSV contract and disk capacity; update [task readiness](tasks.md) |
 | F5: beyond spam | Clustering sealed confirmation and label-free hand-over are incomplete; multiclass Tor is not runnable | P7c after the integration gate; verify withheld-family/execution-mode semantics on code2 and label-free behavior on attacks1 |
+| F9: interrupted searches lose their best configuration | Runs 2 and 3: the best measured configuration (0.9944, 0.9954) became unpromotable after `acknowledgement_required`; the lead re-ran it as a separate trial at the cost of one trial, calls and 10–15 min | Either promote a completed-fold configuration of an interrupted search, or tell the lead about the long-search acknowledgement before it starts a search; verify in a spam1 run |
+| F10: no hand-over within the gate's 45 min | None of the three 2026-11-12 spam1 runs handed over within 60 min; run 3's trial 3 ran over 10 min against 3.5 min for trial 1 | Trace trial 3's cost; re-measure after F9 |
 | F8: hygiene and typecheck scope | Formatting/indexed-access checking are deferred; root semantic typecheck excludes the minimal arm; inherited trailing whitespace/blank EOFs in older training files | Assess coverage/formatting separately from behavior |
 
 ### Non-blocking review findings (v2 streams, 2026-11-11)
