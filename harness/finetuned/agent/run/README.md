@@ -116,3 +116,17 @@ failures; rerunning affected files with RAM-backed TMPDIR passed 7/7. This is
 not a green full-suite result. Fresh independent review and a serial full
 suite with private TMPDIR remain required on the admission-fix commit before
 integration. No paid run or merge has followed these fixes.
+
+Final independent re-review of `8c66442a17b1463296909013ae774278ee715e27`
+found no blockers. On that exact revision, a serial full suite using private
+RAM-backed TMPDIR passed **675 tests, 2 existing libproc skips, zero failures**
+across 91 files in 890.01 seconds; no reruns were needed. Typecheck and diff
+checks passed. The original real-SDK bypass probe reports zero mutations in
+both modes at 80/80. Logs remain under
+`/dev/shm/t3-a3e7e840/review-8c66442-v135Cb/` and are volatile across reboot.
+
+After that review and green full suite, canonical `v2-clean-slate` was
+fast-forwarded unsigned from `81a9a44` to `8c66442` on 2026-11-12. This
+supersedes the earlier pending-review/full-suite statements above. No paid
+task run, upload or push followed integration; the checkpoint workflow's
+model behavior and latency remain unmeasured.
