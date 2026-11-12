@@ -66,3 +66,88 @@ Focused `./dev bun test harness/finetuned/agent/training/validation_measurements
 2 pass, 0 fail, 13.31 s (`/tmp/v2-integration-d-diagnostics.log`).
 `./dev bun run typecheck`: passed (`/tmp/v2-integration-d-typecheck.log`).
 Fresh full-suite log: `/tmp/v2-integration-d-full-final.log` (running).
+
+### Final integrated gate and fresh unit 1 launch
+
+Final tested runtime/test revision: `fb404afd20a1383dd83482639120e95c95185e33`
+(D integration plus the test-only ZIP race fix). Fresh canonical
+`./dev bun test`: **666 pass, 2 skip, 0 fail**, 668 tests across 91 files,
+7,620 assertions, **924.84 s**, exit 0. Log:
+`/tmp/v2-integration-d-full-final.log`. Typecheck exit 0 as recorded above.
+The two skips are Darwin libproc checks on Linux. No material runtime fix
+was needed; the fixture fix does not change the independently reviewed D code.
+
+All authorized production whole-chain setup commands passed, exit 0:
+
+- `./dev bun run experiment -- --arm minimal --check-setup`.
+- `./dev bun run experiment -- --arm finetuned spam1 --check-setup`,
+  run `c6a34da6-5eb9-48c7-b63b-c7acafb758f3`.
+- `./dev bun run experiment -- --arm finetuned spam2 --check-setup`,
+  run `c493db36-3383-4030-83ef-42cd106615a3`.
+- `./dev bun run experiment -- --arm finetuned spam3 --check-setup`,
+  run `919b5d29-d1ae-4066-b408-e6fd0b9154fc`.
+
+Each finetuned command reported success, setup checks passed, no stages
+executed, with a Langfuse trace. Logs and exit receipts are copied into
+`runs/launches/2026-11-12T02-28-14Z-v2-unit1/preflight-<arm-or-task>.{log,exit}`.
+No local prerequisite repair was needed for these integrated gates.
+
+Fresh-run boundary: moved old `spam1/`, `spam2/`, `solutions/`, `knowledge/`
+reversibly into
+`runs/archives/2026-11-12T02-28-14Z-pre-v2-unit1-finetuned/`.
+No destructive reset was used. Existing deliveries and `scout-dry-run/`
+remain in place. Both archived linked solutions worktrees were repaired
+with `git worktree repair`; original and repaired lists and exact moves are
+in the launch directory (`old-worktrees.txt`, `archived-worktrees.txt`,
+`archive.json`). All prior run evidence and nested solutions history survive;
+no old progress/solutions were reused as new evidence. D's worktree journal
+is still excluded and unchanged (SHA-256
+`03f471c7afd858dcc5bc231c2708bfd14b40bdd92c15b5ed0978c6ed8e1f299c`).
+
+A detached durable controller started **2026-11-12T02:28:26.307589Z**,
+PID/session leader **395189**. Controller files and receipts:
+
+- `runs/launches/2026-11-12T02-28-14Z-v2-unit1/controller.py` and `controller.log`.
+- `status.json`: atomic running/queued state, commands, child PIDs, timestamps,
+  runtime code SHA, model/config hash and boundaries.
+- `launch.json`, `checks.json`, per-task `<arm>-<task>-receipt.json` when a task
+  exits, and `exit.json` when the controller exits.
+
+Safe sequential plan: **finetuned spam1 -> spam2 -> spam3, then minimal
+spam1 -> spam2 -> spam3**. The host has 6 CPUs and 15 GiB RAM; both arms can
+consume all CPUs, and minimal has no finetuned-style memory supervision or
+shared cross-arm resource cap. Concurrent arms could oversubscribe the host.
+The minimal arm is therefore **queued, no PID or fresh run location yet**;
+its eventual fresh location is recorded in `status.json`. This is the
+explicitly authorized sequential-arm fallback, not a completed minimal launch.
+
+Finetuned spam1 child command PID **395204**, pipeline process **395313**,
+started **2026-11-12T02:28:26.382465Z** with
+`./dev bun run experiment -- --arm finetuned spam1`. Log:
+`runs/launches/2026-11-12T02-28-14Z-v2-unit1/finetuned-spam1.log`.
+Fresh lead run/invocation ID: `19576477-1b60-4fd6-a5e5-57a3455c9331`,
+lead started **2026-11-12T02:28:53.152Z**. Its durable progress is
+`runs/finetuned/spam1/lead/PROGRESS.json`; training/run roots remain under
+`runs/finetuned/`. At resumed handoff inspection around **03:34 UTC**, it was
+running with two trials and 66/80 calls used. This is startup/run-state
+evidence, not a completed quality result. The controller remained alive.
+
+Finetuned advances only on exit 0, successful pipeline outcome and harness
+`handed_over` progress with a delivery. Minimal's existing batch driver can
+continue on task failure, so the external controller uses its unchanged
+entry points for one task at a time in one fresh jailed run, reusing that
+NEW run for spam2/3 with `--reset none`. It advances only after exit 0 and a
+`delivered` result with matching task, source archive and output hash. The
+first task is launched through `./dev bun run experiment -- --arm minimal
+--only spam1`; later tasks use the controller adapter `minimal-task.ts` and
+`runMinimal`, preserving the same whole-process jail and shared configuration.
+No minimal-arm code or prompts were changed/coached. Any failed gate stops
+later tasks and writes failure receipts; no task or stopped old batch is
+restarted automatically.
+
+Configured runtime for both arms remains **offline**, MythLLM
+`qwen3.8-flash-next-a5b`, shared configuration SHA-256
+`93cde05836634967cfdf9b2bc0cec3cba82f2e6181e86ac5fc28e1ab4eb60a17`.
+The runtime code SHA captured at launch is `fb404afd20a1383dd83482639120e95c95185e33`.
+No uploads, submissions, pushes or code2 launch. No monitoring was scheduled
+by this implementation agent; the parent owns the requested 10-minute checks.
