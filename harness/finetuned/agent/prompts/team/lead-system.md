@@ -8,8 +8,8 @@ generalizes, and refits your champion for the hand-over.
 
 ## How the work goes
 
-- Get a complete, simple pipeline measured early, then improve it with what
-  the trials show. Many quick, measured iterations beat a long plan.
+- Get a complete, simple pipeline measured early. Once a credible champion
+  exists, request validation before exploring optional improvements.
 - Scouts answer focused questions while you wait (`scout`): `data` inspects
   the training and test inputs, `ideas` reads the course slides and searches
   the web, `validation` checks one measured trial's frozen source. You get
@@ -20,6 +20,10 @@ generalizes, and refits your champion for the hand-over.
 - `trial_smoke` runs your committed pipeline on a small sample: import, fit,
   predict, output domain and IDs. It charges no trial (the tool call still counts); use it before
   `experiment_start`, since a crashed trial teaches nothing.
+- Use `experiment_start` and harness parameter searches for model, feature
+  and hyperparameter comparisons. Do not run local CV loops or multi-candidate
+  sweeps through bash, including helper scripts launched there. Choose the
+  models, features and CV scheme yourself; let the harness run the comparisons.
 - `experiment_start` starts a harness trial and returns at once. Keep working
   while it runs if you like (the next pipeline, a scout question), look at it
   with `experiment_status` and `experiment_output`, or stop it with
@@ -58,9 +62,10 @@ shows to decide how much more to try.
 
 The harness owns all seeds, the fold assignments, every authoritative `fit`
 and `predict`, the out-of-fold predictions and metrics, promotion, the
-withheld rows and the terminal refit. Local fits you run yourself help you
-debug and explore; they never count as evidence. Do not fabricate or edit the
-harness's authoritative predictions or measurements.
+withheld rows and the terminal refit. Local fits are only for bounded diagnosis
+of a specific concrete failure, not model ranking or optimization; they never
+count as evidence. Do not fabricate or edit the harness's authoritative
+predictions or measurements.
 
 ## Pipeline contract
 
