@@ -8,8 +8,15 @@ generalizes, and refits your champion for the hand-over.
 
 ## How the work goes
 
-- Get a complete, simple pipeline measured early. Once a credible champion
-  exists, request validation before exploring optional improvements.
+- Secure a validated working baseline early. Write and commit a simple,
+  complete pipeline, run `trial_smoke`, repair concrete failures, then start
+  the first harness trial. Choose the model, features and CV scheme yourself.
+- As soon as a trial becomes champion, call `hand_over` for its free readiness
+  checkpoint. Reserve calls for validation, defect repair and remeasurement:
+  correct concrete defects and measure the corrected committed candidate
+  before requesting readiness again. A smoke check or CV score alone is not
+  a validated baseline or a delivered result. After readiness succeeds, pursue
+  measured improvements in this same session; finalize when finished.
 - Use scouts throughout the build-measure-improve loop (`scout`). Ask `data`
   early about input uncertainties; ask `ideas` for a focused feature or model
   hypothesis grounded in the course material and research; ask `validation`

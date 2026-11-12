@@ -1,6 +1,6 @@
 # Current state and work queue
 
-Updated 2026-11-12 (Stream D branch; independent review pending). This file owns the active queue. The design is
+Updated 2026-11-12 (reviewed integration and worktree cleanup). This file owns the active queue. The design is
 [expert-team-v2.md](../harness/finetuned/docs/expert-team-v2.md) (accepted
 2026-11-11); its contract appendix is
 [expert-team.md](../harness/finetuned/docs/expert-team.md). Superseded plans,
@@ -18,11 +18,9 @@ The old design's orchestrator, research and evaluate stages, knowledge store
 and leakage canary were removed on 2026-11-11 (the clean-slate package below).
 Stream D replaces solve → refit with one lead session calling blocking
 scouts (data, ideas, validation) and harness-run trials, followed by validated
-terminal refit. Foundations and scouts are implemented; the lead branch still
-requires independent review before merge. See [lead execution](../harness/finetuned/agent/run/README.md).
+terminal refit. Foundations, scouts and the lead are merged and independently reviewed. See [lead execution](../harness/finetuned/agent/run/README.md).
 
-Readiness clarification (2026-11-12; isolated implementation, independent review
-pending): `hand_over` defaults to a free validation checkpoint, preserving the
+Readiness clarification (2026-11-12; merged and independently reviewed): `hand_over` defaults to a free validation checkpoint, preserving the
 first verified working baseline and switching the same lead session to
 improvement. Explicit `finalize: true` or the harness end step requests
 validation-gated terminal delivery. Existing immutable measurements and source
@@ -54,19 +52,23 @@ separate.
 | --- | --- | --- |
 | P5′: accept v2 (documents) | Done 2026-11-11 | Docs reorganised; draft prompts kept as seeds for P7a |
 | Clean slate | Done 2026-11-11 | Removed the LLM orchestrator, research and evaluate stages, knowledge store and lesson prompts, scorecard, old `agent/instructions/`, the filename-leakage canary and the profile's `name_leakage` measurement; the chain is solve → refit |
-| P6: foundations | Implemented in A/B; A final integration gate recorded separately | Task data and persistent split; shared tree, `workspace_check`, follow-up merge; trial snapshots; Linux sampler and global `supervision` block with machine-protection stop; `trial_smoke`; parallel folds; per-session environment. Checks in v2 P6 |
-| P7a: lead and scouts | Scouts implemented; lead implementation on Stream D, review pending | Blocking `scout()` built on `agent/subagents/`; tool-call budgets with a counter after every call; lead session with compaction and `PROGRESS.json`; prompts in `agent/prompts/team/`; scout budget test (10 vs 20 calls on spam1–3 and `code2`) |
-| P7b: harness services | Implemented; Stream D checks and independent review gate remain | Trial feedback with noise verdict and Ladder holdout check; wake on news only; `hand_over` with validation scout; budget-end hand-over; retire the remaining solve stage chain |
-| Integration gate | After P7a and P7b | spam1 → spam2 → spam3 offline: first trial ≤ 10 min, hand-over ≤ 45 min, spam1 CV balanced accuracy ≥ 0.994 (reference 0.9944–0.9954), no machine-at-risk stop, reader reused; then `code2` to hand-over |
+| P6: foundations | Implemented, reviewed and merged; live gate remains open | Task data and persistent split; shared tree, `workspace_check`, follow-up merge; trial snapshots; Linux sampler and global `supervision` block with machine-protection stop; `trial_smoke`; parallel folds; per-session environment. Checks in v2 P6 |
+| P7a: lead and scouts | Implemented, reviewed and merged | Blocking `scout()` built on `agent/subagents/`; tool-call budgets with a counter after every call; lead session with compaction and `PROGRESS.json`; prompts in `agent/prompts/team/`; scout budget test (10 vs 20 calls on spam1–3 and `code2`) |
+| P7b: harness services | Implemented, reviewed and merged | Trial feedback with noise verdict and Ladder holdout check; wake on news only; `hand_over` with validation scout; budget-end hand-over; retire the remaining solve stage chain |
+| Integration gate | Not passed; earlier delivery/time gates failed | spam1 → spam2 → spam3 offline: first trial ≤ 10 min, hand-over ≤ 45 min, spam1 CV balanced accuracy ≥ 0.994 (reference 0.9944–0.9954), no machine-at-risk stop, reader reused; then `code2` to hand-over |
 | P7c: beyond binary classification | After the gate | Withheld-family clustering confirmation; label-free unscored hand-over, then evidence labels ([contract](../harness/finetuned/docs/expert-team.md#7-p7c-verification-beyond-binary-classification)) |
 
 Scout starting budgets are set from the P7a budget test: data 15, ideas 10,
 validation 10 (v2 section 3). The lead's 80 is exercised at the integration gate.
 
-Latest run scope: after independently reviewed/merged D and a green suite,
-run unit 1 on **both** harnesses and monitor every 10 minutes. This supersedes
-the finetuned-only immediate gate; the parent owns review and runs. No paid
-v2 runs have started. Uploads are not authorized.
+Latest evidence: the earlier v2 unit-1 runs failed their delivery/time gates
+([run report](experiments/v2-unit1-2026-11-12.md)); the bounded prompt-first spam1
+experiment also failed to deliver within 600 seconds
+([historical report](experiments/prompt-first-spam1-just10min.md)). The later
+checkpoint revision passed independent review and its recorded full suite
+(675 passed, 2 skipped), but has no paid task-run evidence. The integration gate,
+reader reuse, live delivery and P7c remain unproven. No new model runs or uploads
+are authorized for this merge/cleanup. See [cleanup evidence](worktree-cleanup-2026-11-12.md).
 
 ## Follow-ups and readiness limits
 
