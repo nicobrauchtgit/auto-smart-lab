@@ -2,8 +2,9 @@
 
 One fresh offline finetuned run, observed on 2026-11-12. The question was how
 the runtime lead chooses between harness execution and local fitting, not how
-to optimize this classifier. The user subsequently allowed two 30-minute runs;
-only the first was needed to obtain two live explanations of early decisions.
+to optimize this classifier. This first run obtained two live explanations of
+early decisions. The user subsequently requested a
+[second fresh observation](spam1-live-tool-choice-repeat-2026-11-12.md).
 No old solution, feature advice or previous winning parameters were supplied.
 
 ## Conditions and identity
@@ -20,6 +21,14 @@ No old solution, feature advice or previous winning parameters were supplied.
 - [Langfuse trace](https://cloud.langfuse.com/project/cmumh75f5014jad0dx0f2gn0w/traces/cbe792fee9790a829bbf1e53f3992b74).
 - Controller, supervisor receipts, logs, health samples, typed guidance and
   observation snapshots: `runs/launches/2026-11-12T16-29-00Z-spam1-tool-choice-diagnostic/`.
+
+Before the second observation, this run's `spam1/` and `solutions/` trees were
+moved intact to
+`runs/archives/2026-11-12T17-13-07Z-spam1-tool-choice-diagnostic-1/`.
+Paths below describing task state and operator answers now resolve under that
+archive. The delivery and launch/observation records remain at their original
+paths. Git worktree pointers were repaired for the relocated source snapshots;
+their recorded solution commit did not change.
 
 The inherited exec session 77591 was unavailable and no prior preflight process
 remained. Read-only telemetry inspection recovered no completion for that
