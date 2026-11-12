@@ -3,7 +3,7 @@ import { HARNESS_CONFIG } from "../harness/config.js";
 import { SmartContextSession } from "../context/session.js";
 import { createHash } from "node:crypto";
 import {
-	createAgentSession, createBashToolDefinition, createEditToolDefinition,
+	createAgentSession, createEditToolDefinition,
 	createFindToolDefinition, createGrepToolDefinition, createLsToolDefinition,
 	createReadToolDefinition, createWriteToolDefinition, defineTool, SessionManager, SettingsManager,
 	type CreateAgentSessionOptions, type ToolDefinition, type InlineExtension,
@@ -13,6 +13,8 @@ import type { SuppliedInput } from "../pipeline/types.js";
 import type { PromptSnapshot, RenderedPrompt } from "../prompts/loader.js";
 import { createPipelineResourceLoader } from "../run/session_resources.js";
 import type { ChildIdentity, ChildSession } from "./types.js";
+import { agentBashTool, assertSupervisedBash, bindAgentShells, closeAgentShells, hostShell, HOST_SHELL_LOG_ROOT, replaceToolsByName } from "../run/agent_shell.js";
+import { join } from "node:path";
 
 export const CHILD_TOOL_NAMES = ["read", "grep", "find", "ls", "bash", "write", "edit"] as const;
 export type ChildToolName = typeof CHILD_TOOL_NAMES[number];
@@ -20,6 +22,14 @@ export type ChildToolName = typeof CHILD_TOOL_NAMES[number];
 export interface PiChildOptions {
 	cwd: string;
 	agentDir: string;
+	/**
+	 * Controller-supplied tools and guards, never model-selected capabilities.
+	 * They replace the built-in child tools of the same name, or add to them.
+	 * The final set is validated and bound, so a wrapped supervised bash
+	 * (`wrapAgentTool`) is accepted and reports to the child. One factory's
+	 * replacement objects are shared by every child it creates.
+	 */
+	customTools?: readonly ToolDefinition[];
 	model: NonNullable<CreateAgentSessionOptions["model"]>;
 	modelRuntime: NonNullable<CreateAgentSessionOptions["modelRuntime"]>;
 	thinkingLevel?: CreateAgentSessionOptions["thinkingLevel"];
@@ -31,24 +41,22 @@ export interface PiChildOptions {
 	inputs: readonly SuppliedInput[];
 	/** Obtain from context.report.observation(attempt). Caller retains sink ownership. */
 	observe: AgentObservation;
+	/** Built-in child tool names, plus names of `customTools` and `extensionTools`. */
 	tools?: readonly string[];
-	/** Controller-supplied tools/guards; never model-selected capabilities. */
-	customTools?: readonly ToolDefinition[];
 	extensionFactories?: readonly InlineExtension[];
 	/** Names of tools the controller's `extensionFactories` register (e.g. web_search); allowed like custom tools. */
 	extensionTools?: readonly string[];
 	childInstructions?: RenderedPrompt;
 	/** null disables the legacy request wall timer for tool-budgeted scouts. */
 	turnTimeoutMs?: number | null;
+	/** Where each child's shell calls keep their full output. Defaults to the run state's shell-calls folder. */
+	shellLogRoot?: string;
 }
 
-/** Uses Pi's cancellation, streaming, and output truncation with a session-local environment. */
-export function createChildBashTool(cwd: string, environment: Readonly<NodeJS.ProcessEnv>) {
+/** The child's supervised shell, with a session-local environment frozen at construction. */
+export function createChildBashTool(cwd: string, environment: Readonly<NodeJS.ProcessEnv>, logRoot = HOST_SHELL_LOG_ROOT) {
 	const env = Object.freeze({ ...environment });
-	return createBashToolDefinition(cwd, {
-		exposeSessionEnvironment: false,
-		spawnHook: context => ({ ...context, env: agentEnvironment(env) }),
-	});
+	return agentBashTool(hostShell(cwd, agentEnvironment(env), logRoot));
 }
 
 /** No ambient project instructions, skills, extensions, or system-prompt additions. */
@@ -84,7 +92,10 @@ export function createPiChildFactory(options: PiChildOptions): (identity: ChildI
 	const instructions = [...options.sharedInstructions, (options.childInstructions ?? options.prompts.render("subagents.child", {}))]
 		.map(prompt => Object.freeze({ text: prompt.text, reference: Object.freeze({ ...prompt.reference }) }));
 	const toolNames = [...new Set(options.tools ?? CHILD_TOOL_NAMES)];
-	for (const name of toolNames) if (!(CHILD_TOOL_NAMES as readonly string[]).includes(name) && !options.customTools?.some(tool => tool.name === name) && !options.extensionTools?.includes(name)) throw new Error(`Unsupported child tool: ${name}`);
+	const replacements = [...(options.customTools ?? [])];
+	for (const name of toolNames) if (!(CHILD_TOOL_NAMES as readonly string[]).includes(name) && !replacements.some(tool => tool.name === name) && !options.extensionTools?.includes(name)) throw new Error(`Unsupported child tool: ${name}`);
+	// Refused before any child starts, whichever tool it would replace.
+	assertSupervisedBash(replacements);
 	const timeoutMs = options.turnTimeoutMs === null ? null : options.turnTimeoutMs ?? HARNESS_CONFIG.subagents.turnTimeoutMs;
 	if (timeoutMs !== null && (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2_147_483_647)) throw new Error("Invalid child turn timeout");
 	const identity = { ...options.observe.identity };
@@ -102,25 +113,33 @@ export function createPiChildFactory(options: PiChildOptions): (identity: ChildI
 			...(identity.stageInvocationId ? { PIPELINE_STAGE_INVOCATION_ID: identity.stageInvocationId } : {}),
 			...(identity.attempt != null ? { PIPELINE_AGENT_ATTEMPT: String(identity.attempt) } : {}),
 		};
+		// One tool set per child, across its physical sessions: processes a shell call
+		// left running stay tracked through a context handoff and end with the child.
+		const bash = replacements.some(tool => tool.name === "bash") ? []
+			: [createChildBashTool(cwd, childEnv, join(options.shellLogRoot ?? HOST_SHELL_LOG_ROOT, child.logicalAgentId))];
+		const availableTools = [
+			defineTool(createReadToolDefinition(cwd)), defineTool(createGrepToolDefinition(cwd)), defineTool(createFindToolDefinition(cwd)),
+			defineTool(createLsToolDefinition(cwd)), ...bash,
+			defineTool(createWriteToolDefinition(cwd)), defineTool(createEditToolDefinition(cwd)),
+		] as ToolDefinition[];
+		// The final set, after replacement by name, is what is validated and bound.
+		const customTools = replaceToolsByName(availableTools, replacements).filter(tool => toolNames.includes(tool.name));
+		assertSupervisedBash(customTools);
 		const logical = new SmartContextSession({
 			prompts: options.prompts,
 			create: async () => {
 				signal.throwIfAborted();
 				const { settingsManager, resourceLoader, systemPrompt } = await loadChildResources({ cwd, agentDir, instructions, extensionFactories: options.extensionFactories });
 				signal.throwIfAborted();
-				const availableTools = [
-					defineTool(createReadToolDefinition(cwd)), defineTool(createGrepToolDefinition(cwd)), defineTool(createFindToolDefinition(cwd)),
-					defineTool(createLsToolDefinition(cwd)), defineTool(createChildBashTool(cwd, childEnv)),
-					defineTool(createWriteToolDefinition(cwd)), defineTool(createEditToolDefinition(cwd)),
-				];
 				const { session } = await createAgentSession({
 					cwd, agentDir, model, modelRuntime, thinkingLevel, settingsManager, resourceLoader,
-					sessionManager: SessionManager.inMemory(cwd), tools: [...toolNames],
-					customTools: [...new Map([...availableTools, ...(options.customTools ?? [])].map(tool => [tool.name, tool])).values()].filter(tool => toolNames.includes(tool.name)),
+					sessionManager: SessionManager.inMemory(cwd), tools: [...toolNames], customTools,
 				});
 				let observer: Awaited<ReturnType<typeof observeAgentSession>>;
 				try { observer = await observeAgentSession({ session, model: `${model.provider}/${model.id}`, ...observe, parentAgentRunId: child.parentAgentRunId }); }
 				catch (error) { session.dispose(); throw error; }
+				// The child's shell findings wake the child, under its own observability identity.
+				bindAgentShells(customTools, { session: logical, record: observer.record, prompts: options.prompts });
 				let disposed = false;
 				const dispose = () => { if (!disposed) { disposed = true; session.dispose(); } };
 				observer.record("subagent_link", { ...child });
@@ -170,12 +189,13 @@ export function createPiChildFactory(options: PiChildOptions): (identity: ChildI
 			abort,
 			close: () => closing ??= (async () => {
 				signal.removeEventListener("abort", onAbort);
-				await logical.close();
+				try { await logical.close(); } finally { await closeAgentShells(customTools); }
 			})(),
 			terminate: async () => {
 				closing ??= Promise.resolve();
 				signal.removeEventListener("abort", onAbort);
-				await logical.terminate();
+				// Disposing aborts running shell calls; closing the shells stops what they left running.
+				try { await logical.terminate(); } finally { await closeAgentShells(customTools); }
 			},
 		};
 	};

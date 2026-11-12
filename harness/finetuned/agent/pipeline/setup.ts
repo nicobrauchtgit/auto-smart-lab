@@ -1,4 +1,6 @@
 /** Fail-fast prerequisites shared by pipeline and standalone stage execution. */
+import { checkSupervision } from "../experiments/setup.js";
+import { checkReaper } from "../experiments/launcher.js";
 import { checkSolveSandbox } from "../run/solve_sandbox.js";
 import { accessSync, constants, statSync, existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -17,7 +19,7 @@ import { ARM_ROOT, statePath } from "../paths.js";
 import { readCourseResources } from "../research/resources.js";
 import { readTaskData } from "../solve/task_data.js";
 
-export type SetupRequirement = "scouts" | "trial-checks" | "observability" | "model" | "python" | "task" | "training" | "refit" | "web-search" | "submission" | "submission-recovery" | "solve-isolation" | "confirmation" | "data-profile" | "course-resources";
+export type SetupRequirement = "supervision" | "scouts" | "trial-checks" | "observability" | "model" | "python" | "task" | "training" | "refit" | "web-search" | "submission" | "submission-recovery" | "solve-isolation" | "confirmation" | "data-profile" | "course-resources";
 export interface SetupCheck {
  id: string;
  phase: "local" | "remote";
@@ -98,6 +100,8 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
  experimentConfigPath?: string;
  /** Executable overrides for regression tests; production resolves them from the environment. */
  executables?: { python?: string; git?: string; bwrap?: string };
+ /** Test seam for the process-supervision check; production reads /proc. */
+ supervisionProcRoot?: string;
  candidateProducedUpstream?: boolean; refitTrainingRoot?: string;
  submissionPolicy?: import("./types.js").StageInput["submissionPolicy"];
  /**
@@ -110,6 +114,11 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
  const checks: SetupCheck[] = [];
  const add = (id: string, phase: SetupCheck["phase"], remedy: string, run: SetupCheck["run"]) => checks.push({ id, phase, remedy, run });
  const needs = new Set(requirements);
+ if (["supervision", "model", "training", "refit"].some(requirement => needs.has(requirement as SetupRequirement))) {
+  add("process-supervision", "local", "Enable readable own-user /proc stat, io, status and meminfo and a loadable libc (sysconf) on Linux, or libproc on Darwin. Process birth identities and memory sampling are required before agent or trial execution.", () => checkSupervision(options.supervisionProcRoot));
+  // Every trial and agent shell call runs under the child subreaper, so nothing it leaves behind escapes supervision.
+  add("supervision-launcher", "local", "Run ./dev setup so the project Python exists (the supervision launcher uses its standard library only), on a Linux kernel that allows prctl(PR_SET_CHILD_SUBREAPER); it needs no privileges.", () => checkReaper(options.executables?.python));
+ }
  if (needs.has("scouts")) add("scout-prompts", "local", "Prepare the task data (task.md with the unit introduction at its top, and profile.json), restore agent/prompts/team and a non-empty unit-intro.md, and make the task findings destination writable; every scout requires the task text with the unit introduction, the profile and a durable findings journal.", () => {
   const data = options.scoutPaths ? undefined : readTaskData(options.taskId, PROJECT_ROOT);
   if (!options.scoutPaths && !data) throw new Error("Task data not prepared");

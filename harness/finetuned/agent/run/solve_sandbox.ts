@@ -5,7 +5,7 @@ import { delimiter, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
  createReadToolDefinition, createWriteToolDefinition, createEditToolDefinition,
- createBashToolDefinition, createGrepToolDefinition, createFindToolDefinition, createLsToolDefinition,
+ createGrepToolDefinition, createFindToolDefinition, createLsToolDefinition,
  defineTool, type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
@@ -14,12 +14,14 @@ import { sanitizeTrainingEnvironment } from "../training/environment.js";
 import type { SolveWorkspace } from "../solve/workspace.js";
 import type { PythonEnvironment } from "./python_environment.js";
 import { REPO_ROOT } from "../paths.js";
+import { agentBashTool, sandboxShell, type SandboxShellLogs } from "./agent_shell.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const WORKER = join(ROOT, "agent/run/solve_tool_worker.ts");
+// No raw shell definition here or in the worker: `bash` is always the supervised agent shell.
 const factories = { read: createReadToolDefinition, write: createWriteToolDefinition, edit: createEditToolDefinition,
- bash: createBashToolDefinition, grep: createGrepToolDefinition, find: createFindToolDefinition, ls: createLsToolDefinition };
-export const SOLVE_FILE_TOOLS = Object.keys(factories);
+ grep: createGrepToolDefinition, find: createFindToolDefinition, ls: createLsToolDefinition };
+export const SOLVE_FILE_TOOLS = ["read", "write", "edit", "bash", "grep", "find", "ls"];
 type ToolResult = Awaited<ReturnType<ToolDefinition["execute"]>>;
 export interface SandboxMount { source: string; writable?: boolean }
 export interface SolveSandbox { executable: string; cwd: string; mounts: SandboxMount[]; env: Record<string, string>; args(command: string[]): string[] }
@@ -135,11 +137,18 @@ function persistentWrite(policy: SolveSandbox, value: unknown): boolean {
  });
 }
 
-/** Every SDK filesystem tool runs in a fresh restricted mount/PID namespace. */
-export function isolatedSolveTools(policy: SolveSandbox): ToolDefinition[] {
+/**
+ * Every SDK filesystem tool runs in a fresh restricted mount/PID namespace.
+ * `bash` is the supervised agent shell with the sandbox as its process
+ * (run/agent_shell.ts); the other tools run through the sandboxed worker.
+ * `shellLogs` says where its calls keep their logs (harness-owned, outside
+ * every writable mount) and where the agent reads a copy of each (by default
+ * `.shell-calls` in the first writable mount).
+ */
+export function isolatedSolveTools(policy: SolveSandbox, shellLogs?: SandboxShellLogs): ToolDefinition[] {
  // The SDK tool registry erases each factory's parameter schema. Preserve the
  // factory renderers; dispatch still validates parameters through that schema.
- return Object.entries(factories).map(([name, factory]) => ({ ...factory(policy.cwd), async execute(id: string, params: unknown, signal: AbortSignal | undefined, onUpdate: Parameters<ToolDefinition["execute"]>[3]) {
+ return SOLVE_FILE_TOOLS.map((name) => name === "bash" ? agentBashTool(sandboxShell(policy, shellLogs)) : ({ ...factories[name as keyof typeof factories](policy.cwd), async execute(id: string, params: unknown, signal: AbortSignal | undefined, onUpdate: Parameters<ToolDefinition["execute"]>[3]) {
   signal?.throwIfAborted();
   if (["write", "edit"].includes(name) && !persistentWrite(policy, (params as any).path)) throw new Error("Write outside the persistent solve workspace is unavailable");
   return await new Promise<ToolResult>((accept, reject) => {

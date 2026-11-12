@@ -8,6 +8,7 @@
  */
 
 import { HARNESS_CONFIG } from "../harness/config.js";
+import type { PromptId } from "../prompts/registry.js";
 export type ExperimentStatus = "running" | "exited" | "stopped" | "failed";
 
 /** What the caller asks for. Persisted before the process is spawned. */
@@ -30,6 +31,8 @@ export interface ExperimentSpec {
 	 * absent the supervisor calibrates from the gaps this run actually shows.
 	 */
 	expectedGapMs?: number;
+	/** Measured/projected cost, when available. */
+	projectedDurationMs?: number;
 }
 
 /** Everything recorded before the spawn, so a stray process is attributable later. */
@@ -37,6 +40,11 @@ export interface ExperimentRecord extends ExperimentSpec {
 	id: string;
 	pid: number;
 	pgid: number;
+	/**
+	 * The child subreaper `argv` runs under (`launcher.ts`), when there is one.
+	 * It leads the process group, so `pgid` is its PID.
+	 */
+	launcher?: string[];
 	startedAt: string;
 	directory: string;
 	logPath: string;
@@ -55,6 +63,10 @@ export interface ResourceSample {
 	rssBytes: number;
 	/** Absent on the first sample: a rate needs two readings. */
 	cpuPercent?: number;
+	largestProcessBytes?: number;
+	readBytes?: number;
+	writeBytes?: number;
+	pids?: number[];
 }
 
 export interface ExperimentView {
@@ -79,7 +91,7 @@ export interface ExperimentView {
 }
 
 /** Why the supervisor woke the agent. Routine progress is coalesced; the rest jumps the queue. */
-export type UpdateKind = "progress" | "stalled" | "exited" | "diagnostic" | "memory";
+export type UpdateKind = "progress" | "stalled" | "exited" | "diagnostic" | "memory" | "stale" | "time-wasting" | "flooding" | "machine-at-risk" | "busy-silence";
 
 export interface Update {
 	kind: UpdateKind;
@@ -88,12 +100,15 @@ export interface Update {
 	/** The last few lines, not the whole tail: the log keeps the full sequence. */
 	lines: string[];
 	view: ExperimentView;
+	/** Measured values behind the finding: the variables of its note prompt. */
+	facts?: Record<string, string>;
+	/** The note template, when it is not the default one for this kind. */
+	notePrompt?: PromptId;
+	/** Rendered from `agent/prompts/experiments/` by the supervisor. */
 	note?: string;
 }
 
 export interface SupervisorLimits {
-	/** At most one routine wake per interval. 152 lines in 2.9 s is 52 a second. */
-	updateIntervalMs: number;
 	/** Lines carried on one update. The log holds the rest. */
 	linesPerUpdate: number;
 	/** Silence below this never counts, whatever the derived threshold says. */
@@ -109,9 +124,24 @@ export interface SupervisorLimits {
 	maxConcurrent: number;
 	/** Grace between the group's SIGTERM and its SIGKILL. */
 	stopGraceMs: number;
+	outputCapBytes: number;
+	memoryReserveBytes: number;
+	swapFullSeconds: number;
+	/** Time-wasting: elapsed beyond this multiple of the projection for comparable work... */
+	overrunMultiple: number;
+	/** ...and beyond this much wall time. Short calls are never reported as time-wasting. */
+	overrunMinMs: number;
+	/**
+	 * Busy silence beyond this is reported even without a rhythm or a projection:
+	 * no healthy call stays silent this long. Generous on purpose.
+	 */
+	busySilenceCeilingMs: number;
 }
 
-export const DEFAULT_LIMITS: Readonly<SupervisorLimits> = HARNESS_CONFIG.supervisor;
+/** The smallest output read: one character of up to four UTF-8 bytes always fits. */
+export const MIN_OUTPUT_BYTES = 4;
+
+export const DEFAULT_LIMITS: Readonly<SupervisorLimits> = HARNESS_CONFIG.supervision;
 
 /**
  * Output that should reach the agent ahead of routine progress.

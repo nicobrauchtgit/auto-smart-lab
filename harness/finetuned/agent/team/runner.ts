@@ -21,6 +21,7 @@ import { HARNESS_CONFIG } from "../harness/config.js";
 import { webSearchExtension } from "../tools/web_search.js";
 import { runTrialChecks } from "../evaluation/checks.js";
 import { guardScoutSession } from "./budget.js";
+import { wrapAgentTool } from "../run/agent_shell.js";
 
 export const READ_ONLY_SCOUT_TOOLS = ["read", "grep", "find", "ls"] as const;
 /** Results per web search; the ideas scout reads a few sources, not a result page. */
@@ -45,7 +46,8 @@ export interface ScoutView {
  *   extension, capped per session, with its own log in research/;
  * - validation: the trial snapshot read-only as cwd; the live solutions tree
  *   is hidden except checks/ (only checks/<task>/ writable) and this trial's
- *   check logs.
+ *   check and shell-call logs.
+ * Every role with bash gets the supervised agent shell (run/agent_shell.ts).
  */
 export function scoutToolset(role: ScoutRole, options: {
  sandbox: SolveSandbox; solutionsRoot: string; taskId: string; trial?: TrialSnapshot;
@@ -64,7 +66,10 @@ export function scoutToolset(role: ScoutRole, options: {
   const mounts = [...readOnly.filter(mount => !inside(real(mount.source), live)),
    {source: join(live, "checks")}, {source: checks, writable: true}, {source: logs}];
   const sandbox = policy(mounts, join(source, "solutions"));
-  return {sandbox, tools: isolatedSolveTools(sandbox), extensions: [], extensionTools: [], checkSandbox: policy(mounts, live)};
+  // The scout reads a copy of each shell call's output beside this trial's check logs: gitignored
+  // scratch, never checks/<task>/ (its one writable mount), which trial commits would pick up.
+  // The logs themselves stay harness-owned, outside every mount; the copy is never read back.
+  return {sandbox, tools: isolatedSolveTools(sandbox, {spill: {base: live, directory: join(logs, "shell-calls")}}), extensions: [], extensionTools: [], checkSandbox: policy(mounts, live)};
  }
  const research = join(options.sandbox.cwd, "research");
  if (!existsSync(research)) throw new Error("Scout workspace must have its own research/ folder");
@@ -78,8 +83,8 @@ export function scoutToolset(role: ScoutRole, options: {
  return {sandbox, tools, extensions: [{name: "scout-web-search", factory: search}], extensionTools: ["web_search"]};
 }
 
-/** Last part of a check's output, enough to show a traceback or assertion. */
-const tail = (path: string, chars = 1_500) => { try { const text = readFileSync(path, "utf8"); return text.length > chars ? `…${text.slice(-chars)}` : text; } catch { return ""; } };
+/** Last part of a check's output, enough to show a traceback or assertion: from the pipes the harness read, never the log file. */
+const tail = (text: string, chars = 1_500) => text.length > chars ? `…${text.slice(-chars)}` : text;
 
 /**
  * `run_checks` for the validation scout: stream B's runTrialChecks against the
@@ -106,10 +111,10 @@ export function validationCheckTool(options: {
    const hashes = new Map(paths.map(path => [path, createHash("sha256").update(readFileSync(path)).digest("hex")]));
    try {
     const result = await runTrialChecks(options.trial, paths, options.sandbox, signal);
-    const checks = result.checks.map(check => ({path: relative(live, check.path).split(sep).join("/"), exitCode: check.exitCode, sha256: hashes.get(check.path)!, output: tail(check.outputPath)}));
+    const checks = result.checks.map(check => ({path: relative(live, check.path).split(sep).join("/"), exitCode: check.exitCode, sha256: hashes.get(check.path)!, output: tail(check.output)}));
     for (const check of checks) { const at = ran.findIndex(row => row.path === check.path); if (at >= 0) ran.splice(at, 1); ran.push({path: check.path, sha256: check.sha256}); }
     options.record?.("validation_checks", {experiment_id: options.trial.experimentId, commit: options.trial.commit, passed: result.passed,
-     checks: checks.map(({path, exitCode, sha256}) => ({path, exitCode, sha256}))});
+     checks: checks.map(({path, exitCode, sha256}, index) => ({path, exitCode, sha256, logPath: result.checks[index].logPath}))});
     return reply({experiment: options.trial.experimentId, passed: result.passed, checks: checks.map(({path, exitCode, output}) => ({path, exitCode, output}))});
    } catch (error) {
     signal?.throwIfAborted();
@@ -186,21 +191,23 @@ export function createScoutRunner(options: {
 
 /**
  * Gives every scout tool an abort signal the runner owns, besides Pi's, and
- * tracks each execution until it settles. The isolated tools SIGKILL their
- * bubblewrap process on abort and settle only after it has exited; bubblewrap
- * runs with --die-with-parent in its own PID namespace, so the command's whole
- * process tree ends with it.
+ * tracks each execution until it settles. An aborted bash call stops its tree
+ * through its supervisor (run/agent_shell.ts): SIGTERM, a grace period, SIGKILL
+ * to what remains, the sandbox launcher last; it settles once that stop
+ * returns. The other isolated tools SIGKILL their bubblewrap worker on abort
+ * and settle once it has exited. `wrapAgentTool` keeps the supervision brand,
+ * so the child factory still validates and binds the tracked bash.
  */
 export function trackScoutTools(tools: readonly ToolDefinition[]) {
  const controller = new AbortController();
  const running = new Set<Promise<void>>();
  return {
-  tools: tools.map(tool => ({...tool, execute(id, params, signal, onUpdate, context) {
-   const run = tool.execute(id, params, signal ? AbortSignal.any([signal, controller.signal]) : controller.signal, onUpdate, context);
+  tools: tools.map(tool => wrapAgentTool(tool, execute => (id, params, signal, onUpdate, context) => {
+   const run = execute(id, params, signal ? AbortSignal.any([signal, controller.signal]) : controller.signal, onUpdate, context);
    const settled: Promise<void> = run.then(() => undefined, () => undefined).finally(() => { running.delete(settled); });
    running.add(settled);
    return run;
-  }} as ToolDefinition)),
+  })),
   get running() { return running.size; },
   /** Aborts every execution, now and later; returns how many are still running after `ms`. */
   async stop(ms: number): Promise<number> {

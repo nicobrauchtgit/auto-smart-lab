@@ -14,8 +14,9 @@ test("a scoped session exposes its custom tools alongside its allowed built-ins"
 test("concurrent bash tools retain session-local environment without global mutation", async () => {
  const { sessionBashTool } = await import("./session_runner.js");
  const before = process.env.STREAM_B_SESSION_MARKER;
- const first = sessionBashTool(import.meta.dir, { STREAM_B_SESSION_MARKER: "first" });
- const second = sessionBashTool(import.meta.dir, { STREAM_B_SESSION_MARKER: "second" });
+ const logs = (await import("node:fs")).mkdtempSync(`${(await import("node:os")).tmpdir()}/session-shell-`);
+ const first = sessionBashTool(import.meta.dir, { STREAM_B_SESSION_MARKER: "first" }, logs);
+ const second = sessionBashTool(import.meta.dir, { STREAM_B_SESSION_MARKER: "second" }, logs);
  const outputs = await Promise.all([first.execute("a", { command: 'printf "%s" "$STREAM_B_SESSION_MARKER"' }, undefined, undefined, undefined as any), second.execute("b", { command: 'printf "%s" "$STREAM_B_SESSION_MARKER"' }, undefined, undefined, undefined as any)]);
  expect(JSON.stringify(outputs[0])).toContain("first");
  expect(JSON.stringify(outputs[1])).toContain("second");

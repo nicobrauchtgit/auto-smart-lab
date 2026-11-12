@@ -135,6 +135,36 @@ describe("TrainingService", () => {
 		expect(calls).toBe(0);
 	});
 
+	test("a trial repeating completed work receives that work's wall time as its projection", async () => {
+		const root = mkdtempSync(join(tmpdir(), "training-projection-"));
+		mkdirSync(join(root, "solutions"), { recursive: true });
+		writeFileSync(join(root, "solutions", "task.py"), "def build(): pass\n");
+		const specs: ExperimentSpec[] = [];
+		const service = new TrainingService({
+			supervisor: { start(spec, _tool, id) { specs.push(spec); return { id: id!, status: "running", scope: spec.scope,
+				hypothesis: spec.hypothesis, elapsedSeconds: 0, linesEmitted: 0, cursor: 0, logPath: "log" }; } },
+			pythonExecutable: PYTHON, measurement: measurement(root), projectRoot: root, trainingRoot: join(root, "experiments"),
+			taskId: "task", datasetSha256: "a".repeat(64), rootSeed: 13,
+			zipPath: "train.zip", labelsPath: "train.labels", maxExperiments: 5, validatePipeline: noPipelineChecks,
+		});
+		const request = (hypothesis: string, c = 1) => ({ schemaVersion: 1, hypothesis,
+			pipeline: { module: "solutions/task.py", factory: "build", parameters: { c } },
+			cv: { kind: "builtin", scheme: "stratified_kfold", folds: 2, repeats: 1 },
+			scope: { kind: "pilot" } });
+		const first = await service.start(request("first"));
+		expect(specs[0].projectedDurationMs).toBeUndefined();
+		// A failed or unfinished trial projects nothing.
+		service.recordDuration(first.id, { status: "exited", exitCode: 1, elapsedSeconds: 42 });
+		await service.start(request("again"));
+		expect(specs[1].projectedDurationMs).toBeUndefined();
+		writeFileSync(join(first.directory, "trial-result.json"), JSON.stringify({ status: "completed" }));
+		service.recordDuration(first.id, { status: "exited", exitCode: 0, elapsedSeconds: 42 });
+		await service.start(request("same work, another reason"));
+		expect(specs[2].projectedDurationMs).toBe(42_000);
+		await service.start(request("different work", 2));
+		expect(specs[3].projectedDurationMs).toBeUndefined();
+	}, 60_000);
+
 	test("enforces a total trial budget while allowing the agent to stop earlier", async () => {
 		const root = mkdtempSync(join(tmpdir(), "training-service-"));
 		mkdirSync(join(root, "solutions"), { recursive: true });

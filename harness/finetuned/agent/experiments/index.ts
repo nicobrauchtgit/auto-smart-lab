@@ -31,6 +31,25 @@ export interface Wakeable {
 	): Promise<void>;
 }
 
+/**
+ * Deliver one update to a session through one channel, never both.
+ *
+ * `steer()` delivers after the current turn's tool calls finish and before
+ * the next model call, so it reaches a running agent. An idle agent has no
+ * turn to attach to, and only `triggerTurn` starts one. Sending through both
+ * would deliver the same measurement twice.
+ */
+export async function wake(session: Wakeable, text: string, update: Update): Promise<void> {
+	if (session.isStreaming) {
+		await session.steer(text);
+		return;
+	}
+	await session.sendCustomMessage(
+		{ customType: "experiment_update", content: text, display: true, details: { id: update.id, kind: update.kind } },
+		{ triggerTurn: true },
+	);
+}
+
 export function createExperiments(options: Omit<SupervisorOptions, "deliver"> & {
 	prompts: PromptSnapshot;
 	session?: Wakeable;
@@ -44,14 +63,7 @@ export function createExperiments(options: Omit<SupervisorOptions, "deliver"> & 
 		deliver: (text, update) => deliver(text, update),
 	});
 
-	/**
-	 * One channel, never both.
-	 *
-	 * `steer()` delivers after the current turn's tool calls finish and before
-	 * the next model call, so it reaches a running agent. An idle agent has no
-	 * turn to attach to, and only `triggerTurn` starts one. Sending through both
-	 * would deliver the same measurement twice.
-	 */
+	/** Through `wake` once a session is bound; queued for the opening turn before that. */
 	async function deliver(text: string, update: Update): Promise<void> {
 		if (!session) {
 			pending.push({ text, update });
@@ -59,14 +71,7 @@ export function createExperiments(options: Omit<SupervisorOptions, "deliver"> & 
 			options.record?.("experiment_update_undelivered", { experiment_id: update.id, kind: update.kind });
 			return;
 		}
-		if (session.isStreaming) {
-			await session.steer(text);
-			return;
-		}
-		await session.sendCustomMessage(
-			{ customType: "experiment_update", content: text, display: true, details: { id: update.id, kind: update.kind } },
-			{ triggerTurn: true },
-		);
+		await wake(session, text, update);
 	}
 
 	const tools = createExperimentTools(supervisor, options.prompts);
@@ -97,3 +102,6 @@ export function createExperiments(options: Omit<SupervisorOptions, "deliver"> & 
 		},
 	};
 }
+
+export { createSupervisedBashTool } from "./bash.js";
+export { MachineProtection } from "./protection.js";

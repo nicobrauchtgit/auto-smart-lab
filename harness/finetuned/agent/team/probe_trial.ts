@@ -96,7 +96,7 @@ const training = createHarnessTraining({
  workerPath: join(ARM_ROOT, "agent", "training", "python", "worker.py"), lockPath: join(ARM_ROOT, "uv.lock"),
  sandboxCommand: (command, input) => trainingSandboxCommand(sandbox, command, input),
  taskId, datasetSha256: data.datasetSha256, rootSeed: HARNESS_CONFIG.solve.seed, zipPath: data.devZip, measurement: data.measurement,
- solutionsRoot: data.solutionsRoot, search: HARNESS_CONFIG.search, maxExperiments: 1, limits: {updateIntervalMs: 60_000},
+ solutionsRoot: data.solutionsRoot, search: HARNESS_CONFIG.search, maxExperiments: 1,
 });
 try {
  await training.ready();

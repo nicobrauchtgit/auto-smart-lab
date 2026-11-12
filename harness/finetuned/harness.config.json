@@ -24,7 +24,6 @@
     "maxIterations": 6,
     "seed": 13,
     "foldPolicy": "auto",
-    "experimentUpdateIntervalSeconds": 30,
     "idleWakeMs": 600000
   },
   "holdout": {
@@ -61,8 +60,7 @@
       "repeats": 1
     }
   ],
-  "supervisor": {
-    "updateIntervalMs": 5000,
+  "supervision": {
     "linesPerUpdate": 5,
     "minStallMs": 15000,
     "stallGapMultiple": 4,
@@ -70,7 +68,13 @@
     "idleCpuPercent": 5,
     "sampleIntervalMs": 250,
     "maxConcurrent": 2,
-    "stopGraceMs": 2000
+    "stopGraceMs": 2000,
+    "outputCapBytes": 51200,
+    "memoryReserveBytes": 1073741824,
+    "swapFullSeconds": 15,
+    "overrunMultiple": 3,
+    "overrunMinMs": 60000,
+    "busySilenceCeilingMs": 1800000
   },
   "team": {
     "lead": { "maxToolCalls": 80 },

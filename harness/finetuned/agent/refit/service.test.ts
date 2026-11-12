@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { createHarnessTraining } from "../training/index.js";
 import { loadPromptSnapshot } from "../prompts/loader.js";
 import { commitAll, temporaryProject, PYTHON, WORKER, trainingEnvironment, until, writeCorpus, writeSampleManifest } from "../training/testing.js";
@@ -169,7 +169,7 @@ test("dead opaque worker restarts from the same freeze and concurrent invocation
  expect(await until(() => existsSync(join(prepared.directory, "events.jsonl")) && readFileSync(join(prepared.directory, "events.jsonl"), "utf8").includes('terminal_fit'))).toBe(true);
  const exited = new Promise(resolve => child.once("exit", resolve)); child.kill("SIGKILL"); await exited;
  const { ownedProcessAlive, liveGroup } = await import("../experiments/ownership.js");
- const owner = JSON.parse(readFileSync(join(prepared.directory, "worker", "worker-owner.json"), "utf8"));
+ const owner = JSON.parse(readFileSync(join(dirname(prepared.directory), ".supervision", prepared.identity, "worker", "worker-owner.json"), "utf8"));
  expect(ownedProcessAlive(owner.identity)).toBe(true);
  process.kill(-owner.identity.pgid, "SIGKILL");
  expect(await until(() => liveGroup(owner.identity.pgid).length === 0)).toBe(true);

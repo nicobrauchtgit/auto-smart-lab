@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { copyFileSync, realpathSync, mkdtempSync, existsSync, mkdirSync, symlinkSync, writeFileSync, readFileSync } from "node:fs";
+import { copyFileSync, lstatSync, realpathSync, mkdtempSync, existsSync, mkdirSync, symlinkSync, writeFileSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { prepareSolveSandbox, isolatedSolveTools, trainingSandboxCommand, checkSolveSandbox, solvePythonEnvironmentTool, pythonManagerEnvironment } from "./solve_sandbox.js";
 import { tmpdir } from "node:os";
@@ -8,6 +8,7 @@ import { spawnSync } from "node:child_process";
 import { validatePythonEnvironment, type PythonEnvironment } from "./python_environment.js";
 import { temporaryProject, writeSampleManifest, trainingEnvironment, PYTHON, WORKER, until } from "../training/testing.js";
 import { createHarnessTraining } from "../training/index.js";
+import { trialSupervisionDirectory } from "../training/results.js";
 import { git } from "../training/git.js";
 import { loadPromptSnapshot } from "../prompts/loader.js";
 import { SetupSession, setupChecks } from "../pipeline/setup.js";
@@ -119,6 +120,62 @@ test("dependency manager audit retains explicit run/invocation/attempt/session i
 });
 
 
+/**
+ * The agent's pipeline code runs in the trial worker's sandbox, whose one
+ * writable mount is the trial directory. Mid-fit it replaces every file a
+ * supervisor kept there in the old layout (log, launcher status, state,
+ * record) with a symlink to a host-only file. The harness's view of the
+ * trial (output, tail, status, findings) never contains that file.
+ */
+test("a trial worker that swaps its logs for symlinks to a host-only file never shows that file", async () => {
+ const { project, manifest, policy, python } = fixture();
+ const marker = `WITHHELD_LABELS_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+ const secret = join(project.root, "withheld-labels.csv"), content = `id,label\n1,${marker}\n`;
+ writeFileSync(secret, content);
+ const root = join(project.root, "training");
+ const updates: string[] = [];
+ const session = { isStreaming: true, async steer(text: string) { updates.push(text); }, async sendCustomMessage(message: { content: string }) { updates.push(message.content); } };
+ const training = createHarnessTraining({ root, projectRoot: project.root, solutionsRoot: project.solutionsRoot,
+  taskId: "fixture", pythonExecutable: python.executable, env: trainingEnvironment(), datasetSha256: manifest.datasetSha256,
+  rootSeed: 13, measurement: manifest.measurement, workerPath: WORKER, prompts: loadPromptSnapshot(), session,
+  sandboxCommand: (command, input) => trainingSandboxCommand(policy, command, input), executionBoundaryFingerprint: "symlink-swap",
+  record: () => undefined, limits: { sampleIntervalMs: 25, stopGraceMs: 100 } });
+ const features = join(project.solutionsRoot, "features.py");
+ writeFileSync(features, readFileSync(features, "utf8").replace("        if self.delay:",
+  ["        import glob, os",
+   "        if self.delay:",
+   `            for trial in glob.glob(${JSON.stringify(join(root, "*", ""))}):`,
+   "                for name in ('output.log', 'command.json', 'supervisor-state.json', 'experiment.json', 'worker-owner.json', 'worker-runtime.json', 'worker-exit.json', 'launch-released.json'):",
+   "                    path = os.path.join(trial, name)",
+   "                    if os.path.lexists(path): os.unlink(path)",
+   `                    os.symlink(${JSON.stringify(secret)}, path)`,
+   "            print('LOGS_SWAPPED', os.path.exists(" + JSON.stringify(secret) + "), flush=True)",
+   "        if self.delay:"].join("\n")));
+ git(project.solutionsRoot, ["add", "."]); git(project.solutionsRoot, ["commit", "-m", "log swap fixture"]);
+ try {
+  const trial = await training.service.start({ schemaVersion: 2, hypothesis: "swap the logs", pipeline: { module: "solutions/tasks/fixture.py", factory: "build_pipeline", parameters: { delay: 0.2 } },
+   cv: { kind: "builtin", scheme: "stratified_kfold", folds: 2, repeats: 1 }, scope: { kind: "promotion" } });
+  expect(await until(() => training.supervisor.status(trial.id).status !== "running", 30_000)).toBe(true);
+  await Bun.sleep(200);
+  // The attack ran inside the sandbox, which cannot see the host file.
+  expect(lstatSync(join(trial.directory, "output.log")).isSymbolicLink()).toBe(true);
+  let output = "", cursor = 0;
+  for (let round = 0; round < 1000; round++) {
+   const chunk = training.supervisor.output(trial.id, cursor, 4096);
+   output += chunk.text;
+   if (chunk.cursor === cursor) break;
+   cursor = chunk.cursor;
+  }
+  expect(output).toContain("LOGS_SWAPPED False");
+  const view = training.supervisor.status(trial.id);
+  for (const text of [output, training.supervisor.tail(trial.id, 65_536).text, JSON.stringify(view), ...updates]) expect(text).not.toContain(marker);
+  // The supervisor's own records are regular files beside the trial, outside its mount; the host file is untouched.
+  const supervision = trialSupervisionDirectory(trial.directory);
+  for (const name of ["output.log", "experiment.json", "supervisor-state.json"]) expect(lstatSync(join(supervision, name)).isFile()).toBe(true);
+  expect(readFileSync(secret, "utf8")).toBe(content);
+ } finally { await training.close(); }
+}, 60_000);
+
 test("sandboxed fit descendants stop with their owned group and changed boundary refuses resume", async () => {
  const { project, manifest, policy, python } = fixture();
  const root = join(project.root, "training"), events: Array<{ type: string; payload: any }> = [];
@@ -136,8 +193,9 @@ test("sandboxed fit descendants stop with their owned group and changed boundary
  try {
   trial = await training.service.start({ schemaVersion: 2, hypothesis: "interrupt multiprocessing fit", pipeline: { module: "solutions/tasks/fixture.py", factory: "build_pipeline", parameters: { delay: 30, jobs: 2 } },
    cv: { kind: "builtin", scheme: "stratified_kfold", folds: 2, repeats: 1 }, scope: { kind: "promotion" } });
-  const record = JSON.parse(readFileSync(join(trial.directory, "experiment.json"), "utf8"));
-  expect(await until(() => readFileSync(join(trial.directory, "output.log"), "utf8").includes("SANDBOX_CHILD_STARTED"))).toBe(true);
+  const supervision = trialSupervisionDirectory(trial.directory);
+  const record = JSON.parse(readFileSync(join(supervision, "experiment.json"), "utf8"));
+  expect(await until(() => readFileSync(join(supervision, "output.log"), "utf8").includes("SANDBOX_CHILD_STARTED"))).toBe(true);
   expect(liveGroup(record.pgid).length).toBeGreaterThanOrEqual(4);
   const stopped = await training.supervisor.stop(trial.id, "fixture interruption");
   expect(stopped.status).toBe("stopped");

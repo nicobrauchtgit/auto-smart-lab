@@ -71,9 +71,15 @@ waiting for them to settle; it is not a work budget. `runScoutSession` then
 terminates a stopped session instead of closing it: the Pi session is disposed
 and its observer released without waiting for the prompt, and every tool
 execution is aborted through a signal the runner owns and awaited (bounded).
-The sandboxed tools SIGKILL their bubblewrap process, which runs with
-`--die-with-parent` in its own PID namespace, so no process of the scout's bash
-tool survives. `scout_session_end` records the cleanup. The lead then gets a
+A scout's bash is the supervised agent shell (`run/agent_shell.ts`), bound to
+the scout's session, so supervisor findings such as `stalled` reach the scout
+and its calls count against the budget like any other. An aborted bash call
+stops its tree through the supervisor (SIGTERM, a grace period, SIGKILL, the
+sandbox launcher last); the sandbox's PID namespace ends whatever a call
+started when its command ends, and the child's `close()` and `terminate()`
+also close its shells, so no process of the scout's bash tool survives. The
+other sandboxed tools SIGKILL their bubblewrap worker. `scout_session_end`
+records the cleanup. The lead then gets a
 stop line. The service normalizes the final reply to bullets (bulleted or
 numbered items with their indented continuation lines); an empty reply yields
 an explicit no-evidence line. Error, stop and no-evidence lines are harness
@@ -116,7 +122,9 @@ The runner builds the call's sandbox with `expertSandbox(..., "validation",
 trial)` (snapshot mounted read-only, `VALIDATION_SOURCE_ROOT` and
 `VALIDATION_EXPERIMENT_ID` set). The scout's view hides the live solutions tree
 except `checks/` (only `checks/<task>/` writable) and this trial's check logs;
-its cwd is the snapshot's `solutions/`. `run_checks` runs stream B's
+its cwd is the snapshot's `solutions/`. Its shell calls retain authoritative logs outside the sandbox and publish copies in
+`scratch/validation/<experiment>/shell-calls/` (read-only to the scout,
+ignored by git), never in `checks/<task>/`, which trial commits would include. `run_checks` runs stream B's
 `runTrialChecks` on that snapshot (fresh interpreter, snapshot first on the
 import path, live import origins refused) and records each check's hash.
 

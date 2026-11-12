@@ -1,3 +1,4 @@
+import { trialSupervisionDirectory } from "../training/results.js";
 import { guidanceHash } from "../pipeline/guidance.js";
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -71,7 +72,8 @@ function reporter() {
 function pausedTrainingRoot(parent: string, id: string) {
 	const root = join(parent, id), directory = join(root, "paused-trial");
 	mkdirSync(directory, { recursive: true });
-	writeFileSync(join(directory, "recovery.json"), JSON.stringify({ lifecycle: "service_closed", trial: { startedAt: 1 } }));
+	mkdirSync(trialSupervisionDirectory(directory), {recursive: true});
+	writeFileSync(join(trialSupervisionDirectory(directory), "recovery.json"), JSON.stringify({ lifecycle: "service_closed", trial: { startedAt: 1 } }));
 	writeFileSync(join(directory, "trial-result.json"), JSON.stringify({ status: "interrupted" }));
 	writeFileSync(join(directory, "search-report.json"), JSON.stringify({ stopReason: "acknowledgement_required" }));
 	return { root, directory };
@@ -93,7 +95,8 @@ describe("solve recovery root ownership", () => {
 	test("successful upstream evidence cannot hide an active recovery candidate", () => {
 		const parent = mkdtempSync(join(tmpdir(), "solve-root-active-"));
 		const prior = pausedTrainingRoot(parent, "prior");
-		writeFileSync(join(prior.directory, "recovery.json"), JSON.stringify({ lifecycle: "active" }));
+		mkdirSync(trialSupervisionDirectory(prior.directory), {recursive: true});
+		writeFileSync(join(trialSupervisionDirectory(prior.directory), "recovery.json"), JSON.stringify({ lifecycle: "active" }));
 		writeFileSync(join(prior.directory, "search-report.json"), "{}");
 		expect(recoveryTrainingRoot(parent, "followup", [prior.root])).toBe(prior.root);
 	});
@@ -106,7 +109,6 @@ describe("agent-driven harness solve session", () => {
 		const observed = reporter();
 		let closed = false;
 		let bound = false;
-		let updateIntervalMs: number | undefined;
 		let environmentIdentity: PythonManagerIdentity | undefined;
 		const toolNames = ["experiment_start", "experiment_status", "experiment_output", "experiment_stop"];
 		const dependencies: Partial<HarnessSolveDependencies> = {
@@ -119,7 +121,7 @@ describe("agent-driven harness solve session", () => {
 			},
 			createTraining: (options) => {
 				expect(options.root).toBe(join(workspace.root, "training", "stage-1"));
-				updateIntervalMs = options.limits?.updateIntervalMs;
+				expect(options.limits).toBeUndefined();
 				expect(typeof options.sandboxCommand).toBe("function");
 				expect(options.executionBoundaryFingerprint).toMatch(/^[a-f0-9]{64}$/);
 				return {
@@ -154,10 +156,8 @@ describe("agent-driven harness solve session", () => {
 			guidance: (() => { const body = { id: "solve-note", version: 1, stage: "solve" as const, taskId: "task", content: "SOLVE_GUIDANCE", evidence: [] }; return { ...body, contentSha256: guidanceHash(body) }; })(),
             runId: "stage-1", report: observed.report, dependencies,
 			upstream: [{ kind: "training_selected_result", path: join(prior.root, "selected-trial", "trial-result.json") }],
-			experimentUpdateIntervalSeconds: 45,
 		});
 		expect(bound).toBe(true);
-		expect(updateIntervalMs).toBe(45_000);
 		expect(closed).toBe(true);
 		expect(result.valid).toBe(false);
 		expect(result.stopReason).toBe("no_promotion");

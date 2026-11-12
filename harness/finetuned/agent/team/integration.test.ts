@@ -1,3 +1,4 @@
+import { trialSupervisionDirectory } from "../training/results.js";
 /** Stream C on stream B's services: contracts, trial snapshots, validation checks, references and scout inputs. */
 import { test, expect } from "bun:test";
 import { spawnSync } from "node:child_process";
@@ -38,7 +39,8 @@ function stateFixture() {
  const trials = join(state, "fixture/solve/training/run-1");
  const record = (id: string, source = measured) => {
   mkdirSync(join(trials, id), {recursive: true});
-  writeFileSync(join(trials, id, "recovery.json"), JSON.stringify({trial: {id, source: {commit: source.commit, tree: source.tree}, worktrees: [join(trials, id, "solutions")]}, solutionsRoot: live}));
+  mkdirSync(trialSupervisionDirectory(join(trials, id)), {recursive: true});
+  writeFileSync(join(trialSupervisionDirectory(join(trials, id)), "recovery.json"), JSON.stringify({trial: {id, source: {commit: source.commit, tree: source.tree}, worktrees: [join(trials, id, "solutions")]}, solutionsRoot: live}));
  };
  record("exp-1");
  writeFileSync(join(live, "tasks/model.py"), "LEAK = False\nOTHER = 1\n");

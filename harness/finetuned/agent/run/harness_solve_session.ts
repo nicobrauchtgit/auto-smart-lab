@@ -19,6 +19,8 @@ import {
 	ensureSolutionsRepository,
 	type TrainingCollection,
 } from "../training/index.js";
+import { trialSupervisionDirectory } from "../training/results.js";
+import { readRecord } from "../experiments/safe_files.js";
 import { selectionSummary } from "../training/selection_summary.js";
 import { championSelection } from "../training/development_selection.js";
 import { GIT_BLOCK_PROMPT_IDS } from "../training/git_guard.js";
@@ -55,8 +57,6 @@ export interface RunHarnessSolveOptions {
 	maxTrials?: number;
 	seed?: number;
 	foldPolicy?: "auto" | { folds: number; repeats: number };
-	/** Minimum seconds between routine experiment updates. */
-	experimentUpdateIntervalSeconds?: number;
 	upstream?: StageArtifact[];
 	prompts?: PromptSnapshot;
 	report?: StageReporter;
@@ -170,12 +170,18 @@ export function recoveryTrainingRoot(parent: string, runId: string, completedRoo
         const root = join(parent, rootName);
         if (!statSync(root).isDirectory()) continue;
         for (const id of readdirSync(root)) {
-            const path = join(root, id, "recovery.json");
-            if (!existsSync(path)) continue;
+            const path = join(trialSupervisionDirectory(join(root, id)), "recovery.json");
+            if (!existsSync(path)) {
+                if (existsSync(join(root, id, "recovery.json"))) throw new Error(`Legacy worker-writable recovery record at ${join(root, id)}; inspect before migration.`);
+                continue;
+            }
             try {
-                const meta = JSON.parse(readFileSync(path, "utf8"));
-                const read = (name: string) => existsSync(join(root, id, name)) ? JSON.parse(readFileSync(join(root, id, name), "utf8")) : {};
-                if (meta.lifecycle === "active" && !read("supervisor-state.json").stopReason
+                // Never through a symlink: the trial directory is writable by its worker's sandbox.
+                const meta = JSON.parse(readRecord(path) ?? "");
+                const read = (name: string) => existsSync(join(root, id, name)) ? JSON.parse(readRecord(join(root, id, name)) ?? "") : {};
+                const supervisorState = join(trialSupervisionDirectory(join(root, id)), "supervisor-state.json");
+                const state = existsSync(supervisorState) ? JSON.parse(readRecord(supervisorState) ?? "") : {};
+                if (meta.lifecycle === "active" && !state.stopReason
                     && !read("search-report.json").stopReason) candidates.push(root);
                 else if (!["completed", "failed"].includes(read("trial-result.json").status)
                     && read("search-report.json").stopReason !== "max_seconds"
@@ -216,7 +222,8 @@ export async function runHarnessSolveSession(
         executable: sandbox.executable, cwd: sandbox.cwd, mounts: sandbox.mounts, environment: sandbox.env,
         sandbox_script_sha256: sha256(readFileSync(join(ARM_ROOT, "agent/run/solve_sandbox.ts"))),
         tool_worker_sha256: sha256(readFileSync(join(ARM_ROOT, "agent/run/solve_tool_worker.ts"))) }));
-	const isolatedTools = isolatedSolveTools(sandbox);
+	// Shell logs stay in the run folder, outside the sandbox; the agent reads a copy in its workspace.
+	const isolatedTools = isolatedSolveTools(sandbox, { root: join(workspace.root, "shell-calls") });
 	const environmentToolPrompt = prompts.render("solve.python-environment-tool", {});
 	// One ID attributes packages the tool adds to the session that uses it.
 	const pythonSessionId = crypto.randomUUID();
@@ -275,8 +282,7 @@ export async function runHarnessSolveSession(
 		version: 1, defaults: HARNESS_CONFIG,
 		solve: { ...HARNESS_CONFIG.solve, maxIterations: options.maxTrials ?? HARNESS_CONFIG.solve.maxIterations,
 			seed: options.seed ?? HARNESS_CONFIG.solve.seed,
-			foldPolicy: options.foldPolicy ?? HARNESS_CONFIG.solve.foldPolicy,
-			experimentUpdateIntervalSeconds: options.experimentUpdateIntervalSeconds ?? HARNESS_CONFIG.solve.experimentUpdateIntervalSeconds },
+			foldPolicy: options.foldPolicy ?? HARNESS_CONFIG.solve.foldPolicy },
 		foldRecommendation: shape,
 	});
 	const training = dependencies.createTraining({
@@ -311,7 +317,6 @@ export async function runHarnessSolveSession(
 			champion_experiment_id: trial.champion?.experimentId, champion_commit: trial.champion?.commit,
 		}),
 		maxExperiments: options.maxTrials ?? HARNESS_CONFIG.solve.maxIterations,
-		limits: { updateIntervalMs: (options.experimentUpdateIntervalSeconds ?? HARNESS_CONFIG.solve.experimentUpdateIntervalSeconds) * 1_000 },
 		prompts,
 		...(options.signal ? { signal: options.signal } : {}),
 	});

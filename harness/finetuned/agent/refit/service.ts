@@ -5,9 +5,10 @@ import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { hostname } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { atomicJson, claimWorkspace, liveGroup, ownedProcessAlive } from "../experiments/ownership.js";
+import { readRecord } from "../experiments/safe_files.js";
 import { ExperimentSupervisor } from "../experiments/supervisor.js";
 import { addWorktree, git, resolveCommit, tagMessage, uncommittedFiles } from "../training/git.js";
-import { collectTrainingResults } from "../training/results.js";
+import { collectTrainingResults, trialSupervisionDirectory } from "../training/results.js";
 import { championTag } from "../training/development_selection.js";
 import { deriveTrialSeed, parseSeedPlan } from "../training/seeds.js";
 import { candidateIdentity, canonical, digest, selectionClaim, terminalPath } from "../training/terminal.js";
@@ -22,7 +23,7 @@ const FRAMEWORK_ROOT = resolve(import.meta.dir, "..");
 const WORKER = join(import.meta.dir, "worker.py");
 const RUNNER = join(FRAMEWORK_ROOT, "training/python/runner.py");
 export const hashFile = (path: string) => createHash("sha256").update(readFileSync(path)).digest("hex");
-const json = (path: string) => JSON.parse(readFileSync(path, "utf8"));
+const json = (path: string) => JSON.parse(readRecord(path) ?? "");
 export interface RefitOptions {
  taskId: string; projectRoot: string; solutionsRoot: string; pythonExecutable: string;
  /** Selects the terminal fit and prediction domain; must agree with the measured champion. */
@@ -61,7 +62,7 @@ function python(options: RefitOptions, args: string[], timeout = 30_000): string
 /** The advisory review as the person handing over the result needs to see it; null when this run had no evaluation. */
 export function deliveryReview(path?: string): Record<string, unknown> | null {
  if (!path || !existsSync(path)) return null;
- const report = JSON.parse(readFileSync(path, "utf8"));
+ const report = JSON.parse(readRecord(path) ?? "");
  const review = report.review;
  return { experimentId: report.experimentId ?? null, valid: report.validation?.valid ?? false, advisoryOnly: true,
   readinessScore: review?.readinessScore ?? null, status: review?.status ?? null, rationale: review?.readinessRationale ?? null,
@@ -140,7 +141,7 @@ export async function inspectRefitCandidate(options: RefitOptions): Promise<Refi
  const resolved = resolveCommit(options.solutionsRoot, tag.commit);
  if (!source || !resolved || source.commit !== tag.commit || source.tree !== resolved.tree || resolve(source.repository) !== resolve(options.solutionsRoot)) throw new Error("Champion source integrity failed");
  if (git(options.solutionsRoot, ["ls-tree", "-r", tag.commit]).stdout.split("\n").some(line => line.startsWith("120000"))) throw new Error("Frozen source cannot contain symlinks");
- const recoveryPath = join(trial.directory, "recovery.json");
+ const recoveryPath = join(trialSupervisionDirectory(trial.directory), "recovery.json");
  const recovery = json(recoveryPath);
  const dependencies = runtimeDependencyHash(options);
  if (recovery.runtimeDependencyHash !== dependencies || recovery.environmentFingerprint !== options.environmentFingerprint) throw new Error("Champion dependency fingerprint drifted; restore measured environment");
@@ -166,7 +167,7 @@ export async function inspectRefitCandidate(options: RefitOptions): Promise<Refi
  python(options, [WORKER, "--evidence", trial.directory]);
  const identity = candidateIdentity(options.taskId, tag.commit, trial.request.pipeline);
  const directory = statePath(options.projectRoot, options.taskId, "refit", identity);
- const evidencePaths = [...trial.artifacts.map(a => a.path), ...["request.json", "invocation.json", "recovery.json", "single-checkpoint.json"].map(name => join(trial.directory, name))];
+ const evidencePaths = [recoveryPath, ...trial.artifacts.map(a => a.path), ...["request.json", "invocation.json", "single-checkpoint.json"].map(name => join(trial.directory, name))];
  const prepared: RefitFreeze = { schemaVersion: 1, identity, taskId: options.taskId, terminalPath: terminalPath(options.solutionsRoot, identity), directory,
   source: { commit: tag.commit, tree: resolved.tree }, sourceRoot: join(directory, "source"), pipeline: trial.request.pipeline,
   chosenExperimentId: trial.experimentId, environment: { fingerprint: options.environmentFingerprint, runtimeDependencyHash: dependencies, frameworkHash: frameworkHash() },
@@ -248,10 +249,10 @@ export async function runRefit(options: RefitOptions): Promise<{ artifacts: Stag
   for (const evidence of freeze.evidence) options.report?.input({ kind: "refit_supporting_evidence", version: 1, delivery: "none", status: "available", artifact: evidence.path, content_sha256: evidence.sha256 });
   options.report?.input({ kind: "terminal_refit_freeze", version: 1, delivery: "none", status: "available", artifact: path, content_sha256: hashFile(path), candidate_identity: freeze.identity });
   const identity = options.report?.agentIdentity(1);
-  supervisor = new ExperimentSupervisor({ root: freeze.directory, env: sanitizeTrainingEnvironment(options.env, { pipelineRunId: identity?.pipelineRunId ?? undefined, stageInvocationId: identity?.stageInvocationId ?? undefined }),
+  supervisor = new ExperimentSupervisor({ root: join(dirname(freeze.directory), ".supervision", freeze.identity), env: sanitizeTrainingEnvironment(options.env, { pipelineRunId: identity?.pipelineRunId ?? undefined, stageInvocationId: identity?.stageInvocationId ?? undefined }),
    deliver: (_text, update) => options.report?.event("refit_process_update", { update }), record: options.report?.event,
    environmentFingerprint: freeze.environment.fingerprint, pipelineRunId: identity?.pipelineRunId ?? undefined, stageInvocationId: identity?.stageInvocationId ?? undefined });
-  const workerDirectory = join(freeze.directory, "worker");
+  const workerDirectory = join(dirname(freeze.directory), ".supervision", freeze.identity, "worker");
   const recordPath = join(workerDirectory, "experiment.json");
   let attached = false;
   if (existsSync(recordPath) || existsSync(join(workerDirectory, "worker-owner.json"))) {
@@ -262,7 +263,8 @@ export async function runRefit(options: RefitOptions): Promise<{ artifacts: Stag
    const ownerPath = join(workerDirectory, "worker-owner.json");
    const owner = existsSync(ownerPath) ? json(ownerPath) : undefined;
    if (ownedProcessAlive(state.identity) || ownedProcessAlive(owner?.identity)) {
-    if (ownedProcessAlive(state.identity) && ownedProcessAlive(owner?.identity) && state.identity.birth !== owner.identity.birth) throw new Error("Conflicting live refit ownership receipts; inspect recorded groups before retry");
+    // The supervisor records the launcher that leads the worker's group; the worker's receipt is a process in that group.
+    if (ownedProcessAlive(state.identity) && ownedProcessAlive(owner?.identity) && state.identity.birth !== owner.identity.birth && state.identity.pgid !== owner.identity.pgid) throw new Error("Conflicting live refit ownership receipts; inspect recorded groups before retry");
     const identity = ownedProcessAlive(owner?.identity) ? owner.identity : state.identity;
     if (ownedProcessAlive(owner?.identity)) atomicJson(join(workerDirectory, "launch-released.json"), { token: owner.token });
     supervisor.attach({ ...record, pid: identity.pid, pgid: identity.pgid }, { ...state, identity, status: "running" });
