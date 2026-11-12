@@ -146,3 +146,29 @@ p.symlink_to(${JSON.stringify(host)})
   expect(lstatSync(outputRoot).isSymbolicLink()).toBe(true);
  } finally { rmSync(root, {recursive: true, force: true}); }
 }, 30_000);
+
+test("a check rewritten after it was hashed still runs, and is recorded as, the hashed bytes", async () => {
+ const root = mkdtempSync(join(tmpdir(), "check-rewrite-"));
+ const live = join(root, "live", "solutions"), frozen = join(root, "snapshot", "solutions");
+ try {
+  ensureSolutionsRepository(live);
+  writeFileSync(join(live, "model.py"), "value = False\n");
+  git(live, ["add", "-A"]); git(live, ["commit", "-qm", "measured defect"]);
+  const source = resolveCommit(live, "HEAD")!;
+  addWorktree(live, frozen, source.commit);
+  mkdirSync(join(live, "checks"));
+  const check = join(live, "checks", "test_model.py");
+  const original = "from solutions.model import value\nassert value, 'defect still present'\n";
+  writeFileSync(check, original);
+  // Another writer (a parallel validation scout or the lead) replaces the check with a
+  // trivially passing one after the harness read it and before the interpreter starts.
+  const swap = `printf 'print("swapped")\\n' > ${JSON.stringify(check)}; exec "$@"`;
+  const result = await runTrialChecks({ experimentId: "rewrite", commit: source.commit, tree: source.tree, sourceRoot: dirname(frozen) }, [check],
+   { executable: "env", bwrap: "env", scratchRoot: "/nonexistent-scratch", cwd: live, mounts: [{ source: dirname(frozen) }], env: { ...process.env } as Record<string, string>,
+    args: command => ["sh", "-c", swap, "sh", ...command] });
+  expect(readFileSync(check, "utf8")).toContain("swapped");
+  expect(result.passed).toBe(false);
+  expect(result.checks[0].output).toContain("defect still present");
+  expect(result.checks[0].sha256).toBe(new Bun.CryptoHasher("sha256").update(original).digest("hex"));
+ } finally { rmSync(root, { recursive: true, force: true }); }
+});

@@ -1,7 +1,7 @@
 /** Independent observed child sessions; only their final reply crosses the boundary. */
 import { join, relative, resolve, sep } from "node:path";
-import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type InlineExtension, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { isolatedSolveTools, sandboxPolicy, type SandboxMount, type SolveSandbox } from "../run/solve_sandbox.js";
@@ -108,10 +108,10 @@ export function validationCheckTool(options: {
     if (!existsSync(absolute) || !inside(realpathSync(absolute), folder) || !absolute.endsWith(".py")) return reply({error: `${path}: not a .py file in ${folder}`});
     paths.push(realpathSync(absolute));
    }
-   const hashes = new Map(paths.map(path => [path, createHash("sha256").update(readFileSync(path)).digest("hex")]));
    try {
+    // The hash is of the bytes runTrialChecks read once and executed, not of the live file afterwards.
     const result = await runTrialChecks(options.trial, paths, options.sandbox, signal);
-    const checks = result.checks.map(check => ({path: relative(live, check.path).split(sep).join("/"), exitCode: check.exitCode, sha256: hashes.get(check.path)!, output: tail(check.output)}));
+    const checks = result.checks.map(check => ({path: relative(live, check.path).split(sep).join("/"), exitCode: check.exitCode, sha256: check.sha256, output: tail(check.output)}));
     for (const check of checks) { const at = ran.findIndex(row => row.path === check.path); if (at >= 0) ran.splice(at, 1); ran.push({path: check.path, sha256: check.sha256}); }
     options.record?.("validation_checks", {experiment_id: options.trial.experimentId, commit: options.trial.commit, passed: result.passed,
      checks: checks.map(({path, exitCode, sha256}, index) => ({path, exitCode, sha256, logPath: result.checks[index].logPath}))});

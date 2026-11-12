@@ -1,7 +1,8 @@
-/** Execute live check code against immutable trial imports in a fresh interpreter. */
+/** Execute live check code (read once, hashed, piped in) against immutable trial imports in a fresh interpreter. */
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
-import { closeSync, createWriteStream, mkdtempSync, realpathSync } from "node:fs";
+import { closeSync, createWriteStream, mkdtempSync, readFileSync, realpathSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join, resolve, sep, basename } from "node:path";
 import { assertHarnessOwnedRoot } from "../run/agent_shell.js";
 import { projectPython } from "../pipeline/task_configuration.js";
@@ -14,12 +15,13 @@ const runner = `import os,sys
 from pathlib import Path
 source=Path(sys.argv[2]).resolve()
 check=Path(sys.argv[1]).resolve()
+code=sys.stdin.buffer.read()
 sys.path[:]=[str(source)]+[p for p in sys.path if p and 'solutions' not in Path(p).parts]
 os.environ['VALIDATION_SOURCE_ROOT']=str(source)
 os.environ['VALIDATION_EXPERIMENT_ID']=sys.argv[3]
 os.environ['PYTHONPATH']=str(source)
 try:
- exec(compile(check.read_bytes(),str(check),'exec'),{'__name__':'__main__','__file__':str(check)})
+ exec(compile(code,str(check),'exec'),{'__name__':'__main__','__file__':str(check)})
 finally:
  for module in list(sys.modules.values()):
   path=getattr(module,'__file__',None)
@@ -53,7 +55,7 @@ class CheckOutput {
 export const CHECK_CANCEL_GRACE_MS = 2000;
 
 export async function runTrialChecks(snapshot: TrialSnapshot, checkPaths: string[], sandbox: SolveSandbox, signal?: AbortSignal,
- options: { cancelGraceMs?: number } = {}): Promise<{ passed: boolean; checks: { path: string; exitCode: number; outputPath: string; logPath: string; output: string }[] }> {
+ options: { cancelGraceMs?: number } = {}): Promise<{ passed: boolean; checks: { path: string; sha256: string; exitCode: number; outputPath: string; logPath: string; output: string }[] }> {
  const grace = options.cancelGraceMs ?? CHECK_CANCEL_GRACE_MS;
  const source = realpathSync(snapshot.sourceRoot), worktree = join(source, "solutions");
  const identity = resolveCommit(worktree, "HEAD");
@@ -69,6 +71,9 @@ export async function runTrialChecks(snapshot: TrialSnapshot, checkPaths: string
   signal?.throwIfAborted();
   const checked = realpathSync(path);
   if (!inside(checked, resolve(live, "checks")) || !checked.endsWith(".py")) throw new Error("Unsafe check path");
+  // Read once: these exact bytes are hashed and piped to the runner, so a concurrent
+  // rewrite of the live file cannot change what ran under this hash.
+  const code = readFileSync(checked), sha256 = createHash("sha256").update(code).digest("hex");
   const outputPath = join(outputRoot, `${index}.log`);
   const logPath = join(trustedRoot, `${index}.log`);
   const logFd = openLog(logPath);
@@ -76,7 +81,9 @@ export async function runTrialChecks(snapshot: TrialSnapshot, checkPaths: string
   const captured = new CheckOutput();
   const exitCode = await new Promise<number>((done, reject) => {
    const command = [projectPython(), "-I", "-c", runner, checked, source, snapshot.experimentId];
-   const child = spawn(sandbox.executable, sandbox.args(command), { cwd: sandbox.cwd, env: sandbox.env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+   const child = spawn(sandbox.executable, sandbox.args(command), { cwd: sandbox.cwd, env: sandbox.env, detached: true, stdio: ["pipe", "pipe", "pipe"] });
+   child.stdin.on("error", () => { /* A check that exits before reading fails on its own. */ });
+   child.stdin.end(code);
    child.stdout.on("data", (chunk: Buffer) => captured.add(chunk)); child.stderr.on("data", (chunk: Buffer) => captured.add(chunk));
    child.stdout.pipe(output, { end: false }); child.stderr.pipe(output, { end: false });
    const timers: ReturnType<typeof setTimeout>[] = [];
@@ -113,7 +120,7 @@ export async function runTrialChecks(snapshot: TrialSnapshot, checkPaths: string
    child.once("close", code => settle(undefined, code));
   });
   if (captured.unsafe) throw new Error("Unsafe live solutions import origin; see the retained check log");
-  checks.push({ path: checked, exitCode, outputPath, logPath, output: captured.text() });
+  checks.push({ path: checked, sha256, exitCode, outputPath, logPath, output: captured.text() });
  }
  return { passed: checks.every(check => check.exitCode === 0), checks };
 }
