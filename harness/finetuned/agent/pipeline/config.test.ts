@@ -16,7 +16,7 @@ function config(pipeline: unknown): PipelineConfig {
 
 describe("resolvePipelineSettings", () => {
 	test("task configurations come from a validated, fingerprinted pipeline.tasks section", () => {
-		const block = (tasks: unknown) => ({ version: 1, entryStage: "solve", stages: { solve: { enabled: true } }, tasks });
+		const block = (tasks: unknown) => ({ version: 1, entryStage: "lead", stages: { lead: { enabled: true } }, tasks });
 		const resolved = resolvePipelineSettings(config(block({ spam1: spamConfiguration() })));
 		expect(resolved.taskConfigurations.spam1).toEqual(spamConfiguration());
 		expect(resolved.snapshot.tasks).toEqual({ spam1: spamConfiguration() });
@@ -35,12 +35,12 @@ describe("resolvePipelineSettings", () => {
 	test("resolves the solve-only pipeline with defaulted options", () => {
 		const resolved = resolvePipelineSettings(config({
 			version: 1,
-			entryStage: "solve",
+			entryStage: "lead",
 			scheduling: "configured",
-			stages: { solve: { enabled: true, options: {} }, refit: { enabled: false } },
+			stages: { lead: { enabled: true, options: {} }, refit: { enabled: false } },
 		}));
-		expect(resolved.enabledStages).toEqual(["solve"]);
-		expect(resolved.effectiveOptions.solve).toMatchObject({ seed: 13 });
+		expect(resolved.enabledStages).toEqual(["lead"]);
+		expect(resolved.effectiveOptions.lead).toMatchObject({ seed: 13 });
 		expect(resolved.fingerprint).toMatch(/^[0-9a-f]{64}$/);
 	});
 
@@ -48,33 +48,33 @@ describe("resolvePipelineSettings", () => {
         const submit = STAGE_REGISTRY.submit;
         try {
             delete STAGE_REGISTRY.submit;
-            expect(() => resolvePipelineSettings(config({ entryStage: "solve", stages: { solve: { enabled: true }, submit: { enabled: true } } }))).toThrow(/not implemented/);
+            expect(() => resolvePipelineSettings(config({ entryStage: "lead", stages: { lead: { enabled: true }, submit: { enabled: true } } }))).toThrow(/not implemented/);
         } finally { STAGE_REGISTRY.submit = submit; }
-        expect(resolvePipelineSettings(config({ entryStage: "solve", stages: { solve: { enabled: true }, submit: { enabled: true } } })).enabledStages).toContain("submit");
+        expect(resolvePipelineSettings(config({ entryStage: "lead", stages: { lead: { enabled: true }, submit: { enabled: true } } })).enabledStages).toContain("submit");
     });
 
 	test("rejects unknown stages and unknown stage options", () => {
 		expect(() => resolvePipelineSettings(config({
-			entryStage: "solve",
-			stages: { solve: { enabled: true }, deploy: { enabled: false } },
+			entryStage: "lead",
+			stages: { lead: { enabled: true }, deploy: { enabled: false } },
 		}))).toThrow(/Unknown pipeline stage/);
 		expect(() => resolvePipelineSettings(config({
-			entryStage: "solve",
-			stages: { solve: { enabled: true, options: { injectStartup: true } } },
-		}))).toThrow(/unknown solve options/);
+			entryStage: "lead",
+			stages: { lead: { enabled: true, options: { injectStartup: true } } },
+		}))).toThrow(/unknown lead options/);
 	});
 
 	test("rejects a disabled entry stage and unsupported versions", () => {
 		expect(() => resolvePipelineSettings(config({
-			entryStage: "solve",
-			stages: { solve: { enabled: false } },
+			entryStage: "lead",
+			stages: { lead: { enabled: false } },
 		}))).toThrow(/not enabled/);
 		expect(() => resolvePipelineSettings(config({ version: 2, stages: {} }))).toThrow(/Unsupported pipeline config version/);
 	});
 
 	test("falls back to the solve-only default with a warning", () => {
 		const resolved = resolvePipelineSettings(config(undefined));
-		expect(resolved.enabledStages).toEqual(["solve"]);
+		expect(resolved.enabledStages).toEqual(["lead"]);
 		expect(resolved.warnings).toHaveLength(1);
 	});
 });

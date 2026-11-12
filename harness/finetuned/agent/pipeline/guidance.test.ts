@@ -8,19 +8,19 @@ import { InvocationFeedback } from "./feedback.js";
 import { spamConfiguration } from "./task_configuration.testing.js";
 import type { TaskConfiguration } from "./task_configuration.js";
 import { loadPromptSnapshot } from "../prompts/loader.js";
-import { prepareSolvePrompts } from "../prompts/solve.js";
+import { prepareLeadPrompts } from "../prompts/lead.js";
 import { startStageInvocation } from "./executor.js";
 import { STAGE_REGISTRY } from "./registry.js";
 import { resolvePipelineSettings } from "./config.js";
 import type { PipelineConfig } from "../pipeline_config.js";
 import type { StageArtifact, StageReporter } from "./types.js";
 const prompts = loadPromptSnapshot();
-export function note(stage: StageGuidance["stage"] = "solve"): StageGuidance {
+export function note(stage: StageGuidance["stage"] = "lead"): StageGuidance {
  const body = { id: "note-1", version: 1, stage, taskId: "fixture", content: "Investigate {{literal}} shift", objective: "Measure transfer risk", evidence: [] };
  return { ...body, contentSha256: guidanceHash(body) };
 }
 function feedback(id = "feedback-1"): StageFeedback {
- const body = { id, stage: "solve" as const, taskId: "fixture", content: "Observed distribution changed", evidence: [] };
+ const body = { id, stage: "lead" as const, taskId: "fixture", content: "Observed distribution changed", evidence: [] };
  return { ...body, contentSha256: guidanceHash(body) };
 }
 const report = (inputs: any[] = [], events: any[] = []): StageReporter => ({
@@ -28,10 +28,10 @@ const report = (inputs: any[] = [], events: any[] = []): StageReporter => ({
  agentIdentity: () => ({ pipelineRunId: "run", stageInvocationId: "invocation" }), observation: () => { throw new Error("No providers in this fixture"); },
 });
 test("guidance validates bounds, variables, hashes and task/stage; deeply immutable", () => {
- const raw = note(); const snapshot = validateGuidance(raw, "solve", "fixture", []);
+ const raw = note(); const snapshot = validateGuidance(raw, "lead", "fixture", []);
  raw.content = "revision"; expect(snapshot.content).toContain("{{literal}}"); expect(Object.isFrozen(snapshot.evidence)).toBe(true);
  for (const mutation of [ { content: "x".repeat(8193) }, { content: "stale" }, { taskId: "wrong" }, { stage: "refit" }, { version: 0 }, { variables: {} }, { evidence: Array(17).fill({}) } ]) {
-  expect(() => validateGuidance({ ...note(), ...mutation } as any, "solve", "fixture", [])).toThrow();
+  expect(() => validateGuidance({ ...note(), ...mutation } as any, "lead", "fixture", [])).toThrow();
  }
  expect(() => validateGuidance(note("refit"), "refit", "fixture", [])).toThrow(/unsupported/);
  expect(() => validateGuidance(note("submit"), "submit", "fixture", [])).toThrow(/unsupported/);
@@ -44,22 +44,22 @@ test("evidence must match unique producer/task/dataset/candidate and current byt
   const artifact: StageArtifact = { kind: "measurement", path, sha256: ref.sha256, provenance: ref };
   const { contentSha256: _, ...body } = note(); body.evidence = [ref] as any;
   const n = { ...body, contentSha256: guidanceHash(body) };
-  expect(validateGuidance(n, "solve", "fixture", [artifact]).evidence).toEqual([ref]);
-  expect(() => validateGuidance(n, "solve", "fixture", [artifact, artifact])).toThrow(/ambiguous/);
-  expect(() => validateGuidance(n, "solve", "fixture", [{ ...artifact, provenance: { ...ref, candidateId: "other" } }])).toThrow(/provenance/);
-  writeFileSync(path, "changed"); expect(() => validateGuidance(n, "solve", "fixture", [artifact])).toThrow(/Stale evidence/);
+  expect(validateGuidance(n, "lead", "fixture", [artifact]).evidence).toEqual([ref]);
+  expect(() => validateGuidance(n, "lead", "fixture", [artifact, artifact])).toThrow(/ambiguous/);
+  expect(() => validateGuidance(n, "lead", "fixture", [{ ...artifact, provenance: { ...ref, candidateId: "other" } }])).toThrow(/provenance/);
+  writeFileSync(path, "changed"); expect(() => validateGuidance(n, "lead", "fixture", [artifact])).toThrow(/Stale evidence/);
  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 test("unguided solve prompts remain byte-compatible; guidance is separate prompt identity", () => {
  const input = { taskId: "fixture", workspace: "/tmp", datasetPaths: [], configuration: spamConfiguration(), targets: "/tmp/labels", rowCount: 10, targetSummary: "balanced", foldRecommendation: "two", maxIterations: 1 };
- const plain = prepareSolvePrompts(prompts, input); const withNote = prepareSolvePrompts(prompts, { ...input, guidance: note("solve") });
+ const plain = prepareLeadPrompts(prompts, input); const withNote = prepareLeadPrompts(prompts, { ...input, guidance: note("lead") });
  expect(withNote.prompt).toContain(plain.prompt.split("\n\n")[0]); expect(withNote.prompt).toContain("Base stage contracts remain authoritative");
 });
 test("feedback receipts persist, deduplicate, await request admission, survive retry and settle terminally", async () => {
  const root = mkdtempSync(join(tmpdir(), "feedback-"));
  try {
   const inputs: any[] = []; const events: any[] = [];
-  const f = new InvocationFeedback({ stage: "solve", taskId: "fixture", catalog: [], prompts, report: report(inputs, events), journalPath: join(root, "receipts.jsonl") });
+  const f = new InvocationFeedback({ stage: "lead", taskId: "fixture", catalog: [], prompts, report: report(inputs, events), journalPath: join(root, "receipts.jsonl") });
   const n = feedback(); expect((await f.send(n)).status).toBe("queued");
   let admitted: (() => void) | undefined; let count = 0;
   const first = { async deliverFeedback() { return false; } };
@@ -89,16 +89,16 @@ test("unsupported feedback refuses without starting a session", async () => {
  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 test("executor snapshots before awaits, rejects invalid guidance before stage, honors cancellation despite valid artifacts", async () => {
- const root = mkdtempSync(join(tmpdir(), "guidance-executor-")); const original = STAGE_REGISTRY.solve;
+ const root = mkdtempSync(join(tmpdir(), "guidance-executor-")); const original = STAGE_REGISTRY.lead;
  try {
   const events: any[] = [], inputs: any[] = []; let calls = 0; let unblock!: () => void;
-  STAGE_REGISTRY.solve = { name: "solve", version: 1, description: "fixture", parseOptions: () => ({}), checkInput() {}, async run(context) {
+  STAGE_REGISTRY.lead = { name: "lead", version: 1, description: "fixture", parseOptions: () => ({}), checkInput() {}, async run(context) {
    calls++; expect(context.input.guidance?.content).toBe(note().content); expect(Object.isFrozen(context.input.guidance)).toBe(true);
    await new Promise<void>(resolve => { unblock = resolve; }); return { artifacts: [], validation: { valid: true, errors: [] } };
   } };
-  const config = resolvePipelineSettings({ pipeline: { entryStage: "solve", stages: { solve: { enabled: true } } }, agent: { cwd: ".", agentDir: ".", initialPrompt: "" }, providers: {}, defaultModel: "fixture/model" } as PipelineConfig);
+  const config = resolvePipelineSettings({ pipeline: { entryStage: "lead", stages: { lead: { enabled: true } } }, agent: { cwd: ".", agentDir: ".", initialPrompt: "" }, providers: {}, defaultModel: "fixture/model" } as PipelineConfig);
   const trace = { pipelineRunId: "run", artifactRoot: join(root, "trace"), telemetry: { checkLocal() {}, async checkAccess() {} }, stage: () => ({ ...report(inputs, events), inputs: () => inputs }) } as any;
-  const n = note(); const handle = startStageInvocation({ stage: "solve", input: { taskId: "fixture", taskConfiguration: spamConfiguration(), upstream: [], guidance: n }, config, trace, prompts });
+  const n = note(); const handle = startStageInvocation({ stage: "lead", input: { taskId: "fixture", taskConfiguration: spamConfiguration(), upstream: [], guidance: n }, config, trace, prompts });
   n.content = "changed after start";
   while (!unblock) await new Promise(resolve => setTimeout(resolve, 1));
   handle.cancel(); unblock(); expect((await handle.result).outcome).toBe("cancelled");
@@ -106,15 +106,15 @@ test("executor snapshots before awaits, rejects invalid guidance before stage, h
   const guidanceInput = inputs.find(input => input.kind === "stage_guidance");
   expect(guidanceInput.content_sha256).toBe(note().contentSha256); expect(guidanceInput.snapshot_sha256).not.toBe(note().contentSha256);
   expect(readFileSync(guidanceInput.artifact, "utf8")).toContain("{{literal}}");
-  const invalid = startStageInvocation({ stage: "solve", input: { taskId: "fixture", taskConfiguration: spamConfiguration(), upstream: [], guidance: n }, config, trace, prompts });
+  const invalid = startStageInvocation({ stage: "lead", input: { taskId: "fixture", taskConfiguration: spamConfiguration(), upstream: [], guidance: n }, config, trace, prompts });
   expect((await invalid.result).outcome).toBe("failure"); expect(calls).toBe(1);
- } finally { STAGE_REGISTRY.solve = original; rmSync(root, { recursive: true, force: true }); }
+ } finally { STAGE_REGISTRY.lead = original; rmSync(root, { recursive: true, force: true }); }
 });
 
 test("feedback keeps all dedup IDs under a fixed total receipt/byte budget", async () => {
  const root = mkdtempSync(join(tmpdir(), "feedback-bounds-"));
  try {
-  const f = new InvocationFeedback({ stage: "solve", taskId: "fixture", catalog: [], prompts, report: report(), journalPath: join(root, "receipts") });
+  const f = new InvocationFeedback({ stage: "lead", taskId: "fixture", catalog: [], prompts, report: report(), journalPath: join(root, "receipts") });
   const huge = feedback("huge"); huge.content = "x".repeat(8193); const { contentSha256: _, ...body } = huge; huge.contentSha256 = guidanceHash(body);
   await expect(f.send(huge)).rejects.toThrow(/oversized/);
   for (let i = 0; i < 64; i++) await f.send(feedback(`bounded-${i}`));

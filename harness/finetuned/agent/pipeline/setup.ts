@@ -188,7 +188,7 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
  if (needs.has("python")) add("python-environment", "local", "Run ./dev setup; declarations, lockfile and installed packages must agree.", () => { readPythonEnvironment(); });
  if (needs.has("training")) {
   if (options.taskConfiguration?.selection) add(`training-selection:${options.taskId}`, "local", "Restore the evidence-selection prompt and make runs/<task>/solve/agent/evidence.json writable. The agent creates evidence; missing evidence labels are checked at trial acceptance, not at setup.", () => {
-   options.prompts.render("solve.evidence-selection", { evidencePath: statePath(PROJECT_ROOT, options.taskId, "solve", "agent", "evidence.json"), metric: options.taskConfiguration!.selection!.metric });
+   options.prompts.render("team.lead-evidence-selection", { evidencePath: statePath(PROJECT_ROOT, options.taskId, "solve", "agent", "evidence.json"), metric: options.taskConfiguration!.selection!.metric });
    checkEvidenceDestination(statePath(PROJECT_ROOT, options.taskId, "solve", "agent", "evidence.json"));
   });
   add("training-recovery", "local", "Run solve on Linux (/proc) or Darwin (libproc) with process birth identities and local flock support; durable worker recovery requires both. Use the project Devbox Python (fcntl is standard library).", () => {

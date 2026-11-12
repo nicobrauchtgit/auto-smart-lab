@@ -13,11 +13,11 @@ import { STATE_ROOT } from "../paths.js";
 
 export async function smoke() {
  const root = mkdtempSync(join(tmpdir(), "langfuse-smoke-")), configPath = join(root, "config.json");
- const previous = STAGE_REGISTRY.solve;
+ const previous = STAGE_REGISTRY.lead;
  writeFileSync(configPath, JSON.stringify({ agent: { cwd: ".", agentDir: ".", initialPrompt: "" }, providers: {}, defaultModel: "unused/model",
-  pipeline: { version: 1, entryStage: "solve", scheduling: "configured", stages: { solve: { enabled: true } }, tasks: { "langfuse-smoke": spamConfiguration() } } }));
- STAGE_REGISTRY.solve = {
-  name: "solve", version: 1, description: "Synthetic Cloud telemetry smoke; no model or fit", parseOptions: () => ({}), checkInput() {},
+  pipeline: { version: 1, entryStage: "lead", scheduling: "configured", stages: { lead: { enabled: true } }, tasks: { "langfuse-smoke": spamConfiguration() } } }));
+ STAGE_REGISTRY.lead = {
+  name: "lead", version: 1, description: "Synthetic Cloud telemetry smoke; no model or fit", parseOptions: () => ({}), checkInput() {},
   async run(context) {
    context.report.input({ kind: "smoke_fixture", version: 1, status: "available", delivery: "none" });
    context.report.event("agent_attempt_start", { attempt: 1 });
@@ -58,6 +58,6 @@ export async function smoke() {
    await Bun.sleep(2000);
   }
   throw new Error("Cloud ingestion did not become readable within the smoke-check window");
- } finally { STAGE_REGISTRY.solve = previous; rmSync(root, { recursive: true, force: true }); }
+ } finally { STAGE_REGISTRY.lead = previous; rmSync(root, { recursive: true, force: true }); }
 }
 if (import.meta.main) smoke().catch(() => { console.error("Langfuse synthetic smoke failed; no model or training process was started"); process.exitCode = 1; });

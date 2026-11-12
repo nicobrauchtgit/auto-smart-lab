@@ -18,7 +18,7 @@ import { git } from "../training/git.js";
 import { prepareTaskData, readTaskData } from "../workspace/task_data.js";
 import { readPythonEnvironment } from "../run/python_environment.js";
 import { prepareSolveSandbox, trainingSandboxCommand } from "../run/solve_sandbox.js";
-import { workerEnvironment } from "../run/harness_solve_session.js";
+import { workerEnvironment } from "../run/lead_session.js";
 import { HARNESS_CONFIG } from "../harness/config.js";
 import { loadPromptSnapshot } from "../prompts/loader.js";
 import { ARM_ROOT } from "../paths.js";

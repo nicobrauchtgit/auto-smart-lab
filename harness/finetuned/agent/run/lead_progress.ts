@@ -43,6 +43,7 @@ export interface LeadHandOver {
 export interface LeadProgress {
  schemaVersion: 1;
  taskId: string;
+ datasetSha256?: string;
  /** The run that owns this record; a resumed run keeps it. */
  runId: string;
  trainingRoot: string;
@@ -65,7 +66,11 @@ export function readProgress(path: string): LeadProgress | undefined {
  if (!existsSync(path)) return undefined;
  const value = JSON.parse(readFileSync(path, "utf8")) as LeadProgress;
  if (value?.schemaVersion !== 1 || typeof value.runId !== "string" || typeof value.trainingRoot !== "string" || !Array.isArray(value.trials)
-  || !value.budget || !Number.isSafeInteger(value.budget.used)) throw new Error(`Corrupt lead progress at ${path}; restore or remove it before restarting`);
+  || !Array.isArray(value.sessions) || !Array.isArray(value.holdout) || typeof value.taskId !== "string"
+  || !["running", "handing_over", "handed_over", "failed"].includes(value.status)
+  || !value.budget || !Number.isSafeInteger(value.budget.used) || value.budget.used < 0
+  || !Number.isSafeInteger(value.budget.limit) || value.budget.limit < 1 || value.budget.used > value.budget.limit
+  || (value.status === "handing_over" && !value.handOver)) throw new Error(`Corrupt lead progress at ${path}; restore or remove it before restarting`);
  return value;
 }
 export function writeProgress(path: string, progress: LeadProgress): void {

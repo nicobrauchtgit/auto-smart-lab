@@ -16,7 +16,7 @@ import { spamConfiguration } from "../pipeline/task_configuration.testing.js";
 const directories: string[] = [];
 const directory = () => { const path = mkdtempSync(join(tmpdir(), "langfuse-test-")); directories.push(path); return path; };
 afterEach(() => { for (const path of directories.splice(0)) rmSync(path, { recursive: true, force: true }); });
-function recorder(telemetry: Telemetry, stage = "solve", invocationId = "invocation", session = "agent") {
+function recorder(telemetry: Telemetry, stage = "lead", invocationId = "invocation", session = "agent") {
  let sequence = 0;
  return (eventType: string, payload: any = {}) => telemetry.record({ agentRunId: session, piSessionId: "pi", sequence: sequence++, eventType,
   observedAt: new Date().toISOString(), payload, identity: { stage, stageInvocationId: invocationId, attempt: 1 } });
@@ -29,7 +29,7 @@ test("Bun SDK keeps concurrent stages, physical sessions, generations, tools and
  const first = recorder(telemetry), second = recorder(telemetry, "research", "other", "other-agent");
  first("stage_started", { options: { mode: "inductive" } }); second("stage_started");
  first("agent_attempt_start", { attempt: 1 }); first("agent_run_start"); second("agent_run_start");
- first("prompt_snapshot", { prompts: [{ id: "solve.system", template_sha256: "hash" }] });
+ first("prompt_snapshot", { prompts: [{ id: "team.lead-system", template_sha256: "hash" }] });
  first("message_start", { message: { role: "assistant" } }); first("model_request", { model: "test-model", provider: "test", request: { messages: [{ role: "user", content: "hello" }] } });
  for (let n = 0; n < 50; n++) first("message_update", { message: { role: "assistant" } });
  first("message_end", { message: { role: "assistant", model: "test-model", stopReason: "toolUse", content: [{ type: "text", text: "done" }],
@@ -51,7 +51,7 @@ test("Bun SDK keeps concurrent stages, physical sessions, generations, tools and
  expect(attr(generation[0], "usage_details")).toEqual({ input: 10, output: 3, input_cached: 4, input_cache_creation: 2, total: 19 });
  expect(attr(generation[0], "cost_details").total).toBe(.045);
  expect(attr(generation[0], "input").messages[0].content).toBe("hello");
- const stage = spans.find(span => span.name === "stage:solve")!;
+ const stage = spans.find(span => span.name === "stage:lead")!;
  const session = spans.find(span => span.name === "pi-session" && span.attributes["langfuse.observation.metadata.agentRunId"] === "agent")!;
  expect(generation[0].parentSpanContext?.spanId).toBe(session.spanContext().spanId);
  expect(spans.find(span => span.name === "harness-trial")!.parentSpanContext?.spanId).toBe(stage.spanContext().spanId);
@@ -71,7 +71,7 @@ test("failed export at final flush captures exact sanitized spans and marks exec
  await telemetry.close();
  expect(telemetry.degraded).toBe(true);
  const journal = readFileSync(telemetry.localPath!, "utf8");
- expect(journal).toContain("failed_observation"); expect(journal).toContain("stage:solve");
+ expect(journal).toContain("failed_observation"); expect(journal).toContain("stage:lead");
  expect(journal).not.toContain("test-secret"); expect(journal).not.toContain("Authorization");
 });
 
@@ -105,16 +105,16 @@ test("explicit initial fallback permits service outage but never invalid credent
 });
 
 test("invalid Langfuse prerequisites block standalone stage execution before agent construction", async () => {
- const previous = STAGE_REGISTRY.solve;
+ const previous = STAGE_REGISTRY.lead;
  const options = testTelemetry(); options.checkAccess = async () => { throw new LangfuseAccessError(false); };
  const trace = await createPipelineTrace({ taskId: "fixture", pipelineRunId: "setup-run", runsDir: directory(), telemetry: options });
  let ran = false;
- STAGE_REGISTRY.solve = { name: "solve", version: 1, description: "fixture", parseOptions: () => ({}), checkInput() {}, async run() { ran = true; return { artifacts: [] }; } };
+ STAGE_REGISTRY.lead = { name: "lead", version: 1, description: "fixture", parseOptions: () => ({}), checkInput() {}, async run() { ran = true; return { artifacts: [] }; } };
  try {
-  const config = resolvePipelineSettings({ pipeline: { entryStage: "solve", stages: { solve: { enabled: true } }, tasks: { fixture: spamConfiguration() } }, agent: { cwd: ".", agentDir: ".", initialPrompt: "" }, providers: {}, defaultModel: "unused/model" } as any);
-  const result = await invokeStage({ stage: "solve", input: { taskId: "fixture", upstream: [] }, config, trace });
+  const config = resolvePipelineSettings({ pipeline: { entryStage: "lead", stages: { lead: { enabled: true } }, tasks: { fixture: spamConfiguration() } }, agent: { cwd: ".", agentDir: ".", initialPrompt: "" }, providers: {}, defaultModel: "unused/model" } as any);
+  const result = await invokeStage({ stage: "lead", input: { taskId: "fixture", upstream: [] }, config, trace });
   expect(result.outcome).toBe("failure"); expect(result.error).toContain("langfuse-access"); expect(ran).toBe(false);
- } finally { STAGE_REGISTRY.solve = previous; await trace.close(); }
+ } finally { STAGE_REGISTRY.lead = previous; await trace.close(); }
 });
 
 test("configuration rejects missing keys and credential-bearing endpoints; child environments omit Langfuse", () => {
@@ -125,10 +125,10 @@ test("configuration rejects missing keys and credential-bearing endpoints; child
 });
 
 test("final-flush failures reach the pipeline result while authoritative success is preserved", async () => {
- const root = directory(), configPath = join(root, "config.json"), previous = STAGE_REGISTRY.solve;
+ const root = directory(), configPath = join(root, "config.json"), previous = STAGE_REGISTRY.lead;
  writeFileSync(configPath, JSON.stringify({ agent: { cwd: ".", agentDir: ".", initialPrompt: "" },
-  pipeline: { entryStage: "solve", stages: { solve: { enabled: true } }, tasks: { fixture: spamConfiguration() } } }));
- STAGE_REGISTRY.solve = { name: "solve", version: 1, description: "fixture", parseOptions: () => ({}), checkInput() {},
+  pipeline: { entryStage: "lead", stages: { lead: { enabled: true } }, tasks: { fixture: spamConfiguration() } } }));
+ STAGE_REGISTRY.lead = { name: "lead", version: 1, description: "fixture", parseOptions: () => ({}), checkInput() {},
   async run() { return { artifacts: [], validation: { valid: true, errors: [] } }; } };
  const options = testTelemetry(); options.exporter.failed = true;
  try {
@@ -136,22 +136,22 @@ test("final-flush failures reach the pipeline result while authoritative success
   expect(result.outcome).toBe("success"); expect(result.traceDegraded).toBe(true);
   expect(result.traceFailures).toContain("Langfuse observation export failed");
   expect(readFileSync(result.localTracePath!, "utf8")).toContain("pipeline-execution");
- } finally { STAGE_REGISTRY.solve = previous; }
+ } finally { STAGE_REGISTRY.lead = previous; }
 });
 
 test("missing Langfuse keys fail local prerequisites before a stage starts", async () => {
- const previous = STAGE_REGISTRY.solve, savedPublic = process.env.LANGFUSE_PUBLIC_KEY, savedSecret = process.env.LANGFUSE_SECRET_KEY;
+ const previous = STAGE_REGISTRY.lead, savedPublic = process.env.LANGFUSE_PUBLIC_KEY, savedSecret = process.env.LANGFUSE_SECRET_KEY;
  delete process.env.LANGFUSE_PUBLIC_KEY; delete process.env.LANGFUSE_SECRET_KEY;
  const options = testTelemetry(); delete options.config;
  const trace = await createPipelineTrace({ taskId: "fixture", pipelineRunId: "missing-setup", runsDir: directory(), telemetry: options });
  let ran = false;
- STAGE_REGISTRY.solve = { name: "solve", version: 1, description: "fixture", parseOptions: () => ({}), checkInput() {}, async run() { ran = true; return { artifacts: [] }; } };
+ STAGE_REGISTRY.lead = { name: "lead", version: 1, description: "fixture", parseOptions: () => ({}), checkInput() {}, async run() { ran = true; return { artifacts: [] }; } };
  try {
-  const config = resolvePipelineSettings({ pipeline: { entryStage: "solve", stages: { solve: { enabled: true } }, tasks: { fixture: spamConfiguration() } }, agent: { cwd: ".", agentDir: ".", initialPrompt: "" }, providers: {}, defaultModel: "unused/model" } as any);
-  const result = await invokeStage({ stage: "solve", input: { taskId: "fixture", upstream: [] }, config, trace });
+  const config = resolvePipelineSettings({ pipeline: { entryStage: "lead", stages: { lead: { enabled: true } }, tasks: { fixture: spamConfiguration() } }, agent: { cwd: ".", agentDir: ".", initialPrompt: "" }, providers: {}, defaultModel: "unused/model" } as any);
+  const result = await invokeStage({ stage: "lead", input: { taskId: "fixture", upstream: [] }, config, trace });
   expect(result.error).toContain("langfuse-configuration"); expect(ran).toBe(false);
  } finally {
-  STAGE_REGISTRY.solve = previous; await trace.close();
+  STAGE_REGISTRY.lead = previous; await trace.close();
   if (savedPublic === undefined) delete process.env.LANGFUSE_PUBLIC_KEY; else process.env.LANGFUSE_PUBLIC_KEY = savedPublic;
   if (savedSecret === undefined) delete process.env.LANGFUSE_SECRET_KEY; else process.env.LANGFUSE_SECRET_KEY = savedSecret;
  }
@@ -159,7 +159,7 @@ test("missing Langfuse keys fail local prerequisites before a stage starts", asy
 
 test("Pi request observation preserves the controller hook and links child and replacement sessions", async () => {
  const options = testTelemetry(), telemetry = new Telemetry({ pipelineRunId: "handoff" }, directory(), options);
- const identity = { stage: "solve", stageInvocationId: "handoff-stage", attempt: 1 };
+ const identity = { stage: "lead", stageInvocationId: "handoff-stage", attempt: 1 };
  let guarded = 0;
  const previous = async (payload: any) => { guarded++; return { ...payload, guarded: true }; };
  const session = { sessionId: "parent", agent: { onPayload: previous }, subscribe() { return () => {}; } } as unknown as AgentSession;

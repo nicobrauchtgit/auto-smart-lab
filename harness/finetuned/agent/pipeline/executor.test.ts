@@ -17,8 +17,8 @@ import type { StageDefinition } from "./types.js";
 
 
 const workspaces: string[] = [];
-let originalSolve: typeof STAGE_REGISTRY.solve;
-beforeEach(() => { originalSolve = STAGE_REGISTRY.solve; });
+let originalSolve: typeof STAGE_REGISTRY.lead;
+beforeEach(() => { originalSolve = STAGE_REGISTRY.lead; });
 function workspace(): string {
 	const dir = mkdtempSync(join(tmpdir(), "pipeline-trace-"));
 	workspaces.push(dir);
@@ -27,17 +27,17 @@ function workspace(): string {
 
 afterEach(() => {
 	for (const dir of workspaces.splice(0)) rmSync(dir, { recursive: true, force: true });
-	if (originalSolve) STAGE_REGISTRY.solve = originalSolve;
-	else delete STAGE_REGISTRY.solve;
+	if (originalSolve) STAGE_REGISTRY.lead = originalSolve;
+	else delete STAGE_REGISTRY.lead;
 });
 
 function settings(stageOptions: unknown = {}) {
 	return resolvePipelineSettings({
 		pipeline: {
 			version: 1,
-			entryStage: "solve",
+			entryStage: "lead",
 			scheduling: "configured",
-			stages: { solve: { enabled: true, options: stageOptions } },
+			stages: { lead: { enabled: true, options: stageOptions } },
 			tasks: { spam1: spamConfiguration() },
 		},
 		agent: { cwd: ".", agentDir: ".pi/agent", initialPrompt: "hi" },
@@ -48,7 +48,7 @@ function settings(stageOptions: unknown = {}) {
 
 function fakeStage(run: StageDefinition<{ label: string }>["run"]): StageDefinition<{ label: string }> {
 	return {
-		name: "solve",
+		name: "lead",
 		version: 3,
 		description: "test stage",
 		parseOptions: (raw) => ({ label: String((raw as { label?: string })?.label ?? "default") }),
@@ -60,11 +60,11 @@ function fakeStage(run: StageDefinition<{ label: string }>["run"]): StageDefinit
 }
 
 async function runFakeStage(stage: StageDefinition<{ label: string }>, taskId = "spam1") {
-	STAGE_REGISTRY.solve = stage;
+	STAGE_REGISTRY.lead = stage;
 	const runsDir = workspace();
 	const trace = await createPipelineTrace({ telemetry: testTelemetry(), taskId, pipelineRunId: crypto.randomUUID(), runsDir });
 	const invocation = await invokeStage({
-		stage: "solve",
+		stage: "lead",
 		input: { taskId, upstream: [] },
 		config: settings({ label: "configured" }),
 		trace,
@@ -102,7 +102,7 @@ describe("invokeStage", () => {
 		expect(events[1].payload.input).toMatchObject({ kind: "task_configuration", source: "pipeline_config", task_kind: "binary_classification" });
 		// Stage events carry the shared identity and no PI session.
 		for (const event of events) {
-			expect(event.stage).toBe("solve");
+			expect(event.stage).toBe("lead");
 			expect(event.stage_invocation_id).toBe(invocation.invocationId);
 			expect(event.pi_session_id).toBeNull();
 		}
@@ -169,7 +169,7 @@ describe("invokeStage", () => {
 	});
 
 	test("an aborted stage is recorded as cancelled", async () => {
-		STAGE_REGISTRY.solve = fakeStage(async (context) => {
+		STAGE_REGISTRY.lead = fakeStage(async (context) => {
 			await new Promise((resolve, reject) => {
 				context.signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
 			});
@@ -179,7 +179,7 @@ describe("invokeStage", () => {
 		const trace = await createPipelineTrace({ telemetry: testTelemetry(), taskId: "spam1", pipelineRunId: crypto.randomUUID(), runsDir });
 		const controller = new AbortController();
 		const pending = invokeStage({
-			stage: "solve",
+			stage: "lead",
 			input: { taskId: "spam1", upstream: [] },
 			config: settings(),
 			trace,
@@ -192,17 +192,17 @@ describe("invokeStage", () => {
 	});
 
 	test("a disabled stage is refused and the refusal is recorded", async () => {
-		STAGE_REGISTRY.solve = fakeStage(async () => ({ artifacts: [] }));
+		STAGE_REGISTRY.lead = fakeStage(async () => ({ artifacts: [] }));
 		const runsDir = workspace();
 		const trace = await createPipelineTrace({ telemetry: testTelemetry(), taskId: "spam1", pipelineRunId: crypto.randomUUID(), runsDir });
 		const config = resolvePipelineSettings({
-			pipeline: { entryStage: "refit", stages: { refit: { enabled: true }, solve: { enabled: false } } },
+			pipeline: { entryStage: "refit", stages: { refit: { enabled: true }, lead: { enabled: false } } },
 			agent: { cwd: ".", agentDir: ".pi/agent", initialPrompt: "hi" },
 			defaultModel: "saia/test-model",
 			providers: {},
 		} as PipelineConfig);
 		await expect(invokeStage({
-			stage: "solve",
+			stage: "lead",
 			input: { taskId: "spam1", upstream: [] },
 			config,
 			trace,

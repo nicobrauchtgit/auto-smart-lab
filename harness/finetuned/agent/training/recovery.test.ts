@@ -9,7 +9,7 @@ import { loadPromptSnapshot } from "../prompts/loader.js";
 import { atomicJson, claimWorkspace, processIdentity, ownedProcessAlive, liveGroup } from "../experiments/ownership.js";
 import { removeWorktree, tagCommit } from "./git.js";
 import { temporaryProject, commitAll, trainingEnvironment, PYTHON, WORKER, PROJECT_ROOT, until } from "./testing.js";
-import { recoveryTrainingRoot } from "../run/harness_solve_session.js";
+import { recoveryTrainingRoot } from "../run/lead_session.js";
 import { trialSupervisionDirectory } from "./results.js";
 
 const read = (directory: string, name: string) => JSON.parse(readFileSync(join((name.startsWith("worker-") || name === "recovery.json") ? trialSupervisionDirectory(directory) : directory, name), "utf8"));

@@ -1,4 +1,4 @@
-import { primaryMetric } from "../run/harness_solve_session.js";
+import { primaryMetric } from "../run/lead_session.js";
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";

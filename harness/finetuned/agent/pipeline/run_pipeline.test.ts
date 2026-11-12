@@ -30,7 +30,7 @@ function workspace(): string {
 function configFile(dir: string, stages: Record<string, { enabled: boolean }>): string {
 	const path = join(dir, "pipeline.config.json");
 	writeFileSync(path, JSON.stringify({
-		pipeline: { version: 1, entryStage: "solve", scheduling: "configured", stages, tasks: { spam1: spamConfiguration() } },
+		pipeline: { version: 1, entryStage: "lead", scheduling: "configured", stages, tasks: { spam1: spamConfiguration() } },
 		agent: { cwd: ".", agentDir: ".pi/agent", initialPrompt: "hi" },
 	}));
 	return path;
@@ -53,11 +53,11 @@ function events(_runsDir: string, _taskId: string, pipelineRunId: string) { retu
 describe("runPipeline", () => {
 	test("shares one prompt snapshot across stages and records its fingerprint", async () => {
 		let snapshot: import("../prompts/loader.js").PromptSnapshot | undefined;
-		STAGE_REGISTRY.solve = {
-			...stage("solve", "refit", async () => ({ artifacts: [] })),
+		STAGE_REGISTRY.lead = {
+			...stage("lead", "refit", async () => ({ artifacts: [] })),
 			async run(context) {
 				snapshot = context.prompts;
-				const prompt = snapshot.render("solve.system", { taskId: context.input.taskId });
+				const prompt = snapshot.render("team.lead-system", { budget: "80", taskId: context.input.taskId });
 				context.report.event("prompt_reference_test", { prompt: prompt.reference });
 				return { artifacts: [] };
 			},
@@ -72,22 +72,22 @@ describe("runPipeline", () => {
 		const runsDir = workspace();
 		const result = await runPipeline({ telemetry: telemetryForDirectory(runsDir),
 			taskId: "spam1", runsDir,
-			configPath: configFile(runsDir, { solve: { enabled: true }, refit: { enabled: true } }),
+			configPath: configFile(runsDir, { lead: { enabled: true }, refit: { enabled: true } }),
 		});
 		expect(result.outcome).toBe("success");
 		const recorded = events(runsDir, "spam1", result.pipelineRunId);
 		expect(recorded.find(event => event.event_type === "pipeline_prompt_snapshot")!.payload.prompt_snapshot_sha256)
 			.toBe(snapshot!.fingerprint);
 		const reference = recorded.find(event => event.event_type === "prompt_reference_test");
-		expect(reference!.payload.prompt).toEqual(snapshot!.render("solve.system", { taskId: "spam1" }).reference);
+		expect(reference!.payload.prompt).toEqual(snapshot!.render("team.lead-system", { budget: "80", taskId: "spam1" }).reference);
 		expect(reference!.pipeline_run_id).toBe(result.pipelineRunId);
 		expect(reference!.stage_invocation_id).toBe(result.invocations[0].invocationId);
 	});
 
 	test("follows the stage chain while the next stage is enabled", async () => {
 		const order: string[] = [];
-		STAGE_REGISTRY.solve = stage("solve", "refit", async () => {
-			order.push("solve");
+		STAGE_REGISTRY.lead = stage("lead", "refit", async () => {
+			order.push("lead");
 			return { artifacts: [{ kind: "research_document", path: "/tmp/solve.md" }], attempts: 1 };
 		});
 		STAGE_REGISTRY.refit = stage("refit", "submit", async () => {
@@ -98,10 +98,10 @@ describe("runPipeline", () => {
 		const result = await runPipeline({ telemetry: telemetryForDirectory(runsDir),
 			taskId: "spam1",
 			runsDir,
-			configPath: configFile(runsDir, { solve: { enabled: true }, refit: { enabled: true }, submit: { enabled: false } }),
+			configPath: configFile(runsDir, { lead: { enabled: true }, refit: { enabled: true }, submit: { enabled: false } }),
 		});
 
-		expect(order).toEqual(["solve", "refit"]);
+		expect(order).toEqual(["lead", "refit"]);
 		expect(result.outcome).toBe("success");
 		expect(result.stoppedBecause).toContain("configured chain completed");
 		// Downstream stages see what earlier stages produced.
@@ -112,8 +112,8 @@ describe("runPipeline", () => {
 
 	test("stopAfter ends the run even when the next stage is enabled", async () => {
 		const order: string[] = [];
-		STAGE_REGISTRY.solve = stage("solve", "refit", async () => {
-			order.push("solve");
+		STAGE_REGISTRY.lead = stage("lead", "refit", async () => {
+			order.push("lead");
 			return { artifacts: [] };
 		});
 		STAGE_REGISTRY.refit = stage("refit", undefined, async () => {
@@ -124,17 +124,17 @@ describe("runPipeline", () => {
 		const result = await runPipeline({ telemetry: telemetryForDirectory(runsDir),
 			taskId: "spam1",
 			runsDir,
-			stopAfter: "solve",
-			configPath: configFile(runsDir, { solve: { enabled: true }, refit: { enabled: true } }),
+			stopAfter: "lead",
+			configPath: configFile(runsDir, { lead: { enabled: true }, refit: { enabled: true } }),
 		});
 
-		expect(order).toEqual(["solve"]);
+		expect(order).toEqual(["lead"]);
 		expect(result.stoppedBecause).toContain("as requested");
 	});
 
 	test("a failed stage stops the chain and the run reports the failure", async () => {
 		let solved = false;
-		STAGE_REGISTRY.solve = stage("solve", "refit", async () => ({
+		STAGE_REGISTRY.lead = stage("lead", "refit", async () => ({
 			artifacts: [],
 			validation: { valid: false, errors: ["missing sources section"] },
 			attempts: 2,
@@ -147,7 +147,7 @@ describe("runPipeline", () => {
 		const result = await runPipeline({ telemetry: telemetryForDirectory(runsDir),
 			taskId: "spam1",
 			runsDir,
-			configPath: configFile(runsDir, { solve: { enabled: true }, refit: { enabled: true } }),
+			configPath: configFile(runsDir, { lead: { enabled: true }, refit: { enabled: true } }),
 		});
 
 		expect(solved).toBe(false);
@@ -159,8 +159,8 @@ describe("runPipeline", () => {
 
 	test("a run that throws out of the stage loop is not recorded as a success", async () => {
 		const runsDir = workspace();
-		const configPath = configFile(runsDir, { solve: { enabled: true }, refit: { enabled: false } });
-		STAGE_REGISTRY.solve = stage("solve", "refit", async () => ({ artifacts: [] }));
+		const configPath = configFile(runsDir, { lead: { enabled: true }, refit: { enabled: false } });
+		STAGE_REGISTRY.lead = stage("lead", "refit", async () => ({ artifacts: [] }));
 		STAGE_REGISTRY.refit = stage("refit", undefined, async () => ({ artifacts: [] }));
 
 		await expect(runPipeline({ telemetry: telemetryForDirectory(runsDir), taskId: "spam1", runsDir, configPath, entryStage: "refit" }))
@@ -175,7 +175,7 @@ describe("runPipeline", () => {
 	test("an abort between stages ends the run as cancelled", async () => {
 		const controller = new AbortController();
 		let solved = false;
-		STAGE_REGISTRY.solve = stage("solve", "refit", async () => {
+		STAGE_REGISTRY.lead = stage("lead", "refit", async () => {
 			controller.abort();
 			return { artifacts: [] };
 		});
@@ -188,7 +188,7 @@ describe("runPipeline", () => {
 			taskId: "spam1",
 			runsDir,
 			signal: controller.signal,
-			configPath: configFile(runsDir, { solve: { enabled: true }, refit: { enabled: true } }),
+			configPath: configFile(runsDir, { lead: { enabled: true }, refit: { enabled: true } }),
 		});
 
 		expect(solved).toBe(false);
@@ -210,7 +210,7 @@ describe("seeded upstream artifacts", () => {
 		const seed = { kind: "research_document", path: "/prior/solve.md", sha256: "abc123" };
 		const result = await runPipeline({ telemetry: telemetryForDirectory(runsDir),
 			taskId: "spam1", runsDir, entryStage: "refit", seedArtifacts: [seed],
-			configPath: configFile(runsDir, { solve: { enabled: true }, refit: { enabled: true } }),
+			configPath: configFile(runsDir, { lead: { enabled: true }, refit: { enabled: true } }),
 		});
 
 		expect(result.outcome).toBe("success");
@@ -223,11 +223,11 @@ describe("seeded upstream artifacts", () => {
 	});
 
 	test("records an empty seed list when the run starts from the beginning", async () => {
-		STAGE_REGISTRY.solve = stage("solve", undefined, async () => ({ artifacts: [] }));
+		STAGE_REGISTRY.lead = stage("lead", undefined, async () => ({ artifacts: [] }));
 		const runsDir = workspace();
 		const result = await runPipeline({ telemetry: telemetryForDirectory(runsDir),
 			taskId: "spam1", runsDir,
-			configPath: configFile(runsDir, { solve: { enabled: true } }),
+			configPath: configFile(runsDir, { lead: { enabled: true } }),
 		});
 		const start = events(runsDir, "spam1", result.pipelineRunId)
 			.find((event) => event.event_type === "pipeline_run_start");
@@ -236,15 +236,15 @@ describe("seeded upstream artifacts", () => {
 });
 
 test("a missing later-stage prerequisite blocks every stage and records the failure", async () => {
- expect(realStages.solve!.setupRequirements).toContain("web-search");
+ expect(realStages.lead!.setupRequirements).toContain("web-search");
  const before = process.env.TAVILY_API_KEY;
  process.env.TAVILY_API_KEY = "";
  let ran = false;
  const runsDir = workspace();
  try {
-  STAGE_REGISTRY.solve = stage("solve", "refit", async () => { ran = true; return { artifacts: [] }; });
-  STAGE_REGISTRY.refit = { ...stage("refit", undefined, async () => { ran = true; return { artifacts: [] }; }), setupRequirements: realStages.solve!.setupRequirements?.filter(requirement => requirement === "web-search") };
-  const configPath = configFile(runsDir, { solve: { enabled: true }, refit: { enabled: true } });
+  STAGE_REGISTRY.lead = stage("lead", "refit", async () => { ran = true; return { artifacts: [] }; });
+  STAGE_REGISTRY.refit = { ...stage("refit", undefined, async () => { ran = true; return { artifacts: [] }; }), setupRequirements: realStages.lead!.setupRequirements?.filter(requirement => requirement === "web-search") };
+  const configPath = configFile(runsDir, { lead: { enabled: true }, refit: { enabled: true } });
   await expect(runPipeline({ telemetry: telemetryForDirectory(runsDir), taskId: "spam1", runsDir, configPath })).rejects.toThrow("TAVILY_API_KEY");
   expect(ran).toBe(false);
   const records = traceEventsForDirectory(runsDir);
@@ -258,11 +258,11 @@ test("a missing later-stage prerequisite blocks every stage and records the fail
 
 test("setup-only runs do not execute stages; stop-after excludes later requirements", async () => {
  let ran = false;
- STAGE_REGISTRY.solve = stage("solve", "refit", async () => { ran = true; return { artifacts: [] }; });
+ STAGE_REGISTRY.lead = stage("lead", "refit", async () => { ran = true; return { artifacts: [] }; });
  STAGE_REGISTRY.refit = { ...stage("refit", undefined, async () => ({ artifacts: [] })), setupRequirements: ["web-search"] };
  const runsDir = workspace();
- const configPath = configFile(runsDir, { solve: { enabled: true }, refit: { enabled: true } });
- const result = await runPipeline({ telemetry: telemetryForDirectory(runsDir), taskId: "spam1", runsDir, configPath, stopAfter: "solve", checkSetupOnly: true });
+ const configPath = configFile(runsDir, { lead: { enabled: true }, refit: { enabled: true } });
+ const result = await runPipeline({ telemetry: telemetryForDirectory(runsDir), taskId: "spam1", runsDir, configPath, stopAfter: "lead", checkSetupOnly: true });
  expect(result.outcome).toBe("success");
  expect(result.invocations).toHaveLength(0);
  expect(ran).toBe(false);
@@ -271,12 +271,12 @@ test("setup-only runs do not execute stages; stop-after excludes later requireme
 test("invalid guidance prevents every stage before any session, including setup-only", async () => {
  const { guidanceHash } = await import('./guidance.js');
  let ran = 0;
- STAGE_REGISTRY.solve = stage("solve", "refit", async () => { ran++; return { artifacts: [] }; });
+ STAGE_REGISTRY.lead = stage("lead", "refit", async () => { ran++; return { artifacts: [] }; });
  STAGE_REGISTRY.refit = stage("refit", undefined, async () => { ran++; return { artifacts: [] }; });
  const runsDir = workspace();
- const body = { id: "later", version: 1, taskId: "other-task", stage: "solve" as const, content: "Investigate shift", evidence: [] };
- const guidance = { solve: { ...body, contentSha256: guidanceHash(body) } };
+ const body = { id: "later", version: 1, taskId: "other-task", stage: "lead" as const, content: "Investigate shift", evidence: [] };
+ const guidance = { lead: { ...body, contentSha256: guidanceHash(body) } };
  await expect(runPipeline({ telemetry: telemetryForDirectory(runsDir), taskId: "spam1", runsDir, guidance,
-  configPath: configFile(runsDir, { solve: { enabled: true }, refit: { enabled: true } }) })).rejects.toThrow(/binding/);
+  configPath: configFile(runsDir, { lead: { enabled: true }, refit: { enabled: true } }) })).rejects.toThrow(/binding/);
  expect(ran).toBe(0);
 });

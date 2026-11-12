@@ -15,7 +15,7 @@ import { readPythonEnvironment } from "../run/python_environment.js";
 import { prepareSolveSandbox, trainingSandboxCommand } from "../run/solve_sandbox.js";
 import { prepareRefit, runRefit } from "../refit/service.js";
 import { tagMessage, tagCommit } from "../training/git.js";
-import { runHarnessSolveSession } from "../run/harness_solve_session.js";
+import { runLeadSession } from "../run/lead_session.js";
 import type { SolveWorkspace } from "../solve/workspace.js";
 
 async function fixture(delay = 0, barrier = false) {
@@ -64,9 +64,10 @@ test("closed solve confirms once, preserves hidden inputs and refit binds its id
  const f = await fixture();
  await expect(prepareRefit(f.refit)).rejects.toThrow("required");
  let sessionClosed = false;
- const result = await runHarnessSolveSession("fixture", undefined, { taskConfiguration: f.workspace.configuration, runId: "confirmation-session",
+ const result = await runLeadSession("fixture", { taskConfiguration: f.workspace.configuration, runId: "confirmation-session", progressPath: join(f.p.root, "lead/PROGRESS.json"),
   report: { event() {}, input() {}, agentIdentity: () => ({ pipelineRunId: "c2-pipeline", stageInvocationId: "c2-invocation" }), observation: () => () => {} } as any,
-  dependencies: { prepareWorkspace: () => f.workspace, readPython: () => f.python,
+  dependencies: { prepareData: () => f.workspace as any, readPython: () => f.python,
+   scouts: () => ({ tool: {} as any, report: async () => ({ text: "- ok: frozen pipeline", roles: [{ role: "validation", status: "completed" }] } as any) }), refit: async () => ({ artifacts: [], validation: { valid: true, errors: [] } }),
    runAgentSession: async (options: any) => { expect(options.prompt).not.toContain('holdoutConfirmation'); sessionClosed = true; return { output: "existing champion is sufficient", agentRunId: "inert" } as any; },
    confirm: async options => { expect(sessionClosed).toBe(true); return runConfirmation(options); } } });
  expect(result.valid).toBe(true);

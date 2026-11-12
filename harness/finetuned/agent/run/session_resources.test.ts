@@ -43,7 +43,7 @@ async function assertGuidanceExcluded(instructions: string) {
 }
 
 test("assembled solve system prompt excludes local and ancestor development guidance", async () => {
-	await assertGuidanceExcluded(loadPromptSnapshot().render("solve.system", { taskId: "spam1" }).text);
+	await assertGuidanceExcluded(loadPromptSnapshot().render("team.lead-system", { budget: "80", taskId: "spam1" }).text);
 });
 
 test("shared Python guidance joins module instructions without loading development context", async () => {
@@ -55,7 +55,7 @@ test("shared Python guidance joins module instructions without loading developme
 		executable: "/project/.venv/bin/python", prefix: "/project/.venv", packages: [],
 		declared_dependencies: ["demo>=1,<3"], fingerprint: "a".repeat(64),
 	});
-	for (const system of [prompts.render("solve.system", { taskId: "spam1" }).text]) {
+	for (const system of [prompts.render("team.lead-system", { budget: "80", taskId: "spam1" }).text]) {
 		await assertGuidanceExcluded(`${system}\n\n${python.prompt.text}`);
 	}
 });
@@ -95,6 +95,6 @@ test("pipeline extensions exclude project/global settings and load only explicit
 
 test("isolated solve instructions remain explicit and exclude ambient AGENTS markers", async () => {
  const prompts = loadPromptSnapshot();
- await assertGuidanceExcluded([prompts.render("solve.system", { taskId: "fixture" }).text,
+ await assertGuidanceExcluded([prompts.render("team.lead-system", { budget: "80", taskId: "fixture" }).text,
   prompts.render("solve.isolation", { workspace: "/safe/task/agent" }).text].join("\n\n"));
 });

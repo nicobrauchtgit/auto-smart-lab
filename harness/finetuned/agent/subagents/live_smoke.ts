@@ -40,11 +40,11 @@ export async function runLiveSmoke() {
 	let stoppedAfterSuccess = false;
 	let verification: { valid: boolean; output: string } | undefined;
 	let children: ReturnType<typeof createSubagents>["manager"] | undefined;
-	const originalStage = STAGE_REGISTRY.solve;
+	const originalStage = STAGE_REGISTRY.lead;
 	// Process-local test fixture, using the same executor as the existing stage tests.
 	// The normal solve stage and pipeline configuration are never changed on disk.
-	STAGE_REGISTRY.solve = {
-		name: "solve", version: 1, description: "Live subagent implementation smoke fixture",
+	STAGE_REGISTRY.lead = {
+		name: "lead", version: 1, description: "Live subagent implementation smoke fixture",
 		parseOptions: () => ({ fixture: "subagents-live-smoke", stopAfterFirstSuccess: true }),
 		checkInput: () => {},
 		async run(context) {
@@ -108,7 +108,7 @@ export async function runLiveSmoke() {
 		},
 	};
 	try {
-		const invocation = await invokeStage({ stage: "solve", input: { taskId: "subagents-live-smoke", upstream: [], model: model.modelId },
+		const invocation = await invokeStage({ stage: "lead", input: { taskId: "subagents-live-smoke", upstream: [], model: model.modelId },
 			config: resolved, trace, prompts, reason: "live_smoke", optionOverrides: {} });
 		trace.event("pipeline_run_end", { outcome: invocation.outcome, stoppedAfterSuccess });
 		await trace.close();
@@ -135,7 +135,7 @@ export async function runLiveSmoke() {
 		writeFileSync(summaryPath, JSON.stringify(summary, null, 2));
 		console.log(JSON.stringify({ event: "live_smoke_finished", summaryPath, checks, outcome: invocation.outcome, traceDegraded: trace.degraded() }));
 		return invocation.outcome === "success" && Object.values(checks).every(Boolean);
-	} finally { STAGE_REGISTRY.solve = originalStage; await trace.close(); }
+	} finally { STAGE_REGISTRY.lead = originalStage; await trace.close(); }
 }
 
 function verify(python: string, cwd: string) {

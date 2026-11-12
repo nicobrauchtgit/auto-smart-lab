@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { setupChecks, SetupSession } from "../pipeline/setup.js";
 import { loadPromptSnapshot } from "../prompts/loader.js";
 import { refitStage } from "../pipeline/stages/refit.js";
-import { solveStage } from "../pipeline/stages/solve.js";
+import { leadStage } from "../pipeline/stages/lead.js";
 import { STAGE_REGISTRY } from "../pipeline/registry.js";
 import { runPipeline } from "../pipeline/executor.js";
 import { runRefitStage } from "../pipeline/run_refit.js";
@@ -16,7 +16,7 @@ import type { TaskConfiguration } from "../pipeline/task_configuration.js";
 function configuration(root: string, chain = false) {
  const path = join(root, "pipeline.config.json");
  writeFileSync(path, JSON.stringify({ agent: { cwd: ".", agentDir: ".", initialPrompt: "" },
-  pipeline: { version: 1, entryStage: chain ? "solve" : "refit", stages: { solve: { enabled: chain }, refit: { enabled: true } },
+  pipeline: { version: 1, entryStage: chain ? "lead" : "refit", stages: { lead: { enabled: chain }, refit: { enabled: true } },
    tasks: { fixture: spamConfiguration(), "fixture-missing": spamConfiguration() } } }));
  return path;
 }
@@ -34,14 +34,14 @@ test("refit preflight has no provider requirements, checks full data before upst
 
 test("whole chain rejects missing later refit inputs before solve starts", async () => {
  const root = mkdtempSync(join(tmpdir(), "refit-preflight-")); const path = configuration(root, true);
- const oldSolve = STAGE_REGISTRY.solve; const oldRefit = STAGE_REGISTRY.refit;
+ const oldSolve = STAGE_REGISTRY.lead; const oldRefit = STAGE_REGISTRY.refit;
  let called = false;
- STAGE_REGISTRY.solve = { ...solveStage, setupRequirements: [], checkInput() {}, async run() { called = true; return { artifacts: [] }; }, next: "refit" };
+ STAGE_REGISTRY.lead = { ...leadStage, setupRequirements: [], checkInput() {}, async run() { called = true; return { artifacts: [] }; }, next: "refit" };
  STAGE_REGISTRY.refit = refitStage;
  try {
-  await expect(runPipeline({ telemetry: testTelemetry(), taskId: "fixture-missing", entryStage: "solve", configPath: path, runsDir: root })).rejects.toThrow("refit-data");
+  await expect(runPipeline({ telemetry: testTelemetry(), taskId: "fixture-missing", entryStage: "lead", configPath: path, runsDir: root })).rejects.toThrow("refit-data");
   expect(called).toBe(false);
- } finally { STAGE_REGISTRY.solve = oldSolve; STAGE_REGISTRY.refit = oldRefit; }
+ } finally { STAGE_REGISTRY.lead = oldSolve; STAGE_REGISTRY.refit = oldRefit; }
 }, 30_000);
 
 test("standalone refit calls the shared executor, records typed inputs/artifact validation, and skips all workers for check-setup", async () => {

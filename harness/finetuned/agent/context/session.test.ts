@@ -23,7 +23,7 @@ async function fixture(thresholdTokens = CONTEXT_HANDOFF_TOKENS) {
 	runtime.registerNativeProvider(provider.provider);
 	const events: TelemetryRecord[] = [];
 	const sink: ObservationTelemetry = { failures: [], record: event => events.push(event), async close() {} };
-	const observe = { identity: { pipelineRunId: "pipeline", stageInvocationId: "invocation", stage: "solve", attempt: 1 }, telemetry: sink };
+	const observe = { identity: { pipelineRunId: "pipeline", stageInvocationId: "invocation", stage: "lead", attempt: 1 }, telemetry: sink };
 	const scope = createSubagents({ cwd: root, agentDir, model: provider.getModel(), modelRuntime: runtime,
 		prompts, sharedInstructions: [], env: {}, inputs: [], observe });
 	let created = 0;
@@ -31,7 +31,7 @@ async function fixture(thresholdTokens = CONTEXT_HANDOFF_TOKENS) {
 	const sessions: Awaited<ReturnType<typeof createAgentSession>>["session"][] = [];
 	const logical = new SmartContextSession({ prompts, thresholdTokens, create: async () => {
 		created++;
-		const resources = await loadChildResources({ cwd: root, agentDir, instructions: [prompts.render("solve.system", { taskId: "fixture" })] });
+		const resources = await loadChildResources({ cwd: root, agentDir, instructions: [prompts.render("team.lead-system", { budget: "80", taskId: "fixture" })] });
 		const { session } = await createAgentSession({ cwd: root, agentDir, ...resources,
 			model: provider.getModel(), modelRuntime: runtime, tools: ["read"], sessionManager: SessionManager.inMemory(root) });
 		sessions.push(session);
@@ -227,13 +227,13 @@ test("feedback queued during final response never starts a new turn and remains 
 
 test("module guidance appears in assembled openings and every replacement while AGENTS marker stays excluded", async () => {
  const { guidanceHash } = await import("../pipeline/guidance.js");
- const { prepareSolvePrompts } = await import("../prompts/solve.js");
- for (const stage of ["solve"] as const) {
+ const { prepareLeadPrompts } = await import("../prompts/lead.js");
+ for (const stage of ["lead"] as const) {
   const f = await fixture(5000);
   try {
    const body = { id: "immutable", version: 1, stage, taskId: "fixture", content: "INVOCATION_GUIDANCE {{literal}}", evidence: [] };
    const guidance = { ...body, contentSha256: guidanceHash(body) };
-   const opening = prepareSolvePrompts(prompts, { taskId: "fixture", workspace: "/tmp", datasetPaths: [], configuration: spamConfiguration(), targets: "/tmp/labels", rowCount: 10, targetSummary: "balanced", foldRecommendation: "two", maxIterations: 1, guidance }).prompt;
+   const opening = prepareLeadPrompts(prompts, { taskId: "fixture", workspace: "/tmp", datasetPaths: [], configuration: spamConfiguration(), targets: "/tmp/labels", rowCount: 10, targetSummary: "balanced", foldRecommendation: "two", maxIterations: 1, guidance }).prompt;
    f.provider.setResponses([
     context => { assert.match(JSON.stringify(context.messages), /INVOCATION_GUIDANCE/); f.sessions[0].getContextUsage = () => ({ tokens: 6000, contextWindow: 200000, percent: 3 }); return fauxAssistantMessage("Progress"); },
     fauxAssistantMessage("Read the current artifact"),

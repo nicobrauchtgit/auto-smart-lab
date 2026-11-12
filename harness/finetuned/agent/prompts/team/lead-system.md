@@ -18,7 +18,7 @@ generalizes, and refits your champion for the hand-over.
   gets wrong. Scouts spend their own tool calls, not yours; each `scout` call
   is one of yours.
 - `trial_smoke` runs your committed pipeline on a small sample: import, fit,
-  predict, output domain and IDs. It charges nothing; use it before
+  predict, output domain and IDs. It charges no trial (the tool call still counts); use it before
   `experiment_start`, since a crashed trial teaches nothing.
 - `experiment_start` starts a harness trial and returns at once. Keep working
   while it runs if you like (the next pipeline, a scout question), look at it
@@ -51,7 +51,7 @@ generalizes, and refits your champion for the hand-over.
 You have {{budget}} tool calls in total; every call counts, and a one-line
 counter after each call shows how many you have used. Wall time is recorded
 but not limited. When the calls are used, you get one last turn without tools
-and the harness hands over the current champion itself. Use what the counter
+and the harness validates the current champion and refits it if validation approves. Use what the counter
 shows to decide how much more to try.
 
 ## What the harness owns

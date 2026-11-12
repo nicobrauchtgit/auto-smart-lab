@@ -25,7 +25,7 @@ test("child loader includes selected common and child guidance, excluding ambien
 	writeFileSync(join(agentDir, "APPEND_SYSTEM.md"), marker);
 	let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
 	try {
-		const instructions = [prompts.render("solve.system", { taskId: "fixture" }), prompts.render("subagents.child", {})];
+		const instructions = [prompts.render("team.lead-system", { budget: "80", taskId: "fixture" }), prompts.render("subagents.child", {})];
 		const resources = await loadChildResources({ cwd, agentDir, instructions });
 		({ session } = await createAgentSession({ cwd, agentDir, ...resources,
 			sessionManager: SessionManager.inMemory(cwd), tools: [] }));
@@ -84,7 +84,7 @@ test("real Pi children execute tools, preserve follow-up context, and keep trans
 	const scope = createSubagents({ cwd: root, agentDir, model: faux.getModel(), modelRuntime: runtime, shellLogRoot: join(root, "shell-calls"),
 		prompts, sharedInstructions: [],
 		env: { PATH: process.env.PATH }, inputs: [], parentAgentRunId,
-		observe: { identity: { pipelineRunId, stageInvocationId, stage: "solve", attempt: 1 }, telemetry: sink } });
+		observe: { identity: { pipelineRunId, stageInvocationId, stage: "lead", attempt: 1 }, telemetry: sink } });
 	try {
 		const execute = async (name: string, args: unknown) => {
 			const result = await scope.tools.find(tool => tool.name === name)!
@@ -121,7 +121,7 @@ test("an observed Pi parent can spawn and collect a child through the optional t
 	const agentDir = join(root, "agent"); mkdirSync(agentDir);
 	const events: TelemetryRecord[] = [];
 	const sink: ObservationTelemetry = { failures: [], record: event => events.push(event), async close() {} };
-	const observe = { identity: { pipelineRunId: randomUUID(), stageInvocationId: randomUUID(), attempt: 2, stage: "solve" }, telemetry: sink };
+	const observe = { identity: { pipelineRunId: randomUUID(), stageInvocationId: randomUUID(), attempt: 2, stage: "lead" }, telemetry: sink };
 	const runtime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath: null, refreshOnCreate: false });
 	const parentProvider = fauxProvider({ provider: "test-parent", tokensPerSecond: 1_000_000 });
 	const childProvider = fauxProvider({ provider: "test-child", tokensPerSecond: 1_000_000 });
@@ -191,7 +191,7 @@ test("Pi child handoffs preserve logical identity and expose the replacement phy
 		}]);
 	const scope = createSubagents({ cwd: root, agentDir, model: faux.getModel(), modelRuntime: runtime, shellLogRoot: join(root, "shell-calls"),
 		prompts, sharedInstructions: [], env: {}, inputs: [], parentAgentRunId: "parent",
-		observe: { identity: { stage: "solve", stageInvocationId: "invocation", attempt: 1 }, telemetry: sink } });
+		observe: { identity: { stage: "lead", stageInvocationId: "invocation", attempt: 1 }, telemetry: sink } });
 	try {
 		const child = scope.manager.spawn("Complete implementation", "spawn");
 		const result = await scope.manager.wait(child.logicalAgentId);

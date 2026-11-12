@@ -96,8 +96,8 @@ function brokenTrainingExecutables() {
 
 test("solve declares optuna and git prerequisites and both block when missing", async () => {
  const prompts = loadPromptSnapshot();
- const { solveStage } = await import("./stages/solve.js");
- const ids = setupChecks(solveStage.setupRequirements ?? [], { taskId: "spam1", prompts }).map(check => check.id);
+ const { leadStage } = await import("./stages/lead.js");
+ const ids = setupChecks(leadStage.setupRequirements ?? [], { taskId: "spam1", prompts }).map(check => check.id);
  expect(ids).toContain("training-optuna");
  expect(ids).toContain("training-git");
  const healthy = setupChecks(["training"], { taskId: "spam1", prompts }).filter(check => ["training-optuna", "training-git"].includes(check.id));
@@ -115,7 +115,7 @@ test("a missing optuna or git prevents the solve stage from running", async () =
  const { createPipelineTrace } = await import("./trace.js");
  const { resolvePipelineSettings } = await import("./config.js");
  const { STAGE_REGISTRY } = await import("./registry.js");
- const { solveStage } = await import("./stages/solve.js");
+ const { leadStage } = await import("./stages/lead.js");
  const prompts = loadPromptSnapshot();
  const broken = setupChecks(["training"], { taskId: "fixture", prompts, executables: brokenTrainingExecutables() });
  class MissingTrainingTools extends SetupSession {
@@ -126,14 +126,14 @@ test("a missing optuna or git prevents the solve stage from running", async () =
    return super.check(replaced, abort, record);
   }
  }
- const before = STAGE_REGISTRY.solve;
+ const before = STAGE_REGISTRY.lead;
  const directory = mkdtempSync(join(tmpdir(), "solve-preflight-"));
  let ran = false;
  const trace = await createPipelineTrace({ telemetry: testTelemetry(), taskId: "fixture", pipelineRunId: crypto.randomUUID(), runsDir: directory });
  try {
-  STAGE_REGISTRY.solve = { ...solveStage, checkInput() {}, async run() { ran = true; return { artifacts: [] }; } };
-  const config = resolvePipelineSettings({ pipeline: { entryStage: "solve", stages: { solve: { enabled: true } } }, agent: { cwd: ".", agentDir: ".", initialPrompt: "" }, providers: {}, defaultModel: "fixture/model" } as any);
-  const invocation = await invokeStage({ stage: "solve", input: { taskId: "fixture", taskConfiguration: spamConfiguration(), upstream: [] }, config, trace, setupSession: new MissingTrainingTools() });
+  STAGE_REGISTRY.lead = { ...leadStage, checkInput() {}, async run() { ran = true; return { artifacts: [] }; } };
+  const config = resolvePipelineSettings({ pipeline: { entryStage: "lead", stages: { lead: { enabled: true } } }, agent: { cwd: ".", agentDir: ".", initialPrompt: "" }, providers: {}, defaultModel: "fixture/model" } as any);
+  const invocation = await invokeStage({ stage: "lead", input: { taskId: "fixture", taskConfiguration: spamConfiguration(), upstream: [] }, config, trace, setupSession: new MissingTrainingTools() });
   expect(invocation.outcome).toBe("failure");
   expect(invocation.error).toContain("training-optuna");
   expect(invocation.error).toContain("training-git");
@@ -141,7 +141,7 @@ test("a missing optuna or git prevents the solve stage from running", async () =
   await trace.close();
   expect(JSON.stringify(traceEvents(trace.pipelineRunId))).toContain(invocation.invocationId);
  } finally {
-  STAGE_REGISTRY.solve = before;
+  STAGE_REGISTRY.lead = before;
   await trace.close();
   rmSync(directory, { recursive: true, force: true });
  }
@@ -157,9 +157,9 @@ test("training recovery prerequisites are scoped and block execution when flock 
 
 test("confirmation prerequisites are checked before solve execution and scoped to consumers", async () => {
  const prompts = loadPromptSnapshot();
- const { solveStage } = await import("./stages/solve.js");
- expect(solveStage.setupRequirements).toContain("confirmation");
- const checks = setupChecks(solveStage.setupRequirements!, { taskId: "fixture", prompts, taskConfiguration: spamConfiguration(), executables: { python: "/missing-confirmation-python" } });
+ const { leadStage } = await import("./stages/lead.js");
+ expect(leadStage.setupRequirements).toContain("confirmation");
+ const checks = setupChecks(leadStage.setupRequirements!, { taskId: "fixture", prompts, taskConfiguration: spamConfiguration(), executables: { python: "/missing-confirmation-python" } });
  const confirmation = checks.find(check => check.id === "holdout-confirmation-runtime")!;
  expect(confirmation.phase).toBe("local");
  let ran = false;
@@ -187,20 +187,20 @@ test("missing shared metric prerequisites block the solve stage before execution
    return super.check([missing], abort, record);
   }
  }
- const original = STAGE_REGISTRY.solve!;
+ const original = STAGE_REGISTRY.lead!;
  const directory = mkdtempSync(join(tmpdir(), "metric-preflight-"));
  const trace = await createPipelineTrace({ telemetry: testTelemetry(), taskId: "fixture", pipelineRunId: crypto.randomUUID(), runsDir: directory });
  let ran = false;
  try {
-  STAGE_REGISTRY.solve = { ...original, checkInput() {}, async run() { ran = true; return { artifacts: [] }; } };
-  const config = resolvePipelineSettings({ pipeline: { entryStage: "solve", stages: { solve: { enabled: true } } },
+  STAGE_REGISTRY.lead = { ...original, checkInput() {}, async run() { ran = true; return { artifacts: [] }; } };
+  const config = resolvePipelineSettings({ pipeline: { entryStage: "lead", stages: { lead: { enabled: true } } },
    agent: { cwd: ".", agentDir: ".", initialPrompt: "" }, providers: {}, defaultModel: "fixture/model" } as any);
-  const result = await invokeStage({ stage: "solve", input: { taskId: "fixture", taskConfiguration: spamConfiguration(), upstream: [] }, config, trace, setupSession: new MissingMetrics() });
+  const result = await invokeStage({ stage: "lead", input: { taskId: "fixture", taskConfiguration: spamConfiguration(), upstream: [] }, config, trace, setupSession: new MissingMetrics() });
   expect(result.outcome).toBe("failure");
   expect(result.error).toContain("training-imports");
   expect(ran).toBe(false);
  } finally {
-  STAGE_REGISTRY.solve = original;
+  STAGE_REGISTRY.lead = original;
   await trace.close();
   rmSync(directory, { recursive: true, force: true });
  }

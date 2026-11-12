@@ -166,7 +166,7 @@ test.skipIf(!linux)("a C-style wrapped supervised bash passed as a replacement i
 	expect(isAgentShellTool({ ...raw, ...Object.fromEntries(Object.entries(raw)) })).toBe(false);
 	const base = { cwd: root, agentDir, prompts, sharedInstructions: [], env: { PATH: process.env.PATH }, inputs: [] };
 	const sink: ObservationTelemetry = { failures: [], record() {}, async close() {} };
-	const observe = { identity: { pipelineRunId: "p", stageInvocationId: "s", stage: "solve", attempt: 1 }, telemetry: sink };
+	const observe = { identity: { pipelineRunId: "p", stageInvocationId: "s", stage: "lead", attempt: 1 }, telemetry: sink };
 	for (const wrapper of [spread, helper]) {
 		const { faux, runtime, contexts } = await fauxSession(`wrapped-${executions}`, "sleep 1.5; echo wrapped-ran");
 		expect(() => createPiChildFactory({ ...base, model: faux.getModel(), modelRuntime: runtime, observe, customTools: [raw] })).toThrow("agentBashTool");

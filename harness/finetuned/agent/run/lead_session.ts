@@ -16,6 +16,8 @@ import { delimiter, dirname, join } from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type InlineExtension, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 
+import { prepareLeadPrompts } from "../prompts/lead.js";
+export { taskContract } from "../prompts/lead.js";
 import { HARNESS_CONFIG } from "../harness/config.js";
 import { ARM_ROOT, statePath } from "../paths.js";
 import { PROJECT_ROOT, resolveTask } from "../pipeline/resolve_task.js";
@@ -38,7 +40,7 @@ import { createScoutRunner } from "../team/runner.js";
 import { createTrialResolver, taskTrialRoots } from "../team/trials.js";
 import { stageScoutInputs } from "../team/workspace.js";
 import { collectTrainingResults, createGitHistoryGuard, createHarnessTraining, ensureSolutionsRepository, type TrainingCollection } from "../training/index.js";
-import { championSelection, championTag } from "../training/development_selection.js";
+import { championSelection, championTag, handoverChampion } from "../training/development_selection.js";
 import { trialSupervisionDirectory } from "../training/results.js";
 import { readRecord } from "../experiments/safe_files.js";
 import { selectionSummary } from "../training/selection_summary.js";
@@ -104,19 +106,6 @@ export function recoveryTrainingRoot(parent: string, runId: string): string {
  const unique = [...new Set(candidates)];
  if (unique.length > 1) throw new Error(`Multiple interrupted training workspaces: ${unique.join(", ")}. Resume them individually before a new lead run.`);
  return unique[0] ?? join(parent, runId);
-}
-
-/** The task contract for the configured kind: input frame, harness calls and scoring. */
-export function taskContract(prompts: PromptSnapshot, taskId: string, configuration: TaskConfiguration, evidencePath: string): RenderedPrompt[] {
- const contract = configuration.kind === "binary_classification"
-  ? prompts.render("team.lead-task-binary_classification", { taskId })
-  : configuration.kind === "clustering"
-   ? prompts.render("team.lead-task-clustering", { taskId, execution: configuration.execution })
-   : prompts.render("team.lead-task-anomaly_detection", { taskId, execution: configuration.execution,
-    scoreMethod: configuration.anomaly!.scoreMethod, scoreDirection: configuration.anomaly!.scoreDirection.replaceAll("_", " "),
-    anomalyLabel: String(configuration.anomaly!.anomalyLabel) });
- if (configuration.selection) return [contract, prompts.render("team.lead-evidence-selection", { evidencePath, metric: configuration.selection.metric })];
- return configuration.metric === "none" ? [contract, prompts.render("team.lead-label-free", {})] : [contract];
 }
 
 /**
@@ -201,7 +190,7 @@ export interface RunLeadOptions {
  dependencies?: Partial<LeadDependencies>;
 }
 
-export type LeadStopReason = "handed_over" | "no_champion" | "refit_failed" | "cancelled";
+export type LeadStopReason = "handed_over" | "no_champion" | "refit_failed" | "cancelled" | "validation_failed";
 export interface LeadRunResult {
  progress: LeadProgress;
  stopReason: LeadStopReason;
@@ -275,6 +264,10 @@ export function validationSummary(report: ScoutReport | undefined): LeadHandOver
  return { status: report.roles[0]?.status ?? "failed", fix: pick("defect"), advice: pick("idea"), ok: pick("fact") };
 }
 
+export function validationPassed(value: LeadHandOver["validation"]): boolean {
+ return value.status === "completed" && value.fix.length === 0 && value.ok.length + value.advice.length > 0;
+}
+
 export async function runLeadSession(taskId: string, options: RunLeadOptions): Promise<LeadRunResult> {
  const deps: LeadDependencies = { ...DEFAULT_DEPENDENCIES, ...options.dependencies };
  const prompts = options.prompts ?? loadPromptSnapshot();
@@ -285,13 +278,15 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
  const data = deps.prepareData(taskId, configuration, options.seed);
  const progressPath = options.progressPath ?? statePath(PROJECT_ROOT, taskId, "lead", "PROGRESS.json");
  const prior = readProgress(progressPath);
+ if (prior && prior.taskId !== taskId) throw new Error("Lead progress belongs to another task");
+ if (prior?.datasetSha256 && prior.datasetSha256 !== data.datasetSha256) throw new Error("Lead progress dataset changed; restore its task state before resuming");
  const resumed = prior && (prior.status === "running" || prior.status === "handing_over") ? prior : undefined;
  const invocationId = identity?.stageInvocationId ?? options.runId ?? randomUUID();
  const runId = resumed?.runId ?? options.runId ?? invocationId;
- const limit = options.maxToolCalls ?? HARNESS_CONFIG.team.lead.maxToolCalls;
+ const limit = resumed?.budget.limit ?? options.maxToolCalls ?? HARNESS_CONFIG.team.lead.maxToolCalls;
  const trainingRoot = resumed?.trainingRoot ?? recoveryTrainingRoot(join(data.root, "training"), runId);
  const now = () => new Date().toISOString();
- const progress: LeadProgress = resumed ?? { schemaVersion: 1, taskId, runId, trainingRoot, status: "running", startedAt: now(), sessions: [],
+ const progress: LeadProgress = resumed ?? { schemaVersion: 1, taskId, datasetSha256: data.datasetSha256, runId, trainingRoot, status: "running", startedAt: now(), sessions: [],
   trials: [], holdout: [], budget: { limit, used: 0 }, scoutCalls: 0 };
  progress.sessions.push({ startedAt: now(), invocationId });
  progress.budget.limit = limit;
@@ -329,7 +324,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
  report?.input({ kind: "lead_progress", version: 1, delivery: resumed ? "initial_prompt" : "none", status: "available", artifact: progressPath, resumed: !!resumed });
  record("harness_configuration", { version: 1, defaults: HARNESS_CONFIG, lead: { maxToolCalls: limit }, foldRecommendation: shape });
 
- const budget = new ScoutBudget(limit, prompts, { maxTurns: limit * 20 + 20, finishPrompt: "team.lead-finish", used: progress.budget.used });
+ const budget = new ScoutBudget(limit, prompts, { maxTurns: limit * 20 + 20, finishPrompt: "team.lead-finish", used: progress.budget.used, onCharge: used => { progress.budget.used = used; save(); } });
  const inbox = new LeadInbox();
  const validations = new Map<string, LeadHandOver["validation"]>();
  let confirmation: ConfirmationOutput | undefined;
@@ -472,11 +467,11 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
   handOver = { by, reason: reason.slice(0, 1000), experimentId, validation, at: now() };
   progress.handOver = handOver;
   progress.status = "handing_over";
-  save();
   mkdirSync(dirname(reviewPath), { recursive: true });
   writeFileSync(reviewPath, `${JSON.stringify({ experimentId, validation: { valid: validation.fix.length === 0 },
    review: { status: validation.fix.length ? "fix" : validation.status === "completed" ? "ok" : validation.status,
     readinessRationale: `${by === "lead" ? "Lead" : "Harness"} hand-over: ${handOver.reason}`, concerns: validation.fix, recommendations: validation.advice } }, null, 2)}\n`);
+  save();
   record("lead_hand_over", { ...handOver, seconds_since_start: (Date.parse(handOver.at) - Date.parse(progress.startedAt)) / 1000,
    holdout_queries: Math.max(0, ...progress.holdout.map(row => row.queryCount ?? 0)) });
  };
@@ -496,9 +491,8 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
    const champion = championOf(data.solutionsRoot, taskId);
    if (!champion) { record("lead_hand_over_refused", { reason: "no_champion" }); return reply(prompts.render("team.lead-handover-no-champion", {}).text); }
    if (!holdoutDone(champion.experimentId)) await runHoldout(champion.experimentId);
-   const repeat = validations.has(champion.experimentId);
    const validation = await validate(champion.experimentId, args.reason, signal, toolCallId);
-   if (validation.fix.length && !repeat) return reply(prompts.render("team.lead-handover-fix", { experiment: champion.experimentId, bullets: validation.fix.map(row => `- ${row}`).join("\n") }).text);
+   if (!validationPassed(validation)) return reply(prompts.render("team.lead-handover-fix", { experiment: champion.experimentId, bullets: validation.fix.length ? validation.fix.map(row => `- ${row}`).join("\n") : `status: ${validation.status}; labelled findings: ${validation.ok.length + validation.advice.length}` }).text);
    accept("lead", args.reason, champion.experimentId, validation);
    budget.end();
    return reply(prompts.render("team.lead-handover-accepted", { experiment: champion.experimentId, holdout: holdoutUsed(),
@@ -534,23 +528,19 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
   const pythonSessionId = randomUUID();
   const environmentTool = deps.environmentTool(python, environmentToolPrompt.text, PROJECT_ROOT, {
    pipelineRunId: identity?.pipelineRunId ?? runId, stageInvocationId: identity?.stageInvocationId ?? runId, attempt: 1, sessionId: pythonSessionId });
-  const system = prompts.render("team.lead-system", { taskId, budget: String(limit) });
   const shared = prompts.render("team.shared", {});
   const isolation = prompts.render("solve.isolation", { workspace: agentRoot });
-  const contract = taskContract(prompts, taskId, configuration, join(agentRoot, "evidence.json"));
-  const guidance = guidanceBlock(prompts, options.guidance);
   const followUpNote = followUp ? prompts.render("team.lead-follow-up", { branch: followUp.branch, champion: followUp.champion.slice(0, 12), previous: followUp.previous }) : undefined;
   const resume = resumed ? prompts.render("team.lead-resume", { progress: renderProgress(prompts, progress).text }) : undefined;
-  const resources = readCourseResources(resolveTask({ taskId }).unitSlug);
-  const opening = prompts.render("team.lead-start", {
-   task: readFileSync(data.taskPath, "utf8").trim(), taskContract: contract.map(part => part.text).join("\n\n"),
-   datasetPaths: data.datasetPaths.map(path => `- ${path}`).join("\n"), targets: data.targets, rowCount: String(data.rowCount),
-   targetSummary: data.targetSummary, foldRecommendation: `${shape.folds}-fold ${data.recommendation.scheme}, ${shape.repeats} repeat(s)`,
-   workspace: agentRoot, resources: resources.length ? resources.map(({ resource }) => `- ${resource.title} (${resource.path})`).join("\n") : "- none: this unit supplies no course material",
-   followUp: followUpNote?.text ?? "", resume: resume?.text ?? "", guidance: guidance?.text ?? "" });
-  const promptReferences = [system.reference, opening.reference, shared.reference, isolation.reference, environmentToolPrompt.reference,
-   ...contract.map(part => part.reference), ...(followUpNote ? [followUpNote.reference] : []), ...(resume ? [resume.reference] : []),
-   ...(guidance ? [guidance.reference] : []), ...training.toolPrompts, ...GIT_BLOCK_PROMPT_IDS.map(id => prompts.render(id, {}).reference)];
+  const opening = prepareLeadPrompts(prompts, { taskId, configuration, workspace: agentRoot,
+   evidencePath: join(agentRoot, "evidence.json"), task: readFileSync(data.taskPath, "utf8").trim(),
+   datasetPaths: data.datasetPaths, targets: data.targets, rowCount: data.rowCount, targetSummary: data.targetSummary,
+   foldRecommendation: `${shape.folds}-fold ${data.recommendation.scheme}, ${shape.repeats} repeat(s)`, budget: limit,
+   resources: "", followUp: followUpNote?.text, resume: resume?.text, guidance: options.guidance });
+  const system = opening.system;
+  const promptReferences = [...opening.promptReferences, shared.reference, isolation.reference, environmentToolPrompt.reference,
+   ...(followUpNote ? [followUpNote.reference] : []), ...(resume ? [resume.reference] : []),
+   ...training.toolPrompts, ...GIT_BLOCK_PROMPT_IDS.map(id => prompts.render(id, {}).reference)];
   let generations = 0;
   const continueWhenIdle = async (signal?: AbortSignal): Promise<RenderedPrompt | undefined> => {
    for (;;) {
@@ -571,7 +561,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
    prompt_snapshot_sha256: prompts.fingerprint, prompts: promptReferences });
   try {
    const { agentRunId } = await deps.runAgentSession({
-    prompts, system, prompt: [opening.text, shared.text, isolation.text].join("\n\n"), promptReferences,
+    prompts, system, prompt: [opening.prompt, shared.text, isolation.text].join("\n\n"), promptReferences,
     feedback: options.feedback, reportInput: report ? input => report.input(input) : undefined, model: options.model,
     cwd: PROJECT_ROOT, env: { SOLVE_WORKSPACE: agentRoot }, pythonSessionId, tools: [],
     customTools: [...training.tools, ...isolatedSolveTools(sandbox, { root: join(data.root, "shell-calls") }), environmentTool, scoutTool, handOverTool],
@@ -607,7 +597,9 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
    const champion = championOf(data.solutionsRoot, taskId);
    if (champion && !cancelled()) {
     if (!holdoutDone(champion.experimentId)) await runHoldout(champion.experimentId);
-    accept("harness", endReason, champion.experimentId, await validate(champion.experimentId, `harness hand-over at ${endReason}`, options.signal));
+    const validation = await validate(champion.experimentId, `harness hand-over at ${endReason}`, options.signal);
+    if (validationPassed(validation)) accept("harness", endReason, champion.experimentId, validation);
+    else { stopReason = "validation_failed"; errors.push("Champion validation failed or returned no labelled evidence"); progress.status = "failed"; progress.error = errors[0]; }
    }
   }
  } finally {
@@ -616,11 +608,11 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
  }
 
  if (cancelled()) stopReason = "cancelled";
- else if (!handOver) {
+ else if (!handOver && stopReason !== "validation_failed") {
   stopReason = "no_champion";
   errors.push("No trial became champion; nothing to hand over");
   progress.status = "failed"; progress.error = errors[0];
- } else {
+ } else if (handOver) {
   try {
    const refit = await deps.refit({ taskId, configuration, experimentId: handOver.experimentId, reviewPath, model: options.model,
     ...(options.signal ? { signal: options.signal } : {}), ...(report ? { report } : {}) });
@@ -638,7 +630,13 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
   }
  }
  save();
- const collection = await championSelection(await deps.collectResults(trainingRoot), data.solutionsRoot, taskId);
+ let collection = await championSelection(await deps.collectResults(trainingRoot), data.solutionsRoot, taskId);
+ // Terminal freezing closes development selection; retain the validated handover evidence.
+ if (progress.status === "handed_over") {
+  const selected = await handoverChampion(data.solutionsRoot, taskId);
+  if (selected) collection = { ...collection, valid: true, errors: [], selected,
+   artifacts: [...new Map([...collection.artifacts, ...selected.artifacts].map(artifact => [artifact.path, artifact])).values()] };
+ }
  record("lead_run_finished", { stop_reason: stopReason, status: progress.status, champion: progress.champion, hand_over: progress.handOver,
   first_trial_seconds: progress.firstTrialAt ? (Date.parse(progress.firstTrialAt) - Date.parse(progress.startedAt)) / 1000 : null,
   hand_over_seconds: progress.handOver ? (Date.parse(progress.handOver.at) - Date.parse(progress.startedAt)) / 1000 : null,

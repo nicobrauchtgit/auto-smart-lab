@@ -74,22 +74,22 @@ test("missing or invalid declared course material blocks a stage that declares i
 			return super.check([check], signal, record);
 		}
 	}
-	const original = STAGE_REGISTRY.solve!;
+	const original = STAGE_REGISTRY.lead!;
 	let ran = false;
 	try {
-		STAGE_REGISTRY.solve = { ...original, setupRequirements: ["course-resources"], checkInput() {}, async run() { ran = true; return { artifacts: [] }; } };
-		const config = resolvePipelineSettings({ pipeline: { entryStage: "solve", stages: { solve: { enabled: true } } },
+		STAGE_REGISTRY.lead = { ...original, setupRequirements: ["course-resources"], checkInput() {}, async run() { ran = true; return { artifacts: [] }; } };
+		const config = resolvePipelineSettings({ pipeline: { entryStage: "lead", stages: { lead: { enabled: true } } },
 			agent: { cwd: ".", agentDir: ".", initialPrompt: "" }, providers: {}, defaultModel: "fixture/model" } as any);
 		for (const fault of ["changed", "missing"]) {
 			if (fault === "changed") writeFileSync(join(f.directory, "slides.txt"), "changed");
 			else rmSync(join(f.directory, "slides.txt"));
 			const trace = await createPipelineTrace({ telemetry: testTelemetry(), taskId: "fixture", pipelineRunId: crypto.randomUUID(), runsDir: f.root });
 			try {
-				const result = await invokeStage({ stage: "solve", input: { taskId: "fixture", taskConfiguration: spamConfiguration(), upstream: [] }, config, trace, setupSession: new ResourceSetup() });
+				const result = await invokeStage({ stage: "lead", input: { taskId: "fixture", taskConfiguration: spamConfiguration(), upstream: [] }, config, trace, setupSession: new ResourceSetup() });
 				expect(result.outcome).toBe("failure");
 				expect(result.error).toContain("course-resources");
 				expect(ran).toBe(false);
 			} finally { await trace.close(); }
 		}
-	} finally { STAGE_REGISTRY.solve = original; }
+	} finally { STAGE_REGISTRY.lead = original; }
 });

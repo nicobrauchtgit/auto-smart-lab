@@ -1,6 +1,8 @@
-The validation scout found defects in champion `{{experiment}}`:
+Validation has not approved champion `{{experiment}}`:
 
 {{bullets}}
 
-Correct them and run more trials if you can, or call `hand_over` again to hand
-over this champion as is; the defects are then recorded with the hand-over.
+Correct any defects and measure a new candidate within your remaining budget.
+A repeated hand-over request cannot override a known defect or missing
+validation evidence. Only a completed validation with ok or advice findings
+and no fix findings permits terminal refit.
