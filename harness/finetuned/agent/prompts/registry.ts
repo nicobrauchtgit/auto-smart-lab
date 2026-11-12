@@ -1,5 +1,8 @@
 /** Stable prompt IDs and their required string inputs. Prose belongs in files. */
 export const PROMPTS = {
+ "team.skill-data": { file: "team/skills/scout-data.md", variables: [] },
+ "team.skill-ideas": { file: "team/skills/scout-ideas.md", variables: [] },
+ "team.skill-validation": { file: "team/skills/scout-validation.md", variables: [] },
  "team.probe-question": { file: "team/probe-question.md", variables: [] },
  "team.probe-validation": { file: "team/probe-validation.md", variables: [] },
  "team.data": { file: "team/data.md", variables: ["taskId", "budget", "dataPaths", "resources"] },

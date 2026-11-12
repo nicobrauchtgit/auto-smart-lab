@@ -87,3 +87,19 @@ test("the solve opening selects the task contract of the configured kind", () =>
     assert.ok(selected.promptReferences.some(reference => reference.id === "team.lead-evidence-selection"));
     assert.ok(!selected.promptReferences.some(reference => reference.id === "team.lead-label-free"));
 });
+
+test("scout skill IDs reject missing files and undeclared variables", () => {
+ const root = mkdtempSync(join(tmpdir(), "scout-skill-prompts-"));
+ try {
+  cpSync(new URL("./", import.meta.url), root, { recursive: true });
+  for (const id of ["team.skill-data", "team.skill-ideas", "team.skill-validation"] as const) {
+   const path = join(root, PROMPTS[id].file), original = readFileSync(path, "utf8");
+   assert.throws(() => loadPromptSnapshot().render(id, { unexpected: "x" } as never), /unknown/);
+   writeFileSync(path, `${original}\n{{unexpected}}`);
+   assert.throws(() => loadPromptSnapshot(root), /Invalid template/);
+   rmSync(path);
+   assert.throws(() => loadPromptSnapshot(root), /ENOENT/);
+   writeFileSync(path, original);
+  }
+ } finally { rmSync(root, { recursive: true, force: true }); }
+});

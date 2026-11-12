@@ -282,6 +282,8 @@ test("invalid guidance prevents every stage before any session, including setup-
 });
 
 test('pipeline and standalone check-setup pass scout source checks without changing retained TaskData', async()=>{
+ const { withScoutSourceFixtures }=await import('./scout_sources.testing.js');
+ await withScoutSourceFixtures(['spam1','spam2','spam3'],async()=>{
  const { runLeadStage }=await import('./run_lead.js');
  const { readTaskData }=await import('../solve/task_data.js');
  for(const taskId of ['spam1','spam2','spam3']) {
@@ -297,4 +299,5 @@ test('pipeline and standalone check-setup pass scout source checks without chang
   expect(checked.outcome).toBe('success');expect(checked.invocations).toHaveLength(0);expect(ran).toBe(1);
   expect(readTaskData(taskId)).toEqual(retainedData);
  }
+ });
 });

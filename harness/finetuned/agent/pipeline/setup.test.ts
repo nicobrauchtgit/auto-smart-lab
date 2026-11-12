@@ -231,6 +231,8 @@ test("evidence setup checks a writable destination before execution and permits 
 
 
 test('lead local prerequisites validate source inputs without creating TaskData', async () => {
+ const { withScoutSourceFixtures } = await import('./scout_sources.testing.js');
+ await withScoutSourceFixtures(['spam1','spam2','spam3'], async () => {
  const { leadStage } = await import('./stages/lead.js');
  const { statePath } = await import('../paths.js');
  const { PROJECT_ROOT } = await import('./resolve_task.js');
@@ -247,4 +249,5 @@ test('lead local prerequisites validate source inputs without creating TaskData'
    await new SetupSession().check(checks.filter(c=>c.id==='scout-prompts'),signal(),()=>{});
   expect(existsSync(split)).toBe(before);
  }
+ });
 });

@@ -36,6 +36,8 @@ import type { SuppliedInput } from "../pipeline/types.js";
 export const SESSION_MAX_WALL_MS = HARNESS_CONFIG.session.maxWallMs;
 
 export interface RunSessionOptions {
+	/** Only the lead supplies these harness-owned, snapshotted skills. */
+	skills?: readonly import("@earendil-works/pi-coding-agent").Skill[];
 	/** Fresh controller state queued at every physical session construction; empty text queues nothing. */
 	sessionContext?: () => string;
 	/**
@@ -170,7 +172,7 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 			additionalExtensionPaths: options.extensions === false ? [] : extensionPaths,
 			extensionFactories: [...(options.extensionFactories ?? []), ...searchFactories, ...(options.observe?.executionGuard ? [{ name: "controller-budget", factory(pi: any) { pi.on("tool_call", () => { try { options.observe!.executionGuard!.beforeToolCall(); } catch { return { block: true, reason: "Controller tool budget exhausted" }; } }); } }] : [])],
 			systemPrompt,
-		});
+		}, options.skills);
 
 		await resourceLoader.reload();
 
