@@ -28,6 +28,14 @@ correction was supplied to the new runtime lead.
   worktree pointers repaired after relocation. Prior deliveries, archives,
   diagnostics and setup journals were preserved. Nothing was reset or resumed.
 
+Before the subsequent
+[live interface verification](spam1-interface-verification-2026-11-12.md), this
+second diagnostic's `spam1/` and `solutions/` trees were moved intact into
+`runs/archives/2026-11-12T19-27-17Z-spam1-tool-choice-diagnostic-2/`.
+Task-state and operator-answer paths below now resolve under that archive;
+launch/observer records and historical deliveries remain at their original
+locations.
+
 The lead-system template and rendered hashes match the first observation:
 `dede994a3d4d2978914f55135fc7829b101c0ad38ce371348d978f8c9f7d7155`
 and `e2548874b41fccf949a36f2c2c6a7299cb584b3b61d2fd67e26c074e19858afd`.

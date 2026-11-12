@@ -39,8 +39,11 @@ shares module validation with trial admission. Both reject symlinks in the
 requested commit before fitting, using the same Git-tree check as refit.
 Tool descriptions share explicit path, CV-field and source-eligibility guidance.
 See [training API](../harness/finetuned/agent/training/README.md#module-paths-and-source-eligibility).
-This correction has local regression coverage, not a new live task-run result;
-the multi-task integration gate remains open.
+The subsequent [live verification](experiments/spam1-interface-verification-2026-11-12.md)
+used canonical paths without path/schema rejection and delivered within its
+thirty-minute bound. It also observed a validation scout running CV/contract
+checks through bash rather than `run_checks`; that execution-policy violation
+remains unresolved. The multi-task integration gate remains open.
 
 Both arms receive the user-supplied spam slides as checksummed, read-only course
 resources with page-labelled text copies ([course resources](../resources/README.md)).
