@@ -17,6 +17,16 @@ remains runs solve and then refit as a configured chain until P7 replaces it. Th
 
 Paths are relative to `harness/finetuned/` unless prefixed by `runs/` or `docs/`.
 
+## Clarification: readiness and delivery (2026-11-12)
+
+`hand_over` now defaults to a free nonterminal readiness checkpoint. Its first
+verified working baseline switches the harness goal to improvement in the same
+lead session and preserves immutable measurement and validation evidence.
+`finalize: true`, or the harness end step, requests validation-gated terminal
+refit and delivery. Earlier descriptions below of `hand_over` immediately
+refitting mean explicit finalization. See [lead execution](../agent/run/README.md)
+for receipt identity, retry, budget and label-access semantics.
+
 ## 1. Why the design changes
 
 ### Evidence from our own runs (2026-11-11)

@@ -154,3 +154,13 @@ test('handover revokes calls already admitted later in the same message', () => 
  expect(budget.admit('late-trial')?.block).toBe(true);
  expect(budget.used).toBe(2);
 });
+
+test('lead control calls stay free at exhaustion, mixed messages and reused IDs preserve paid admissions',()=>{
+ const budget=new ScoutBudget(1,prompts,{freeTools:['hand_over'],maxTurns:100});
+ const emit=(names:string[])=>budget.assistant({role:'assistant',content:names.map(name=>({type:'toolCall',id:'same',name}))});
+ emit(['hand_over','unknown','hand_over','malformed']);
+ expect(budget.used).toBe(1);
+ expect(budget.admit('same')).toBeUndefined();expect(budget.admit('same')).toBeUndefined();expect(budget.admit('same')).toBeUndefined();expect(budget.admit('same')?.block).toBe(true);
+ for(let i=0;i<3;i++){expect(emit(['unknown','hand_over'])).toBeUndefined();expect(budget.admit('same')?.block).toBe(true);expect(budget.admit('same')).toBeUndefined();}
+ budget.end();expect(emit(['hand_over'])).toBeDefined();expect(budget.admit('same')?.block).toBe(true);
+});

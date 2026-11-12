@@ -80,7 +80,7 @@ export function createTrialResolver(options: { roots: () => readonly string[]; s
   if (!cache.has(key)) cache.set(key, "experiment" in ref && !("check" in ref) ? experiment(ref.experiment)
    : "file" in ref && ref.commit ? Promise.resolve(file(ref.file, ref.line, ref.commit))
    : Promise.reject(new Error("Not an experiment or commit-bound reference")));
-  return cache.get(key)!;
+  return cache.get(key)!.then(value => { if (value.status !== "resolved") cache.delete(key); return value; }, error => { cache.delete(key); throw error; });
  };
  return {locate, snapshot, status};
 }

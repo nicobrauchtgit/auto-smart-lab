@@ -1,6 +1,6 @@
 /** One task-data sandbox policy, parameterized by expert role. */
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import type { TaskData, TeamRole, TrialSnapshot } from "../team/contracts.js";
 import { resolveCommit, uncommittedFiles } from "../training/git.js";
 import type { PythonEnvironment } from "./python_environment.js";
@@ -19,7 +19,7 @@ export function expertSandbox(data: TaskData, role: TeamRole, python: PythonEnvi
  if (cwd !== base.cwd) mkdirSync(join(cwd, "research"), { recursive: true });
  if (role === "data") mounts.push({ source: join(cwd, "research"), writable: true });
  if (trial) {
-  const source = resolve(trial.sourceRoot), repository = join(source, "solutions");
+  const source = realpathSync(trial.sourceRoot), repository = join(source, "solutions");
   const identity = resolveCommit(repository, "HEAD");
   if (!identity || identity.commit !== trial.commit || identity.tree !== trial.tree || uncommittedFiles(repository).length) throw new Error("Invalid expert trial snapshot");
   mounts.push({ source });

@@ -1,7 +1,7 @@
 import type { InlineExtension } from "@earendil-works/pi-coding-agent";
 import type { PromptSnapshot } from "../prompts/loader.js";
 
-type Content = { type: string; id?: string };
+type Content = { type: string; id?: string; name?: string };
 type AnyMessage = { role: string; content?: unknown; stopReason?: string };
 const toolCalls = (message: AnyMessage) => Array.isArray(message.content)
  ? (message.content as Content[]).filter(part => part.type === "toolCall") : [];
@@ -9,7 +9,8 @@ const toolCalls = (message: AnyMessage) => Array.isArray(message.content)
 /**
  * Counts every tool call the model emits, at the assistant message, before Pi
  * resolves the tool or validates its arguments. Unknown tools and invalid
- * arguments therefore use budget like any other call.
+ * arguments therefore use budget like any other call. Only explicitly named
+ * lead control tools may be exempted with freeTools; scout budgets never set it.
  *
  * Calls within the budget are admitted; later calls are blocked with
  * finish-up feedback. Every call occurrence counts: calls that share an ID,
@@ -39,14 +40,16 @@ export class ScoutBudget {
  private ended = false;
  /** What a blocked call and the spent counter tell the agent: write its final answer now. */
  private readonly onCharge?: (used: number) => void;
+ private readonly freeTools: readonly string[];
  private readonly finish: "team.finish" | "team.lead-finish";
  /**
   * `used` continues a resumed run from the calls it already used; `finishPrompt`
   * is the finish-up instruction (the lead's differs from the scouts').
   */
- constructor(readonly limit: number, private prompts: PromptSnapshot, options: { maxTurns?: number; finishPrompt?: "team.finish" | "team.lead-finish"; used?: number; onCharge?: (used: number) => void } = {}) {
+ constructor(readonly limit: number, private prompts: PromptSnapshot, options: { freeTools?: readonly string[]; maxTurns?: number; finishPrompt?: "team.finish" | "team.lead-finish"; used?: number; onCharge?: (used: number) => void } = {}) {
   if (!Number.isSafeInteger(limit) || limit < 1) throw new Error("Invalid scout budget");
   this.onCharge = options.onCharge;
+  this.freeTools = options.freeTools ?? [];
   this.finish = options.finishPrompt ?? "team.finish";
   this.used = Math.min(limit, Math.max(0, Math.floor(options.used ?? 0)));
   this.maxTurns = options.maxTurns ?? limit + 2;
@@ -61,15 +64,16 @@ export class ScoutBudget {
   if (!calls.length) return;
   this.attempted += calls.length;
   const overBudget = this.used >= this.limit;
-  if (this.ended || this.turns >= this.maxTurns || (overBudget && this.overBudgetTurns >= 1)) {
+  const free = (call: Content) => this.freeTools.includes(call.name ?? "");
+  if (this.ended || this.turns >= this.maxTurns || (overBudget && this.overBudgetTurns >= 1 && !calls.some(free))) {
    this.blocked += calls.length;
    this.stopped = this.ended ? "ended" : overBudget ? "budget" : "turns";
    return { ...message, content: (message.content as Content[]).filter(part => part.type !== "toolCall"), stopReason: "stop" };
   }
   if (overBudget) this.overBudgetTurns++;
   for (const call of calls) {
-   const admitted = this.used < this.limit && typeof call.id === "string";
-   if (admitted) { this.used++; this.onCharge?.(this.used); } else this.blocked++;
+   const admitted = (free(call) || this.used < this.limit) && typeof call.id === "string";
+   if (admitted && !free(call)) { this.used++; this.onCharge?.(this.used); } else if (!admitted) this.blocked++;
    if (typeof call.id === "string") this.decisions.set(call.id, [...this.decisions.get(call.id) ?? [], admitted]);
   }
  }

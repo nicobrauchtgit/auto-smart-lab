@@ -3,7 +3,7 @@ import { trialSupervisionDirectory } from "../training/results.js";
 import { test, expect } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, statSync, symlinkSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { loadPromptSnapshot } from "../prompts/loader.js";
@@ -29,8 +29,8 @@ function commit(repository: string, message: string) {
  * A state root with a shared solutions tree, one measured trial whose source
  * has a defect, a later live fix, and prepared task data for task "fixture".
  */
-function stateFixture() {
- const state = realpathSync(mkdtempSync(join(tmpdir(), "scout-state-")));
+function stateFixture(base = tmpdir()) {
+ const state = realpathSync(mkdtempSync(join(base, "scout-state-")));
  const live = join(state, "solutions");
  ensureSolutionsRepository(live);
  mkdirSync(join(live, "tasks"), {recursive: true}); mkdirSync(join(live, "checks/fixture"), {recursive: true});
@@ -88,6 +88,27 @@ test("validation sees only the measured snapshot: live code hidden, snapshot rea
  const script = [
   `test ! -e ${f.live}/tasks/model.py`, "grep -q 'LEAK = True' tasks/model.py", "! echo x > tasks/model.py",
   `! echo x > ${f.live}/checks/elsewhere.py`, `echo ok > ${f.live}/checks/fixture/written.py`].join(" && ");
+ const result = spawnSync(view.sandbox.executable, view.sandbox.args(["bash", "-c", script]), {encoding: "utf8", timeout: 20_000});
+ expect({status: result.status, stderr: result.stderr}).toEqual({status: 0, stderr: expect.any(String)});
+ expect(readFileSync(join(f.live, "checks/fixture/written.py"), "utf8")).toBe("ok\n");
+ expect(readFileSync(join(trial.sourceRoot, "solutions/tasks/model.py"), "utf8")).toContain("LEAK = True");
+}, 30_000);
+
+test("symlinked task state mounts the canonical snapshot cwd without exposing live state or labels", async () => {
+ const f = stateFixture("/dev/shm");
+ const backing = mkdtempSync("/dev/shm/scout-symlink-");
+ renameSync(f.state, join(backing, "state")); symlinkSync(join(backing, "state"), f.state);
+ const sealed = join(f.state, "fixture/sealed-labels.json"); writeFileSync(sealed, "SECRET");
+ const trial = await f.resolver.snapshot("exp-1");
+ expect(trial).toMatchObject({experimentId: "exp-1", commit: f.measured.commit, tree: f.measured.tree});
+ const sandbox = expertSandbox(f.data, "validation", readPythonEnvironment(false), trial);
+ expect(sandbox.env.VALIDATION_SOURCE_ROOT).toBe(realpathSync(trial.sourceRoot)); expect(sandbox.env.VALIDATION_EXPERIMENT_ID).toBe("exp-1");
+ const view = scoutToolset("validation", {sandbox, solutionsRoot: f.live, taskId: "fixture", trial});
+ expect(view.sandbox.cwd).toBe(join(realpathSync(trial.sourceRoot), "solutions"));
+ expect(view.sandbox.mounts.filter(mount => mount.writable).map(mount => mount.source)).toEqual([join(realpathSync(f.live), "checks/fixture")]);
+ const script = [
+  `test ! -e ${realpathSync(f.live)}/tasks/model.py`, `test ! -e ${realpathSync(sealed)}`, "grep -q 'LEAK = True' tasks/model.py", "! echo x > tasks/model.py",
+  `! echo x > ${realpathSync(f.live)}/checks/elsewhere.py`, `echo ok > ${realpathSync(f.live)}/checks/fixture/written.py`].join(" && ");
  const result = spawnSync(view.sandbox.executable, view.sandbox.args(["bash", "-c", script]), {encoding: "utf8", timeout: 20_000});
  expect({status: result.status, stderr: result.stderr}).toEqual({status: 0, stderr: expect.any(String)});
  expect(readFileSync(join(f.live, "checks/fixture/written.py"), "utf8")).toBe("ok\n");
@@ -229,4 +250,12 @@ test("missing validation or task-data prerequisites stop every scout before its 
  await expect(new SetupSession().check(setupChecks(["scouts"], {taskId: "no-such-task-prepared", prompts}),
   new AbortController().signal, () => {})).rejects.toThrow("scout-prompts");
  expect(events).toContain("setup_finished");
+});
+
+test('a transient unresolved reference is retried by the same resolver', async()=>{
+ const f=stateFixture();const ref={experiment:'later'};
+ expect((await f.resolver.status(ref)).status).toBe('unresolved');
+ mkdirSync(join(f.trials,'later'),{recursive:true});const supervision=trialSupervisionDirectory(join(f.trials,'later'));mkdirSync(supervision,{recursive:true});
+ writeFileSync(join(supervision,'recovery.json'),JSON.stringify({trial:{id:'later',source:{commit:f.measured.commit,tree:f.measured.tree},worktrees:[join(f.trials,'later/solutions')]},solutionsRoot:f.live}));
+ expect((await f.resolver.status(ref)).status).toBe('resolved');
 });

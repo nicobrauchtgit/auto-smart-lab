@@ -1,3 +1,1 @@
-Your tool calls are used. Write a short final note without tools: the
-champion, what the trials showed, and what you would try next. The harness
-will validate the current champion and refit it if validation approves.
+Your paid tool calls are used. You may still request the free hand_over readiness checkpoint or explicit finalize=true. Write a short final note with the champion and evidence. At session end the harness validates and finalizes the current champion only if the evidence passes.

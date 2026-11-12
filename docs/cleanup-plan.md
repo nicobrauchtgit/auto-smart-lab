@@ -21,6 +21,16 @@ scouts (data, ideas, validation) and harness-run trials, followed by validated
 terminal refit. Foundations and scouts are implemented; the lead branch still
 requires independent review before merge. See [lead execution](../harness/finetuned/agent/run/README.md).
 
+Readiness clarification (2026-11-12; isolated implementation, independent review
+pending): `hand_over` defaults to a free validation checkpoint, preserving the
+first verified working baseline and switching the same lead session to
+improvement. Explicit `finalize: true` or the harness end step requests
+validation-gated terminal delivery. Existing immutable measurements and source
+snapshots are reused. This does not establish the paid task integration gate.
+The same change fixes validation snapshot mounts when task state is symlinked;
+it does not broaden scout access. API and label-safety correction are in the
+[lead execution contract](../harness/finetuned/agent/run/README.md).
+
 Both arms receive the user-supplied spam slides as checksummed, read-only course
 resources with page-labelled text copies ([course resources](../resources/README.md)).
 No modelling hints were added to the minimal solver's instructions.

@@ -59,6 +59,9 @@ export interface LeadProgress {
  holdout: LeadHoldoutRecord[];
  budget: { limit: number; used: number };
  scoutCalls: number;
+ phase?: "baseline" | "improvement";
+ baseline?: { experimentId: string; commit: string; receiptKey: string; at: string };
+ validationReceipts?: Record<string, { experimentId: string; commit: string; validation: LeadHandOver["validation"]; at: string }>;
  handOver?: LeadHandOver;
  delivery?: string;
  error?: string;
@@ -73,6 +76,13 @@ export function readProgress(path: string): LeadProgress | undefined {
   || !value.budget || !Number.isSafeInteger(value.budget.used) || value.budget.used < 0
   || !Number.isSafeInteger(value.budget.limit) || value.budget.limit < 1 || value.budget.used > value.budget.limit
   || (value.status === "handing_over" && !value.handOver)) throw new Error(`Corrupt lead progress at ${path}; restore or remove it before restarting`);
+ if (value.phase !== undefined && value.phase !== "baseline" && value.phase !== "improvement") throw new Error(`Corrupt lead phase at ${path}`);
+ if (value.baseline) {
+  const baseline = value.baseline, receipt = value.validationReceipts?.[baseline.receiptKey];
+  if (value.phase !== "improvement" || !receipt || receipt.experimentId !== baseline.experimentId || receipt.commit !== baseline.commit
+   || receipt.validation.status !== "completed" || receipt.validation.fix.length !== 0 || receipt.validation.ok.length + receipt.validation.advice.length === 0)
+   throw new Error(`Corrupt lead baseline evidence at ${path}`);
+ } else if (value.phase === "improvement") throw new Error(`Missing lead baseline evidence at ${path}`);
  return value;
 }
 export function writeProgress(path: string, progress: LeadProgress): void {
@@ -90,6 +100,8 @@ export function renderProgress(prompts: PromptSnapshot, progress: LeadProgress) 
  const holdout = progress.holdout.length ? progress.holdout.map(row => `${row.experimentId} ${row.status}${row.verdict ? `: ${row.verdict}` : ""}${row.score !== undefined ? ` (${row.score.toFixed(4)})` : ""}${row.reason ? ` (${row.reason})` : ""}`).join("; ")
   + `; queries used: ${Math.max(0, ...progress.holdout.map(row => row.queryCount ?? 0))}` : "none yet";
  return prompts.render("team.lead-progress", {
+  phase: progress.phase ?? "baseline",
+  baseline: progress.baseline ? JSON.stringify(progress.baseline) : "not yet validated",
   champion: progress.champion ? `${progress.champion.experimentId} (${score(progress.champion.score)})` : "none yet",
   trials: progress.trials.length ? progress.trials.map(trial => `- ${trial.experimentId}: ${trial.status}, ${score(trial.score)}${trial.verdict ? `; ${trial.verdict}` : ""}${trial.becameChampion ? "; became champion" : ""} — ${trial.hypothesis}`).join("\n") : "- none yet",
   holdout, budget: `${progress.budget.used} of ${progress.budget.limit} used`, scouts: String(progress.scoutCalls),

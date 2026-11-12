@@ -1,8 +1,1 @@
-Hand over the current champion as your result. Give a one- or two-sentence
-reason. The harness first runs a validation scout once on the champion's
-frozen source. Concrete defects (`fix`) come back to you: correct them and run
-more trials, or call `hand_over` again to hand over as is with the defects
-recorded. Otherwise the harness refits the champion deterministically on all
-training rows, including the withheld ones, and writes the hand-over files.
-Refused while trials are running or before any trial has become champion.
-After an accepted hand-over no further tool calls run.
+Validate readiness of the current measured champion. Give a reason. Default finalize=false is a nonterminal checkpoint: no trial charge, no new holdout query, no terminal refit. The first successful checkpoint records the immutable working baseline and switches the goal to improvement in this session. Completed validation receipts are reused for the same source and checks. Failed or unavailable validation can be retried. Defects and missing evidence block acceptance. Set finalize=true only when finished: acceptance ends tool use and requests all-training-data refit and test prediction, never test labels. This control call is free even at the lead tool limit. Running trials block readiness. A readiness milestone is not a submitted or delivered result.

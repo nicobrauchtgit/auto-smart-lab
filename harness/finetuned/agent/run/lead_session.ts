@@ -11,7 +11,7 @@
  * deterministic terminal refit.
  */
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type InlineExtension, type ToolDefinition } from "@earendil-works/pi-coding-agent";
@@ -33,7 +33,7 @@ import type { ExperimentView, Wakeable } from "../experiments/index.js";
 import { readCourseResources } from "../research/resources.js";
 import type { SolveWorkspace } from "../solve/workspace.js";
 import { prepareTaskData } from "../solve/task_data.js";
-import type { TaskData } from "../team/contracts.js";
+import type { TaskData, TrialSnapshot } from "../team/contracts.js";
 import { ScoutBudget } from "../team/budget.js";
 import { createScouts, finalBullets, validationKind, type ScoutReport, type ScoutRequest } from "../team/scouts.js";
 import { createScoutRunner } from "../team/runner.js";
@@ -41,6 +41,8 @@ import { createTrialResolver, taskTrialRoots } from "../team/trials.js";
 import { stageScoutInputs } from "../team/workspace.js";
 import { collectTrainingResults, createGitHistoryGuard, createHarnessTraining, ensureSolutionsRepository, type TrainingCollection } from "../training/index.js";
 import { championSelection, championTag, handoverChampion } from "../training/development_selection.js";
+import { readSeedPlan } from "../training/seeds.js";
+import { resolveTrialSnapshot } from "../training/trial_source.js";
 import { trialSupervisionDirectory } from "../training/results.js";
 import { readRecord } from "../experiments/safe_files.js";
 import { selectionSummary } from "../training/selection_summary.js";
@@ -166,6 +168,7 @@ export interface LeadDependencies {
  confirm: typeof runConfirmation;
  refit(input: LeadRefitInput): Promise<{ artifacts: StageArtifact[]; validation: { valid: boolean; errors: string[] } }>;
  collectResults: typeof collectTrainingResults;
+ verifiedCandidate(repository: string, taskId: string, datasetSha256: string): Promise<TrialSnapshot>;
  /** How long to wait between looks at running trials when nothing arrives. */
  pollMs: number;
 }
@@ -220,6 +223,14 @@ const DEFAULT_DEPENDENCIES: LeadDependencies = {
   const { runRefit } = await import("../refit/service.js");
   return runRefit({ ...refitInputs(input.taskId, input.configuration), model: input.model, reviewPath: input.reviewPath,
    expectedExperimentId: input.experimentId, ...(input.signal ? { signal: input.signal } : {}), ...(input.report ? { report: input.report } : {}) });
+ },
+ verifiedCandidate: async (repository, taskId, datasetSha256) => {
+  const collection = await championSelection({ trials: [], valid: false, errors: [], artifacts: [] }, repository, taskId);
+  if (!collection.valid || !collection.selected) throw new Error("Champion has no completed eligible measurement");
+  const trial = collection.selected;
+  const seedPlan = await readSeedPlan(join(trial.directory, "seed-plan.json"));
+  if (seedPlan.taskId !== taskId || seedPlan.datasetSha256 !== datasetSha256) throw new Error("Champion measurement belongs to different task data");
+  return resolveTrialSnapshot(dirname(trial.directory), trial.experimentId);
  },
  collectResults: collectTrainingResults,
  pollMs: 5_000,
@@ -326,9 +337,10 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
  report?.input({ kind: "lead_progress", version: 1, delivery: resumed ? "initial_prompt" : "none", status: "available", artifact: progressPath, resumed: !!resumed });
  record("harness_configuration", { version: 1, defaults: HARNESS_CONFIG, lead: { maxToolCalls: limit }, foldRecommendation: shape });
 
- const budget = new ScoutBudget(limit, prompts, { maxTurns: limit * 20 + 20, finishPrompt: "team.lead-finish", used: progress.budget.used, onCharge: used => { progress.budget.used = used; save(); } });
+ const budget = new ScoutBudget(limit, prompts, { freeTools: ["hand_over"], maxTurns: limit * 20 + 20, finishPrompt: "team.lead-finish", used: progress.budget.used, onCharge: used => { progress.budget.used = used; save(); } });
  const inbox = new LeadInbox();
- const validations = new Map<string, LeadHandOver["validation"]>();
+ progress.phase ??= progress.baseline ? "improvement" : "baseline";
+ progress.validationReceipts ??= {};
  let confirmation: ConfirmationOutput | undefined;
  let leadAgentRunId: string | undefined;
  let composing = 0, idleStreak = 0;
@@ -460,9 +472,33 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
  let scouts: LeadScouts | undefined;
  const scoutContext: LeadScoutContext = { data, python, runId, invocationId, parentAgentRunId: () => leadAgentRunId };
  const getScouts = () => scouts ??= deps.scouts(scoutContext);
+ const checkIdentity = () => {
+  const root = join(data.solutionsRoot, "checks", taskId);
+  if (existsSync(root) && realpathSync(root) !== join(realpathSync(data.solutionsRoot), "checks", taskId)) throw new Error("Unsafe validation checks folder");
+  const walk = (folder: string): unknown[] => existsSync(folder) ? readdirSync(folder, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name)).filter(entry => entry.name !== "__pycache__").map(entry => {
+   const path = join(folder, entry.name);
+   if (entry.isSymbolicLink() || (!entry.isDirectory() && !entry.isFile())) throw new Error("Unsafe validation check identity");
+   return [entry.name, entry.isDirectory() ? walk(path) : sha256(readFileSync(path))];
+  }) : [];
+  return sha256(JSON.stringify(walk(root)));
+ };
  const validate = async (experimentId: string, reason: string, signal?: AbortSignal, toolCallId?: string) => {
-  const cached = validations.get(experimentId);
-  if (cached) return cached;
+  let snapshot: TrialSnapshot;
+  try {
+   snapshot = await deps.verifiedCandidate(data.solutionsRoot, taskId, fingerprint);
+   if (snapshot.experimentId !== experimentId || snapshot.commit !== championOf(data.solutionsRoot, taskId)?.commit) throw new Error("Champion identity changed");
+  } catch (error) {
+   record("lead_validation_unavailable", { experiment_id: experimentId, message: String(error) });
+   return { status: "unavailable", fix: [], advice: [], ok: [] };
+  }
+  const receiptKey = () => sha256(JSON.stringify({ experimentId, commit: snapshot.commit, tree: snapshot.tree, dataset: fingerprint,
+   checks: checkIdentity(), prompts: prompts.fingerprint, boundary: boundaryFingerprint }));
+  let key: string;
+  try { key = receiptKey(); } catch {
+   return { status: "unavailable", fix: [], advice: [], ok: [] };
+  }
+  const cached = progress.validationReceipts![key];
+  if (cached) { record("lead_validation_reused", { experiment_id: experimentId, commit: snapshot.commit, receipt_key: key }); return cached.validation; }
   let result: ScoutReport | undefined;
   try {
    result = await getScouts().report({ role: "validation", question: prompts.render("team.lead-handover-question", { experiment: experimentId, reason }).text,
@@ -472,7 +508,21 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
    record("lead_validation_failed", { experiment_id: experimentId, message: error instanceof Error ? error.message : String(error) });
   }
   const summary = validationSummary(result);
-  validations.set(experimentId, summary);
+  // Unavailable/failed checks may be transient. Completed verdicts are receipts,
+  // including defects, and expire when the immutable source or check identity changes.
+  if (summary.status === "completed" && summary.fix.length + summary.ok.length + summary.advice.length > 0) {
+   let completedKey: string;
+   try { completedKey = receiptKey(); } catch {
+    return { status: "unavailable", fix: [], advice: [], ok: [] };
+   }
+   progress.validationReceipts![completedKey] = { experimentId, commit: snapshot.commit, validation: summary, at: now() };
+   if (validationPassed(summary) && !progress.baseline) {
+    progress.baseline = { experimentId, commit: snapshot.commit, receiptKey: completedKey, at: now() };
+    progress.phase = "improvement";
+    record("lead_baseline_validated", { ...progress.baseline, phase: progress.phase });
+   }
+   save();
+  }
   record("lead_validation", { experiment_id: experimentId, ...summary });
   return summary;
  };
@@ -494,7 +544,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
  };
  const holdoutUsed = () => `${Math.max(0, ...progress.holdout.map(row => row.queryCount ?? 0))}`;
  const handOverTool = defineTool({ executionMode: "sequential", name: "hand_over", label: "Hand over", description: prompts.render("team.lead-handover-tool", {}).text,
-  parameters: Type.Object({ reason: Type.String({ minLength: 1, maxLength: 1000 }) }, { additionalProperties: false }),
+  parameters: Type.Object({ reason: Type.String({ minLength: 1, maxLength: 1000 }), finalize: Type.Optional(Type.Boolean()) }, { additionalProperties: false }),
   async execute(toolCallId, args, signal) {
    const reply = (text: string) => ({ content: [{ type: "text" as const, text }], details: {} });
    if (handOver) return reply(prompts.render("team.lead-handover-accepted", { experiment: handOver.experimentId, holdout: holdoutUsed(), validation: handOver.validation.status }).text);
@@ -503,9 +553,9 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
    await settle(signal);
    const champion = championOf(data.solutionsRoot, taskId);
    if (!champion) { record("lead_hand_over_refused", { reason: "no_champion" }); return reply(prompts.render("team.lead-handover-no-champion", {}).text); }
-   if (!holdoutDone(champion.experimentId)) await runHoldout(champion.experimentId);
    const validation = await validate(champion.experimentId, args.reason, signal, toolCallId);
    if (!validationPassed(validation)) return reply(prompts.render("team.lead-handover-fix", { experiment: champion.experimentId, bullets: validation.fix.length ? validation.fix.map(row => `- ${row}`).join("\n") : `status: ${validation.status}; labelled findings: ${validation.ok.length + validation.advice.length}` }).text);
+   if (!args.finalize) return reply(prompts.render("team.lead-checkpoint", { progress: renderProgress(prompts, progress).text }).text);
    accept("lead", args.reason, champion.experimentId, validation);
    budget.end();
    return reply(prompts.render("team.lead-handover-accepted", { experiment: champion.experimentId, holdout: holdoutUsed(),
@@ -553,7 +603,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
   const system = opening.system;
   const promptReferences = [...opening.promptReferences, shared.reference, isolation.reference, environmentToolPrompt.reference,
    ...(followUpNote ? [followUpNote.reference] : []), ...(resume ? [resume.reference] : []),
-   ...training.toolPrompts, ...GIT_BLOCK_PROMPT_IDS.map(id => prompts.render(id, {}).reference)];
+   prompts.render("team.lead-checkpoint", { progress: renderProgress(prompts, progress).text }).reference, ...training.toolPrompts, ...GIT_BLOCK_PROMPT_IDS.map(id => prompts.render(id, {}).reference)];
   let generations = 0;
   const continueWhenIdle = async (signal?: AbortSignal): Promise<RenderedPrompt | undefined> => {
    for (;;) {
@@ -650,7 +700,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
   if (selected) collection = { ...collection, valid: true, errors: [], selected,
    artifacts: [...new Map([...collection.artifacts, ...selected.artifacts].map(artifact => [artifact.path, artifact])).values()] };
  }
- record("lead_run_finished", { stop_reason: stopReason, status: progress.status, champion: progress.champion, hand_over: progress.handOver,
+ record("lead_run_finished", { stop_reason: stopReason, status: progress.status, phase: progress.phase, baseline: progress.baseline, champion: progress.champion, hand_over: progress.handOver,
   first_trial_seconds: progress.firstTrialAt ? (Date.parse(progress.firstTrialAt) - Date.parse(progress.startedAt)) / 1000 : null,
   hand_over_seconds: progress.handOver ? (Date.parse(progress.handOver.at) - Date.parse(progress.startedAt)) / 1000 : null,
   trials: progress.trials.length, holdout_queries: holdoutUsed(), budget: progress.budget, scout_calls: progress.scoutCalls,

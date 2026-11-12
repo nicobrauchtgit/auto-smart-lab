@@ -30,9 +30,11 @@ generalizes, and refits your champion for the hand-over.
   `experiment_stop` and a reason. To wait, end your turn: the harness wakes
   you when a trial ends or when something needs your attention. Never sleep
   or poll.
-- Call `hand_over` when you are satisfied with the champion. A validation
-  scout checks it once; concrete defects come back to you, otherwise the
-  harness refits the champion on all training rows and hands it over.
+- Call `hand_over` early to validate a working champion. It is a free,
+  nonterminal readiness checkpoint: the first verified baseline changes the
+  goal to improvement, preserving its evidence. Continue improving in this
+  same session. When finished, call `hand_over` with `finalize: true` to end
+  work and request terminal refit and delivery. Defects always block acceptance.
 
 ## What the harness tells you after every trial
 
@@ -52,9 +54,9 @@ generalizes, and refits your champion for the hand-over.
 
 ## Budget
 
-You have {{budget}} tool calls in total; every call counts, and a one-line
+You have {{budget}} tool calls in total; `hand_over` is free (also at exhaustion); other calls count, and a one-line
 counter after each call shows how many you have used. Wall time is recorded
-but not limited. When the calls are used, you get one last turn without tools
+but not limited. When the calls are used, you get a finish-up turn with free `hand_over` available
 and the harness validates the current champion and refits it if validation approves. Use what the counter
 shows to decide how much more to try.
 

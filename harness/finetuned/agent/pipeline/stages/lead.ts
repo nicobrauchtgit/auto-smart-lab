@@ -90,6 +90,7 @@ export const leadStage: StageDefinition<LeadOptions> = {
     stop_reason: result.stopReason, resumed: result.resumed, task_kind: configuration.kind,
     first_trial_seconds: seconds(progress.firstTrialAt), hand_over_seconds: seconds(progress.handOver?.at),
     trials: progress.trials.length, trial_ids: progress.trials.map(trial => trial.experimentId),
+    phase: progress.phase, baseline: progress.baseline, baseline_seconds: seconds(progress.baseline?.at),
     champion: progress.champion?.experimentId, hand_over: progress.handOver,
     selected_metric: primaryMetric({ configuration }, result.collection.selected?.result?.metrics as Record<string, unknown> | undefined),
     selected_selection: selectionSummary(result.collection.selected?.result),
