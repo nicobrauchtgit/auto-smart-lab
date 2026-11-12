@@ -172,7 +172,7 @@ def run(root_path, command):
         if os.getppid() != parent or parent == 1:
             requested = signal.SIGTERM
         if requested is not None:
-            return 128 + requested
+            return -requested
         if not command:  # preflight exercises creation, disk check and cleanup
             return 0
         child = subprocess.Popen([command[0], "--bind-fd", str(temporary), "/tmp", *command[1:]], pass_fds=(temporary,))
@@ -185,7 +185,7 @@ def run(root_path, command):
             except subprocess.TimeoutExpired:
                 if kill_at is not None and time.monotonic() >= kill_at:
                     child.kill()
-        return 128 - code if code < 0 else code
+        return code
     finally:
         if temporary is not None:
             os.close(temporary)
@@ -211,9 +211,23 @@ def main():
     return run(sys.argv[1], [sys.argv[2], *sys.argv[4:]])
 
 
+def exit_like(code):
+    """Exit as the sandbox did. A signal death stays a signal death (scratch is
+    already cleaned up), so callers that tell an interrupted process from a
+    failed one (training recovery) see exactly what they saw without this wrapper."""
+    if code < 0:
+        if -code not in (signal.SIGKILL, signal.SIGSTOP):
+            signal.signal(-code, signal.SIG_DFL)
+            signal.pthread_sigmask(signal.SIG_UNBLOCK, [-code])
+        os.kill(os.getpid(), -code)
+        code = 128 - code  # Only if the signal could not end this process.
+    sys.exit(code)
+
+
 if __name__ == "__main__":
     try:
-        sys.exit(main())
+        result = main()
     except (OSError, ValueError) as error:
         os.write(2, f"sandbox disk scratch unavailable: {error}\n".encode())
         sys.exit(125)
+    exit_like(result)

@@ -89,6 +89,17 @@ test("cancellation terminates namespace descendants and removes disk scratch", a
  expect(readdirSync(f.scratchRoot)).toEqual([]);
 });
 
+test("a sandbox ended by a signal still reports that signal, not an ordinary failing exit code", async () => {
+ // Training recovery treats a positive exit code as a deterministic failure and a
+ // signal death as an interruption it may resume; the wrapper must not change that.
+ const f = fixture(), ready = join(f.workspace, "ready");
+ const running = start(f.policy, `require('node:fs').writeFileSync(${JSON.stringify(ready)}, 'ready'); setInterval(() => {}, 1000);`);
+ await waitFor(() => existsSync(ready));
+ running.child.kill("SIGTERM");
+ expect(await running.ended).toEqual({code: null, signal: "SIGTERM"});
+ expect(readdirSync(f.scratchRoot)).toEqual([]);
+});
+
 test("a hard kill leaves private evidence-free scratch, reclaimed safely on a later launch", async () => {
  const f = fixture(), ready = join(f.workspace, "ready"), marker = join(f.root, "host-marker.txt");
  writeFileSync(marker, "HARMLESS_HOST_MARKER");
