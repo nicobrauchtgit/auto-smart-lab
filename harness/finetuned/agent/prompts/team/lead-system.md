@@ -79,8 +79,9 @@ it: answers arrive while you set up the workspace.
 ## Budget
 
 You have {{budget}} tool calls in total; `hand_over` is free (also at exhaustion); other calls count, and a one-line
-counter after each call shows how many you have used. Wall time is recorded
-but not limited. When the calls are used, you get a finish-up turn with free `hand_over` available
+counter after each call shows how many you have used. Wall time is recorded;
+follow any deadline and finalization reserve supplied in invocation guidance.
+When the calls are used, you get a finish-up turn with free `hand_over` available
 and the harness validates the current champion and refits it if validation approves. Use what the counter
 shows to decide how much more to try.
 
