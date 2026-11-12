@@ -19,7 +19,7 @@ test("live fixes cannot make a defective measured snapshot pass executable check
   writeFileSync(join(live, "model.py"), "value = True\n");
   git(live, ["add", "-A"]); git(live, ["commit", "-qm", "live fix"]);
   // The process adapter is deliberately unsandboxed in this unit test; production supplies bubblewrap.
-  const result = await runTrialChecks({ experimentId: "measured", commit: source.commit, tree: source.tree, sourceRoot: dirname(frozen) }, [check], { executable: "env", cwd: live, mounts: [{ source: dirname(frozen) }], env: { ...process.env } as Record<string, string>, args: command => command });
+  const result = await runTrialChecks({ experimentId: "measured", commit: source.commit, tree: source.tree, sourceRoot: dirname(frozen) }, [check], { executable: "env", bwrap: "env", scratchRoot: "/nonexistent-scratch", cwd: live, mounts: [{ source: dirname(frozen) }], env: { ...process.env } as Record<string, string>, args: command => command });
   expect(result.passed).toBe(false);
   expect(result.checks[0].exitCode).toBe(1);
  } finally { rmSync(root, { recursive: true, force: true }); }
@@ -48,7 +48,7 @@ while True:
 `);
   const controller = new AbortController();
   const running = runTrialChecks({ experimentId: "hang", commit: source.commit, tree: source.tree, sourceRoot: dirname(frozen) }, [check],
-   { executable: "env", cwd: live, mounts: [{ source: dirname(frozen) }], env: { ...process.env } as Record<string, string>, args: command => command },
+   { executable: "env", bwrap: "env", scratchRoot: "/nonexistent-scratch", cwd: live, mounts: [{ source: dirname(frozen) }], env: { ...process.env } as Record<string, string>, args: command => command },
    controller.signal, { cancelGraceMs: 200 });
   const outcome = running.then(() => "resolved", () => "rejected");
   const deadline = Date.now() + 20_000;
@@ -91,7 +91,7 @@ while True:
 `);
   const controller = new AbortController();
   const running = runTrialChecks({ experimentId: "leader-exits", commit: source.commit, tree: source.tree, sourceRoot: dirname(frozen) }, [check],
-   { executable: "env", cwd: live, mounts: [{ source: dirname(frozen) }], env: { ...process.env } as Record<string, string>, args: command => command },
+   { executable: "env", bwrap: "env", scratchRoot: "/nonexistent-scratch", cwd: live, mounts: [{ source: dirname(frozen) }], env: { ...process.env } as Record<string, string>, args: command => command },
    controller.signal, { cancelGraceMs: 200 });
   const outcome = running.then(() => "resolved", () => "rejected");
   const deadline = Date.now() + 20_000;
@@ -135,7 +135,7 @@ p.rename(str(p) + "-moved")
 p.symlink_to(${JSON.stringify(host)})
 `);
   const result = await runTrialChecks({experimentId: "swap", commit: source.commit, tree: source.tree, sourceRoot: dirname(frozen)}, [check],
-   {executable: "env", cwd: live, mounts: [{source: dirname(frozen)}, {source: live, writable: true}], env: {...process.env} as Record<string,string>, args: command => command});
+   { executable: "env", bwrap: "env", scratchRoot: "/nonexistent-scratch", cwd: live, mounts: [{source: dirname(frozen)}, {source: live, writable: true}], env: {...process.env} as Record<string,string>, args: command => command});
   expect(result.passed).toBe(true);
   expect(result.checks[0].output).toContain("REAL_CHECK_OUTPUT");
   expect(readFileSync(result.checks[0].logPath, "utf8")).toBe("REAL_CHECK_OUTPUT\n");

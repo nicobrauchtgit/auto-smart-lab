@@ -1,7 +1,7 @@
 /** Fail-fast prerequisites shared by pipeline and standalone stage execution. */
 import { checkSupervision } from "../experiments/setup.js";
 import { checkReaper } from "../experiments/launcher.js";
-import { checkSolveSandbox } from "../run/solve_sandbox.js";
+import { checkSandboxScratch, checkSolveSandbox } from "../run/solve_sandbox.js";
 import { accessSync, constants, statSync, existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -161,11 +161,14 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
    await options.telemetry.checkAccess(signal);
   });
  }
- if (needs.has("solve-isolation")) add("solve-filesystem-isolation", "local", "Research and solve require Linux bubblewrap with working user, mount and PID namespaces, plus bash/git/rg/fd/uv. Install bubblewrap through the host administrator or set SOLVE_BWRAP to an existing executable; no agent starts without this boundary.", () => {
+ if (needs.has("solve-isolation")) {
+ add("solve-disk-scratch", "local", "Each sandboxed command gets a private /tmp directory on disk under the host temp directory (TMPDIR, else /tmp); tmpfs/ramfs is refused. If /tmp is RAM-backed, set TMPDIR to a disk-backed directory. Run ./dev setup so the project Python and sandbox_scratch.py helper are available.", () => checkSandboxScratch());
+ add("solve-filesystem-isolation", "local", "Research and solve require Linux bubblewrap with working user, mount and PID namespaces, plus bash/git/rg/fd/uv. Install bubblewrap through the host administrator or set SOLVE_BWRAP to an existing executable; no agent starts without this boundary.", () => {
   checkSolveSandbox(options.executables?.bwrap);
   options.prompts.render("solve.isolation", { workspace: "preflight" });
   options.prompts.render("solve.python-environment-tool", {});
  });
+ }
  if (needs.has("submission")) checks.push(...submissionSetupChecks({ taskId: options.taskId, taskConfiguration: options.taskConfiguration, policy: options.submissionPolicy, candidateProducedUpstream: options.candidateProducedUpstream }));
  if (needs.has("submission-recovery")) checks.push(...submissionRecoverySetupChecks({ taskId: options.taskId, policy: options.submissionPolicy }));
  if (needs.has("task")) add(`task:${options.taskId}`, "local", "Fetch the selected unit again; its metadata and prompt must be readable. The task configuration must name readable train/test archives with unique, disjoint sample IDs and a targets file covering exactly the training samples; add it as pipeline.tasks.<task> in pipeline.config.json.", () => {

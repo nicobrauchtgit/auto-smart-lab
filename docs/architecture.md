@@ -42,7 +42,7 @@ flowchart TD
     X -. excluded mounts .-> FJ
 ```
 
-Evidence: [parseExperimentArgs / dispatch](../experiment/cli.ts), [minimal adapter](../experiment/minimal.ts), [prepareResearchSandbox](../harness/finetuned/agent/run/solve_sandbox.ts), [research boundary tests](../harness/finetuned/agent/run/research_sandbox.test.ts), [minimal boundary tests](../experiment/minimal.test.ts). This is a tool/process boundary; trusted harness code runs outside agent jails.
+Evidence: [parseExperimentArgs / dispatch](../experiment/cli.ts), [minimal adapter](../experiment/minimal.ts), [prepareSolveSandbox](../harness/finetuned/agent/run/solve_sandbox.ts), [finetuned boundary tests](../harness/finetuned/agent/run/arm_boundary.test.ts), [minimal boundary tests](../experiment/minimal.test.ts). This is a tool/process boundary; trusted harness code runs outside agent jails.
 
 ## CURRENT minimal flow
 

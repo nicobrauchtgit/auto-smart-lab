@@ -50,7 +50,7 @@ Controller code may sit anywhere. **Agents do not leave their run location.**
 | Finetuned solve | `runs/finetuned/<task>/solve/agent/`, `runs/finetuned/solutions/` | Bubblewrap tools (`prepareSolveSandbox`) |
 
 Neither arm can read the other's code, prompts or state, or `.env`. `experiment/minimal.test.ts`
-and `harness/finetuned/agent/run/research_sandbox.test.ts` prove this; keep them passing.
+and `harness/finetuned/agent/run/arm_boundary.test.ts` prove this; keep them passing.
 
 Known limit: the minimal arm's model key has to be in the arm's process, and its
 shell tool drops credentials from the environment, but a command could still read

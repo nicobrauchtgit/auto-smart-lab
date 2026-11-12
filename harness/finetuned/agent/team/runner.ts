@@ -55,7 +55,7 @@ export function scoutToolset(role: ScoutRole, options: {
  searchEnv?: Readonly<Record<string, string | undefined>>;
 }): ScoutView {
  const readOnly = options.sandbox.mounts.map(mount => ({...mount, writable: false}));
- const policy = (mounts: SandboxMount[], cwd: string) => sandboxPolicy({cwd, env: options.sandbox.env, bwrap: options.sandbox.executable, mounts});
+ const policy = (mounts: SandboxMount[], cwd: string) => sandboxPolicy({cwd, env: options.sandbox.env, bwrap: options.sandbox.bwrap, scratchRoot: options.sandbox.scratchRoot, mounts});
  if (role === "validation") {
   const trial = options.trial;
   if (!trial) throw new Error("Validation scout requires a resolved trial snapshot");

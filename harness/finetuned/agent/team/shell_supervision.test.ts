@@ -14,7 +14,8 @@ import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall, InMemoryCre
 import { ModelRuntime, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { loadPromptSnapshot } from "../prompts/loader.js";
 import { readPythonEnvironment } from "../run/python_environment.js";
-import { findBubblewrap, prepareResearchSandbox } from "../run/solve_sandbox.js";
+import { findBubblewrap } from "../run/solve_sandbox.js";
+import { workspaceTestSandbox } from "../run/testing.js";
 import { expertSandbox } from "../run/sandbox.js";
 import { agentBashTool, assertSupervisedBash, isAgentShellTool, replaceToolsByName, sandboxShell } from "../run/agent_shell.js";
 import { createPiChildFactory } from "../subagents/pi.js";
@@ -82,7 +83,7 @@ async function scoutView(role: Extract<ScoutRole, "data" | "validation">) {
  const root = realpathSync(mkdtempSync(join(tmpdir(), "scout-shell-")));
  const workspace = join(root, "workspace"), task = join(root, "task");
  mkdirSync(join(workspace, "research"), {recursive: true}); mkdirSync(task);
- const view = scoutToolset("data", {sandbox: prepareResearchSandbox(workspace, task, readPythonEnvironment(false)), solutionsRoot: join(root, "solutions"), taskId: "fixture"});
+ const view = scoutToolset("data", {sandbox: workspaceTestSandbox(workspace, task, readPythonEnvironment(false)), solutionsRoot: join(root, "solutions"), taskId: "fixture"});
  return {view, live: undefined, spill: {base: join(workspace, "research"), directory: join(workspace, "research/.shell-calls")},
   system: prompts.render("team.data", {taskId: "fixture", budget: "5", dataPaths: "none", resources: "- none"})};
 }

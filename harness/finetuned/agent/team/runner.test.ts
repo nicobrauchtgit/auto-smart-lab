@@ -7,7 +7,7 @@ import { SetupSession, setupChecks } from "../pipeline/setup.js";
 import { createScouts } from "./scouts.js";
 import { READ_ONLY_SCOUT_TOOLS, runScoutSession, scoutToolset, trackScoutTools } from "./runner.js";
 import { ScoutBudget } from "./budget.js";
-import { prepareResearchSandbox } from "../run/solve_sandbox.js";
+import { workspaceTestSandbox } from "../run/testing.js";
 import { readPythonEnvironment } from "../run/python_environment.js";
 import { AgentSession } from "@earendil-works/pi-coding-agent";
 const prompts = loadPromptSnapshot();
@@ -56,7 +56,7 @@ test("the runner's tool set: ideas is read-only with search, data writes only it
  const workspace = join(root, "workspace"), shared = join(root, "shared");
  mkdirSync(join(workspace, "research"), {recursive: true}); mkdirSync(shared);
  // The real policy needs an executable for bubblewrap; no process is started here.
- const sandbox = {executable: process.execPath, cwd: workspace, env: {}, args: () => [],
+ const sandbox = {executable: process.execPath, bwrap: process.execPath, scratchRoot: join(root, "scratch"), cwd: workspace, env: {}, args: () => [],
   mounts: [{source: workspace, writable: true}, {source: shared, writable: true}, {source: join(root, "data")}]};
  const common = {solutionsRoot: shared, taskId: "fixture"};
  const ideas = scoutToolset("ideas", {sandbox, ...common, searchEnv: {TAVILY_API_KEY: "fixture"}});
@@ -95,7 +95,7 @@ async function sandboxedScout(responses: Parameters<Awaited<ReturnType<typeof im
  const root = realpathSync(mkdtempSync(join(tmpdir(), "scout-guard-")));
  const workspace = join(root, "workspace"), task = join(root, "task");
  mkdirSync(join(workspace, "research"), {recursive: true}); mkdirSync(task);
- const sandbox = prepareResearchSandbox(workspace, task, readPythonEnvironment(false));
+ const sandbox = workspaceTestSandbox(workspace, task, readPythonEnvironment(false));
  const tools = trackScoutTools(scoutToolset("data", {sandbox, solutionsRoot: join(root, "solutions"), taskId: "fixture"}).tools);
  const faux = fauxProvider({provider: `scout-guard-${Math.random()}`, tokensPerSecond: 1_000_000});
  const runtime = await ModelRuntime.create({credentials: new InMemoryCredentialStore(), modelsPath: null, refreshOnCreate: false});

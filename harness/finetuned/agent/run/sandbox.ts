@@ -25,6 +25,6 @@ export function expertSandbox(data: TaskData, role: TeamRole, python: PythonEnvi
   mounts.push({ source });
   env.VALIDATION_SOURCE_ROOT = source; env.VALIDATION_EXPERIMENT_ID = trial.experimentId;
  }
- return sandboxPolicy({ mounts, cwd, env, bwrap: base.executable });
+ return sandboxPolicy({ mounts, cwd, env, bwrap: base.bwrap, scratchRoot: base.scratchRoot });
 }
 export type { SolveSandbox } from "./solve_sandbox.js";

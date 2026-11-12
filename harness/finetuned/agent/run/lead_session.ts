@@ -317,6 +317,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
  const boundaryFingerprint = sha256(JSON.stringify({ version: 1, mechanism: "bubblewrap_mount_pid_user_namespaces",
   executable: sandbox.executable, cwd: sandbox.cwd, mounts: sandbox.mounts, environment: sandbox.env,
   sandbox_script_sha256: sha256(readFileSync(join(ARM_ROOT, "agent/run/solve_sandbox.ts"))),
+  sandbox_scratch_sha256: sha256(readFileSync(join(ARM_ROOT, "agent/run/sandbox_scratch.py"))),
   tool_worker_sha256: sha256(readFileSync(join(ARM_ROOT, "agent/run/solve_tool_worker.ts"))) }));
  const fingerprint = datasetFingerprint(data);
  const repository = deps.prepareRepository(data.solutionsRoot);

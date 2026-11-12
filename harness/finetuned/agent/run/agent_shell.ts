@@ -151,7 +151,7 @@ export function sandboxShell(policy: SolveSandbox, logs: SandboxShellLogs = {}):
 		get spill() { return spill ??= sandboxSpill(policy); },
 		argv: (command) => {
 			// Unbuffered Python inside, so output timing reaches the supervisor as it happens.
-			inside ??= sandboxPolicy({ mounts: policy.mounts, cwd: policy.cwd, env: { ...policy.env, PYTHONUNBUFFERED: "1" }, bwrap: policy.executable });
+			inside ??= sandboxPolicy({ mounts: policy.mounts, cwd: policy.cwd, env: { ...policy.env, PYTHONUNBUFFERED: "1" }, bwrap: policy.bwrap, scratchRoot: policy.scratchRoot });
 			return [inside.executable, ...inside.args([bash, "-c", command])];
 		},
 	};

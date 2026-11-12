@@ -158,7 +158,7 @@ test("ideas search is B's session-local extension: three searches, one log per s
  try {
   const root = mkdtempSync(join(tmpdir(), "scout-search-"));
   mkdirSync(join(root, "research"));
-  const sandbox = {executable: process.execPath, cwd: root, env: {}, args: () => [], mounts: [{source: root}]};
+  const sandbox = {executable: process.execPath, bwrap: process.execPath, scratchRoot: join(tmpdir(), "scouts-test-scratch"), cwd: root, env: {}, args: () => [], mounts: [{source: root}]};
   const view = () => scoutToolset("ideas", {sandbox, solutionsRoot: join(root, "solutions"), taskId: "fixture", searchEnv: {TAVILY_API_KEY: "FIXTURE_CREDENTIAL"}});
   const search = (scout: ReturnType<typeof view>) => {
    let tool: any;
