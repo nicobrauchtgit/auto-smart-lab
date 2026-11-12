@@ -23,8 +23,10 @@ class DiagnosticPipeline(Pipeline):
                 "empty": np.zeros(len(frame), dtype=bool)}
     def diagnostic_changes(self, frame, context):
         changed = frame.copy()
-        import zipfile
-        path = frame["input"].iloc[0]["archive"] + ".perturbed.zip"
+        import uuid, zipfile
+        # Each parallel fold owns its perturbation archive; hooks must not
+        # overwrite another fold's validation population.
+        path = frame["input"].iloc[0]["archive"] + "." + uuid.uuid4().hex + ".perturbed.zip"
         with zipfile.ZipFile(path, "w") as archive:
             for descriptor in frame["input"]:
                 archive.writestr(descriptor["member"], "unknown words")

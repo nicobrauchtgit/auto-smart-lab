@@ -32,3 +32,37 @@ Stream D is not merged. Its existing unfinished work was preserved in
 implementation and validation. No paid runs or uploads have started. After
 reviewed/merged D and a green suite, the parent owns unit 1 on both harnesses,
 with monitoring every 10 minutes; this supersedes the immediate finetuned-only gate.
+
+## D integration, 2026-11-12
+
+D integrated into canonical `v2-clean-slate` with
+`git -c commit.gpgsign=false merge --no-edit b38a1532aa5bbe88a25f6405a7413d6432168520`.
+This was a fast-forward to `b38a1532aa5bbe88a25f6405a7413d6432168520`,
+preserving D's complete history and existing worktree. Final D code is
+`cd452ffede8affca75aee2f187e699d990e8b34e`. The parent reports a fresh
+independent blocking re-review CLEAR, with 119 focused tests passing, covering
+source/materialized preflight separation, the real SDK sequential handover
+barrier and recovered completion/champion reconciliation. That clearance
+supersedes the pending-review statements in the historical D handoff.
+No additional review or child agent was commissioned here. D's pre-existing
+dirty `harness/finetuned/agent/runtime/python/changes.jsonl` remains in its
+worktree, excluded from integration.
+
+Canonical integration validation is in progress: full `./dev bun test`, log
+`/tmp/v2-integration-d-full.log`; typecheck and production setup gates follow.
+No production run has been launched by this integration step yet.
+
+Canonical suite found a pre-existing parallel-fold fixture race in
+`training/validation_measurements.test.ts`: every diagnostic hook overwrote
+one shared `.perturbed.zip`. The retained failed result at
+`/tmp/validation-measurements-6kjWNi/training/b396291d-2fae-458b-95ff-83637645d9aa/trial-result.json`
+records a missing member from another fold's validation population. The
+fixture now uses a unique UUID archive per invocation, retaining every
+runtime check and assertion. This is a test-only integration fix; no runtime
+code or minimal-arm files changed. The initial full attempt was interrupted
+with exit 130 after that failure, not counted as green evidence.
+
+Focused `./dev bun test harness/finetuned/agent/training/validation_measurements.test.ts`:
+2 pass, 0 fail, 13.31 s (`/tmp/v2-integration-d-diagnostics.log`).
+`./dev bun run typecheck`: passed (`/tmp/v2-integration-d-typecheck.log`).
+Fresh full-suite log: `/tmp/v2-integration-d-full-final.log` (running).
