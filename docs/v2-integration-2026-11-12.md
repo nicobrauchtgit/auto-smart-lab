@@ -151,3 +151,73 @@ Configured runtime for both arms remains **offline**, MythLLM
 The runtime code SHA captured at launch is `fb404afd20a1383dd83482639120e95c95185e33`.
 No uploads, submissions, pushes or code2 launch. No monitoring was scheduled
 by this implementation agent; the parent owns the requested 10-minute checks.
+
+### Finetuned terminal failure and independent minimal continuation
+
+The original controller ended **failed**, exit **1**, at
+**2026-11-12T04:44:15.783610Z**. Finetuned spam1 exhausted its **80 calls**
+with champion validation still blocked by an open defect; it was not handed
+over and no later task started. Three harness trials completed; champion
+CV was **0.995944**. The first trial took about **8m03s** and passed; the
+batch ran about **2h15m** before the failed handover. Those measurements do
+not establish a validated delivery or instructor score.
+
+The parent's concrete log/PROGRESS/findings inspection reported a **static
+code finding**: `lib/emails.py` silently substitutes empty bytes when reads
+fail. The scout's targeted I/O probe **failed to import `lib`**, so that probe
+did not demonstrate the faulty read behavior dynamically. Preserve that
+evidence distinction. There was no machine-risk stop; the original controller
+and finetuned processes had exited before minimal started. The failed status,
+exit and task receipts, solutions, findings and worktree journals remain
+unchanged. No finetuned restart, repair, validation bypass or spam2/3 launch
+was performed.
+
+The independently authorized minimal unit 1 batch started detached at
+**2026-11-12T04:48:16Z**, controller PID/session leader **471526**. Its plan
+is **minimal spam1 -> spam2 -> spam3**, stopping on any failed delivery gate.
+The fresh run location is `runs/minimal/2026-11-12T04-48-17/`.
+The first command uses the standard experiment entry; subsequent tasks use
+an unchanged copy of the original `minimal-task.ts` adapter calling
+`runMinimal` with `--reset none` in that same new run. The whole arm process
+remains jailed; no finetuned code or findings are passed to it. There are no
+minimal-arm code, prompt or coaching changes.
+
+Launch directory:
+`runs/launches/2026-11-12T04-47-34Z-v2-unit1-minimal/`.
+It contains `controller.py`, `minimal-task.ts`, `metadata.json`, `launch.json`,
+`preflight.json`, `preflight-minimal.log`, atomic `status.json`,
+`controller.log`, and `minimal-spam1.log` (later task logs when started).
+Per-task `minimal-<task>-receipt.json` and final `exit.json` are written on
+completion. Metadata links the original failed batch and records hashes of
+its original files. The only addition in the original launch folder is
+`minimal-continuation.json`, pointing the parent's monitor to this launch.
+No run-state file is tracked in git.
+
+Advancement requires process exit 0, a `delivered` summary row for the selected
+task with exit 0, matching manifest task, a source archive, and matching output
+SHA-256, as in the original controller. The controller also rejects changes
+to the shared configuration before starting any task. Runtime remains offline
+MythLLM `qwen3.8-flash-next-a5b`, configuration SHA-256
+`93cde05836634967cfdf9b2bc0cec3cba82f2e6181e86ac5fc28e1ab4eb60a17`.
+Code SHA at this launch: `496263a0e1fda1b54c2610a3dfcd2cf2d762e3be`.
+
+Bounded preflight (`./dev bun run experiment -- --arm minimal --check-setup`,
+60-second limit) passed, exit 0. Boundary verification
+`./dev bun test experiment/minimal.test.ts`: **15 pass, 0 fail**.
+Initial observation confirmed controller session detachment, fresh run creation,
+spam1 session start, configured model resolution, and first tool calls. This
+is startup evidence only; no minimal task completion is claimed. The parent
+retains its existing 10-minute monitor, schedule
+`scheduled-task:9dcf8a4c-b341-4f8d-90b4-04ddac5479fd`; this implementation
+agent created no schedule and did not wait for modeling results. No uploads,
+pushes, model substitution or withheld-label inspection occurred.
+
+Development check `./dev bun run test:fast` encountered a state-dependent
+failure at `harness/finetuned/agent/pipeline/run_pipeline.test.ts:288`:
+`fresh pipeline and standalone check-setup pass scout source checks before
+TaskData exists` expects `readTaskData('spam1')` to be undefined, but the
+preserved measured spam1 run already has TaskData. The suite was interrupted
+after that recorded failure (exit 130); it is not green evidence. Log:
+`/tmp/minimal-continuation-test-fast.log`. No run data was removed or tests
+changed to satisfy that assumption. Minimal preflight and the 15 boundary
+tests passed independently, as recorded above.
