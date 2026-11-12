@@ -13,7 +13,7 @@ import { ensureSolutionsRepository, git, resolveCommit } from "../training/git.j
 import { ScoutBudget } from "./budget.js";
 import { createFindings } from "./findings.js";
 import { readFindings } from "./journal.js";
-import { createScoutRunner, scoutToolset, validationCheckTool } from "./runner.js";
+import { createScoutRunner, scoutToolset, validationCheckTool, VALIDATION_SCOUT_TOOLS } from "./runner.js";
 import { createScouts, type ScoutSessionInput } from "./scouts.js";
 import { createTrialResolver, describeRefs } from "./trials.js";
 import { stageScoutInputs } from "./workspace.js";
@@ -84,6 +84,7 @@ test("validation sees only the measured snapshot: live code hidden, snapshot rea
  expect(sandbox.env.VALIDATION_SOURCE_ROOT).toBe(trial.sourceRoot); expect(sandbox.env.VALIDATION_EXPERIMENT_ID).toBe("exp-1");
  const view = scoutToolset("validation", {sandbox, solutionsRoot: f.live, taskId: "fixture", trial});
  expect(view.sandbox.cwd).toBe(join(trial.sourceRoot, "solutions"));
+ expect(view.tools.map(tool => tool.name).sort()).toEqual([...VALIDATION_SCOUT_TOOLS].sort());
  expect(view.sandbox.mounts.filter(mount => mount.writable).map(mount => mount.source)).toEqual([join(f.live, "checks/fixture")]);
  const script = [
   `test ! -e ${f.live}/tasks/model.py`, "grep -q 'LEAK = True' tasks/model.py", "! echo x > tasks/model.py",
@@ -95,8 +96,9 @@ test("validation sees only the measured snapshot: live code hidden, snapshot rea
 }, 30_000);
 
 test("symlinked task state mounts the canonical snapshot cwd without exposing live state or labels", async () => {
- const f = stateFixture("/dev/shm");
- const backing = mkdtempSync("/dev/shm/scout-symlink-");
+ // A second disk-backed location exercises canonicalization without RAM-backed task data.
+ const f = stateFixture();
+ const backing = mkdtempSync(join(tmpdir(), "scout-symlink-"));
  renameSync(f.state, join(backing, "state")); symlinkSync(join(backing, "state"), f.state);
  const sealed = join(f.state, "fixture/sealed-labels.json"); writeFileSync(sealed, "SECRET");
  const trial = await f.resolver.snapshot("exp-1");

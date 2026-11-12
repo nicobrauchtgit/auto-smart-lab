@@ -179,7 +179,12 @@ delivers a pipeline, an architecture or code for the lead to adopt.
 | --- | --- | --- | --- |
 | **data** | task text, profile, training and test inputs | interesting properties of the data; where training and test differ; which inputs or fields look informative; traps (e.g. encodings, duplicates) | read, bash (observed), profile |
 | **ideas** | task, data bullets, course slides, web | features that might work and why; extras worth having in a pipeline (class weighting, threshold tuning, normalization …); no estimator recipes or parameters | read-only, web search |
-| **validation** | the champion's frozen snapshot and trial records | concrete defects with evidence (fold leakage, wrong output domain, fit on test inputs); `ok` / `fix` / `advice` | read, bash (observed) on the snapshot |
+| **validation** | the champion's frozen snapshot and trial records | concrete defects with evidence (fold leakage, wrong output domain, fit on test inputs); `ok` / `fix` / `advice` | read/search files, author checks, execute through `run_checks`; no bash |
+
+Capability correction, 2026-11-12: validation's shell was removed after the
+[live audit](../../../docs/experiments/spam1-interface-verification-2026-11-12.md)
+observed checks executing outside `run_checks`. File-tool admission now enforces
+the route. This does not constrain arbitrary Python inside a check from doing CV.
 
 **Output.** Short bullets, as many as the scout actually found and no
 more, each with where it came from (a profile record, a file, a trial ID or a

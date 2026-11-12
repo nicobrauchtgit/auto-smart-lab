@@ -74,7 +74,7 @@ waiting for them to settle; it is not a work budget. `runScoutSession` then
 terminates a stopped session instead of closing it: the Pi session is disposed
 and its observer released without waiting for the prompt, and every tool
 execution is aborted through a signal the runner owns and awaited (bounded).
-A scout's bash is the supervised agent shell (`run/agent_shell.ts`), bound to
+For roles with bash, it is the supervised agent shell (`run/agent_shell.ts`), bound to
 the scout's session, so supervisor findings such as `stalled` reach the scout
 and its calls count against the budget like any other. An aborted bash call
 stops its tree through the supervisor (SIGTERM, a grace period, SIGKILL, the
@@ -127,11 +127,31 @@ The runner builds the call's sandbox with `expertSandbox(..., "validation",
 trial)` (snapshot mounted read-only, `VALIDATION_SOURCE_ROOT` and
 `VALIDATION_EXPERIMENT_ID` set). The scout's view hides the live solutions tree
 except `checks/` (only `checks/<task>/` writable) and this trial's check logs;
-its cwd is the snapshot's `solutions/`. Its shell calls retain authoritative logs outside the sandbox and publish copies in
-`scratch/validation/<experiment>/shell-calls/` (read-only to the scout,
-ignored by git), never in `checks/<task>/`, which trial commits would include. `run_checks` runs stream B's
+its cwd is the snapshot's `solutions/`. The validation scout receives only
+`read`, `grep`, `find`, `ls`, `write`, `edit` and `run_checks`. There is no bash
+tool, including no default shell restored by the child SDK. File tools author
+checks only under the existing writable task-check mount. The explicit file
+tool allowlist also excludes future execution tools unless deliberately added.
+Historical shell-call logs may remain readable, but no new validation shell
+calls are admitted. `run_checks` runs stream B's
 `runTrialChecks` on that snapshot (fresh interpreter, snapshot first on the
 import path, live import origins refused) and records each check's hash.
+
+This enforces the execution route, not the semantics of arbitrary Python.
+A check can still contain extra fitting, subprocesses or a CV loop; preventing
+redundant CV would require a separate, narrower validation API. This change
+does not claim that restriction. Data/lead shell tools and their supervision
+are unchanged. Scripted child-session regressions reject an attempted bash
+call, then write and run a check that imports the frozen snapshot despite
+different live source, retaining check hashes and validation telemetry.
+
+Local verification, 2026-11-12: `./dev bun run test:fast` passed 575 tests with
+2 existing libproc skips and no failures (133.98 s); typecheck and whitespace
+checks passed. The focused snapshot/runner/session tests and the scripted
+bash-rejection/check-execution regression are included in that suite. Logs are
+under `runs/launches/2026-11-12-validation-tool-fix-checks/`. Task/snapshot
+fixtures use disk-backed temporary directories. No new live model run or merge
+was performed; the full suite remains required before merging.
 
 Bullets start with `ok`, `fix` or `advice` and are journaled as `fact`,
 `defect` and `idea`, each with the trial's `{experiment}` ref, commit-bound

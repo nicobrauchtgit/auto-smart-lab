@@ -43,7 +43,12 @@ The subsequent [live verification](experiments/spam1-interface-verification-2026
 used canonical paths without path/schema rejection and delivered within its
 thirty-minute bound. It also observed a validation scout running CV/contract
 checks through bash rather than `run_checks`; that execution-policy violation
-remains unresolved. The multi-task integration gate remains open.
+is now addressed at the tool boundary: validation has an explicit file-tool
+allowlist and `run_checks`, with no bash capability or SDK shell fallback.
+Snapshot/check telemetry and hash recording remain in the existing runner.
+This enforces the route; arbitrary Python checks can still perform extra fits
+or CV, so redundant-CV prevention remains a separate limitation. The multi-task
+integration gate remains open.
 
 Both arms receive the user-supplied spam slides as checksummed, read-only course
 resources with page-labelled text copies ([course resources](../resources/README.md)).

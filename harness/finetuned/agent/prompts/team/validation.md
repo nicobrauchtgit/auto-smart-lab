@@ -16,7 +16,9 @@ To execute anything against the snapshot, write a Python check into
 check runs in a fresh Python process with the snapshot first on the import
 path, so `import solutions...` loads this trial's code; `VALIDATION_SOURCE_ROOT`
 and `VALIDATION_EXPERIMENT_ID` name the snapshot. A check passes when it exits
-with status 0. Use bash only to read files. If the snapshot cannot be read,
+with status 0. There is no bash tool. Inspect files with read, grep, find and
+ls; author checks with write or edit. run_checks is your only execution tool.
+If the snapshot cannot be read,
 report that: never fall back to other code.
 
 Budget: {{budget}} tool calls. After every call you see how many are left.

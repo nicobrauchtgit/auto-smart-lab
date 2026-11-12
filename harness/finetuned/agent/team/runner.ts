@@ -24,6 +24,8 @@ import { guardScoutSession } from "./budget.js";
 import { wrapAgentTool } from "../run/agent_shell.js";
 
 export const READ_ONLY_SCOUT_TOOLS = ["read", "grep", "find", "ls"] as const;
+/** Validation authors checks with file tools; run_checks is added separately as its sole execution tool. */
+export const VALIDATION_SCOUT_TOOLS = [...READ_ONLY_SCOUT_TOOLS, "write", "edit"] as const;
 /** Results per web search; the ideas scout reads a few sources, not a result page. */
 const SEARCH_RESULTS = 4;
 const inside = (path: string, root: string) => path === root || path.startsWith(`${root}${sep}`);
@@ -66,10 +68,10 @@ export function scoutToolset(role: ScoutRole, options: {
   const mounts = [...readOnly.filter(mount => !inside(real(mount.source), live)),
    {source: join(live, "checks")}, {source: checks, writable: true}, {source: logs}];
   const sandbox = policy(mounts, join(source, "solutions"));
-  // The scout reads a copy of each shell call's output beside this trial's check logs: gitignored
-  // scratch, never checks/<task>/ (its one writable mount), which trial commits would pick up.
-  // The logs themselves stay harness-owned, outside every mount; the copy is never read back.
-  return {sandbox, tools: isolatedSolveTools(sandbox, {spill: {base: live, directory: join(logs, "shell-calls")}}), extensions: [], extensionTools: [], checkSandbox: policy(mounts, live)};
+  // Explicit admission prevents shell execution (and future execution tools)
+  // from bypassing the snapshot check runner. File writes stay sandbox-scoped.
+  const tools = isolatedSolveTools(sandbox).filter(tool => (VALIDATION_SCOUT_TOOLS as readonly string[]).includes(tool.name));
+  return {sandbox, tools, extensions: [], extensionTools: [], checkSandbox: policy(mounts, live)};
  }
  const research = join(options.sandbox.cwd, "research");
  if (!existsSync(research)) throw new Error("Scout workspace must have its own research/ folder");
