@@ -9,8 +9,9 @@ original is in git history (commit 452e1e5).
 This file keeps only the contracts v2 section 10 retains. "Agent" means the
 lead or a scout (v2 section 3). Paths are relative to `harness/finetuned/`
 unless prefixed by `runs/`, `experiment/` or "root". Package names (P6, P7a,
-P7b, P7c) follow v2 section 11. None of this is implemented yet; the current
-code still runs the old stage chain.
+P7b, P7c) follow v2 section 11. Foundations and scouts are implemented; the Stream D lead entry is pending
+independent review. See [runtime limits](../agent/run/README.md). P7c remains
+separate and the paid task integration gate has not run.
 
 ## 1. Task data and sealing
 

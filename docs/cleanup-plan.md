@@ -1,6 +1,6 @@
 # Current state and work queue
 
-Updated 2026-11-11. This file owns the active queue. The design is
+Updated 2026-11-12 (Stream D branch; independent review pending). This file owns the active queue. The design is
 [expert-team-v2.md](../harness/finetuned/docs/expert-team-v2.md) (accepted
 2026-11-11); its contract appendix is
 [expert-team.md](../harness/finetuned/docs/expert-team.md). Superseded plans,
@@ -16,10 +16,10 @@ code/configuration and `runs/minimal/` / `runs/finetuned/` state. See
 
 The old design's orchestrator, research and evaluate stages, knowledge store
 and leakage canary were removed on 2026-11-11 (the clean-slate package below).
-What remains runs solve (one agent session with harness-owned trials) and then
-refit as a configured chain. v2 replaces it with one lead agent that calls
-blocking scouts (data, ideas, validation) and harness-run trials; no part of v2
-is implemented yet.
+Stream D replaces solve → refit with one lead session calling blocking
+scouts (data, ideas, validation) and harness-run trials, followed by validated
+terminal refit. Foundations and scouts are implemented; the lead branch still
+requires independent review before merge. See [lead execution](../harness/finetuned/agent/run/README.md).
 
 Both arms receive the user-supplied spam slides as checksummed, read-only course
 resources with page-labelled text copies ([course resources](../resources/README.md)).
@@ -44,14 +44,19 @@ separate.
 | --- | --- | --- |
 | P5′: accept v2 (documents) | Done 2026-11-11 | Docs reorganised; draft prompts kept as seeds for P7a |
 | Clean slate | Done 2026-11-11 | Removed the LLM orchestrator, research and evaluate stages, knowledge store and lesson prompts, scorecard, old `agent/instructions/`, the filename-leakage canary and the profile's `name_leakage` measurement; the chain is solve → refit |
-| P6: foundations | Next: streams A and B in [v2-kickoff.md](v2-kickoff.md), parallel with C | Task data and persistent split; shared tree, `workspace_check`, follow-up merge; trial snapshots; Linux sampler and global `supervision` block with machine-protection stop; `trial_smoke`; parallel folds; per-session environment. Checks in v2 P6 |
-| P7a: lead and scouts | Scouts: stream C (now); lead: stream D after A–C | Blocking `scout()` built on `agent/subagents/`; tool-call budgets with a counter after every call; lead session with compaction and `PROGRESS.json`; prompts in `agent/prompts/team/`; scout budget test (10 vs 20 calls on spam1–3 and `code2`) |
-| P7b: harness services | Feedback: stream B; wake-on-news: stream A; hand-over: stream D | Trial feedback with noise verdict and Ladder holdout check; wake on news only; `hand_over` with validation scout; budget-end hand-over; retire the remaining solve stage chain |
+| P6: foundations | Implemented in A/B; A final integration gate recorded separately | Task data and persistent split; shared tree, `workspace_check`, follow-up merge; trial snapshots; Linux sampler and global `supervision` block with machine-protection stop; `trial_smoke`; parallel folds; per-session environment. Checks in v2 P6 |
+| P7a: lead and scouts | Scouts implemented; lead implementation on Stream D, review pending | Blocking `scout()` built on `agent/subagents/`; tool-call budgets with a counter after every call; lead session with compaction and `PROGRESS.json`; prompts in `agent/prompts/team/`; scout budget test (10 vs 20 calls on spam1–3 and `code2`) |
+| P7b: harness services | Implemented; Stream D checks and independent review gate remain | Trial feedback with noise verdict and Ladder holdout check; wake on news only; `hand_over` with validation scout; budget-end hand-over; retire the remaining solve stage chain |
 | Integration gate | After P7a and P7b | spam1 → spam2 → spam3 offline: first trial ≤ 10 min, hand-over ≤ 45 min, spam1 CV balanced accuracy ≥ 0.994 (reference 0.9944–0.9954), no machine-at-risk stop, reader reused; then `code2` to hand-over |
 | P7c: beyond binary classification | After the gate | Withheld-family clustering confirmation; label-free unscored hand-over, then evidence labels ([contract](../harness/finetuned/docs/expert-team.md#7-p7c-verification-beyond-binary-classification)) |
 
 Scout starting budgets are set from the P7a budget test: data 15, ideas 10,
 validation 10 (v2 section 3). The lead's 80 is exercised at the integration gate.
+
+Latest run scope: after independently reviewed/merged D and a green suite,
+run unit 1 on **both** harnesses and monitor every 10 minutes. This supersedes
+the finetuned-only immediate gate; the parent owns review and runs. No paid
+v2 runs have started. Uploads are not authorized.
 
 ## Follow-ups and readiness limits
 
