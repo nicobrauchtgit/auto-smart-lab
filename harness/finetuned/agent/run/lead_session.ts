@@ -54,6 +54,7 @@ import { expertSandbox } from "./sandbox.js";
 import { isolatedSolveTools, solvePythonEnvironmentTool, trainingSandboxCommand, type SolveSandbox } from "./solve_sandbox.js";
 import { runSession } from "./session_runner.js";
 import { oneLine, readProgress, renderProgress, writeProgress, type LeadHandOver, type LeadProgress } from "./lead_progress.js";
+import { messageText, OperatorQuestions } from "./operator_questions.js";
 
 const sha256 = (content: string | Buffer) => createHash("sha256").update(content).digest("hex");
 
@@ -340,6 +341,14 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
 
  const budget = new ScoutBudget(limit, prompts, { freeTools: ["hand_over"], maxTurns: limit * 20 + 20, finishPrompt: "team.lead-finish", used: progress.budget.used, onCharge: used => { progress.budget.used = used; save(); } });
  const inbox = new LeadInbox();
+ // Operator questions (ask_lead.ts) reach the live lead like news; its next text is the answer.
+ const operator = new OperatorQuestions(join(dirname(progressPath), "operator"));
+ const deliverQuestions = async () => {
+  for (const question of operator.take()) {
+   record("operator_question", { question_id: question.id, question: question.text });
+   await inbox.steer(prompts.render("team.lead-operator-question", { id: question.id, question: question.text }).text);
+  }
+ };
  progress.phase ??= progress.baseline ? "improvement" : "baseline";
  progress.validationReceipts ??= {};
  let confirmation: ConfirmationOutput | undefined;
@@ -571,6 +580,12 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
    progress.budget.used = budget.used;
    save();
   });
+  pi.on("message_end", event => {
+   const message = event.message as { role?: string }, text = messageText(message);
+   if (message.role !== "assistant") {
+    for (const id of operator.delivered(text)) record("operator_question_delivered", { question_id: id });
+   } else for (const id of operator.answered(text)) record("operator_answer", { question_id: id, answer: text });
+  });
  } };
  let sessionError: string | undefined;
  let endReason = "lead_finished";
@@ -621,6 +636,8 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
     await inbox.wait(deps.pollMs, signal);
    }
   };
+  const questionTimer = setInterval(() => void deliverQuestions().catch(error =>
+   record("operator_question_failed", { message: error instanceof Error ? error.message : String(error) })), 2_000);
   record("agent_attempt_start", { attempt: 1, reason: resumed ? "lead_resumed" : "lead", model: options.model ?? "pipeline-default",
    prompt_snapshot_sha256: prompts.fingerprint, prompts: promptReferences });
   try {
@@ -643,7 +660,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
    sessionError = error instanceof Error ? error.message : String(error);
    endReason = "agent_failed";
    record("agent_attempt_error", { attempt: 1, message: sessionError });
-  }
+  } finally { clearInterval(questionTimer); }
   progress.budget.used = budget.used;
   save();
  }

@@ -296,6 +296,19 @@ Each execution prints its Langfuse Cloud trace link. Stage lifecycle, typed inpu
 physical sessions, generations, tools, trials and artifact checks share one trace.
 JSONL is created only when delivery fails; see [telemetry](docs/telemetry.md).
 
+### Asking the running lead a question
+
+```bash
+./dev bun harness/finetuned/agent/run/ask_lead.ts spam1 "Why have you not used scouts?" --wait 10
+```
+
+The question reaches the live lead like trial news, framed as a question that does not
+change its task, budget or judging; its next text is the answer. Both are recorded in
+Langfuse (`operator_question`, `operator_answer`) and kept under
+`runs/finetuned/<task>/lead/operator/` (questions, delivered, answers), which no agent
+can write. A question does change the lead's context from then on, so use it in test
+runs, not measured ones. It works only for runs started with this code.
+
 ### Solve output
 
 The solve agent writes an unfitted pipeline under `solutions/`. The harness owns folds, seeds, fits, predictions, measurements and paired champion comparison. Solve gives the agent a development archive and opaque sample manifest; sealed rows and original full labels remain outside its filesystem boundary.
