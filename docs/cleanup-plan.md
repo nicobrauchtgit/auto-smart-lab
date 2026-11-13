@@ -105,6 +105,13 @@ separate.
 
 ## Work queue (v2 section 11)
 
+First priority, proposed 2026-11-13: [completion reliability repair](completion-reliability-plan.md).
+The audit reproduced a saved validated baseline followed by a rejected newer
+champion yielding zero refits. The plan makes delivery selection explicit across
+lead, confirmation and refit, supplies truthful review context, and tests actual
+fallback delivery while preserving the prior integrity/isolation fixes. Runtime
+implementation and another live run have not been started.
+
 | Package | State | Next action / completion evidence |
 | --- | --- | --- |
 | P5′: accept v2 (documents) | Done 2026-11-11 | Docs reorganised; draft prompts kept as seeds for P7a |
