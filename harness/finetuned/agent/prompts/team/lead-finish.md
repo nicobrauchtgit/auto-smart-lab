@@ -1,1 +1,1 @@
-Your paid tool calls are used. You may still request the free hand_over readiness checkpoint or explicit finalize=true. Write a short final note with the champion and evidence. At session end the harness validates and finalizes the current champion only if the evidence passes.
+Tool-call limit reached. Follow the system prompt's completion policy.

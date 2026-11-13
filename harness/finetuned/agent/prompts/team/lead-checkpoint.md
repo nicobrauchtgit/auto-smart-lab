@@ -1,3 +1,3 @@
-Readiness checkpoint accepted. Continue improving in this session. This milestone is not a delivery; no terminal refit has run.
+Readiness checkpoint accepted. No terminal refit or delivery has run.
 
 {{progress}}

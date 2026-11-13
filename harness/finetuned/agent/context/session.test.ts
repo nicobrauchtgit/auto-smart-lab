@@ -36,6 +36,8 @@ async function fixture(thresholdTokens = CONTEXT_HANDOFF_TOKENS) {
 			model: provider.getModel(), modelRuntime: runtime, tools: ["read"], sessionManager: SessionManager.inMemory(root) });
 		sessions.push(session);
 		assert.match(session.systemPrompt, /solutions/);
+		assert.equal(session.systemPrompt.split("Budget delivery before optional improvements.").length - 1, 1);
+		assert.match(session.systemPrompt, /Do not wait until the counter reaches the limit to finalize/);
 		assert.doesNotMatch(session.systemPrompt, /DEVELOPMENT_CONTEXT_EXCLUDED/);
 		const observer = await observeAgentSession({ session, model: "context-test/faux", ...observe });
 		scope.bindParent(observer.agentRunId);
@@ -68,6 +70,8 @@ for (const threshold of [5_000, 120_000]) test(`${threshold} rollover finishes t
 			},
 			context => {
 				assert.equal(f.created(), 2);
+				assert.equal(f.sessions[1].systemPrompt, f.sessions[0].systemPrompt);
+				assert.doesNotMatch(JSON.stringify(context.messages), /Budget delivery before optional improvements/);
 				assert.notEqual(f.logical.agentRunId, oldParent);
 				assert.match(JSON.stringify(context.messages), /Next: validate/);
 				assert.match(JSON.stringify(context.messages), /experiment abc completed during handoff/);

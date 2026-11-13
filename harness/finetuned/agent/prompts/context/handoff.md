@@ -5,4 +5,4 @@ Use a few short bullets:
 - Resume at: the unfinished step and immediate next action.
 - Carry forward: only constraints, decisions, blockers, or pending updates that cannot be recovered from those artifacts. Include active experiment or subagent IDs when needed to avoid duplicate work.
 
-Omit empty bullets, conversation history, file contents, logs, and credentials. Do not restate information already stored in artifacts. Label uncertainty instead of guessing. The workspace and running processes persist; the successor should inspect them before repeating actions. Session replacement does not mean the stage is complete.
+Omit empty bullets, conversation history, file contents, logs, and credentials. Do not restate information already stored in artifacts. Do not copy standing system instructions, including budget and finishing policy: the replacement receives the same system instructions. Label uncertainty instead of guessing. The workspace and running processes persist; the successor should inspect them before repeating actions. Session replacement does not mean the stage is complete.

@@ -56,6 +56,17 @@ hashes and artifact snapshots use supplied-input metadata, while template and
 rendered hashes keep their prompt identities. See the pipeline integration guide
 for provenance, bounds, feedback receipt semantics and deterministic-stage refusal.
 
+## Lead budget policy (2026-11-13)
+
+The shared `team.lead-system` owns budget and completion policy for every lead
+session, including context replacements. Handoff text carries unfinished work,
+not another copy of standing instructions. `team.lead-checkpoint` reports
+readiness state, `team.lead-handover-tool` describes arguments/results, and
+`team.lead-finish` signals exhaustion; they do not repeat the system policy.
+Dynamic counters and harness progress remain factual inputs. This prompt change
+adds no repair allowance or tool-budget exemption and does not implement the
+separate completion fallback plan.
+
 ## Lead scout skills (2026-11-12)
 
 `team.skill-data`, `team.skill-ideas` and `team.skill-validation` register the

@@ -196,7 +196,7 @@ test('checkpoint retries transient failure, persists first baseline through rest
    expect(JSON.stringify(await handover.execute('free',{reason:'ready'}))).toContain('not approved');
   } else expect(opts.prompt).toContain('Goal phase: improvement');
   for(let i=0;i<2;i++) {await emit([{type:'toolCall',id:'free',name:'hand_over'}]);await admit('free');
-   expect(JSON.stringify(await handover.execute('free',{reason:'ready'}))).toContain('Continue improving');}
+   expect(JSON.stringify(await handover.execute('free',{reason:'ready'}))).toContain('Readiness checkpoint accepted');}
   expect(refits).toBe(0);
   expect(opts.sessionContext()).toBe('');expect(opts.sessionContext()).toContain('Goal phase: improvement');
   await emit([{type:'toolCall',id:'work',name:'experiment_start'}]);await admit('work','experiment_start');

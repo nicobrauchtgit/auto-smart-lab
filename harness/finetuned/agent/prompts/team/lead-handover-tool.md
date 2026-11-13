@@ -1,1 +1,5 @@
-Validate readiness of the current measured champion. Give a reason. Default finalize=false is a nonterminal checkpoint: no trial charge, no new holdout query, no terminal refit. The first successful checkpoint records the immutable working baseline and switches the goal to improvement in this session. Completed validation receipts are reused for the same source and checks. Failed or unavailable validation can be retried. Defects and missing evidence block acceptance. Set finalize=true only when finished: acceptance ends tool use and requests all-training-data refit and test prediction, never test labels. This control call is free even at the lead tool limit. Running trials block readiness. A readiness milestone is not a submitted or delivered result.
+Validate the current measured champion. Supply `reason` (1–1000 characters).
+Default `finalize=false` records a nonterminal readiness checkpoint; set
+`finalize=true` to request terminal delivery. Completed validation receipts are
+reused for the same source and checks. Running trials block the request;
+defects or missing evidence return validation feedback.
