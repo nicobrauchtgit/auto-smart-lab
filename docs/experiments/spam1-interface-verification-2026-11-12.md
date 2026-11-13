@@ -197,3 +197,11 @@ CV target, or establish the multi-task integration gate. The validation
 execution-policy violation is a remaining limitation, not a repaired result.
 No speculative remedy or additional run was started. Only documentation was
 changed during observation; no runtime code or prompts changed after launch.
+
+Subsequent follow-up: the validation tool restriction was implemented in
+`c746a7a`. The later [completion batch observation](spam-completion-tool-choice-2026-11-13.md)
+exercised it in seven live validation sessions without a bash call. This
+verification's task and solutions were preserved before that fresh batch at
+`runs/archives/2026-11-12T22-32-10Z-spam1-interface-verification/`;
+its delivery remains at the path above. The historical execution-policy
+violation described here remains part of this run's evidence.

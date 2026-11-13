@@ -1,6 +1,6 @@
 # Current state and work queue
 
-Updated 2026-11-12 (spam1 test runs, async scouts, scout skills). This file owns the active queue. The design is
+Updated 2026-11-13 (observed finetuned spam completion batch). This file owns the active queue. The design is
 [expert-team-v2.md](../harness/finetuned/docs/expert-team-v2.md) (accepted
 2026-11-11); its contract appendix is
 [expert-team.md](../harness/finetuned/docs/expert-team.md). Superseded plans,
@@ -49,6 +49,22 @@ Snapshot/check telemetry and hash recording remain in the existing runner.
 This enforces the route; arbitrary Python checks can still perform extra fits
 or CV, so redundant-CV prevention remains a separate limitation. The multi-task
 integration gate remains open.
+
+**Observed completion batch (2026-11-12–13).** After an authorized unsigned
+push of `c746a7a`, a fresh offline finetuned spam1 → spam2 → spam3 batch ran
+under configured budgets, without an external time cutoff. Spam1 delivered
+in 99 min 47 s (development CV 0.99539); spam2 stopped after 60 min 7 s with
+`validation_failed` at the lead's 80-call limit; spam3 was not launched.
+The two final validation concerns involved the scout's visibility of measured
+parameters and a small-sample robustness fix absent from the measured source.
+Authoritative parameters were retained; no terminal spam2 refit executed.
+All seven validation sessions respected the new tool route, with no bash.
+The lead nevertheless executed a local three-candidate comparison in spam2,
+describing it as branch smoke coverage when questioned live. Three operator
+questions and their answers were captured and cross-checked against receipts;
+two details of the final explanation contradicted timing/tool capabilities.
+No further run or speculative remedy followed the failure. The integration
+gate remains unmet. See the [completion and decision-process report](experiments/spam-completion-tool-choice-2026-11-13.md).
 
 Both arms receive the user-supplied spam slides as checksummed, read-only course
 resources with page-labelled text copies ([course resources](../resources/README.md)).
