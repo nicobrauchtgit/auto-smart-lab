@@ -9,6 +9,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { mkdirSync } from "node:fs";
 import { atomicJson } from "../experiments/ownership.js";
+import type { MeasuredCandidateSelection } from "../training/development_selection.js";
 import type { PromptSnapshot } from "../prompts/loader.js";
 
 export interface LeadTrialRecord {
@@ -33,12 +34,15 @@ export interface LeadHoldoutRecord {
  score?: number;
  queryCount?: number;
  reason?: string;
+ receipt?: { path: string; sha256: string };
 }
 export interface LeadHandOver {
  by: "lead" | "harness";
  /** Why the harness handed over on its own: budget, idle lead, failed session. */
  reason: string;
  experimentId: string;
+ selectedCandidate?: MeasuredCandidateSelection;
+ confirmationReceipt?: { path: string; sha256: string };
  validation: { status: string; fix: string[]; advice: string[]; ok: string[] };
  at: string;
 }
@@ -62,7 +66,7 @@ export interface LeadProgress {
   * process and are deliberately not restored after a restart. */
  scoutCalls: number;
  phase?: "baseline" | "improvement";
- baseline?: { experimentId: string; commit: string; receiptKey: string; at: string };
+ baseline?: { experimentId: string; commit: string; trainingRoot?: string; confirmationReceipt?: { path: string; sha256: string }; receiptKey: string; at: string };
  validationReceipts?: Record<string, { experimentId: string; commit: string; validation: LeadHandOver["validation"]; at: string }>;
  handOver?: LeadHandOver;
  delivery?: string;
@@ -78,6 +82,13 @@ export function readProgress(path: string): LeadProgress | undefined {
   || !value.budget || !Number.isSafeInteger(value.budget.used) || value.budget.used < 0
   || !Number.isSafeInteger(value.budget.limit) || value.budget.limit < 1 || value.budget.used > value.budget.limit
   || (value.status === "handing_over" && !value.handOver)) throw new Error(`Corrupt lead progress at ${path}; restore or remove it before restarting`);
+ const validReceipt = (receipt: { path: string; sha256: string } | undefined) => !receipt || (typeof receipt.path === "string" && /^[a-f0-9]{64}$/.test(receipt.sha256));
+ if ((value.baseline?.trainingRoot !== undefined && typeof value.baseline.trainingRoot !== "string")
+  || !validReceipt(value.baseline?.confirmationReceipt) || !validReceipt(value.handOver?.confirmationReceipt)
+  || value.holdout.some(row => !validReceipt(row.receipt))) throw new Error(`Corrupt lead confirmation reference at ${path}`);
+ const selected = value.handOver?.selectedCandidate;
+ if (selected && (selected.experimentId !== value.handOver!.experimentId || typeof selected.commit !== "string" || typeof selected.trainingRoot !== "string"))
+  throw new Error(`Corrupt lead delivery selection at ${path}`);
  if (value.phase !== undefined && value.phase !== "baseline" && value.phase !== "improvement") throw new Error(`Corrupt lead phase at ${path}`);
  if (value.baseline) {
   const baseline = value.baseline, receipt = value.validationReceipts?.[baseline.receiptKey];

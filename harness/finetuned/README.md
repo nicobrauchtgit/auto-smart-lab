@@ -8,15 +8,17 @@
 
 Auto SmartLab is an experimental autonomous machine-learning pipeline for the [SmartLab](https://lab-test.smartlab.mlsec.tu-berlin.de/) adversarial-AI platform. It gives an agent the task, local data and measured feedback. Deterministic code owns input preparation, metric recomputation, artifact validation, trace recording, refit and authorized submission.
 
-**Plan.** The accepted design is [expert-team-v2.md](docs/expert-team-v2.md) (2026-11-11): one lead agent drives the run, calls blocking scouts for data, ideas and validation, and measures every pipeline with harness-run trials. There is no LLM orchestrator and no fixed stage chain. The work queue is [docs/cleanup-plan.md](../../docs/cleanup-plan.md).
+**Plan.** The accepted design is [expert-team-v2.md](docs/expert-team-v2.md) (2026-11-11): one lead agent drives the run, calls asynchronous scouts for data, ideas and validation, and measures every pipeline with harness-run trials. There is no LLM orchestrator and no fixed stage chain. The work queue is [docs/cleanup-plan.md](../../docs/cleanup-plan.md).
 
-**Current code (Stream D, pending independent review).** One lead stage drives
-harness trials and blocking scouts, then validates the champion snapshot and
-runs deterministic terminal refit. The solve stage/CLI are retired. Both the
+**Current code.** One lead stage drives harness trials and asynchronous scouts,
+then validates its measured delivery selection and runs deterministic terminal
+refit. It tries the current champion, then its recorded validated baseline if
+needed, retaining all integrity gates and existing call accounting. The solve stage/CLI are retired. Both the
 pipeline and standalone `lead-stage` use whole-chain preflight and shared
-telemetry. See [lead execution and limits](agent/run/README.md). No paid v2
-integration gate has run; the next authorized run is unit 1 on both arms only
-after review, merge and a green suite. Uploads still require explicit policy.
+telemetry. See [lead execution and limits](agent/run/README.md). The observed spam
+batch delivered spam1 and failed spam2; the integration gate remains unmet.
+The completion fallback repair has local fixture evidence, with no new live run.
+Uploads still require explicit policy.
 
 ## The experiment
 

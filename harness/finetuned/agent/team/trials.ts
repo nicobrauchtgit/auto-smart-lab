@@ -5,10 +5,13 @@ import { trialSupervisionDirectory } from "../training/results.js";
  * `<state>/<task>/solve/training/<training root>/.supervision/<experiment>/recovery.json`.
  */
 import { existsSync, readdirSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { readRecord } from "../experiments/safe_files.js";
+import { collectTrainingTrial } from "../training/results.js";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { resolveTrialSnapshot } from "../workspace/trial_source.js";
 import { git, resolveCommit } from "../training/git.js";
-import type { FindingRef, TrialSnapshot } from "./contracts.js";
+import type { FindingRef, TrialSnapshot, TrialReviewContext } from "./contracts.js";
 
 const EXPERIMENT_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -31,6 +34,8 @@ export interface TrialResolver {
  locate(experimentId: string): string | undefined;
  /** B's resolver: verified (and, when absent, restored) immutable source. Throws when unknown or unverifiable. */
  snapshot(experimentId: string): Promise<TrialSnapshot>;
+ /** Safe measured configuration, separate from source and unavailable sibling records. */
+ review(experimentId: string): Promise<TrialReviewContext>;
  /** Status of an experiment or commit-bound file reference; other refs are not this resolver's concern. */
  status(ref: FindingRef): Promise<RefState>;
 }
@@ -82,7 +87,28 @@ export function createTrialResolver(options: { roots: () => readonly string[]; s
    : Promise.reject(new Error("Not an experiment or commit-bound reference")));
   return cache.get(key)!.then(value => { if (value.status !== "resolved") cache.delete(key); return value; }, error => { cache.delete(key); throw error; });
  };
- return {locate, snapshot, status};
+ const review = async (experimentId: string): Promise<TrialReviewContext> => {
+  const frozen = await snapshot(experimentId), root = locate(experimentId)!;
+  const directory = join(root, experimentId);
+  const receipt = JSON.parse(readRecord(join(trialSupervisionDirectory(directory), "recovery.json")) ?? "");
+  const invocation = readRecord(join(directory, "invocation.json"));
+  if (!invocation || createHash("sha256").update(invocation).digest("hex") !== receipt.invocationHash)
+   throw new Error("Measured review invocation identity mismatch");
+  const measured = await collectTrainingTrial(directory);
+  const source = measured.invocation?.source as {commit?: string; tree?: string} | undefined;
+  if (!measured.eligible || !measured.request || source?.commit !== frozen.commit || source.tree !== frozen.tree)
+   throw new Error("Measured review requires completed eligible evidence matching the snapshot");
+  const measurement = measured.invocation?.measurement as {execution?: string} | undefined;
+  if (measurement?.execution !== "inductive" && measurement?.execution !== "batch")
+   throw new Error("Measured review lacks an execution contract");
+  // Parsing in collectTrainingTrial fixes search winners and rejects unexpected request fields.
+  // Copy explicitly; never forward the raw invocation, inputs, predictions or private feedback.
+  return structuredClone({experimentId, commit: frozen.commit, tree: frozen.tree,
+   pipeline: measured.request.pipeline, cv: measured.request.cv,
+   coverage: {requestedFolds: measured.result!.requestedFolds!, completedFolds: measured.result!.completedFolds!},
+   execution: measurement.execution});
+ };
+ return {locate, snapshot, status, review};
 }
 
 /** Whether this resolver decides the reference (experiment or commit-bound file). */

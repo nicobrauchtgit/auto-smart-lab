@@ -3,6 +3,7 @@
  * Implementations import these; the workspace/ entry points re-export them.
  */
 import type { SolveWorkspace } from "../solve/workspace.js";
+import type { PipelineRequest, CvRequest } from "../training/types.js";
 
 export type TeamRole = "lead" | "data" | "ideas" | "validation";
 export type ScoutRole = Exclude<TeamRole, "lead">;
@@ -18,6 +19,13 @@ export interface TreeState { commit: string; uncommittedFiles: string[]; moved: 
 export interface WorkspaceCheck { valid: boolean; errors: string[]; warnings: string[]; blocking: string[]; measurements: Record<string, number>; changedPaths: string[] }
 /** Immutable source of one measured trial, reconstructed from its receipt. */
 export interface TrialSnapshot { experimentId: string; commit: string; tree: string; sourceRoot: string }
+/** Allowlisted controller facts; contains no row identities, targets or confirmation feedback. */
+export interface TrialReviewContext {
+ experimentId: string; commit: string; tree: string;
+ pipeline: PipelineRequest; cv: CvRequest;
+ coverage: { requestedFolds: number; completedFolds: number };
+ execution: "inductive" | "batch";
+}
 /** One development label row, as read from a task's targets file. */
 export interface TrainingLabelRow { id: string; label: 0 | 1 }
 

@@ -9,7 +9,7 @@ import { readRecord } from "../experiments/safe_files.js";
 import { ExperimentSupervisor } from "../experiments/supervisor.js";
 import { addWorktree, committedSymlinks, git, resolveCommit, tagMessage, uncommittedFiles } from "../training/git.js";
 import { collectTrainingResults, trialSupervisionDirectory } from "../training/results.js";
-import { championTag } from "../training/development_selection.js";
+import { championTag, type MeasuredCandidateSelection } from "../training/development_selection.js";
 import { deriveTrialSeed, parseSeedPlan } from "../training/seeds.js";
 import { candidateIdentity, canonical, digest, selectionClaim, terminalPath } from "../training/terminal.js";
 import { sanitizeTrainingEnvironment } from "../training/environment.js";
@@ -37,6 +37,9 @@ export interface RefitOptions {
  reviewPath?: string;
 	/** Controller assertion binding reviewed upstream evidence to terminal selection. */
 	expectedExperimentId?: string;
+ /** Internal controller selection, independent of the statistical champion. */
+ selectedCandidate?: MeasuredCandidateSelection;
+ confirmationReceipt?: { path: string; sha256: string };
  signal?: AbortSignal; report?: StageReporter;
 }
 export interface RefitFreeze {
@@ -126,17 +129,18 @@ export function assertNoWorkers(root: string): void {
 /** Read-only candidate integrity check; never selects by score. */
 export async function inspectRefitCandidate(options: RefitOptions): Promise<RefitFreeze> {
  options.signal?.throwIfAborted();
- const tag = tagMessage(options.solutionsRoot, championTag(options.taskId));
+ const tag = options.selectedCandidate ? { commit: options.selectedCandidate.commit, message: JSON.stringify(options.selectedCandidate) }
+  : tagMessage(options.solutionsRoot, championTag(options.taskId));
  if (!tag) throw new Error("No authoritative champion tag; complete a measured promotion first");
  const chosen = JSON.parse(tag.message);
  if (options.expectedExperimentId !== undefined && chosen.experimentId !== options.expectedExperimentId) throw new Error("Chosen champion differs from controller-supplied reviewed evidence");
- if (typeof chosen.experimentId !== "string" || !chosen.pipeline || typeof chosen.trainingRoot !== "string") throw new Error("Champion tag lacks evidence or fixed pipeline");
+ if (typeof chosen.experimentId !== "string" || (!options.selectedCandidate && !chosen.pipeline) || typeof chosen.trainingRoot !== "string") throw new Error("Champion tag lacks evidence or fixed pipeline");
  const trainingRoot = resolve(options.trainingRoot ?? chosen.trainingRoot);
  if (trainingRoot !== resolve(chosen.trainingRoot)) throw new Error("Supplied evidence root disagrees with champion tag");
  const collection = await collectTrainingResults(trainingRoot);
  const trial = collection.trials.find(t => t.experimentId === chosen.experimentId);
  if (!trial?.eligible || !trial.invocation || !trial.request) throw new Error("Chosen champion has no valid eligible measured confirmation evidence");
- if (canonical(chosen.pipeline) !== canonical(trial.request.pipeline)) throw new Error("Champion parameters disagree with measured confirmation");
+ if (!options.selectedCandidate && canonical(chosen.pipeline) !== canonical(trial.request.pipeline)) throw new Error("Champion parameters disagree with measured confirmation");
  const source = trial.invocation.source as { commit: string; tree: string; repository: string } | undefined;
  const resolved = resolveCommit(options.solutionsRoot, tag.commit);
  if (!source || !resolved || source.commit !== tag.commit || source.tree !== resolved.tree || resolve(source.repository) !== resolve(options.solutionsRoot)) throw new Error("Champion source integrity failed");
@@ -153,16 +157,16 @@ export async function inspectRefitCandidate(options: RefitOptions): Promise<Refi
  const dataHash = createHash("sha256").update(canonical(measuredDeclaration(measurement!))).update(readFileSync(manifest)).digest("hex");
  const datasetHash = createHash("sha256").update(readFileSync(devZip)).update(readFileSync(manifest)).digest("hex");
  if (recovery.dataHash !== dataHash || recovery.datasetSha256 !== datasetHash) throw new Error("Measured evidence/data identity drifted");
+ if (recovery.invocationHash !== hashFile(join(trial.directory, "invocation.json"))
+  || recovery.seedPlanHash !== hashFile(join(trial.directory, "seed-plan.json"))) throw new Error("Measured evidence/data identity drifted");
+ const plan = parseSeedPlan(readFileSync(join(trial.directory, "seed-plan.json"), "utf8"));
+ if (plan.taskId !== options.taskId) throw new Error("Champion belongs to another task");
  const original = originalRefitData(options) as { task: Record<string, unknown> };
  const inputs: Record<string, unknown> = { ...original, task: { ...original.task, execution: options.taskConfiguration.execution, predictions: options.taskConfiguration.submission.predictions,
   ...(options.taskConfiguration.anomaly ? { anomaly: options.taskConfiguration.anomaly } : {}),
   // Exactly the controller context the factory received in its measured trials.
   measurement: Object.fromEntries(Object.entries(measurement!).filter(([key]) => !["sampleManifestPath", "sampleManifestSha256", "evidence", "evidenceManifestSha256"].includes(key))) },
   devZip, devManifest: manifest };
- if (recovery.invocationHash !== hashFile(join(trial.directory, "invocation.json"))
-  || recovery.seedPlanHash !== hashFile(join(trial.directory, "seed-plan.json"))) throw new Error("Measured evidence/data identity drifted");
- const plan = parseSeedPlan(readFileSync(join(trial.directory, "seed-plan.json"), "utf8"));
- if (plan.taskId !== options.taskId) throw new Error("Champion belongs to another task");
  const data = JSON.parse(python(options, [WORKER, "--inspect-json", JSON.stringify(inputs)]));
  python(options, [WORKER, "--evidence", trial.directory]);
  const identity = candidateIdentity(options.taskId, tag.commit, trial.request.pipeline);
@@ -186,7 +190,7 @@ export async function inspectRefitCandidate(options: RefitOptions): Promise<Refi
 }
 export async function prepareRefit(options: RefitOptions): Promise<RefitFreeze> {
  const prepared = await inspectRefitCandidate(options);
- const confirmation = confirmedCandidate(options.projectRoot, options.taskId, prepared);
+ const confirmation = confirmedCandidate(options.projectRoot, options.taskId, prepared, options.confirmationReceipt);
  if (confirmation) {
   prepared.evidence.push({ path: confirmation.path, sha256: confirmation.sha256 });
   if (confirmation.record.status === "completed") {
@@ -228,11 +232,12 @@ export async function runRefit(options: RefitOptions): Promise<{ artifacts: Stag
   try {
    if (existsSync(prepared.terminalPath)) freeze = json(prepared.terminalPath);
    else {
-    const current = tagMessage(options.solutionsRoot, championTag(options.taskId));
+    const current = options.selectedCandidate ? { commit: options.selectedCandidate.commit, message: JSON.stringify({ ...options.selectedCandidate, pipeline: prepared.pipeline }) }
+     : tagMessage(options.solutionsRoot, championTag(options.taskId));
     if (!current || current.commit !== prepared.source.commit || JSON.parse(current.message).experimentId !== prepared.chosenExperimentId || canonical(JSON.parse(current.message).pipeline) !== canonical(prepared.pipeline)) throw new Error("Champion changed while preparing refit; retry selection");
     for (const entry of prepared.evidence) if (hashFile(entry.path) !== entry.sha256) throw new Error("Evidence changed before freeze");
     assertNoWorkers(statePath(options.projectRoot, options.taskId, "solve", "training"));
-    assertNoWorkers(options.trainingRoot ?? JSON.parse(tagMessage(options.solutionsRoot, championTag(options.taskId))!.message).trainingRoot);
+    assertNoWorkers(options.selectedCandidate?.trainingRoot ?? options.trainingRoot ?? JSON.parse(tagMessage(options.solutionsRoot, championTag(options.taskId))!.message).trainingRoot);
     freeze = prepared;
     mkdirSync(freeze.directory, { recursive: true });
     // One atomic record is both the freeze and terminal selection boundary.

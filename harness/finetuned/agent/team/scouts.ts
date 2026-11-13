@@ -9,7 +9,7 @@ import { REPO_ROOT, statePath } from "../paths.js";
 import { ScoutBudget } from "./budget.js";
 import { appendValidFindings, validRef } from "./journal.js";
 import { earlierFindings } from "./findings.js";
-import type { FindingKind, FindingRef, ScoutRole, TrialSnapshot } from "./contracts.js";
+import type { FindingKind, FindingRef, ScoutRole, TrialSnapshot, TrialReviewContext } from "./contracts.js";
 import { describeRefs, type TrialResolver } from "./trials.js";
 
 export interface ScoutRequest { role: ScoutRole | ScoutRole[]; question: string; refs?: FindingRef[] }
@@ -20,6 +20,7 @@ export interface ScoutSessionInput {
  system: RenderedPrompt; opening: RenderedPrompt; budget: ScoutBudget; signal?: AbortSignal;
  /** Validation only: the resolved, verified snapshot of the trial under check. */
  trial?: TrialSnapshot;
+ review?: TrialReviewContext;
 }
 /**
  * How one role ended. completed: it returned bullets. empty: it finished
@@ -196,10 +197,11 @@ export function createScouts(options: ScoutsOptions) {
    signal?.throwIfAborted();
    const budget = new ScoutBudget(options.budgets?.[role] ?? HARNESS_CONFIG.team.scouts[role].maxToolCalls, options.prompts);
    // Validation inspects one verified snapshot; when it cannot be resolved, the role fails and never falls back to live code.
-   let trial: TrialSnapshot | undefined;
+   let trial: TrialSnapshot | undefined, review: TrialReviewContext | undefined;
    if (role === "validation") try {
     if (!options.trials || !options.solutionsRoot) throw new Error("no trial records available; validation never uses live code");
     trial = await options.trials.snapshot(validationExperiments(request.refs)[0]);
+    review = await options.trials.review(trial.experimentId);
    } catch (error) {
     signal?.throwIfAborted();
     failed(role, new Error(`snapshot unavailable: ${error instanceof Error ? error.message : "unknown error"}`));
@@ -212,10 +214,11 @@ export function createScouts(options: ScoutsOptions) {
    const earlier = await earlierFindings(options.journalPath, { runId: options.runId, datasetSha256: options.datasetSha256 });
    const opening = options.prompts.render("team.start", { task: options.task, question: request.question,
     refs, shown: String(earlier.lines.length), omitted: String(earlier.omitted),
-    earlier: earlier.lines.length ? earlier.lines.join("\n") : "none" });
+    earlier: earlier.lines.length ? earlier.lines.join("\n") : "none",
+    review: review ? options.prompts.render("team.validation-review", {review: JSON.stringify(review, null, 2)}).text : "" });
    let reply: ScoutReply;
    try {
-    const result = await options.run({ role, toolCallId, shared, system, opening, budget, signal, ...trial ? { trial } : {} });
+    const result = await options.run({ role, toolCallId, shared, system, opening, budget, signal, ...trial ? { trial, review } : {} });
     signal?.throwIfAborted();
     reply = typeof result === "string" ? { text: result } : result;
    } catch (error) {

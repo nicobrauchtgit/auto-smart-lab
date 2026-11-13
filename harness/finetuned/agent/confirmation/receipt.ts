@@ -31,14 +31,14 @@ export function confirmationRequirement(projectRoot: string, taskId: string): st
  }
  return undefined;
 }
-export function confirmedCandidate(projectRoot: string, taskId: string, candidate: { chosenExperimentId: string; source: unknown; pipeline: unknown }) {
+export function confirmedCandidate(projectRoot: string, taskId: string, candidate: { chosenExperimentId: string; source: unknown; pipeline: unknown }, receipt?: { path: string; sha256: string }) {
  const latest = join(confirmationRoot(projectRoot, taskId), "latest.json");
- if (!existsSync(latest)) {
+ if (!receipt && !existsSync(latest)) {
   const required = confirmationRequirement(projectRoot, taskId);
   if (required) throw new Error(`Held-back confirmation is required before refit (${required}); run the confirmation of the frozen champion first`);
   return undefined; // Champions without harness-sealed task data retain their existing refit contract.
  }
- const pointer = JSON.parse(readFileSync(latest, "utf8"));
+ const pointer = receipt ?? JSON.parse(readFileSync(latest, "utf8"));
  if (confirmationHash(pointer.path) !== pointer.sha256) throw new Error("Holdout confirmation checksum changed");
  const record = JSON.parse(readFileSync(pointer.path, "utf8"));
  if (record.schemaVersion !== 1 || record.taskId !== taskId || record.experimentId !== candidate.chosenExperimentId

@@ -432,7 +432,7 @@ test("tool returns immediately, roles run concurrently, and only bullets wake th
 
 test("cap queues FIFO across consultations; synchronous validation bypasses saturation", async () => {
  const releases=[deferred<string>(),deferred<string>(),deferred<string>()];const started:string[]=[];
- const scope=createScouts(scoutOptions({maxConcurrent:1,solutionsRoot:'/fixture',trials:{status:async()=>({status:'resolved'}),snapshot:async()=>({experimentId:'exp',commit:'commit',sourceRoot:'/fixture',tree:'tree'})} as any,
+ const scope=createScouts(scoutOptions({maxConcurrent:1,solutionsRoot:'/fixture',trials:{status:async()=>({status:'resolved'}),snapshot:async()=>({experimentId:'exp',commit:'commit',sourceRoot:'/fixture',tree:'tree'}),review:async()=>({experimentId:'exp',pipeline:{module:'model.py',factory:'build'},execution:'inductive'})} as any,
   run:async input=>{if(input.role==='validation')return '- ok: snapshot checked';const index=started.length;started.push(input.opening.text);return releases[index].promise;}}));
  await callScout(scope,['data','ideas'],'first');await callScout(scope,'data','second');
  await until(()=>started.length===1);

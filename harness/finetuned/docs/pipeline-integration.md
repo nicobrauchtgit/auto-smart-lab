@@ -313,15 +313,22 @@ provider credentials are added. See the [durable recovery contract](training-sea
 
 `agent/pipeline/stages/refit.ts` registers deterministic terminal training;
 `agent/pipeline/run_refit.ts` and `agent/refit_cli.ts` provide the standalone
-executor path (`npm run refit-stage -- <task-id> [--check-setup]`). The configured
-chain is solve → refit. Configured chains stop before submission; uploads require an explicit controller policy. Refit has no successor or model session.
+executor path (`./dev bun run refit-stage -- <task-id> [--check-setup]`). The lead
+owns terminal refit; the former solve chain is retired. Configured chains stop
+before submission; uploads require an explicit controller policy. Refit has no
+successor or model session.
 
-Refit resolves the chosen champion tag rather than the generic score-sorted
-selection artifact. It records typed freeze/evidence inputs, supervised process
+Standalone refit resolves the chosen champion tag rather than a generic
+score-sorted artifact. The lead may supply its recorded validated baseline as an
+explicit immutable delivery selection when the current champion fails. Both use
+the same integrity gates; acceptance and refit share one selection and its exact
+confirmation receipt. After acceptance, restart retains that selection and spent
+budget instead of starting a new lead. It records typed freeze/evidence inputs, supervised process
 events and validated final predictions/model/result artifacts under shared
 pipeline/invocation IDs. Setup declares `observability`, `python`, `task` and `refit`, without model or web credentials. Whole-chain preflight checks data/runtime availability
-before solve; candidate evidence is checked at refit invocation when solve is its
-producer. Standalone checks include chosen candidate integrity up front.
+before the lead starts. Candidate evidence is checked as it becomes available;
+the lead reuses the full read-only refit integrity checks before accepting a
+selection. Standalone checks include chosen candidate integrity up front.
 
 See [terminal freeze, execution, artifacts and retry semantics](harness-owned-training.md#implemented-terminal-refit).
 

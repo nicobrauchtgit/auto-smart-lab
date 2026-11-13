@@ -10,9 +10,9 @@ import { ScoutBudget } from '../team/budget.js';
 import { spamConfiguration } from '../pipeline/task_configuration.testing.js';
 import { trialSupervisionDirectory } from '../training/results.js';
 const prompts = loadPromptSnapshot();
-function fixture() {
+function fixture(canonical = false) {
  const root = mkdtempSync(join(tmpdir(), 'lead-contract-'));
- const solutionsRoot = join(root, 'solutions'); mkdirSync(solutionsRoot);
+ const solutionsRoot = canonical ? join(root, 'runs/finetuned/solutions') : join(root, 'solutions'); mkdirSync(solutionsRoot,{recursive:true});
  const git = (...args: string[]) => execFileSync('git', ['-C', solutionsRoot, ...args], { encoding: 'utf8' }).trim();
  git('init'); git('config','user.name','Fixture'); git('config','user.email','fixture@example.test');
  writeFileSync(join(solutionsRoot,'INDEX.md'),'fixture'); git('add','.'); git('-c','commit.gpgsign=false','commit','-m','fixture');
@@ -167,7 +167,7 @@ test('resume reconciles completion gap, authoritative champion and noise once wi
  const dependencies:any={verifiedCandidate:async()=>({experimentId:"measured",commit:f.commit,tree:"tree",sourceRoot:f.root}),
  prepareData:()=>f.data,readPython:()=>({prefix:f.root,executable:'/bin/false',fingerprint:'f'}),sandbox:()=>({executable:'/bin/false',cwd:f.root,mounts:[],env:{},agentRoot:join(f.root,'agent')}),prepareRepository:()=>({initialized:false,head:f.commit,branch:'master'}),environmentTool:()=>({name:'python_environment'}),
  createTraining:(opts:any)=>{finished=opts.onTrialFinished;return {ready:async()=>{await finished('measured',view);await finished('measured',view);},close:async()=>{},tools:[],toolPrompts:[],service:{describe:()=>({status:'completed',balancedAccuracy:1,noiseVerdict:'clear improvement',championComparison:{status:'completed'},foldScores:[{metrics:{balancedAccuracy:1}}]})},supervisor:{list:()=>[view]},bindSession:()=>{}};},
- confirm:async()=>{confirmations++;return {summary:{status:'completed',verdict:'no significant improvement',queryCount:1},privateScore:0.123456,scoutTranscript:'PRIVATE SCOUT'};},
+ confirm:async()=>{confirmations++;return {artifact:{kind:'holdout_confirmation',path:join(f.root,'confirmation.json'),sha256:'a'.repeat(64)},summary:{status:'completed',verdict:'no significant improvement',queryCount:1},privateScore:0.123456,scoutTranscript:'PRIVATE SCOUT'};},
  scouts:()=>({tool:{name:'scout'},report:async()=>{throw Error('cancelled lead must not validate');}}),refit:async()=>{throw Error('cancelled lead must not refit');},collectResults:async()=>({valid:false,trials:[],artifacts:[],errors:[]}),
  runAgentSession:async(opts:any)=>{expect(opts.prompt).toContain('clear improvement');expect(opts.prompt).toContain('measured (1.0000)');expect(opts.prompt).not.toContain('0.123456');expect(opts.prompt).not.toContain('PRIVATE SCOUT');active.abort();return {output:'cancelled',agentRunId:'fixture'};}};
  try {for(let resume=0;resume<2;resume++) {
@@ -316,3 +316,54 @@ test('lead on-demand skill metadata is assembled, bodies are sandbox-readable, s
   }
  }finally{session?.dispose();f.close();}
 }, 30_000);
+
+for (const mode of ['budget', 'explicit', 'current-valid', 'both-fail', 'same', 'restart', 'rejected-finalize', 'refit-retry', 'canonical'] as const) test(`delivery selection retains baseline: ${mode}`, async () => {
+ const f = fixture(mode==='canonical'); const validated: string[] = [], refitted: string[] = [];
+ const path = join(f.root, 'lead/PROGRESS.json'); const controller=new AbortController();let sessions=0;let agentSessions=0;
+ try {
+  const options: Parameters<typeof runLeadSession>[1] = { taskConfiguration: spamConfiguration(), maxToolCalls: 1, progressPath: path, dependencies: {
+   prepareData: () => f.data, readPython: () => ({prefix:f.root, executable:'/bin/false', fingerprint:'env'} as any),
+   sandbox: () => ({executable:'/bin/false', cwd:f.root, mounts:[], env:{}, agentRoot:join(f.root,'agent')} as any),
+   prepareRepository: () => ({initialized:false,head:f.commit,branch:'master'}), environmentTool: () => ({name:'python_environment'} as any),
+   createTraining: () => ({ready:async()=>{},close:async()=>{},tools:[],toolPrompts:[],service:{describe:()=>({})},supervisor:{list:()=>[]},bindSession:()=>{}} as any),
+   verifiedCandidate: async (_repo,_task,_data,selected,context) => {expect(context?.projectRoot).toBe(f.root);return {experimentId:selected!.experimentId,commit:selected!.commit,tree:'tree',sourceRoot:f.root};},
+   scouts: () => ({tool:{name:'scout'} as any,report:async request => {
+    const id=(request.refs![0] as {experiment:string}).experiment;validated.push(id);
+    const pass = mode === 'current-valid' || (id === 'measured' && !((mode === 'both-fail' || mode === 'rejected-finalize') && validated.length > 1));
+    return {text:pass?'- ok: selected source verified':'- fix: reproducible selected defect',roles:[{role:'validation',status:'completed',bullets:1}]};
+   }}),
+   runAgentSession: async options => {
+    agentSessions++;
+    const handover=options.customTools!.find(t=>t.name==='hand_over')!;
+    if(mode==='restart' && sessions++>0) return {output:'resumed at limit',agentRunId:'resumed'} as any;
+    await handover.execute('baseline',{reason:'baseline'},undefined,undefined,undefined as never);
+    expect(readProgress(path)?.baseline?.experimentId).toBe('measured');
+    if(mode !== 'same') {
+     writeFileSync(join(f.solutionsRoot,'new.txt'),'new source');
+     execFileSync('git',['-C',f.solutionsRoot,'add','.']);
+     execFileSync('git',['-C',f.solutionsRoot,'-c','commit.gpgsign=false','commit','-m','new source']);
+     execFileSync('git',['-C',f.solutionsRoot,'tag','-f','-a','champion/spam1','-m',JSON.stringify({experimentId:'new',trainingRoot:join(f.root,'training')})]);
+    }
+    if(mode === 'both-fail' || mode === 'rejected-finalize') {mkdirSync(join(f.solutionsRoot,'checks/spam1'),{recursive:true});writeFileSync(join(f.solutionsRoot,'checks/spam1/new.py'),'new check');}
+    if(mode === 'explicit') await handover.execute('final',{reason:'finished',finalize:true},undefined,undefined,undefined as never);
+    else {
+     if(mode==='rejected-finalize') expect(JSON.stringify(await handover.execute('rejected',{reason:'finished',finalize:true},undefined,undefined,undefined as never))).toContain('not approved');
+     const handlers:any={};for(const extension of options.extensionFactories??[]) {const factory=typeof extension==='function'?extension:(extension as any).factory;factory?.({on:(name:string,fn:any)=>(handlers[name]??=[]).push(fn)});}
+     for(const fn of handlers.message_end??[])await fn({message:{role:'assistant',content:[{type:'toolCall',id:'spent',name:'read'}]}});
+     if(mode==='rejected-finalize')for(const fn of handlers.tool_call??[])expect(await fn({toolCallId:'spent',toolName:'read'})).toBeUndefined();
+     if(mode==='restart')controller.abort();
+    }
+    return {output:'finished',agentRunId:'fixture'} as any;
+   },
+   refit:async input=>{refitted.push(input.experimentId);if(mode==='refit-retry' && refitted.length===1)throw Error('frozen worker failed');expect(input.selectedCandidate?.experimentId).toBe(input.experimentId);return{artifacts:[],validation:{valid:true,errors:[]}};},
+   collectResults:async()=>({valid:false,trials:[],artifacts:[],errors:[]}) as any,
+  }};
+  let result=await runLeadSession('spam1',{...options,...(mode==='restart'?{signal:controller.signal}:{})});
+  if(mode==='refit-retry'){expect(result.stopReason).toBe('refit_failed');expect(result.progress.handOver?.experimentId).toBe('measured');result=await runLeadSession('spam1',options);expect(result.resumed).toBe(true);expect(agentSessions).toBe(1);expect(result.progress.budget.used).toBe(1);}
+  if(mode==='restart'){expect(result.stopReason).toBe('cancelled');expect(refitted).toEqual([]);result=await runLeadSession('spam1',options);expect(result.resumed).toBe(true);expect(result.progress.sessions).toHaveLength(2);}
+  if(mode==='both-fail'||mode==='rejected-finalize') {expect(result.stopReason).toBe('validation_failed');expect(result.errors.join(';')).toContain('new:');expect(result.errors.join(';')).toContain('measured:');expect(refitted).toEqual([]);}
+  else {expect(result.valid).toBe(true);expect(refitted).toEqual(mode==='refit-retry'?['measured','measured']:[mode==='current-valid'?'new':'measured']);}
+  expect(validated).toEqual(mode==='same'?['measured']:mode==='both-fail'||mode==='rejected-finalize'?['measured','new','measured']:['measured','new']);
+  expect(result.progress.budget.used).toBe(mode==='explicit'?0:1);
+ }finally{f.close();}
+});

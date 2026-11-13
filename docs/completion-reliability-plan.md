@@ -1,8 +1,64 @@
 # Completion reliability: investigation and proposed repair
 
-2026-11-13. Status: investigated and planned, **runtime changes not implemented**.
-Base: `96930a8`. No new model sessions, task runs, task-data fits, dependency
-changes or uploads were made for this investigation.
+2026-11-13. Status: **runtime repair implemented and locally verified; not merged**.
+Investigation base: `96930a8`; implementation base: `77d81e5`. The findings below
+describe the previous behavior; the repair now implements A–C. No new model
+sessions, real task runs, dependency changes or uploads were made. Integration
+checks use tiny synthetic data and scripted agent/reviewer decisions.
+
+## Implementation
+
+Terminal delivery now tries the current champion and then the recorded baseline,
+with one shared finalization path and no statistical retagging. Internal measured
+selection carries experiment, training root and commit; parameters come from
+verified trial records. The baseline retains its exact confirmation receipt,
+including its checksum; later `latest.json` updates do not replace that proof or
+trigger another query. No accounting or trial-promotion rule changed.
+
+Validation receives an explicit projection of the selected measured request and
+fit/predict population contract in typed prompt input. Protected invocation hashes
+and eligible evidence are checked first. No new mount, writable metadata file or
+raw record exposure was added. Validation receipts also bind the Python environment.
+
+The real-worker regression measures baseline A and better champion B, approves A,
+rejects B and delivers A through the terminal worker. It checks exact test IDs,
+binary output, output hash, source ZIP contents, measured parameters, one terminal
+fit and idempotent repeat. A second case approves B first, changes its recorded
+request/invocation and verifies that the full preaccept integrity gate rejects
+the cached approval and delivers A. Both use the canonical run-directory layout.
+The champion tag remains B. Additional lifecycle and
+integrity checks cover rejection, restart and historical confirmation receipts.
+This establishes deterministic fixture behavior, not a successful live spam run.
+
+Independent implementation reviews found three issues before final verification:
+failed-refit restart dropping the accepted selection, incomplete preaccept
+integrity checks, and a canonical repository-root mismatch. These were corrected
+by retaining the accepted selection and budget on recovery, reusing the existing
+read-only `prepareRefit` checks before validation-cache reuse, and using
+`repoRootOf`. Re-review found no remaining blockers. Refit recovery never starts
+a fresh lead or selects another candidate after acceptance. The returned
+confirmation artifact also follows the delivered selection rather than the last
+candidate queried.
+
+## Repair verification
+
+- Serial `./dev bun run test:fast`: **588 passed, two existing libproc platform
+  skips, zero failed**, 76 files, 195.24 seconds. This includes both canonical
+  real-worker delivery cases and the review-context integrity regression.
+- `./dev bun run typecheck` and `./dev git diff --check`: passed.
+- Focused refit service checks: eight passed, 75 assertions, 128.63 seconds.
+- Full serial `./dev bun test`: **718 passed, two existing libproc platform
+  skips, zero failed**, 95 files, 1,048.45 seconds (17 min 28 s).
+- Periodic resource spot checks remained around 9.1 GiB free disk and 13 GiB
+  available RAM. Checks used disk-backed scratch/logs; existing run evidence and
+  Python setup journals were preserved. No merge, push or live task run occurred.
+
+Logs are disk-backed under
+`runs/launches/2026-11-13-completion-repair-checks/`. The initial fast invocation
+had two new fixture failures: its canonical layout retained a test-only project
+root override that produced incompatible recorded module paths. The fixture now
+uses the production training root setting; the serial rerun above passed without
+changing production path contracts, relaxing gates or increasing test timeouts.
 
 ## Required behavior
 
@@ -251,7 +307,7 @@ state not needed by A–C. Prefer extracting/reusing verification and replacing
 latest-pointer assumptions. A line-count target is not proof of simplicity, but
 each new state field must justify why existing trial/receipt records cannot do it.
 
-## Investigation checks completed
+## Investigation checks completed (before implementation)
 
 - Scripted missing-fallback reproduction: 1 passed, 6 assertions; current broken
   outcome reproduced. Its passing status confirms the reproduction, not the fix.

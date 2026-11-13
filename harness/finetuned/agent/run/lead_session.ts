@@ -20,7 +20,7 @@ import { prepareLeadPrompts } from "../prompts/lead.js";
 import { stageScoutSkills } from "../prompts/scout_skills.js";
 export { taskContract } from "../prompts/lead.js";
 import { HARNESS_CONFIG } from "../harness/config.js";
-import { ARM_ROOT, statePath } from "../paths.js";
+import { ARM_ROOT, statePath, repoRootOf } from "../paths.js";
 import { PROJECT_ROOT, resolveTask } from "../pipeline/resolve_task.js";
 import type { InvocationFeedback } from "../pipeline/feedback.js";
 import { guidanceBlock, type StageGuidance } from "../pipeline/guidance.js";
@@ -29,6 +29,7 @@ import type { TaskConfiguration } from "../pipeline/task_configuration.js";
 import type { StageArtifact, StageReporter } from "../pipeline/types.js";
 import type { Telemetry } from "../telemetry/runtime.js";
 import { loadPromptSnapshot, type PromptSnapshot, type RenderedPrompt } from "../prompts/loader.js";
+import { prepareRefit, type RefitOptions } from "../refit/service.js";
 import { runConfirmation, type ConfirmationOutput } from "../confirmation/service.js";
 import type { ExperimentView, Wakeable } from "../experiments/index.js";
 import { readCourseResources } from "../research/resources.js";
@@ -41,7 +42,7 @@ import { createScoutRunner } from "../team/runner.js";
 import { createTrialResolver, taskTrialRoots } from "../team/trials.js";
 import { stageScoutInputs } from "../team/workspace.js";
 import { collectTrainingResults, createGitHistoryGuard, createHarnessTraining, ensureSolutionsRepository, type TrainingCollection } from "../training/index.js";
-import { championSelection, championTag, handoverChampion } from "../training/development_selection.js";
+import { championSelection, championTag, handoverChampion, measuredCandidate, type MeasuredCandidateSelection } from "../training/development_selection.js";
 import { readSeedPlan } from "../training/seeds.js";
 import { resolveTrialSnapshot } from "../training/trial_source.js";
 import { trialSupervisionDirectory } from "../training/results.js";
@@ -160,6 +161,7 @@ export interface LeadScoutContext {
 }
 export interface LeadRefitInput {
  taskId: string; configuration: TaskConfiguration; experimentId: string; reviewPath: string;
+ selectedCandidate?: MeasuredCandidateSelection; confirmationReceipt?: {path: string; sha256: string};
  model?: string; signal?: AbortSignal; report?: StageReporter;
 }
 export interface LeadDependencies {
@@ -174,7 +176,7 @@ export interface LeadDependencies {
  confirm: typeof runConfirmation;
  refit(input: LeadRefitInput): Promise<{ artifacts: StageArtifact[]; validation: { valid: boolean; errors: string[] } }>;
  collectResults: typeof collectTrainingResults;
- verifiedCandidate(repository: string, taskId: string, datasetSha256: string): Promise<TrialSnapshot>;
+ verifiedCandidate(repository: string, taskId: string, datasetSha256: string, selected?: MeasuredCandidateSelection, context?: RefitOptions): Promise<TrialSnapshot>;
  /** How long to wait between looks at running trials when nothing arrives. */
  pollMs: number;
 }
@@ -228,15 +230,18 @@ const DEFAULT_DEPENDENCIES: LeadDependencies = {
   const { refitInputs } = await import("../pipeline/stages/refit.js");
   const { runRefit } = await import("../refit/service.js");
   return runRefit({ ...refitInputs(input.taskId, input.configuration), model: input.model, reviewPath: input.reviewPath,
-   expectedExperimentId: input.experimentId, ...(input.signal ? { signal: input.signal } : {}), ...(input.report ? { report: input.report } : {}) });
+   expectedExperimentId: input.experimentId, selectedCandidate: input.selectedCandidate, confirmationReceipt: input.confirmationReceipt, ...(input.signal ? { signal: input.signal } : {}), ...(input.report ? { report: input.report } : {}) });
  },
- verifiedCandidate: async (repository, taskId, datasetSha256) => {
+ verifiedCandidate: async (repository, taskId, datasetSha256, selected, context) => {
   const collection = await championSelection({ trials: [], valid: false, errors: [], artifacts: [] }, repository, taskId);
-  if (!collection.valid || !collection.selected) throw new Error("Champion has no completed eligible measurement");
-  const trial = collection.selected;
+  if (!selected && (!collection.valid || !collection.selected)) throw new Error("Champion has no completed eligible measurement");
+  const trial = selected ? await measuredCandidate(repository, taskId, selected) : collection.selected;
+  if (!trial) throw new Error("Candidate has no completed eligible measurement");
   const seedPlan = await readSeedPlan(join(trial.directory, "seed-plan.json"));
   if (seedPlan.taskId !== taskId || seedPlan.datasetSha256 !== datasetSha256) throw new Error("Champion measurement belongs to different task data");
-  return resolveTrialSnapshot(dirname(trial.directory), trial.experimentId);
+  const snapshot = await resolveTrialSnapshot(dirname(trial.directory), trial.experimentId);
+  if (context) await prepareRefit(context);
+  return snapshot;
  },
  collectResults: collectTrainingResults,
  pollMs: 5_000,
@@ -299,7 +304,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
  const prior = readProgress(progressPath);
  if (prior && prior.taskId !== taskId) throw new Error("Lead progress belongs to another task");
  if (prior?.datasetSha256 && prior.datasetSha256 !== data.datasetSha256) throw new Error("Lead progress dataset changed; restore its task state before resuming");
- const resumed = prior && (prior.status === "running" || prior.status === "handing_over") ? prior : undefined;
+ const resumed = prior && (prior.status === "running" || prior.status === "handing_over" || (prior.status === "failed" && !!prior.handOver)) ? prior : undefined;
  const invocationId = identity?.stageInvocationId ?? options.runId ?? randomUUID();
  const runId = resumed?.runId ?? options.runId ?? invocationId;
  const limit = resumed?.budget.limit ?? options.maxToolCalls ?? HARNESS_CONFIG.team.lead.maxToolCalls;
@@ -362,7 +367,8 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
  let composing = 0, idleStreak = 0;
  let streak = 0;
  for (const trial of progress.trials) streak = trial.becameChampion ? 0 : trial.status === "completed" ? streak + 1 : streak;
- let handOver: LeadHandOver | undefined = resumed?.status === "handing_over" ? resumed.handOver : undefined;
+ let handOver: LeadHandOver | undefined = resumed?.handOver;
+ if (handOver) { progress.status = "handing_over"; delete progress.error; save(); }
 
  // ---- trials, feedback and the Ladder holdout check ----
  let training: ReturnType<typeof createHarnessTraining> | undefined;
@@ -377,12 +383,14 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
   const existing = progress.holdout.find(row => row.experimentId === experimentId);
   if (existing) return holdoutText(existing);
   let row: LeadProgress["holdout"][number];
+  let receipt: { path: string; sha256: string } | undefined;
   if (!data.holdoutSeedPlan || !data.split.sealedIds.length) row = { experimentId, status: "skipped", reason: data.split.confirmation?.reason ?? "this task has no withheld rows" };
   else try {
    const output = await deps.confirm({ workspace: data, pythonExecutable: python.executable, environmentFingerprint: python.fingerprint,
     env: workerEnvironment(python), report, ...(options.signal ? { signal: options.signal } : {}),
     sandboxCommand: (command, input) => trainingSandboxCommand(sandbox, command, input) });
    confirmation = output;
+   receipt = { path: output.artifact.path, sha256: output.artifact.sha256! };
    const summary = output.summary as { status?: string; verdict?: string; score?: number; queryCount?: number; reason?: string };
    row = summary.status === "completed"
     ? { experimentId, status: "completed", verdict: summary.verdict, queryCount: summary.queryCount, ...(typeof summary.score === "number" ? { score: summary.score } : {}) }
@@ -391,6 +399,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
    options.signal?.throwIfAborted();
    row = { experimentId, status: "failed", reason: (error instanceof Error ? error.message : String(error)).split("\n")[0].slice(0, 200) };
   }
+  if (receipt) row.receipt = receipt;
   progress.holdout.push(row);
   save();
   record("lead_holdout_check", { ...row });
@@ -499,17 +508,35 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
   }) : [];
   return sha256(JSON.stringify(walk(root)));
  };
+ const candidateSelection = (experimentId: string): MeasuredCandidateSelection | undefined => {
+  if (progress.baseline?.experimentId === experimentId)
+   return { experimentId, commit: progress.baseline.commit, trainingRoot: progress.baseline.trainingRoot ?? trainingRoot };
+  const champion = championOf(data.solutionsRoot, taskId);
+  if (champion?.experimentId !== experimentId) return undefined;
+  const tag = tagMessage(data.solutionsRoot, championTag(taskId));
+  const root = tag && JSON.parse(tag.message).trainingRoot;
+  return { experimentId, commit: champion.commit, trainingRoot: typeof root === "string" ? root : trainingRoot };
+ };
+ const candidateConfirmation = (experimentId: string) => progress.baseline?.experimentId === experimentId
+  ? progress.baseline.confirmationReceipt ?? progress.holdout.find(row => row.experimentId === experimentId)?.receipt
+  : progress.holdout.find(row => row.experimentId === experimentId)?.receipt;
  const validate = async (experimentId: string, reason: string, signal?: AbortSignal, toolCallId?: string) => {
   let snapshot: TrialSnapshot;
   try {
-   snapshot = await deps.verifiedCandidate(data.solutionsRoot, taskId, fingerprint);
-   if (snapshot.experimentId !== experimentId || snapshot.commit !== championOf(data.solutionsRoot, taskId)?.commit) throw new Error("Champion identity changed");
+   const selection = candidateSelection(experimentId);
+   if (!selection) throw new Error("Candidate identity unavailable");
+   snapshot = await deps.verifiedCandidate(data.solutionsRoot, taskId, fingerprint, selection,
+    { taskId, taskConfiguration: configuration, projectRoot: repoRootOf(data.solutionsRoot), solutionsRoot: data.solutionsRoot,
+     trainZip: data.trainZip, testZip: data.testZip, labelsPath: data.originalTargetsPath,
+     environmentFingerprint: python.fingerprint, pythonExecutable: python.executable, env: workerEnvironment(python),
+     selectedCandidate: selection, expectedExperimentId: experimentId, confirmationReceipt: candidateConfirmation(experimentId) });
+   if (snapshot.experimentId !== experimentId || snapshot.commit !== selection.commit) throw new Error("Candidate identity changed");
   } catch (error) {
    record("lead_validation_unavailable", { experiment_id: experimentId, message: String(error) });
    return { status: "unavailable", fix: [], advice: [], ok: [] };
   }
   const receiptKey = () => sha256(JSON.stringify({ experimentId, commit: snapshot.commit, tree: snapshot.tree, dataset: fingerprint,
-   checks: checkIdentity(), prompts: prompts.fingerprint, boundary: boundaryFingerprint }));
+   checks: checkIdentity(), prompts: prompts.fingerprint, boundary: boundaryFingerprint, environment: python.fingerprint }));
   let key: string;
   try { key = receiptKey(); } catch {
    return { status: "unavailable", fix: [], advice: [], ok: [] };
@@ -534,7 +561,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
    }
    progress.validationReceipts![completedKey] = { experimentId, commit: snapshot.commit, validation: summary, at: now() };
    if (validationPassed(summary) && !progress.baseline) {
-    progress.baseline = { experimentId, commit: snapshot.commit, receiptKey: completedKey, at: now() };
+    progress.baseline = { experimentId, commit: snapshot.commit, trainingRoot: candidateSelection(experimentId)?.trainingRoot, confirmationReceipt: candidateConfirmation(experimentId), receiptKey: completedKey, at: now() };
     progress.phase = "improvement";
     record("lead_baseline_validated", { ...progress.baseline, phase: progress.phase });
    }
@@ -544,7 +571,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
   return summary;
  };
  const accept = (by: LeadHandOver["by"], reason: string, experimentId: string, validation: LeadHandOver["validation"]) => {
-  handOver = { by, reason: reason.slice(0, 1000), experimentId, validation, at: now() };
+  handOver = { by, reason: reason.slice(0, 1000), experimentId, selectedCandidate: candidateSelection(experimentId), confirmationReceipt: candidateConfirmation(experimentId), validation, at: now() };
   progress.handOver = handOver;
   progress.status = "handing_over";
   mkdirSync(dirname(reviewPath), { recursive: true });
@@ -560,6 +587,27 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
   await feedbackChain;
  };
  const holdoutUsed = () => `${Math.max(0, ...progress.holdout.map(row => row.queryCount ?? 0))}`;
+ const finalize = async (by: LeadHandOver["by"], reason: string, signal?: AbortSignal, toolCallId?: string) => {
+  const champion = championOf(data.solutionsRoot, taskId);
+  const choices = [...new Set([champion?.experimentId, progress.baseline?.experimentId].filter((id): id is string => !!id))];
+  const failures: string[] = [];
+  for (const experimentId of choices) {
+   signal?.throwIfAborted();
+   // Only the current champion may incur a new query. A baseline reuses its receipt.
+   if (experimentId === champion?.experimentId && !holdoutDone(experimentId)) await runHoldout(experimentId);
+   const validation = await validate(experimentId, reason, signal, toolCallId);
+   if (validationPassed(validation)) {
+    const fallback = experimentId !== champion?.experimentId;
+    accept(by, fallback ? `${reason}; fallback after ${failures.join("; ")}` : reason, experimentId, validation);
+    if (fallback) record("lead_delivery_fallback", { experiment_id: experimentId, rejected: failures });
+    budget.end();
+    await scouts?.cancel?.();
+    return { experimentId, validation, failures };
+   }
+   failures.push(`${experimentId}: ${validation.fix.join("; ") || `validation ${validation.status}; no approved evidence`}`);
+  }
+  return { failures };
+ };
  const handOverTool = defineTool({ executionMode: "sequential", name: "hand_over", label: "Hand over", description: prompts.render("team.lead-handover-tool", {}).text,
   parameters: Type.Object({ reason: Type.String({ minLength: 1, maxLength: 1000 }), finalize: Type.Optional(Type.Boolean()) }, { additionalProperties: false }),
   async execute(toolCallId, args, signal) {
@@ -569,15 +617,15 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
    if (running.length) return reply(prompts.render("team.lead-handover-running", { running: running.map(view => view.id).join(", ") }).text);
    await settle(signal);
    const champion = championOf(data.solutionsRoot, taskId);
-   if (!champion) { record("lead_hand_over_refused", { reason: "no_champion" }); return reply(prompts.render("team.lead-handover-no-champion", {}).text); }
-   const validation = await validate(champion.experimentId, args.reason, signal, toolCallId);
-   if (!validationPassed(validation)) return reply(prompts.render("team.lead-handover-fix", { experiment: champion.experimentId, bullets: validation.fix.length ? validation.fix.map(row => `- ${row}`).join("\n") : `status: ${validation.status}; labelled findings: ${validation.ok.length + validation.advice.length}` }).text);
-   if (!args.finalize) return reply(prompts.render("team.lead-checkpoint", { progress: renderProgress(prompts, progress).text }).text);
-   accept("lead", args.reason, champion.experimentId, validation);
-   await scouts?.cancel?.();
-   budget.end();
-   return reply(prompts.render("team.lead-handover-accepted", { experiment: champion.experimentId, holdout: holdoutUsed(),
-    validation: validation.fix.length ? `${validation.fix.length} open defect(s) recorded` : validation.status }).text);
+   if (!champion && (!args.finalize || !progress.baseline)) { record("lead_hand_over_refused", { reason: "no_champion" }); return reply(prompts.render("team.lead-handover-no-champion", {}).text); }
+   if (!args.finalize) {
+    const validation = await validate(champion!.experimentId, args.reason, signal, toolCallId);
+    if (!validationPassed(validation)) return reply(prompts.render("team.lead-handover-fix", { experiment: champion!.experimentId, bullets: validation.fix.length ? validation.fix.map(row => `- ${row}`).join("\n") : `status: ${validation.status}; labelled findings: ${validation.ok.length + validation.advice.length}` }).text);
+    return reply(prompts.render("team.lead-checkpoint", { progress: renderProgress(prompts, progress).text }).text);
+   }
+   const selected = await finalize("lead", args.reason, signal, toolCallId);
+   if (!selected.experimentId) return reply(prompts.render("team.lead-handover-fix", { experiment: champion?.experimentId ?? progress.baseline!.experimentId, bullets: selected.failures.join("\n") }).text);
+   return reply(prompts.render("team.lead-handover-accepted", { experiment: selected.experimentId, holdout: holdoutUsed(), validation: selected.validation!.status }).text);
   } });
 
  // ---- the lead session ----
@@ -683,12 +731,9 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
    record("lead_harness_hand_over_started", { reason: endReason, running: runningTrials().map(view => view.id) });
    while (!cancelled() && runningTrials().length) await inbox.wait(deps.pollMs, options.signal);
    await settle(options.signal);
-   const champion = championOf(data.solutionsRoot, taskId);
-   if (champion && !cancelled()) {
-    if (!holdoutDone(champion.experimentId)) await runHoldout(champion.experimentId);
-    const validation = await validate(champion.experimentId, `harness hand-over at ${endReason}`, options.signal);
-    if (validationPassed(validation)) accept("harness", endReason, champion.experimentId, validation);
-    else { stopReason = "validation_failed"; errors.push("Champion validation failed or returned no labelled evidence"); progress.status = "failed"; progress.error = errors[0]; }
+   if (!cancelled()) {
+    const selected = await finalize("harness", endReason, options.signal);
+    if (!selected.experimentId && selected.failures.length) { stopReason = "validation_failed"; errors.push(...selected.failures); progress.status = "failed"; progress.error = errors.join("; "); }
    }
   }
  } finally {
@@ -703,7 +748,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
   progress.status = "failed"; progress.error = errors[0];
  } else if (handOver) {
   try {
-   const refit = await deps.refit({ taskId, configuration, experimentId: handOver.experimentId, reviewPath, model: options.model,
+   const refit = await deps.refit({ taskId, configuration, experimentId: handOver.experimentId, selectedCandidate: handOver.selectedCandidate, confirmationReceipt: handOver.confirmationReceipt, reviewPath, model: options.model,
     ...(options.signal ? { signal: options.signal } : {}), ...(report ? { report } : {}) });
    refitArtifacts = refit.artifacts;
    if (!refit.validation.valid) throw new Error(refit.validation.errors.join("; ") || "refit invalid");
@@ -722,7 +767,8 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
  let collection = await championSelection(await deps.collectResults(trainingRoot), data.solutionsRoot, taskId);
  // Terminal freezing closes development selection; retain the validated handover evidence.
  if (progress.status === "handed_over") {
-  const selected = await handoverChampion(data.solutionsRoot, taskId);
+  const selected = handOver?.selectedCandidate ? await measuredCandidate(data.solutionsRoot, taskId, handOver.selectedCandidate, true).catch(() => undefined)
+   : await handoverChampion(data.solutionsRoot, taskId);
   if (selected) collection = { ...collection, valid: true, errors: [], selected,
    artifacts: [...new Map([...collection.artifacts, ...selected.artifacts].map(artifact => [artifact.path, artifact])).values()] };
  }
@@ -731,6 +777,15 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
   hand_over_seconds: progress.handOver ? (Date.parse(progress.handOver.at) - Date.parse(progress.startedAt)) / 1000 : null,
   trials: progress.trials.length, holdout_queries: holdoutUsed(), budget: progress.budget, scout_calls: progress.scoutCalls,
   selected_selection: selectionSummary(collection.selected?.result), errors });
+ if (handOver) {
+  const selectedId = handOver.experimentId;
+  const row = progress.holdout.find(item => item.experimentId === selectedId);
+  const receipt = handOver.confirmationReceipt;
+  if (receipt && row) {
+   const { receipt: _receipt, ...summary } = row;
+   confirmation = { artifact: { kind: "holdout_confirmation", ...receipt }, summary };
+  } else confirmation = undefined;
+ }
  return { progress, stopReason, valid: stopReason === "handed_over", errors, collection, configuration, trainingRoot,
   ...(confirmation ? { confirmation } : {}), refitArtifacts, ...(sessionError ? { sessionError } : {}), resumed: !!resumed };
 }

@@ -54,6 +54,11 @@ function stateFixture(base = tmpdir()) {
   devZip: join(dataRoot, "development.zip"), developmentArchive: join(dataRoot, "development.zip"), sampleManifestPath: join(dataRoot, "development-samples.json"),
   developmentManifest: join(dataRoot, "development-samples.json"), testZip: join(state, "test.zip"), testArchive: join(state, "test.zip"), datasetSha256: "dataset"} as unknown as TaskData;
  const resolver = createTrialResolver({roots: () => [trials], solutionsRoot: live});
+ // These source-only fixtures test scout routing, not completed measurement parsing.
+ resolver.review = async id => ({experimentId: id, commit: measured.commit, tree: measured.tree,
+  pipeline: {module: "solutions/tasks/model.py", factory: "build_pipeline"},
+  cv: {kind: "builtin", scheme: "stratified_kfold", folds: 2, repeats: 1},
+  coverage: {requestedFolds: 2, completedFolds: 2}, execution: "inductive"});
  return {state, live, trials, measured, fixed, data, resolver};
 }
 

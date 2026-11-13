@@ -203,3 +203,21 @@ test("authoritative chosen tag wins when a different eligible trial has a higher
  await runRefit(f.options);
  expect(readFileSync(join(frozen.directory, "predictions.csv"), "utf8").trim().split(/\r?\n/).slice(1).every(line => line.endsWith(",0"))).toBe(true);
 }, 90_000);
+
+test("controller selection refits an older measured source without retagging the statistical champion", async () => {
+ const f=await fixture();
+ const selectedCandidate={experimentId:f.started.id,trainingRoot:f.root,commit:f.head};
+ writeFileSync(join(f.solutionsRoot,'tasks','fixture.py'),"raise RuntimeError('new live source must not run')\n");
+ const newer=commitAll(f.solutionsRoot,'newer source');
+ tagCommit(f.solutionsRoot,'champion/fixture',newer,JSON.stringify({experimentId:'newer',trainingRoot:f.root,pipeline:f.request.pipeline}),true);
+ const options={...f.options,selectedCandidate,expectedExperimentId:f.started.id};
+ const prepared=await prepareRefit(options);expect(prepared.source.commit).toBe(f.head);
+ expect((await runRefit(options)).validation.valid).toBe(true);
+ expect(tagMessage(f.solutionsRoot,'champion/fixture')?.commit).toBe(newer);
+ await expect(prepareRefit({...options,selectedCandidate:{...selectedCandidate,commit:newer}})).rejects.toThrow('source integrity');
+ await expect(prepareRefit({...options,expectedExperimentId:'newer'})).rejects.toThrow('reviewed evidence');
+ await expect(prepareRefit({...options,selectedCandidate:{...selectedCandidate,trainingRoot:join(f.root,'missing')}})).rejects.toThrow('disagrees');
+ const checkpoint=join(f.started.directory,'single-checkpoint.json');const original=readFileSync(checkpoint,'utf8');
+ const corrupt=JSON.parse(original);corrupt.checkpointSha256='0'.repeat(64);writeFileSync(checkpoint,JSON.stringify(corrupt));
+ await expect(prepareRefit(options)).rejects.toThrow();writeFileSync(checkpoint,original);
+},90_000);

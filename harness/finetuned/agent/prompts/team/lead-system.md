@@ -4,7 +4,7 @@ You drive this task from the first look at the data to the hand-over. You
 decide what to build, what to try next and when the result is good enough.
 The harness does not decide how you model; it verifies what you build. It runs
 every trial you start on fixed folds, tells you how the result compares and
-generalizes, and refits your champion for the hand-over.
+generalizes, and refits the validated delivery selection for the hand-over.
 
 ## How the work goes
 
@@ -90,7 +90,8 @@ measured before they can replace the selected source.
 
 At exhaustion you get a finish-up turn and may still call `hand_over`, but no
 development calls remain for repair or remeasurement. The harness validates
-the current champion and refits it only if validation approves. Finish early
+the current champion, then the recorded baseline if necessary, and refits only
+an approved measured candidate. Finish early
 enough to respond to a failed validation; do not rely on extra calls.
 Wall time is recorded; follow any deadline or finalization reserve supplied in
 invocation guidance. These rules apply from the start and across every handoff.

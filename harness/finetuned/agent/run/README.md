@@ -51,18 +51,30 @@ compaction convey phase, baseline and current champion without scout transcripts
 or private sealed scores. A checkpoint is not a delivered or submitted result.
 
 Validation receipts persist by experiment/source/tree, development data,
-validation prompt snapshot, execution boundary and task-check content hashes.
+validation prompt snapshot, execution boundary, Python environment and task-check content hashes.
 Completed defects also persist until that identity changes; unavailable,
 failed, stopped and empty validation can retry. Repeated unchanged successful
 checkpoints reuse the receipt, including across restart, without another scout.
 Every request still verifies eligible measurement and snapshot identity before
 using a receipt; a missing snapshot is never permanently cached as unavailable.
 
-`hand_over({reason, finalize: true})` validates by the same path, then ends tool
+`hand_over({reason, finalize: true})` tries the current champion, then the recorded
+validated baseline if needed, deduplicating identical selections. Each choice
+must still pass source, measurement, task-data, environment and confirmation
+integrity checks and current validation. The baseline retains its original
+evidence root and exact confirmation receipt; fallback issues no new Ladder
+query and never retags the statistical champion. Both rejected selections yield
+failure with per-candidate reasons. A rejected request leaves remaining ordinary
+calls available for repair.
+
+Acceptance ends tool
 use (including later mutations in a real parallel batch). Only after the session
 ends does the harness run deterministic all-training-data refit and test
 prediction. Budget/idle/session-failure end also waits for trials and uses the
-same evidence gate. Unresolved defects never receive an override. Cancellation
+same selection and evidence gate. The approved immutable selection is passed
+through to refit and reported as the delivered selection. After terminal freeze,
+recovery uses that identity; a refit failure does not trigger another selection.
+Unresolved defects never receive an override. Cancellation
 retains progress; delivered success still requires final refit artifact gates.
 
 Correction to the earlier label-safety claim: refit does not inherently expose
@@ -71,15 +83,28 @@ This checkpoint changes neither training populations nor withheld-label
 visibility; it needs no baseline refit. Terminal refit uses all training rows,
 never test labels, under the existing controller boundaries.
 
-Limits: no paid task run has exercised this checkpoint revision. Earlier v2
-baseline runs failed their delivery/time gates; their evidence remains in
-`docs/experiments/v2-unit1-2026-11-12.md`. This revision's wall-time/accuracy
+Limits: the previous checkpoint revision delivered spam1 but failed spam2;
+see `docs/experiments/spam-completion-tool-choice-2026-11-13.md`.
+No paid task run has exercised the completion fallback repair. Its wall-time/accuracy
 targets are unmeasured. Validation detects only defects it observes; a completed scout
 is not proof of model correctness. Clustering
 confirmation and label-free hand-over retain the P7c limitations. Host shells
 and terminal refit retain the documented privileges; filesystem isolation is
 not a network policy. PROGRESS is the lead's durable trial summary; measured
 trial results are not automatically appended as result-kind findings yet.
+
+## Completion repair checks (2026-11-13)
+
+Independent implementation review and re-review found no remaining blockers
+after recovery, preaccept integrity and canonical-root corrections. The serial
+fast suite passed 588 tests with two platform skips; the full suite passed 718
+tests with two platform skips across 95 files (1,048.45 seconds). Both had zero
+failures. Typecheck and whitespace checks passed. Two real-worker cases verify
+baseline delivery after a newer review failure or changed cached-approved
+evidence, including output IDs/hash, source archive, fixed parameters, one fit,
+delivery provenance and idempotence in the production directory layout.
+Logs: `runs/launches/2026-11-13-completion-repair-checks/`. These are local fixture
+checks; no live spam run, merge, push or upload followed this repair.
 
 ## Isolated development checks (2026-11-12)
 
@@ -134,4 +159,6 @@ After that review and green full suite, canonical `v2-clean-slate` was
 fast-forwarded unsigned from `81a9a44` to `8c66442` on 2026-11-12. This
 supersedes the earlier pending-review/full-suite statements above. No paid
 task run, upload or push followed integration; the checkpoint workflow's
-model behavior and latency remain unmeasured.
+model behavior and latency were subsequently observed in the spam completion
+report above. Historical development-check records do not verify the newer
+fallback repair.

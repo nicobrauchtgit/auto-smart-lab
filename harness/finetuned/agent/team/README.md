@@ -137,6 +137,19 @@ calls are admitted. `run_checks` runs stream B's
 `runTrialChecks` on that snapshot (fresh interpreter, snapshot first on the
 import path, live import origins refused) and records each check's hash.
 
+The opening also supplies a typed controller-owned measured review summary:
+exact pipeline/factory parameters (including fixed search winners), CV scheme,
+completed/requested fold counts, commit/tree and inductive/batch execution.
+`TrialResolver.review` checks completed eligible evidence, the protected receipt's
+invocation hash and the snapshot identity. Missing or inconsistent evidence fails
+before a validation session starts. This allowlisted input contains no private
+scores, row identities, targets, predictions or raw invocation fields. It is
+delivered by value in the opening and recorded as supplied input metadata;
+no file or mount is added and the measured source is unchanged. The prompt states
+the terminal population contract and no longer promises sibling trial records
+are filesystem-readable. Defects must apply to the measured configuration;
+unproven risks remain advice and unavailable checks are reported honestly.
+
 This enforces the execution route, not the semantics of arbitrary Python.
 A check can still contain extra fitting, subprocesses or a CV loop; preventing
 redundant CV would require a separate, narrower validation API. This change

@@ -1,6 +1,6 @@
 # Current state and work queue
 
-Updated 2026-11-13 (observed finetuned spam completion batch). This file owns the active queue. The design is
+Updated 2026-11-13 (completion fallback repair). This file owns the active queue. The design is
 [expert-team-v2.md](../harness/finetuned/docs/expert-team-v2.md) (accepted
 2026-11-11); its contract appendix is
 [expert-team.md](../harness/finetuned/docs/expert-team.md). Superseded plans,
@@ -105,12 +105,17 @@ separate.
 
 ## Work queue (v2 section 11)
 
-First priority, proposed 2026-11-13: [completion reliability repair](completion-reliability-plan.md).
+First priority, implemented and locally verified, 2026-11-13:
+[completion reliability repair](completion-reliability-plan.md).
 The audit reproduced a saved validated baseline followed by a rejected newer
 champion yielding zero refits. The plan makes delivery selection explicit across
 lead, confirmation and refit, supplies truthful review context, and tests actual
 fallback delivery while preserving the prior integrity/isolation fixes. Runtime
-implementation and another live run have not been started.
+implementation now carries an explicit measured selection through validation,
+confirmation and refit; the real-worker fallback fixture delivers the validated
+baseline without retagging the champion. Independent re-review found no remaining
+blockers. Fast suite: 588 passed, two skips; full suite: 718 passed, two skips;
+both had zero failures. Typecheck passed. No new live run or merge has started.
 
 | Package | State | Next action / completion evidence |
 | --- | --- | --- |
@@ -125,14 +130,16 @@ implementation and another live run have not been started.
 Scout starting budgets are set from the P7a budget test: data 15, ideas 10,
 validation 10 (v2 section 3). The lead's 80 is exercised at the integration gate.
 
-Latest evidence: the earlier v2 unit-1 runs failed their delivery/time gates
+Earlier evidence: the v2 unit-1 runs failed their delivery/time gates
 ([run report](experiments/v2-unit1-2026-11-12.md)); the bounded prompt-first spam1
 experiment also failed to deliver within 600 seconds
 ([historical report](experiments/prompt-first-spam1-just10min.md)). The later
 checkpoint revision passed independent review and its recorded full suite
-(675 passed, 2 skipped), but has no paid task-run evidence. The integration gate,
-reader reuse, live delivery and P7c remain unproven. No new model runs or uploads
-are authorized for this merge/cleanup. See [cleanup evidence](worktree-cleanup-2026-11-12.md).
+(675 passed, 2 skipped). Its subsequent live spam batch delivered spam1 but failed
+spam2, as reported above. The new fallback repair has synthetic delivery evidence
+and remains untested in a live model run. The multi-task integration gate, reader
+reuse and P7c remain unproven. No new model runs or uploads are part of this repair.
+See [cleanup evidence](worktree-cleanup-2026-11-12.md) for the historical merge.
 
 ## Follow-ups and readiness limits
 

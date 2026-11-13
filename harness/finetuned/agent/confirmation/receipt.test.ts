@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { confirmedCandidate, confirmationRequirement } from "./receipt.js";
+import { confirmedCandidate, confirmationRequirement, confirmationHash } from "./receipt.js";
 
 const candidate = { chosenExperimentId: "trial", source: { commit: "c" }, pipeline: { module: "m", factory: "f" } };
 
@@ -32,4 +32,22 @@ test("refit refuses an unconfirmed champion whenever the harness sealed rows", (
   writeFileSync(join(legacy, "holdout.json"), JSON.stringify({ sealedIds: ["a"] }));
   expect(confirmedCandidate(root, "spam1", candidate)).toBeUndefined();
  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("an exact historical confirmation survives a newer latest pointer without spending another read", () => {
+ const root=mkdtempSync(join(tmpdir(),'historical-receipt-'));
+ try {
+  const dir=join(root,'runs/finetuned/spam1/confirmation');mkdirSync(dir,{recursive:true});
+  const record={schemaVersion:1,taskId:'spam1',experimentId:'trial',identity:'receipt-a',population:'population',source:candidate.source,pipeline:candidate.pipeline,status:'completed'};
+  const path=join(dir,'a.json');writeFileSync(path,JSON.stringify(record));const receipt={path,sha256:confirmationHash(path)};
+  writeFileSync(join(dir,'latest.json'),JSON.stringify({path:join(dir,'b.json'),sha256:'newer'}));
+  const ledger=join(root,'runs/finetuned/spam1/holdout-ledger.json');
+  writeFileSync(ledger,JSON.stringify({schemaVersion:1,taskId:'spam1',populations:{population:{reads:[{identity:'receipt-a',experimentId:'trial'},{identity:'receipt-b',experimentId:'new'}]}}}));
+  expect(confirmedCandidate(root,'spam1',candidate,receipt)?.populationReadCount).toBe(2);
+  expect(()=>confirmedCandidate(root,'spam1',{...candidate,chosenExperimentId:'new'},receipt)).toThrow('differs');
+  expect(()=>confirmedCandidate(root,'spam1',{...candidate,pipeline:{...candidate.pipeline,parameters:{changed:true}}},receipt)).toThrow('differs');
+  writeFileSync(ledger,JSON.stringify({schemaVersion:1,taskId:'spam1',populations:{population:{reads:[]}}}));
+  expect(()=>confirmedCandidate(root,'spam1',candidate,receipt)).toThrow('reservation');
+  writeFileSync(path,JSON.stringify({...record,status:'failed'}));expect(()=>confirmedCandidate(root,'spam1',candidate,receipt)).toThrow('checksum');
+ }finally{rmSync(root,{recursive:true,force:true});}
 });
