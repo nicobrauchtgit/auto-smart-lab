@@ -9,6 +9,14 @@ history (commit 452e1e5).
 
 ## Experiment and current runtime
 
+**Unit 2 setup (2026-11-15).** DOCX `documents1` inputs and original training
+labels are staged and hashed, shared task metadata/text are restored without VM
+credentials or modeling coaching, and the finetuned declaration uses the existing
+binary primitive. Minimal source-continuation setup and the task-specific
+finetuned production preflight passed. No experiment started; retain each arm's
+own source and run sequentially when requested. PDF/RTF/mixed remain unstaged.
+See [DOCX setup and limitations](experiments/unit2-docx-setup-2026-11-15.md).
+
 The experiment compares a minimal autonomous agent with a task-adapted harness.
 Both arms are selected through `experiment/`, with independent
 code/configuration and `runs/minimal/` / `runs/finetuned/` state. See

@@ -1,5 +1,10 @@
 # Unit 2 readiness and proposed cleanup, 2026-11-14
 
+Update, 2026-11-15: [DOCX setup](unit2-docx-setup-2026-11-15.md) now records
+downloaded/decrypted inputs, restored shared task material and passed production
+setup. The missing-input statements below describe the earlier assessment;
+PDF/RTF/mixed remain unstaged. No experiment has started.
+
 Requested scope: assess the second unit on both arms, running one arm at a time,
 and report preparation and proposed deletions before applying them. No model
 experiment, dataset download, deletion, task registration or runtime change was
