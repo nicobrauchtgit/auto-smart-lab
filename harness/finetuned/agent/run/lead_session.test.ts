@@ -153,7 +153,8 @@ for (const mode of ['checkpoint','finalize','exhausted'] as const) test(`real Pi
  expect(events).toEqual(mode==='checkpoint'?['validation','start_training','write','refit']:['validation','refit']);expect(refits).toBe(1);expect(result.valid).toBe(true);
  // Admission charges emitted calls even when acceptance subsequently blocks execution.
  expect(result.progress.budget.used).toBe(mode==='exhausted'?80:2);
- expect(counters).toHaveLength(3);for(const text of counters)expect(text).toContain(mode==='exhausted'?'80 of 80':'2 of 80');
+ expect(result.progress.budget.limit).toBe(mode==='exhausted'?80:100);
+ expect(counters).toHaveLength(3);for(const text of counters)expect(text).toContain(mode==='exhausted'?'80 of 80':'2 of 100');
  expect((await import('node:fs')).existsSync(join(f.root,'late-mutation'))).toBe(mode==='checkpoint');
  } finally {f.close();}
 },30000);

@@ -1,6 +1,7 @@
 import { guidanceBlock, type StageGuidance } from '../pipeline/guidance.js';
 import type { TaskConfiguration } from '../pipeline/task_configuration.js';
 import type { PromptSnapshot, RenderedPrompt } from './loader.js';
+import { HARNESS_CONFIG } from '../harness/config.js';
 /** The task contract for the configured kind: input frame, harness calls and scoring. */
 export function taskContract(prompts: PromptSnapshot, taskId: string, configuration: TaskConfiguration, evidencePath: string): RenderedPrompt[] {
  const contract = configuration.kind === "binary_classification"
@@ -20,7 +21,7 @@ export function prepareLeadPrompts(prompts: PromptSnapshot, input: {
  targets: string; rowCount: number; targetSummary: string; foldRecommendation: string; maxIterations?: number;
  task?: string; resources?: string; followUp?: string; resume?: string; budget?: number; guidance?: StageGuidance;
 }) {
- const system = prompts.render('team.lead-system', { taskId: input.taskId, budget: String(input.budget ?? 80) });
+ const system = prompts.render('team.lead-system', { taskId: input.taskId, budget: String(input.budget ?? HARNESS_CONFIG.team.lead.maxToolCalls) });
  const contract = taskContract(prompts, input.taskId, input.configuration, input.evidencePath ?? `${input.workspace}/evidence.json`);
  const guidance = guidanceBlock(prompts, input.guidance);
  const start = prompts.render('team.lead-start', {

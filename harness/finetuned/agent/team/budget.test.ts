@@ -9,6 +9,26 @@ import { readFindings } from "./journal.js";
 const prompts = loadPromptSnapshot();
 const call = (id: string, name = "read") => ({type: "toolCall", id, name, arguments: {}});
 
+test('lead warnings select the strongest band across boundaries, batches and resume', () => {
+ const counter = (used: number, limit = 100) => new ScoutBudget(limit, prompts, { used, finishPrompt: 'team.lead-finish' }).counter();
+ expect(counter(49)).not.toContain('warning');
+ expect(counter(50)).toContain('Budget warning: your remaining tool-call budget is 50');
+ expect(counter(84)).toContain('Budget warning: your remaining tool-call budget is 16');
+ expect(counter(85)).toContain('Final budget warning: your remaining tool-call budget is 15');
+ expect(counter(99)).toContain('Final budget warning: your remaining tool-call budget is 1');
+ expect(counter(100)).toContain('Tool-call limit reached');
+ expect(counter(100)).not.toContain('budget warning');
+ // Persisted older runs scale their warnings without receiving more calls.
+ expect(counter(68, 80)).toContain('Final budget warning: your remaining tool-call budget is 12');
+ const budget = new ScoutBudget(100, prompts, { used: 49, finishPrompt: 'team.lead-finish', freeTools: ['hand_over'] });
+ budget.assistant({ role: 'assistant', content: [call('a'), call('b'), call('c'), call('checkpoint', 'hand_over')] });
+ expect(budget.used).toBe(52);
+ expect(budget.counter()).toContain('Budget warning: your remaining tool-call budget is 48');
+ expect(budget.counter()).toBe(counter(52));
+ budget.end(); expect(budget.counter()).not.toContain('warning');
+ expect(new ScoutBudget(100, prompts, { used: 85 }).counter()).not.toContain('warning');
+});
+
 test("every emitted call counts at its message; one finish turn, then calls are removed", () => {
  const budget = new ScoutBudget(2, prompts);
  expect(budget.assistant({role: "assistant", content: [call("a"), call("b", "no_such_tool")]})).toBeUndefined();
@@ -66,6 +86,25 @@ async function scriptedChild(responses: Parameters<Awaited<ReturnType<typeof imp
  const child = await factory({logicalAgentId: "child", parentAgentRunId: "parent", spawnToolCallId: "call"}, new AbortController().signal);
  return {child, executions, faux};
 }
+
+for (const [used, count, warning] of [[49, 2, 'Budget warning:'], [84, 1, 'Final budget warning:']] as const)
+test(`real tool results deliver the lead warning after ${used + count} calls`, async () => {
+ const { fauxAssistantMessage, fauxToolCall, fauxText } = await import('@earendil-works/pi-ai');
+ const budget = new ScoutBudget(100, prompts, { used, finishPrompt: 'team.lead-finish' });
+ const { child, executions } = await scriptedChild([
+  () => fauxAssistantMessage(Array.from({ length: count }, () => fauxToolCall('fixture', { count: 1 })), { stopReason: 'toolUse' }),
+  context => {
+   expect(JSON.stringify(context.messages)).toContain(warning);
+   expect(JSON.stringify(context.messages)).toContain(`remaining tool-call budget is ${100 - used - count}`);
+   return fauxAssistantMessage([fauxText('- fact: warning received')]);
+  },
+ ], budget);
+ try {
+  await child.prompt(prompts.render('team.probe-question', {}));
+  expect(executions.count).toBe(count);
+  expect(budget.used).toBe(used + count);
+ } finally { await child.close(); }
+});
 
 test("a scripted Pi child that only emits malformed calls stops and still returns bullets", async () => {
  const { fauxAssistantMessage, fauxToolCall, fauxText } = await import("@earendil-works/pi-ai");

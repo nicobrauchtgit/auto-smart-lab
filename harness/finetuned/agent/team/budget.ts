@@ -94,8 +94,17 @@ export class ScoutBudget {
  end(): void { this.ended = true; this.decisions.clear(); }
  get exhausted(): boolean { return this.used >= this.limit; }
  counter(): string {
-  return this.prompts.render("team.counter", { used: String(this.used), budget: String(this.limit) }).text.trim()
-   + (this.used >= this.limit && !this.ended ? ` ${this.prompts.render(this.finish, {}).text.trim()}` : "");
+  const counter = this.prompts.render("team.counter", { used: String(this.used), budget: String(this.limit) }).text.trim();
+  if (this.ended) return counter;
+  const remaining = this.limit - this.used;
+  if (!remaining) return `${counter} ${this.prompts.render(this.finish, {}).text.trim()}`;
+  // Show the strongest active warning on every result: batches and restarts cannot skip it.
+  if (this.finish === "team.lead-finish") {
+   const warning = remaining / this.limit <= 0.15 ? "team.lead-budget-final"
+    : remaining / this.limit <= 0.5 ? "team.lead-budget-half" : undefined;
+   if (warning) return `${counter} ${this.prompts.render(warning, { remaining: String(remaining) }).text.trim()}`;
+  }
+  return counter;
  }
  extension(): InlineExtension {
   return { name: "scout-budget", factory: pi => {

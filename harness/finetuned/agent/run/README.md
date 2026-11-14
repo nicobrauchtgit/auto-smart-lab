@@ -20,7 +20,11 @@ Scouts keep their own sessions and return only sourced final bullets.
 The controller stores `runs/finetuned/<task>/lead/PROGRESS.json` outside writable
 agent mounts. It retains the original run/training root, dataset identity,
 trials/hypotheses, champion, released Ladder feedback, session identities and
-budget. Default lead budget is 80 calls. Each admission persists before tool
+budget. Default lead budget is 100 calls. Lead result counters show a warning at
+50% remaining and a stronger final warning at 15% remaining (50 and 15 calls
+under the default). The strongest active warning stays visible on subsequent
+results, including after parallel batches and restart. Warnings add no calls or
+exemptions; resumed runs retain their original persisted limit. Each admission persists before tool
 execution, including rejected/unknown tool calls; replacement sessions keep
 the same budget object. Compaction receives fresh progress with the existing
 findings journal and solutions history available through scouts and tools.
@@ -92,6 +96,16 @@ confirmation and label-free hand-over retain the P7c limitations. Host shells
 and terminal refit retain the documented privileges; filesystem isolation is
 not a network policy. PROGRESS is the lead's durable trial summary; measured
 trial results are not automatically appended as result-kind findings yet.
+
+## Lead budget checks (2026-11-14)
+
+Budget update verification (2026-11-14): the default lead allowance is now 100,
+with 50%/15% remaining warnings in the result counter. Serial fast checks passed
+591 tests with two platform skips and zero failures (195.12 seconds); typecheck
+and whitespace checks passed. Regressions cover threshold boundaries, parallel
+batches, actual SDK tool-result delivery, retained older limits, free hand-over
+and unchanged scout counters. Logs: `runs/launches/2026-11-14-lead-budget-checks/`.
+No full-suite rerun, merge, push or live model run was performed for this update.
 
 ## Completion repair checks (2026-11-13)
 

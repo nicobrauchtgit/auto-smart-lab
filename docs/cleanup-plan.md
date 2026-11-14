@@ -128,7 +128,10 @@ both had zero failures. Typecheck passed. No new live run or merge has started.
 | P7c: beyond binary classification | After the gate | Withheld-family clustering confirmation; label-free unscored hand-over, then evidence labels ([contract](../harness/finetuned/docs/expert-team.md#7-p7c-verification-beyond-binary-classification)) |
 
 Scout starting budgets are set from the P7a budget test: data 15, ideas 10,
-validation 10 (v2 section 3). The lead's 80 is exercised at the integration gate.
+validation 10 (v2 section 3). New lead runs default to 100 calls, with visible
+warnings at 50% and 15% remaining. Resumed runs keep their recorded limit; the
+observed spam batch above used 80. The updated allowance has not been evaluated
+in a new live run.
 
 Earlier evidence: the v2 unit-1 runs failed their delivery/time gates
 ([run report](experiments/v2-unit1-2026-11-12.md)); the bounded prompt-first spam1
