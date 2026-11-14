@@ -1,6 +1,6 @@
 # Current state and work queue
 
-Updated 2026-11-13 (completion fallback repair). This file owns the active queue. The design is
+Updated 2026-11-14 (fresh spam2 completion observation). This file owns the active queue. The design is
 [expert-team-v2.md](../harness/finetuned/docs/expert-team-v2.md) (accepted
 2026-11-11); its contract appendix is
 [expert-team.md](../harness/finetuned/docs/expert-team.md). Superseded plans,
@@ -115,7 +115,13 @@ implementation now carries an explicit measured selection through validation,
 confirmation and refit; the real-worker fallback fixture delivers the validated
 baseline without retagging the champion. Independent re-review found no remaining
 blockers. Fast suite: 588 passed, two skips; full suite: 718 passed, two skips;
-both had zero failures. Typecheck passed. No new live run or merge has started.
+both had zero failures. Typecheck passed. A subsequent fresh spam2 run on
+`222781f` delivered in 75 min 27 s at development CV 0.99794, using 93/100 calls.
+Both new warnings appeared; the lead retained its validated champion after an
+interrupted search and explicitly finalized it. No newer champion failed review,
+so the specific older-baseline fallback branch remains covered by synthetic
+regressions rather than this live run. See the
+[fresh spam2 observation](experiments/spam2-completion-repeat-2026-11-14.md).
 
 | Package | State | Next action / completion evidence |
 | --- | --- | --- |
@@ -130,8 +136,8 @@ both had zero failures. Typecheck passed. No new live run or merge has started.
 Scout starting budgets are set from the P7a budget test: data 15, ideas 10,
 validation 10 (v2 section 3). New lead runs default to 100 calls, with visible
 warnings at 50% and 15% remaining. Resumed runs keep their recorded limit; the
-observed spam batch above used 80. The updated allowance has not been evaluated
-in a new live run.
+observed spam batch above used 80. The fresh spam2 run above exercised the updated
+allowance and both warnings, with seven calls unused at successful finalization.
 
 Earlier evidence: the v2 unit-1 runs failed their delivery/time gates
 ([run report](experiments/v2-unit1-2026-11-12.md)); the bounded prompt-first spam1
@@ -139,9 +145,11 @@ experiment also failed to deliver within 600 seconds
 ([historical report](experiments/prompt-first-spam1-just10min.md)). The later
 checkpoint revision passed independent review and its recorded full suite
 (675 passed, 2 skipped). Its subsequent live spam batch delivered spam1 but failed
-spam2, as reported above. The new fallback repair has synthetic delivery evidence
-and remains untested in a live model run. The multi-task integration gate, reader
-reuse and P7c remain unproven. No new model runs or uploads are part of this repair.
+spam2, as reported above. The exact newer-champion-rejected fallback branch has
+synthetic delivery evidence; the fresh spam2 run delivered its retained champion
+after an interrupted search. The multi-task integration gate, reader reuse and
+P7c remain unproven. The repair itself included no model runs or uploads; the
+subsequent spam2 run was separately authorized.
 See [cleanup evidence](worktree-cleanup-2026-11-12.md) for the historical merge.
 
 ## Follow-ups and readiness limits
