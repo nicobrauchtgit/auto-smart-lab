@@ -1,6 +1,6 @@
 # Current state and work queue
 
-Updated 2026-11-14 (fresh spam2 completion observation). This file owns the active queue. The design is
+Updated 2026-11-14 (spam2 and spam3 completion observations). This file owns the active queue. The design is
 [expert-team-v2.md](../harness/finetuned/docs/expert-team-v2.md) (accepted
 2026-11-11); its contract appendix is
 [expert-team.md](../harness/finetuned/docs/expert-team.md). Superseded plans,
@@ -123,6 +123,18 @@ so the specific older-baseline fallback branch remains covered by synthetic
 regressions rather than this live run. See the
 [fresh spam2 observation](experiments/spam2-completion-repeat-2026-11-14.md).
 
+The subsequently authorized spam3 continuation on `aae2876` retained shared
+solutions and delivered in 41 min 11 s, using 54/100 calls; readiness passed at
+32 min 43 s and development CV was 0.99783. A challenger tied its champion on all
+ten paired folds and did not promote. The delivered pipeline reused spam2's
+unchanged raw-sample reader. Observation also confirmed a local feature-family
+comparison with 90 classifier fits, described by the lead as an overextended
+leakage probe; two live operator answers were cross-checked against scripts,
+tool timings and results. See the
+[spam3 report](experiments/spam3-completion-2026-11-14.md). This successful delivery
+does not establish the entire multi-task timing gate or the newer-champion-fails
+fallback branch.
+
 | Package | State | Next action / completion evidence |
 | --- | --- | --- |
 | P5′: accept v2 (documents) | Done 2026-11-11 | Docs reorganised; draft prompts kept as seeds for P7a |
@@ -147,9 +159,10 @@ checkpoint revision passed independent review and its recorded full suite
 (675 passed, 2 skipped). Its subsequent live spam batch delivered spam1 but failed
 spam2, as reported above. The exact newer-champion-rejected fallback branch has
 synthetic delivery evidence; the fresh spam2 run delivered its retained champion
-after an interrupted search. The multi-task integration gate, reader reuse and
-P7c remain unproven. The repair itself included no model runs or uploads; the
-subsequent spam2 run was separately authorized.
+after an interrupted search. The subsequent spam3 run establishes reuse of the
+raw-sample reader; the multi-task integration gate and P7c remain unproven.
+The repair itself included no model runs or uploads; the subsequent spam2 and
+spam3 runs were separately authorized.
 See [cleanup evidence](worktree-cleanup-2026-11-12.md) for the historical merge.
 
 ## Follow-ups and readiness limits
