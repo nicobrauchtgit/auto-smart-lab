@@ -24,10 +24,14 @@ task/protocol information, excluding obsolete VM credentials and page navigation
 confirm prediction IDs/format and distinguish a chosen development metric from an
 unverified official metric. Supply any new course resources equally to both arms.
 
-The 2026-11-10 share inventory lists approximately 4.2 GB of encrypted Unit 2
-archives, with an empty mixed-task training file. These sizes have **not** been
-revalidated against the share during this audit. No share/decryption secret is
-currently configured in the project environment.
+The course-share password was supplied securely and read-only WebDAV access was
+verified on 2026-11-15 (local date). The live `02-maldoc` listing contains eight
+encrypted archives totaling **4,192,156,084 bytes**, with DOCX train/test totaling
+1,303,997,448 bytes. The mixed training ciphertext is only 346 bytes; the older
+inventory described empty training, but its contents still require decryption
+to confirm. Receipt: `runs/diagnostics/unit2-share-inventory-20261114T232757Z.json`.
+No sample files were downloaded. Password values were neither logged nor added
+to the project; the document-archive decryption passphrase is still outstanding.
 
 ## Actual checks and preparation needed
 
@@ -44,8 +48,8 @@ a new model-design abstraction for DOCX/PDF/RTF.
 
 Before launching:
 
-1. Securely obtain the course-share password and document-archive decryption
-   passphrase. Re-list files/sizes; establish input identities/checksums.
+1. Share access and current file sizes are verified. Securely obtain the
+   document-archive decryption passphrase and establish downloaded input hashes.
 2. Stage/decrypt the first format on disk without retaining unnecessary
    encrypted and decrypted duplicates or extracting the whole corpus. `gpg` is
    currently unavailable and needs an approved project-local execution path.
