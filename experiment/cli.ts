@@ -24,16 +24,31 @@ const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const ARMS = ["finetuned", "minimal"] as const;
 export type Arm = (typeof ARMS)[number];
 
-export function parseExperimentArgs(argv: readonly string[]): { arm: Arm; reset: boolean; yes: boolean; checkSetup: boolean; detach: boolean; model?: string; rest: string[] } {
+export function parseExperimentArgs(argv: readonly string[]): { arm: Arm; reset: boolean; yes: boolean; checkSetup: boolean; detach: boolean; model?: string; sourceFrom?: string; rest: string[] } {
 	const rest = [...argv];
 	const take = (flag: string) => { const index = rest.indexOf(flag); if (index < 0) return false; rest.splice(index, 1); return true; };
 	const armIndex = rest.indexOf("--arm");
 	const arm = armIndex >= 0 ? rest[armIndex + 1] : undefined;
 	if (!ARMS.includes(arm as Arm)) throw new Error(`Choose an arm: --arm ${ARMS.join("|")}`);
 	rest.splice(armIndex, 2);
+	const sourceIndex = rest.indexOf("--source-from");
+	const sourceFrom = sourceIndex < 0 ? undefined : rest[sourceIndex + 1];
+	if (sourceIndex >= 0) {
+		if (!sourceFrom || sourceFrom.startsWith("--")) throw new Error("--source-from requires an earlier minimal run path");
+		if (arm !== "minimal") throw new Error("--source-from is only for minimal; finetuned already retains its own solutions");
+		rest.splice(sourceIndex, 2);
+		if (rest.includes("--source-from")) throw new Error("Use --source-from only once");
+	}
+	const resetIndex = rest.indexOf("--reset");
+	const minimalResetMode = arm === "minimal" && resetIndex >= 0 && ["once", "each", "none"].includes(rest[resetIndex + 1]);
+	const reset = minimalResetMode ? false : take("--reset");
+	if (sourceFrom) {
+		if (reset || minimalResetMode && rest[resetIndex + 1] !== "none") throw new Error("--source-from requires retaining source; omit --reset or use --reset none");
+		if (!minimalResetMode) rest.push("--reset", "none");
+	}
 	const modelIndex = rest.indexOf("--model");
 	const model = modelIndex >= 0 ? rest[modelIndex + 1] : undefined;
-	return { arm: arm as Arm, reset: take("--reset"), yes: take("--yes"), checkSetup: take("--check-setup"), detach: take("--detach"), ...(model ? { model } : {}), rest };
+	return { arm: arm as Arm, reset, yes: take("--yes"), checkSetup: take("--check-setup"), detach: take("--detach"), ...(model ? { model } : {}), ...(sourceFrom ? { sourceFrom } : {}), rest };
 }
 
 /** What a finetuned reset removes: everything in runs/finetuned/ except the hand-over files. */
@@ -119,12 +134,13 @@ async function main(): Promise<number> {
 		const args = [join(PROJECT_ROOT, "harness", "finetuned", "agent", "pipeline_cli.ts"), ...options.rest, ...(options.checkSetup ? ["--check-setup"] : [])];
 		return spawnSync(process.execPath, args, { cwd: PROJECT_ROOT, stdio: "inherit" }).status ?? 1;
 	}
-	const problems = checkMinimalSetup({ model: options.model });
+	const problems = checkMinimalSetup({ model: options.model, sourceFrom: options.sourceFrom });
 	if (problems.length) { console.error(`Minimal arm setup failed:\n${problems.map(problem => `- ${problem}`).join("\n")}`); return 1; }
 	if (options.checkSetup) { console.log("Minimal arm setup ok."); return 0; }
 	const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-	const run = prepareMinimalRun({ stamp });
+	const run = prepareMinimalRun({ stamp, sourceFrom: options.sourceFrom });
 	console.log(`[experiment] run location: ${run.root}`);
+	if (options.sourceFrom) console.log(`[experiment] retained source: ${options.sourceFrom}; hashes: ${join(run.root, "source-retention.json")}`);
 	createMinimalVenv(run);
 	return await runMinimal(run, options.rest);
 }

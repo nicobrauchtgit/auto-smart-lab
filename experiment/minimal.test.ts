@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, realpathSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, realpathSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { armModelsJson, checkMinimalSetup, minimalArgs, minimalPolicy, prepareMinimalRun, withModel } from "./minimal.js";
@@ -50,6 +50,65 @@ function inJail(root: string, script: string, env: NodeJS.ProcessEnv = {}) {
 }
 
 describe("minimal arm run location", () => {
+	test("retains only its own Python source in a new isolated run, with hashes and fresh state", () => {
+		const root = fixture();
+		mkdirSync(join(root, "harness/minimal/agent/smartlab/tasks"), { recursive: true });
+		writeFileSync(join(root, "harness/minimal/agent/smartlab/common.py"), "# current framework\n");
+		const first = prepareMinimalRun({ projectRoot: root, stamp: "first" });
+		const module = "from smartlab.helpers import reader\n";
+		writeFileSync(join(first.root, "agent/smartlab/tasks/spam1.py"), module);
+		writeFileSync(join(first.root, "agent/smartlab/helpers.py"), "reader = 1\n");
+		writeFileSync(join(first.root, "agent/smartlab/model.pkl"), "fitted state");
+		writeFileSync(join(first.root, "agent/smartlab/labels.json"), "private row labels");
+		mkdirSync(join(first.root, "agent/smartlab/checkpoints"));
+		writeFileSync(join(first.root, "agent/smartlab/checkpoints/state.json"), "old checkpoint");
+		writeFileSync(join(first.root, "agent/instructions/solver.md"), "old instructions must not replace current prompt\n");
+		writeFileSync(join(first.root, ".env"), "old credentials\n");
+		mkdirSync(join(root, "harness/minimal/agent/memory"), { recursive: true });
+		writeFileSync(join(root, "harness/minimal/agent/memory/memory.json"), "old template memory");
+		writeFileSync(join(root, "harness/minimal/agent/smartlab/tasks/unselected.py"), "unselected template solver");
+		const next = prepareMinimalRun({ projectRoot: root, stamp: "next", sourceFrom: "runs/minimal/first" });
+		expect(readFileSync(join(next.root, "agent/smartlab/tasks/spam1.py"), "utf8")).toBe(module);
+		expect(readFileSync(join(next.root, "agent/smartlab/helpers.py"), "utf8")).toBe("reader = 1\n");
+		for (const file of ["model.pkl", "labels.json", "checkpoints/state.json"]) expect(existsSync(join(next.root, "agent/smartlab", file))).toBe(false);
+		expect(existsSync(join(next.root, ".env"))).toBe(false);
+		expect(existsSync(join(next.root, "agent/memory/memory.json"))).toBe(false);
+		expect(existsSync(join(next.root, "agent/smartlab/tasks/unselected.py"))).toBe(false);
+		expect(readFileSync(join(next.root, "agent/instructions/solver.md"), "utf8")).toBe("solver prompt\n");
+		const receipt = JSON.parse(readFileSync(join(next.root, "source-retention.json"), "utf8"));
+		expect(receipt.sourceRun).toBe("runs/minimal/first");
+		expect(receipt.files).toContainEqual({ path: "agent/smartlab/tasks/spam1.py", sha256: createHash("sha256").update(module).digest("hex") });
+		writeFileSync(join(first.root, "agent/smartlab/tasks/spam1.py"), "later old-run change\n");
+		expect(readFileSync(join(next.root, "agent/smartlab/tasks/spam1.py"), "utf8")).toBe(module);
+		const policy = minimalPolicy(next, { env: {} });
+		const result = spawnSync(policy.executable, policy.args(["bash", "-c", `test ! -e '${first.root}' && cat agent/smartlab/tasks/spam1.py`]), { encoding: "utf8", timeout: 20_000 });
+		expect(result.status).toBe(0); expect(result.stdout).toBe(module);
+	});
+
+	test("refuses other arms, missing source and source symlinks before creating a new run", () => {
+		const root = fixture();
+		mkdirSync(join(root, "runs/minimal/first/agent/smartlab/tasks"), { recursive: true });
+		writeFileSync(join(root, "runs/minimal/first/agent/smartlab/tasks/spam1.py"), "# prior solver\n");
+		for (const from of ["runs/finetuned/solutions", "runs/minimal/missing"]) {
+			expect(() => prepareMinimalRun({ projectRoot: root, stamp: "bad", sourceFrom: from })).toThrow();
+			expect(existsSync(join(root, "runs/minimal/bad"))).toBe(false);
+		}
+		symlinkSync(join(root, "runs/finetuned/solutions/tasks/spam1.py"), join(root, "runs/minimal/first/agent/smartlab/tasks/linked.py"));
+		expect(() => prepareMinimalRun({ projectRoot: root, stamp: "bad", sourceFrom: "runs/minimal/first" })).toThrow("symlink");
+		expect(checkMinimalSetup({ projectRoot: root, sourceFrom: "runs/minimal/first", env: {} }).join("\n")).toContain("Retained source");
+		expect(existsSync(join(root, "runs/minimal/bad"))).toBe(false);
+	});
+
+	test("refuses an old run that would replace current harness framework code", () => {
+		const root = fixture();
+		mkdirSync(join(root, "harness/minimal/agent/smartlab/tasks"), { recursive: true });
+		writeFileSync(join(root, "harness/minimal/agent/smartlab/common.py"), "# current\n");
+		const first = prepareMinimalRun({ projectRoot: root, stamp: "first" });
+		writeFileSync(join(first.root, "agent/smartlab/common.py"), "# old or changed framework\n");
+		writeFileSync(join(first.root, "agent/smartlab/tasks/spam1.py"), "# prior solver\n");
+		expect(() => prepareMinimalRun({ projectRoot: root, stamp: "bad", sourceFrom: "runs/minimal/first" })).toThrow("framework code");
+		expect(existsSync(join(root, "runs/minimal/bad"))).toBe(false);
+	});
 	test("holds the arm's agent code and real units, not its docs or archives", () => {
 		const root = fixture();
 		const run = prepareMinimalRun({ projectRoot: root, stamp: "a" });
@@ -162,6 +221,15 @@ describe("experiment switch", () => {
 		expect(() => parseExperimentArgs(["--arm", "other"])).toThrow("--arm");
 		expect(parseExperimentArgs(["--arm", "minimal", "--offline", "--only", "spam1"])).toMatchObject({ arm: "minimal", rest: ["--offline", "--only", "spam1"], reset: false });
 		expect(parseExperimentArgs(["--arm", "finetuned", "--check-setup"])).toMatchObject({ arm: "finetuned", checkSetup: true, rest: [] });
+	});
+
+	test("source continuation bypasses only the new run's initial reset", () => {
+		const parsed = parseExperimentArgs(["--arm", "minimal", "--source-from", "runs/minimal/first", "--only", "documents1"]);
+		expect(parsed).toMatchObject({ arm: "minimal", sourceFrom: "runs/minimal/first", reset: false, rest: ["--only", "documents1", "--reset", "none"] });
+		expect(parseExperimentArgs(["--arm", "minimal", "--reset", "none", "--source-from", "runs/minimal/first"]).rest).toEqual(["--reset", "none"]);
+		for (const mode of ["once", "each"]) expect(() => parseExperimentArgs(["--arm", "minimal", "--source-from", "runs/minimal/first", "--reset", mode])).toThrow("retaining source");
+		expect(() => parseExperimentArgs(["--arm", "finetuned", "--source-from", "runs/minimal/first"])).toThrow("only for minimal");
+		expect(() => parseExperimentArgs(["--arm", "minimal", "--source-from", "--only", "x"])).toThrow("requires");
 	});
 
 	test("a finetuned reset keeps minimal runs and hand-over files", () => {

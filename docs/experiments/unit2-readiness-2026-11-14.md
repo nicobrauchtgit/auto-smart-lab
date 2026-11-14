@@ -72,9 +72,13 @@ Before launching:
    read-only prevents execution or exfiltration.
 7. Run task-specific setup for each arm, then use the same hashed task inputs
    and configured offline MythLLM model, sequentially with no overlap. Record
-   the reset/reuse protocol; a fresh Unit 2 start for both arms avoids silently
-   giving one arm an earlier solver. Preserve existing run evidence by archiving
-   state rather than resetting/deleting it.
+   the reset/reuse protocol. **Decision on 2026-11-15:** retain each arm's own
+   generated Python source across units, without carrying old task state or
+   sharing between arms. Minimal uses
+   `--source-from runs/minimal/2026-11-11T08-29-56`; its setup check accepts the
+   three prior spam modules. Finetuned keeps `runs/finetuned/solutions/`, including
+   its reused raw-sample reader. Preserve existing run evidence; no reset or
+   deletion is needed. See the source-continuation contract in `docs/experiment.md`.
 
 A shared model/telemetry-only production preflight using existing spam3 **passed**:
 pipeline `64cf0434-5caf-489c-9ab1-3e182843d614`, setup checks passed, no stages

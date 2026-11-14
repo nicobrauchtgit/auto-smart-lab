@@ -10,9 +10,10 @@
  */
 import { spawn, spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadExperimentConfig, modelReference, type ExperimentConfig } from "./config.js";
+import { minimalSource } from "./source.js";
 import { readCourseResources } from "../harness/finetuned/agent/research/resources.js";
 import { checkSolveSandbox, executable, sandboxPolicy, type SandboxMount, type SolveSandbox } from "../harness/finetuned/agent/run/solve_sandbox.js";
 
@@ -44,14 +45,27 @@ export function armModelsJson(config: Pick<ExperimentConfig, "providers">): stri
 }
 
 /** Fresh run directory with the arm's code and links to the course units. No venv yet. */
-export function prepareMinimalRun(options: { projectRoot?: string; stamp: string }): MinimalRun {
+export function prepareMinimalRun(options: { projectRoot?: string; stamp: string; sourceFrom?: string }): MinimalRun {
 	const projectRoot = options.projectRoot ?? PROJECT_ROOT;
+	const retained = options.sourceFrom ? minimalSource(projectRoot, options.sourceFrom) : undefined;
 	const armRoot = join(projectRoot, "harness", "minimal");
 	const root = join(projectRoot, "runs", "minimal", options.stamp);
 	if (existsSync(root)) throw new Error(`Run location already exists: ${root}`);
 	mkdirSync(root, { recursive: true });
+	const staleState = ["agent/smartlab/tasks", "agent/smartlab/checkpoints", "agent/memory/memory.json", "agent/submissions"];
 	for (const path of ARM_PATHS) {
-		cpSync(join(armRoot, path), join(root, path), { recursive: true, filter: source => !source.endsWith("__pycache__") });
+		cpSync(join(armRoot, path), join(root, path), { recursive: true, filter: source => {
+			const name = relative(armRoot, source);
+			return !source.endsWith("__pycache__") && (!retained || !staleState.some(path => name === path || name.startsWith(path + "/")));
+		} });
+	}
+	if (retained) {
+		for (const file of retained.files) {
+			mkdirSync(dirname(join(root, file.path)), { recursive: true });
+			writeFileSync(join(root, file.path), file.content);
+		}
+		writeFileSync(join(root, "source-retention.json"), JSON.stringify({ schemaVersion: 1, sourceRun: retained.sourceRun,
+			files: retained.files.map(({ path, sha256 }) => ({ path, sha256 })) }, null, 2) + "\n");
 	}
 
 	const home = join(root, ".home");
@@ -143,10 +157,14 @@ export function repositoryState(projectRoot = PROJECT_ROOT): { commit: string; b
 }
 
 /** Every missing prerequisite at once, with what to do about it. */
-export function checkMinimalSetup(options: { projectRoot?: string; env?: NodeJS.ProcessEnv; bwrap?: string; model?: string } = {}): string[] {
+export function checkMinimalSetup(options: { projectRoot?: string; env?: NodeJS.ProcessEnv; bwrap?: string; model?: string; sourceFrom?: string } = {}): string[] {
 	const projectRoot = options.projectRoot ?? PROJECT_ROOT;
 	const env = options.env ?? process.env;
 	const problems: string[] = [];
+	if (options.sourceFrom) {
+		try { minimalSource(projectRoot, options.sourceFrom); }
+		catch (error) { problems.push(`Retained source: ${error instanceof Error ? error.message : String(error)}`); }
+	}
 	try { checkSolveSandbox(options.bwrap); } catch (error) { problems.push(`Filesystem boundary: ${error instanceof Error ? error.message : String(error)}`); }
 	try { executable("uv"); } catch { problems.push("uv is missing: run commands through ./dev and run ./dev setup"); }
 	for (const path of ["harness/minimal/agent/run/solve_units.ts", "harness/minimal/requirements.txt", "node_modules/@earendil-works/pi-coding-agent", "node_modules/@langfuse/pi-observability-plugin"]) {

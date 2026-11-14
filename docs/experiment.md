@@ -10,6 +10,7 @@ Both arms live on this branch. Choose one with a flag; no branch switch.
 ```bash
 ./dev bun run experiment -- --arm minimal --check-setup
 ./dev bun run experiment -- --arm minimal --only spam1,spam2,spam3
+./dev bun run experiment -- --arm minimal --source-from runs/minimal/<previous-run> --only documents1 --check-setup
 ./dev bun run experiment -- --arm finetuned --check-setup spam1
 ./dev bun run experiment -- --arm finetuned spam1
 ./dev bun run experiment -- --arm finetuned spam1 --detach                    # survives the terminal
@@ -56,12 +57,35 @@ Known limit: the minimal arm's model key has to be in the arm's process, and its
 shell tool drops credentials from the environment, but a command could still read
 the parent's `/proc/<pid>/environ`. That exposes the model key, not the other arm.
 
-## Starting clean
+## Starting clean and continuing source
 
 A measured run starts from scratch. The minimal arm gets a fresh location for every
 invocation. The finetuned arm keeps `runs/finetuned/` (task runs, `solutions/`)
 between runs on purpose, so run `--arm finetuned --reset --yes` before a
 measured run. Delivered files under `runs/finetuned/deliveries/` survive a reset.
+
+Cross-unit continuation was explicitly selected on 2026-11-15: keep each arm's
+own generated Python source and reusable helpers, without sharing between arms.
+Finetuned keeps `runs/finetuned/solutions/`; do not reset it for Unit 2.
+Minimal uses `--source-from runs/minimal/<previous-run>` to copy Python modules
+from that run's `agent/smartlab/` into a fresh confined workspace. Existing current
+framework files must match rather than being silently overwritten; task modules
+and new Python helpers are retained. Other files, old prompts, memory, predictions,
+checkpoints, models and credentials are not copied. Source symlinks and sources
+outside a direct `runs/minimal/<run>` directory are refused before agent startup.
+
+The wrapper automatically passes `--reset none` for this newly created source-only
+workspace; combining source continuation with `--reset once|each` is refused.
+Without `--source-from`, the fresh-run default is unchanged. `--check-setup` checks
+the source path and compatibility without creating a run. `source-retention.json`
+records originating run and copied module SHA-256 hashes and is included by the
+minimal delivery source archiver. This is code retention, not recovery of an old
+agent session or its results. Current prompts, environments and task budgets apply.
+
+For the planned Unit 2 continuation, minimal's source is
+`runs/minimal/2026-11-11T08-29-56`; finetuned retains the existing shared tree.
+The actual minimal source check passes for spam1.py, spam2.py and spam3.py.
+Each arm continues only its own work; this is not a fresh independent repeat.
 
 ## What is compared
 
