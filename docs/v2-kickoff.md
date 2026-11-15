@@ -8,7 +8,8 @@ section 11), its contracts are in
 
 Follow-up: [shared message board completion](message-board-plan.md) stages the
 cross-task persistence, agent tools and recall missing from stream C's original
-journal integration. That follow-up is planned, not implemented.
+journal integration. That follow-up is implemented; see its rollout record and
+the message-board operating contract.
 
 ## How much can run at once
 

@@ -6,9 +6,10 @@ References from the lead, with what the harness found for trial references:
 {{refs}}
 {{review}}
 
-Earlier findings from this run on this dataset, newest {{shown}} shown and
-{{omitted}} older not shown (attributed observations, not proof; do not repeat
+Earlier attributed findings, {{shown}} shown and
+{{omitted}} not shown (attributed observations, not proof; do not repeat
 them):
 {{earlier}}
+{{board}}
 
 Return only short sourced bullets. Cite files, profile keys, trial IDs or URLs.

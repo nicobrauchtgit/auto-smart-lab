@@ -18,6 +18,15 @@ export function validRef(ref: unknown): boolean {
 }
 /** The first reason a complete record breaks the contract, or undefined. */
 export function findingProblem(entry: FindingEntry): string | undefined {
+ if (entry.schemaVersion !== undefined && entry.schemaVersion !== 2) return "unknown schema version";
+ if (entry.schemaVersion === 2 && (typeof entry.taskId !== "string" || !/^[a-zA-Z0-9_-]+$/.test(entry.taskId))) return "missing origin task";
+ if (entry.producerModel !== undefined && (typeof entry.producerModel !== "string" || !entry.producerModel)) return "invalid producer model";
+ if (entry.requestId !== undefined && (typeof entry.requestId !== "string" || !entry.requestId)) return "invalid request identity";
+ if (entry.schemaVersion === 2 && entry.kind === "result" && !entry.legacy && !entry.measurement) return "result requires a harness measurement";
+ if (entry.measurement !== undefined && (entry.kind !== "result" || typeof entry.measurement.source !== "string" || !entry.measurement.source ||
+  typeof entry.measurement.status !== "string" || !entry.measurement.status || typeof entry.measurement.experimentId !== "string" ||
+  !entry.refs?.some(ref => "experiment" in ref && ref.experiment === entry.measurement!.experimentId) || !Array.isArray(entry.measurement.foldScores) ||
+  entry.measurement.foldScores.some(value => typeof value !== "number" || !Number.isFinite(value)))) return "invalid harness measurement";
  if (typeof entry.id !== "string" || !entry.id) return "missing id";
  if (!["fact", "idea", "result", "defect", "decision"].includes(entry.kind)) return "unknown kind";
  if (typeof entry.title !== "string" || !entry.title || entry.title.length > 100) return "title must be 1-100 characters";
@@ -52,6 +61,11 @@ export async function readFindings(path: string) {
   } else validateFinding(record);
   return record;
  });
+ const ids = new Set<string>();
+ for (const record of records) if ("kind" in record) {
+  if (ids.has(record.id)) throw new Error("Duplicate finding identity");
+  ids.add(record.id);
+ }
  for (const record of records) if ("status" in record) {
   const preceding = records.filter((row): row is FindingEntry => "kind" in row && row.cursor < record.cursor);
   if (!preceding.some(row => row.id === record.id) || (record.supersededBy && !preceding.some(row => row.id === record.supersededBy && row.id !== record.id))) throw new Error("Resolution refers to a missing finding");
@@ -62,7 +76,7 @@ export async function readFindings(path: string) {
 }
 
 /** Separate kernel flock; cancellation waits/retries and process exit releases it. */
-async function appendRecords(path: string, build: (view: Awaited<ReturnType<typeof readFindings>>) => FindingRecord[], signal?: AbortSignal) {
+export async function appendRecords(path: string, build: (view: Awaited<ReturnType<typeof readFindings>>) => FindingRecord[], signal?: AbortSignal) {
  await mkdir(dirname(path), {recursive: true});
  const lock = await open(`${path}.lock`, "a", 0o600);
  try {

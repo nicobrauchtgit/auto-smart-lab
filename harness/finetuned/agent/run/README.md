@@ -187,3 +187,20 @@ task run, upload or push followed integration; the checkpoint workflow's
 model behavior and latency were subsequently observed in the spam completion
 report above. Historical development-check records do not verify the newer
 fallback repair.
+
+
+## Shared message board
+
+Lead and scout sessions read and contribute through `findings_read`,
+`finding_write` and `finding_resolve`, under their existing tool budgets. The
+canonical board is `runs/finetuned/findings/journal.jsonl`, shared across this
+checkout's finetuned tasks and runs. Startup recall is bounded and attributed;
+lead progress retains board IDs across resume and compaction. Harness trial
+completion/recovery records visible results idempotently. Each reference uses
+its origin task; another dataset's results cannot approve the current candidate.
+
+Before running updated sessions, stop old writers and use
+`./dev bun run findings-import --dry-run`, then `--apply` for this checkout's
+legacy history. Originals are retained, and shared preflight detects missing
+imports or later legacy writes. See [the operating contract](../../docs/message-board.md)
+for filters, limits, compatibility, observability and migration receipts.

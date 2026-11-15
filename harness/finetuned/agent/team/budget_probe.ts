@@ -27,6 +27,7 @@ import { prepareTaskData, readTaskData } from "../workspace/task_data.js";
 import { SetupSession, setupChecks } from "../pipeline/setup.js";
 import { createPipelineTrace } from "../pipeline/trace.js";
 
+import { boardPath } from "./board.js";
 import { appendFindings } from "./journal.js";
 import { createScouts, finalBullets, scoutOutcome } from "./scouts.js";
 import { createScoutRunner } from "./runner.js";
@@ -67,7 +68,7 @@ try {
  trace.event("pipeline_run_start", {kind: "scout_budget_probe", role, budget, configuration, promptSnapshot: prompts.fingerprint, ...(role === "validation" ? {experiment_id: extra} : {})});
  // Stream B's sealed task data: resumes the stored split, never redraws it.
  const data = readTaskData(taskId) ?? prepareTaskData(taskId, configuration);
- const scoutPaths = {journal: join(workspace, "findings/journal.jsonl"), unitIntro: join(dirname(task.taskDir), "unit-intro.md"), task: data.taskPath, profile: data.profilePath};
+ const scoutPaths = {journal: boardPath(), unitIntro: join(dirname(task.taskDir), "unit-intro.md"), task: data.taskPath, profile: data.profilePath};
  // The shared preflight checks task.md, the unit introduction and the journal before anything is staged.
  const setup = new SetupSession();
  await setup.check(setupChecks(scoutRequirements(scoutRole), {taskId, taskConfiguration: configuration, prompts, telemetry: trace.telemetry, scoutPaths}),
@@ -79,7 +80,7 @@ try {
  trace.event("scout_probe_staged", {datasetSha256: data.datasetSha256, scout_root: inputs.root});
  if (role === "ideas" && extra) {
   // Data bullets from an earlier probe reach ideas the way they do in a run: as earlier journal findings.
-  await appendFindings(scoutPaths.journal, finalBullets(readFileSync(extra, "utf8"), "").filter(Boolean).map(bullet => ({kind: "fact" as const,
+  await appendFindings(scoutPaths.journal, finalBullets(readFileSync(extra, "utf8"), "").filter(Boolean).map(bullet => ({kind: "fact" as const, schemaVersion: 2 as const, taskId,
    author: {role: "data" as const, runId, invocationId}, title: bullet.slice(2, 102), text: bullet.slice(2, 802).replace(/\s*\n\s*/g, " "), refs: [], datasetSha256: data.datasetSha256})));
  }
  const python = readPythonEnvironment();
@@ -87,7 +88,7 @@ try {
  const backend = createScoutRunner({prompts, sandbox: (scout, trial) => expertSandbox(data, scout, python, trial), solutionsRoot: data.solutionsRoot,
   observe: reporter.observation(1), taskId, taskConfiguration: configuration, telemetry: trace.telemetry, record: reporter.event, scoutPaths, setup});
  const scope = createScouts({prompts, taskId, task: readFileSync(data.taskPath, "utf8"), dataPaths: inputs.dataPaths, resources: inputs.resources,
-  journalPath: scoutPaths.journal, datasetSha256: data.datasetSha256, trials, solutionsRoot: data.solutionsRoot,
+  boardRoot: statePath(PROJECT_ROOT), journalPath: scoutPaths.journal, datasetSha256: data.datasetSha256, trials, solutionsRoot: data.solutionsRoot,
   runId, invocationId, prepare: backend.prepare, budgets: {[role]: budget},
   async run(input) {
    reporter.input({kind: "scout_request", version: 1, delivery: "initial_prompt", status: "available",

@@ -343,7 +343,7 @@ test("a repeat call sees only a bounded view of this run's current findings", as
  await createScouts(scoutOptions({journalPath: journal, async run(input) {opening = input.opening.text; return "- x";}})).scout({role: "data", question: "q"});
  for (const marker of ["SUPERSEDED_MARKER", "OTHER_RUN_MARKER", "OTHER_DATA_MARKER", "entry-7 "]) expect(opening).not.toContain(marker);
  expect(opening).toContain("entry-8 "); expect(opening).toContain("entry-19 ");
- expect(opening).toContain("newest 12 shown and\n8 older not shown");
+ expect(opening).toContain("12 shown and\n8 not shown");
  expect(opening.length).toBeLessThan(5_000);
 });
 

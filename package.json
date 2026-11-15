@@ -14,7 +14,8 @@
     "typecheck": "tsc --noEmit",
     "refit-stage": "bun harness/finetuned/agent/refit_cli.ts",
     "experiment": "bun experiment/cli.ts",
-    "lead-stage": "bun harness/finetuned/agent/lead_cli.ts"
+    "lead-stage": "bun harness/finetuned/agent/lead_cli.ts",
+    "findings-import": "bun harness/finetuned/agent/team/board_import_cli.ts"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "0.84.1",

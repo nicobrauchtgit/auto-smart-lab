@@ -88,7 +88,7 @@ test('news wakes an idle lead, and healthy waiting does not fabricate messages',
  const inbox=new LeadInbox();const waiting=inbox.wait(1000);inbox.push('trial completed');await waiting;expect(inbox.take()).toEqual(['trial completed']);expect(inbox.take()).toEqual([]);
 });
 test('interrupted lead resumes the same training root and budget, compacts from progress, and receives only scout bullets', async()=>{
- const f=fixture();const controller=new AbortController();const path=join(f.root,'lead/PROGRESS.json');let activeController=controller;let sessions=0,starts=0;const roots:string[]=[];
+ const f=fixture();const controller=new AbortController();const path=join(f.root,'lead/PROGRESS.json');let activeController=controller;let sessions=0,starts=0;let boardId="";const roots:string[]=[];
  const {createScouts}=await import('../team/scouts.js');
  const scouts=createScouts({prompts,taskId:'spam1',task:'UNIT INTRO\nTASK TEXT',dataPaths:'dev',resources:'none',journalPath:join(f.root,'findings/journal.jsonl'),datasetSha256:'d'.repeat(64),runId:'original',invocationId:'fixture',prepare:async()=>{},run:async()=> 'PRIVATE SCOUT TRANSCRIPT\n- sourced final observation (profile.rows)\nPRIVATE TOOL OUTPUT'});
  const dependencies:any={
@@ -100,12 +100,17 @@ test('interrupted lead resumes the same training root and budget, compacts from 
  runAgentSession:async(options:any)=>{
  const handlers:any={};for(const extension of options.extensionFactories) {const factory=typeof extension==='function'?extension:extension.factory;factory({on:(name:string,fn:any)=>{(handlers[name]??=[]).push(fn);}});}
  if(sessions++===0) {
+  const write=options.customTools.find((tool:any)=>tool.name==='finding_write');
+  const result=await write.execute('board-post',{requestId:'resume-observation',kind:'fact',title:'persistent observation',text:'persistent observation',refs:[]},undefined,undefined,undefined);
+  boardId=JSON.parse(result.content[0].text).id;
+  expect(readProgress(path)!.board!.ids).toContain(boardId);
   for(const fn of handlers.message_end??[]) await fn({message:{role:'assistant',content:[{type:'toolCall',id:'trial'}]}});
   // The controller restart must not reissue this admitted trial.
   starts++;
  } else {
   expect(options.prompt).toContain('1 of 80');
-  expect(options.sessionContext()).toBe('');expect(options.sessionContext()).toContain('1 of 80');
+  expect(options.prompt).toContain(boardId);
+  expect(options.sessionContext()).toBe('');const compacted=options.sessionContext();expect(compacted).toContain('1 of 80');expect(compacted).toContain(boardId);
   const tool=options.customTools.find((tool:any)=>tool.name==='scout');
   const reply=await tool.execute('scout-call',{role:'data',question:'inspect'},undefined,undefined,undefined);
   const leadContext=JSON.stringify(reply);
@@ -177,6 +182,11 @@ test('resume reconciles completion gap, authoritative champion and noise once wi
  const result=await runLeadSession('spam1',{taskConfiguration:spamConfiguration(),progressPath:path,signal:active.signal,dependencies,report:{event:(type:string)=>{if(type==='lead_trial_feedback')feedback++;},input(){},agentIdentity(){return {};},observation(){return {};} } as any});
  expect(result.progress.trials).toHaveLength(1);expect(result.progress.trials[0].status).toBe('completed');expect(result.progress.trials[0].feedbackRecorded).toBe(true);expect(result.progress.champion?.experimentId).toBe('measured');expect(result.progress.budget.used).toBe(7);expect(result.progress.holdout).toHaveLength(1);
  } expect(feedback).toBe(1);expect(confirmations).toBe(1);
+ const {readFindings}=await import('../team/journal.js');
+ const board=await readFindings(join(f.root,'findings/journal.jsonl'));
+ expect(board.entries).toHaveLength(1);expect(board.entries[0].kind).toBe('result');
+ expect(board.entries[0].measurement?.foldScores).toEqual([1]);expect(board.entries[0].measurement?.status).toBe('completed');
+ expect(JSON.stringify(board)).not.toContain('0.123456');expect(JSON.stringify(board)).not.toContain('PRIVATE SCOUT');
  }finally{f.close();}
 });
 

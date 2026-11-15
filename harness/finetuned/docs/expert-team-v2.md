@@ -672,3 +672,13 @@ in attempt/observability records. Scouts receive no skills. Add one coaching
 note: a data or ideas consultation before the first pipeline is often worth it,
 since asynchronous answers arrive during workspace setup. This is optional
 finetuned coaching, not a consultation quota. No minimal-arm change.
+
+
+### Shared board implementation (2026-11-15)
+
+The cross-task journal promise now uses one board at
+`runs/finetuned/findings/journal.jsonl`. Lead and scout tools, bounded startup
+recall, lead resume/compaction IDs, harness result replay and explicit history
+import use the existing journal service. Source attribution and dataset identity
+remain visible; cross-task claims never replace current harness evidence.
+[The operating contract](message-board.md) describes limits and migration.

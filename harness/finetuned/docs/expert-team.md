@@ -167,7 +167,9 @@ abort errors.
 ## 4. Findings journal
 
 One append-only file outside git:
-`runs/finetuned/<task>/findings/journal.jsonl`. Serialize writes across sessions
+`runs/finetuned/findings/journal.jsonl`, shared across tasks and runs within
+one checkout. The original per-task adapters remain for compatibility; runtime
+lead/scout sessions use the shared board. Serialize writes across sessions
 and processes: wait and retry an exclusive lock, with cancellation, instead of
 failing on contention. Do not change training's lock semantics: its
 `claimWorkspace` deliberately throws on contention
@@ -187,6 +189,7 @@ type FindingRef = { experiment: string } | { file: string; line: number; commit?
   { check: string; experiment?: string; sha256: string } | { url: string } |
   { profile: string } | { entry: string };
 type FindingEntry = {
+  schemaVersion?: 2; taskId?: string; producerModel?: string; requestId?: string;
   id: string; cursor: number; kind: FindingKind;
   author: { role: TeamRole; invocationId: string; runId: string };
   title: string; text: string; refs: FindingRef[]; datasetSha256: string;
@@ -200,9 +203,30 @@ type FindingsStatus = { cursor: number; counts: Partial<Record<FindingKind, numb
 Titles ≤100 characters, text ≤800. Results require an experiment ID and
 receive metric/spread/cost from the harness record, never agent text. Defects
 come from the validation scout and cite the snapshot, check or trial.
-Superseding one's own entry appends a resolution. Reads page from a cursor, at
+Superseding one's own entry (same role, run and invocation) appends a resolution. Reads page from a cursor, at
 most 12 new titles in status. A repeat scout call sees earlier entries and is
 told not to repeat them (v2 section 3).
+
+New shared entries always carry schema version 2 and origin task. Imported
+entries preserve original identity, source record hash, dataset and attribution
+in provenance; unknown legacy model identities remain unknown. Harness results
+carry typed measurement/source fields from visible trial receipts. Full types
+are in `agent/team/contracts.ts`.
+
+The lead and all scouts have budgeted `findings_read`, `finding_write` and
+`finding_resolve` tools. Harness-supplied identity and durable request IDs prevent
+forged producers and duplicate retries. Startup recall selects up to 8 recent
+same-task and 4 text-matched other-task contributions, bounded to 12,000 serialized
+characters of recall data; full entries remain available by ID. Lead progress retains board
+position and relevant IDs across resume/compaction. References resolve using
+each entry's original task. Cross-dataset measurements never grant promotion
+or readiness for the current task.
+
+Migration is an explicit dry-run/apply import of direct finetuned per-task
+journals, with original files retained and cursor/reference mappings recorded.
+Shared preflight blocks corrupt boards, missing imports and changed legacy
+sources before sessions. See [message-board operations](message-board.md) for
+query limits, compatibility, telemetry and cutover instructions.
 
 Entries retain evidence links: experiment IDs, hashed check files, profile
 records, source URLs. Report missing or changed references as stale; keep the
@@ -257,6 +281,7 @@ credentials.
 | `workspaceCheckTool(root: string, taskId: string, prompts: PromptSnapshot): ToolDefinition` — same | sync factory; throws invalid path/prompt; tool awaits check and reports its error |
 | `prepareModellingWorkspace(data: TaskData, configuration: TaskConfiguration): SolveWorkspace` — `solve/workspace.ts` | sync; no split draw; throws mismatched configuration, missing retained inputs or I/O error |
 | `webSearchExtension(options: {maxCalls: number; maxResults: number; logPath: string}): ExtensionFactory` — `tools/web_search.ts` | sync factory; throws invalid options; async tool returns sanitized search failure; limits/log are session-local |
+| `createBoard(root?, record?)` — `team/board.ts`; `createBoardTools(board, actor, prompts)` — `team/board_tools.ts` | shared runtime read/write/resolve/recall adapters; controller-supplied destination and producer identity; pages and evidence status; idempotent durable contributions |
 | `FindingsReader.status(taskId: string, cursor?: number): Promise<FindingsStatus>` — interface in `team/contracts.ts` | rejects malformed cursor, corrupt journal or I/O; absent journal returns empty status; tests may use a fake |
 | `createFindingsReader(root: string): FindingsReader` — `workspace/findings_reader.ts` | sync; read-only journal projection in the contract format; throws invalid root/I/O |
 | `findingsStatus(taskId: string, cursor?: number): Promise<FindingsStatus>` — `team/findings.ts` | async implementation of that interface; same errors |

@@ -1,8 +1,9 @@
 # Shared agent message board completion plan
 
-Status: planned; runtime implementation has not started. Requested after the
-2026-11-15 journal audit. Experiment comparability is secondary to making the
-board useful; it is not a prerequisite for this work.
+Status: implemented and validated on main; Google rollout is next. Requested after the
+2026-11-15 journal audit. The landed contract is in
+[message-board operations](../harness/finetuned/docs/message-board.md).
+Experiment comparability is secondary to making the board useful; it is not a prerequisite for this work.
 
 ## Goal and existing commitments
 
@@ -19,11 +20,10 @@ references, paged views and superseding entries. The
 [kickoff stream C](v2-kickoff.md) stages scout bullet append and repeat-call
 recall, but does not stage the complete cross-task board or lead tools.
 
-There is one contract mismatch to resolve during implementation: the appendix
-specifies a journal per task, while v2 promises learning between tasks. The
-storage and integration changes below make that promise explicit. Existing
-contracts continue to describe current behavior until their implementation
-stage lands.
+The original appendix specified a journal per task, while v2 promised learning
+between tasks. The landed contract resolves that mismatch with one shared
+board and explicit origin task metadata. Per-task adapters remain available
+to legacy callers and fixtures.
 
 ## Reuse the implementation
 
@@ -186,3 +186,31 @@ stage lands; run `./dev bun run test:fast` during development and
 Use a deterministic multi-task fixture to establish functionality; any later
 live experiment is separately requested work. Comparability reporting may note
 the deployment revision but does not block the board.
+
+
+## Rollout record
+
+The main checkout imported 259 entries from documents1, documents2, spam2 and
+spam3, with no rejected records or torn tails. A repeated apply appended zero
+records and skipped all 259. Source journals remain unchanged; the local
+`runs/finetuned/findings/import-receipt.json` records source hashes and cursor
+mappings. Runtime data is not committed or copied between checkouts. The Google
+checkout must import its own history after the code cherry-pick.
+
+
+## Validation
+
+On main, `./dev bun run test:fast` passed 617 tests with 3 skips;
+`./dev bun test` passed 747 tests with 3 skips (750 total, 943.61 seconds).
+`./dev bun run typecheck` and whitespace checks passed. The 14 board fixtures
+cover cross-task discovery, stable paging, identity restrictions, durable retry,
+real Pi budgets/context exclusion, recovery, bounded recall, and import of
+healthy/corrupt/torn/missing legacy sources. Lead fixtures also verify board IDs
+through resume/compaction and exactly-once recovered result publication without
+sealed feedback.
+
+The initial baseline exposed unconditional task downloads in source-only stages
+and split/recovery tests depending on absent fetched archives. The executor now
+prepares data only for requested task requirements, and those tests own
+synthetic archives; their affected suites passed before the branch merge.
+No live modeling experiment was run for this feature.

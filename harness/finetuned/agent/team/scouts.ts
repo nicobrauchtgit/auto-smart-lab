@@ -9,12 +9,15 @@ import { REPO_ROOT, statePath } from "../paths.js";
 import { ScoutBudget } from "./budget.js";
 import { appendValidFindings, validRef } from "./journal.js";
 import { earlierFindings } from "./findings.js";
+import { createBoard, type BoardActor } from "./board.js";
+import { readFindings } from "./journal.js";
 import type { FindingKind, FindingRef, ScoutRole, TrialSnapshot, TrialReviewContext, ValidationCheckResult } from "./contracts.js";
 import { describeRefs, type TrialResolver } from "./trials.js";
 
 export interface ScoutRequest { role: ScoutRole | ScoutRole[]; question: string; refs?: FindingRef[] }
 export interface ScoutSessionInput {
  role: ScoutRole; toolCallId: string;
+ board?: {root: string; actor: BoardActor};
  /** Instructions every scout role gets, before its role prompt. */
  shared: RenderedPrompt;
  system: RenderedPrompt; opening: RenderedPrompt; budget: ScoutBudget; signal?: AbortSignal;
@@ -55,6 +58,7 @@ export interface ScoutsOptions {
  prompts: PromptSnapshot; taskId: string; task: string; dataPaths: string;
  /** Staged course resources, one line each (team/workspace.ts). */
  resources: string;
+ boardRoot?: string; producerModel?: string;
  journalPath: string; datasetSha256: string; runId: string; invocationId: string;
  /** State root that journaled file citations are stored relative to; default runs/finetuned. */
  citationBase?: string;
@@ -212,14 +216,21 @@ export function createScouts(options: ScoutsOptions) {
     : role === "ideas" ? options.prompts.render("team.ideas", { taskId: options.taskId, budget: String(budget.limit), webSearches: String(HARNESS_CONFIG.team.scouts.ideas.webSearches), resources: options.resources })
     : options.prompts.render("team.validation", { taskId: options.taskId, budget: String(budget.limit), experiment: trial!.experimentId, commit: trial!.commit,
      checks: join(options.solutionsRoot!, "checks", options.taskId) });
-   const earlier = await earlierFindings(options.journalPath, { runId: options.runId, datasetSha256: options.datasetSha256 });
+   const board = options.boardRoot ? createBoard(options.boardRoot, options.record) : undefined;
+   const actor: BoardActor = {taskId: options.taskId, datasetSha256: options.datasetSha256,
+    author: {role, runId: options.runId, invocationId: `${options.invocationId}:${toolCallId}:${role}`}, producerModel: options.producerModel};
+   const recall = board ? await board.recall(options.taskId, `${options.task} ${request.question}`) : undefined;
+   const earlier = recall ? {lines: recall.entries.map(row => JSON.stringify(row)), omitted: recall.omitted} :
+    await earlierFindings(options.journalPath, { runId: options.runId, datasetSha256: options.datasetSha256 });
    const opening = options.prompts.render("team.start", { task: options.task, question: request.question,
     refs, shown: String(earlier.lines.length), omitted: String(earlier.omitted),
     earlier: earlier.lines.length ? earlier.lines.join("\n") : "none",
+    board: recall ? options.prompts.render("team.board-context", {recall: JSON.stringify({cursor: recall.cursor, limits: recall.limits, omitted: recall.omitted})}).text : "",
     review: review ? options.prompts.render("team.validation-review", {review: JSON.stringify(review, null, 2)}).text : "" });
+   if (recall) options.record?.("scout_board_context", {role, prompt: options.prompts.render("team.board-context", {recall: JSON.stringify({cursor: recall.cursor, limits: recall.limits, omitted: recall.omitted})}).reference});
    let reply: ScoutReply;
    try {
-    const result = await options.run({ role, toolCallId, shared, system, opening, budget, signal, ...trial ? { trial, review } : {} });
+    const result = await options.run({ role, toolCallId, shared, system, opening, budget, signal, ...(options.boardRoot ? {board: {root: options.boardRoot, actor}} : {}), ...trial ? { trial, review } : {} });
     signal?.throwIfAborted();
     reply = typeof result === "string" ? { text: result } : result;
    } catch (error) {
@@ -238,7 +249,9 @@ export function createScouts(options: ScoutsOptions) {
    }
    // Validation bullets must say ok, fix or advice; others are returned but not journaled.
    const unlabelled = role === "validation" ? bullets.filter(bullet => !validationKind(bullet.replace(/^- /, ""))) : [];
-   const { rejected } = await appendValidFindings(options.journalPath, bullets.filter(bullet => !unlabelled.includes(bullet)).map(bullet => {
+   const explicit = board ? (await readFindings(board.path)).entries.filter(row => row.author.invocationId === actor.author.invocationId && row.author.role === role) : [];
+   const captured = bullets.filter(bullet => !unlabelled.includes(bullet) && !explicit.some(row => bullet.includes(`[${row.id}]`)));
+   const inputs = captured.map(bullet => {
     const prose = bullet.replace(/^- /, "");
     return {
      kind: role === "ideas" ? "idea" as const : role === "validation" ? validationKind(prose)! : "fact" as const,
@@ -247,7 +260,14 @@ export function createScouts(options: ScoutsOptions) {
      refs: trial ? validationRefs(bullet, trial, { solutionsRoot: options.solutionsRoot, checks: reply.checks }) : bulletRefs(bullet, { root: reply.root, base: citationBase }),
      datasetSha256: options.datasetSha256,
     };
-   }), signal);
+   });
+   const rejected: {index: number; title: string; reason: string}[] = [];
+   if (board) {
+    for (const [index, input] of inputs.entries()) try {
+     const {kind, title, text, refs} = input;
+     await board.write(actor, {kind: kind as "fact" | "idea" | "defect", title, text, refs}, `bullet:${index}`, signal);
+    } catch (error) {signal?.throwIfAborted(); rejected.push({index, title: input.title, reason: error instanceof Error ? error.message : "append failed"});}
+   } else rejected.push(...(await appendValidFindings(options.journalPath, inputs, signal)).rejected);
    rejected.push(...unlabelled.map(bullet => ({ index: -1, title: bullet.replace(/^- /, "").slice(0, 100), reason: "validation bullets start with ok, fix or advice" })));
    output.push(...bullets);
    if (rejected.length) output.push(options.prompts.render("team.rejected", { count: String(rejected.length),

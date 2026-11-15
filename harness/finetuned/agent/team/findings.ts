@@ -92,7 +92,7 @@ export function createFindings(root = statePath(REPO_ROOT), options: { trials?: 
   return {cursor: fresh.length > page.length ? page.at(-1)!.cursor : view.cursor, counts, newEntries: page.map(({id, title}) => ({id, title})),
    staleRefs: [...(view.incompleteTail ? ["incomplete-journal-tail"] : []), ...refs.staleRefs], unresolvedRefs: refs.unresolvedRefs};
  };
- return {read, status,
+ return {read, status, referenceStatus: refStatus,
   add: async (taskId: string, entry: Omit<FindingEntry, "id" | "cursor">, signal?: AbortSignal) => (await appendFindings(journal(taskId), [entry], signal))[0],
   resolve: (taskId: string, event: Omit<FindingResolution, "cursor">, actor: TeamRole, signal?: AbortSignal) => resolveFinding(journal(taskId), event, actor, signal),
  };

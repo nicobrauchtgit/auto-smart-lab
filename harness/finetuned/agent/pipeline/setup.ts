@@ -16,9 +16,12 @@ import type { PromptSnapshot } from "../prompts/loader.js";
 import { submissionSetupChecks, submissionRecoverySetupChecks } from "../submission/setup.js";
 import type { Telemetry } from "../telemetry/runtime.js";
 import { ARM_ROOT, statePath } from "../paths.js";
+import { assertBoardDestination, boardPath } from "../team/board.js";
+import { readFindings } from "../team/journal.js";
+import { checkBoardHistory } from "../team/board_migration.js";
 import { readCourseResources } from "../research/resources.js";
 
-export type SetupRequirement = "supervision" | "scouts" | "trial-checks" | "observability" | "model" | "python" | "task" | "training" | "refit" | "web-search" | "submission" | "submission-recovery" | "solve-isolation" | "confirmation" | "data-profile" | "course-resources";
+export type SetupRequirement = "findings-board" | "supervision" | "scouts" | "trial-checks" | "observability" | "model" | "python" | "task" | "training" | "refit" | "web-search" | "submission" | "submission-recovery" | "solve-isolation" | "confirmation" | "data-profile" | "course-resources";
 export interface SetupCheck {
  id: string;
  phase: "local" | "remote";
@@ -118,11 +121,21 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
   // Every trial and agent shell call runs under the child subreaper, so nothing it leaves behind escapes supervision.
   add("supervision-launcher", "local", "Run ./dev setup so the project Python exists (the supervision launcher uses its standard library only), on a Linux kernel that allows prctl(PR_SET_CHILD_SUBREAPER); it needs no privileges.", () => checkReaper(options.executables?.python));
  }
+ if (needs.has("findings-board")) add("findings-board", "local", "Restore the shared runs/finetuned/findings/journal.jsonl schema and board prompts/tools; make the destination writable. Stop old pipeline/scout sessions, run ./dev bun run findings-import --dry-run, then --apply to import per-task history before starting agents.", async () => {
+  const path = options.scoutPaths?.journal ?? boardPath();
+  checkEvidenceDestination(path);
+  await assertBoardDestination(dirname(dirname(path)));
+  const view = await readFindings(path);
+  if (view.entries.some(row => row.schemaVersion !== 2 || !row.taskId)) throw new Error("Board requires origin task metadata");
+  await checkBoardHistory(dirname(dirname(path)));
+  for (const id of ["team.board-read", "team.board-write", "team.board-resolve"] as const) options.prompts.render(id, {});
+  options.prompts.render("team.board-context", {recall: "preflight"});
+ });
  if (needs.has("scouts")) add("scout-prompts", "local", "Restore the task prompt, agent/prompts/team and a non-empty unit-intro.md, and make the task findings destination writable; prepared scout artifacts are checked separately after task preparation.", () => {
   // Preflight validates source inputs, not artifacts created after preflight.
   // Runtime scout callers can additionally validate their materialized inputs.
   const task = options.scoutPaths ? undefined : resolveTask({ taskId: options.taskId });
-  const paths = options.scoutPaths ?? { journal: statePath(PROJECT_ROOT, options.taskId, "findings", "journal.jsonl"),
+  const paths = options.scoutPaths ?? { journal: boardPath(),
    unitIntro: join(dirname(task!.taskDir), "unit-intro.md"), task: join(task!.taskDir, "prompt.md") };
   checkEvidenceDestination(paths.journal);
   for (const path of [paths.unitIntro, paths.task]) readable(path);

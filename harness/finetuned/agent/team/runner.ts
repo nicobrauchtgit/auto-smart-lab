@@ -21,6 +21,8 @@ import { HARNESS_CONFIG } from "../harness/config.js";
 import { webSearchExtension } from "../tools/web_search.js";
 import { runTrialChecks } from "../evaluation/checks.js";
 import { guardScoutSession } from "./budget.js";
+import { createBoard } from "./board.js";
+import { createBoardTools } from "./board_tools.js";
 import { wrapAgentTool } from "../run/agent_shell.js";
 
 export const READ_ONLY_SCOUT_TOOLS = ["read", "grep", "find", "ls"] as const;
@@ -168,10 +170,12 @@ export function createScoutRunner(options: {
    trial: input.trial, searchEnv: {TAVILY_API_KEY: process.env.TAVILY_API_KEY}});
   const checks = input.trial && view.checkSandbox ? validationCheckTool({trial: input.trial, sandbox: view.checkSandbox, solutionsRoot: options.solutionsRoot,
    taskId: options.taskId, prompts: options.prompts, record: options.record}) : undefined;
-  const tracked = trackScoutTools([...view.tools, ...(checks ? [checks.tool] : [])]), tools = tracked.tools;
+  const boardTools = input.board ? createBoardTools(createBoard(input.board.root, options.record), input.board.actor, options.prompts) : [];
+  const tracked = trackScoutTools([...view.tools, ...(checks ? [checks.tool] : []), ...boardTools]), tools = tracked.tools;
   const sandbox = view.sandbox;
   const pipeline = await loadPipelineConfig();
   const model = await initializeModel({config: pipeline.config});
+  if (input.board) input.board.actor.producerModel = model.modelId;
   const python = preparePythonEnvironment(options.prompts, readPythonEnvironment());
   const factory = createPiChildFactory({cwd: sandbox.cwd, agentDir: pipeline.agentDir, ...model, prompts: options.prompts,
    sharedInstructions: [input.shared, python.prompt], childInstructions: input.system, inputs: [python.input, {kind: "scout_configuration", version: 1, delivery: "initial_prompt", status: "available",

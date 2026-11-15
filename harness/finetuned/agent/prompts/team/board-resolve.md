@@ -1,0 +1,1 @@
+Append a superseding event for a contribution from your original producer session. Optionally cite a replacement entry with supersededBy. History remains readable. To disagree with another producer, write a new finding citing their entry instead.

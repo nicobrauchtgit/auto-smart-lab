@@ -1,5 +1,9 @@
 /** Stable prompt IDs and their required string inputs. Prose belongs in files. */
 export const PROMPTS = {
+ "team.board-read": { file: "team/board-read.md", variables: [] },
+ "team.board-write": { file: "team/board-write.md", variables: [] },
+ "team.board-resolve": { file: "team/board-resolve.md", variables: [] },
+ "team.board-context": { file: "team/board-context.md", variables: ["recall"] },
  "team.skill-data": { file: "team/skills/scout-data.md", variables: [] },
  "team.skill-ideas": { file: "team/skills/scout-ideas.md", variables: [] },
  "team.skill-validation": { file: "team/skills/scout-validation.md", variables: [] },
@@ -12,7 +16,7 @@ export const PROMPTS = {
  "team.check-tool": { file: "team/check-tool.md", variables: [] },
  "team.scout-started": { file: "team/scout-started.md", variables: ["id", "roles"] },
  "team.lead-scout-news": { file: "team/lead-scout-news.md", variables: ["id", "roles", "statuses", "bullets"] },
- "team.start": { file: "team/start.md", variables: ["task", "question", "refs", "shown", "omitted", "earlier"], optionalVariables: ["review"] },
+ "team.start": { file: "team/start.md", variables: ["task", "question", "refs", "shown", "omitted", "earlier"], optionalVariables: ["review", "board"] },
  "team.shared": { file: "team/shared.md", variables: [] },
  "team.stopped": { file: "team/stopped.md", variables: ["reason"] },
  "team.failed": { file: "team/failed.md", variables: ["role", "reason"] },

@@ -50,6 +50,7 @@ export interface LeadHandOver {
 }
 export interface LeadProgress {
  schemaVersion: 1;
+ board?: {cursor: number; ids: string[]};
  taskId: string;
  datasetSha256?: string;
  /** The run that owns this record; a resumed run keeps it. */
@@ -89,6 +90,8 @@ export function readProgress(path: string): LeadProgress | undefined {
  if ((value.baseline?.trainingRoot !== undefined && typeof value.baseline.trainingRoot !== "string")
   || !validReceipt(value.baseline?.confirmationReceipt) || !validReceipt(value.handOver?.confirmationReceipt)
   || value.holdout.some(row => !validReceipt(row.receipt))) throw new Error(`Corrupt lead confirmation reference at ${path}`);
+ if (value.board && (!Number.isSafeInteger(value.board.cursor) || value.board.cursor < 0 || !Array.isArray(value.board.ids) || value.board.ids.length > 24 || value.board.ids.some(id => typeof id !== "string" || !id)))
+  throw new Error(`Corrupt lead board position at ${path}`);
  const selected = value.handOver?.selectedCandidate;
  if (selected && (selected.experimentId !== value.handOver!.experimentId || typeof selected.commit !== "string" || typeof selected.trainingRoot !== "string"))
   throw new Error(`Corrupt lead delivery selection at ${path}`);

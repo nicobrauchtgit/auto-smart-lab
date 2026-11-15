@@ -32,7 +32,16 @@ export interface TrainingLabelRow { id: string; label: 0 | 1 }
 export type FindingKind = "fact" | "idea" | "result" | "defect" | "decision";
 export type FindingRef = { experiment: string } | { file: string; line: number; commit?: string } |
  { check: string; experiment?: string; sha256: string } | { url: string } | { profile: string } | { entry: string };
+export interface TrialMeasurement {
+ experimentId: string; source: string; status: string; metric?: string; score?: number;
+ foldScores: number[]; mean?: number; sd?: number; elapsedSeconds?: number; peakRssMb?: number;
+ sourceCommit?: string; sourceTree?: string; scope?: string; promotionEligible?: boolean; requestedFolds?: number; completedFolds?: number;
+}
 export type FindingEntry = {
+ /** Absent on legacy per-task entries. New shared records always use version 2. */
+ schemaVersion?: 2; taskId?: string; producerModel?: string; requestId?: string;
+ legacy?: {taskId: string; source: string; cursor: number; id: string; recordSha256?: string};
+ measurement?: TrialMeasurement;
  id: string; cursor: number; kind: FindingKind;
  author: { role: TeamRole; invocationId: string; runId: string };
  title: string; text: string; refs: FindingRef[]; datasetSha256: string;

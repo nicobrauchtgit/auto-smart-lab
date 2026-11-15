@@ -37,6 +37,9 @@ import type { SolveWorkspace } from "../solve/workspace.js";
 import { prepareTaskData } from "../solve/task_data.js";
 import type { TaskData, TrialSnapshot } from "../team/contracts.js";
 import { ScoutBudget } from "../team/budget.js";
+import { createBoard, boardPath, postTrialResult } from "../team/board.js";
+import { createBoardTools } from "../team/board_tools.js";
+import { loadPipelineConfig } from "../pipeline_config.js";
 import { createScouts, finalBullets, validationKind, type ScoutReport, type ScoutRequest } from "../team/scouts.js";
 import { createScoutRunner } from "../team/runner.js";
 import { createTrialResolver, taskTrialRoots } from "../team/trials.js";
@@ -249,19 +252,19 @@ const DEFAULT_DEPENDENCIES: LeadDependencies = {
 
 /** Production scouts for the lead: stream C's asynchronous scouts on stream B's task data. */
 export function productionScouts(options: { prompts: PromptSnapshot; taskId: string; configuration: TaskConfiguration; report: StageReporter;
- setup: { session: SetupSession; telemetry: Telemetry } }) {
+ setup: { session: SetupSession; telemetry: Telemetry }; producerModel?: string }) {
  return (context: LeadScoutContext): LeadScouts => {
   const task = resolveTask({ taskId: options.taskId });
   const inputs = stageScoutInputs(context.data, readCourseResources(task.unitSlug));
   const runner = createScoutRunner({ prompts: options.prompts, taskId: options.taskId, taskConfiguration: options.configuration,
    telemetry: options.setup.telemetry, record: options.report.event, setup: options.setup.session,
-   scoutPaths: { journal: statePath(PROJECT_ROOT, options.taskId, "findings", "journal.jsonl"),
+   scoutPaths: { journal: boardPath(),
     unitIntro: join(dirname(task.taskDir), "unit-intro.md"), task: context.data.taskPath, profile: context.data.profilePath },
    sandbox: (role, trial) => expertSandbox(context.data, role, context.python, trial), solutionsRoot: context.data.solutionsRoot,
    observe: options.report.observation(1), parentAgentRunId: () => context.parentAgentRunId() ?? context.invocationId });
   return createScouts({ prompts: options.prompts, taskId: options.taskId, task: readFileSync(context.data.taskPath, "utf8"),
-   dataPaths: inputs.dataPaths, resources: inputs.resources, journalPath: statePath(PROJECT_ROOT, options.taskId, "findings", "journal.jsonl"),
-   datasetSha256: context.data.datasetSha256, runId: context.runId, invocationId: context.invocationId,
+   dataPaths: inputs.dataPaths, resources: inputs.resources, journalPath: boardPath(),
+   boardRoot: statePath(PROJECT_ROOT), producerModel: options.producerModel, datasetSha256: context.data.datasetSha256, runId: context.runId, invocationId: context.invocationId,
    trials: createTrialResolver({ roots: () => taskTrialRoots(statePath(PROJECT_ROOT), options.taskId), solutionsRoot: context.data.solutionsRoot }),
    solutionsRoot: context.data.solutionsRoot, prepare: runner.prepare, run: runner, signal: context.signal, news: context.news, record: options.report.event });
  };
@@ -312,6 +315,10 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
  const resumed = prior && (prior.status === "running" || prior.status === "handing_over" || (prior.status === "failed" && !!prior.handOver)) ? prior : undefined;
  const invocationId = identity?.stageInvocationId ?? options.runId ?? randomUUID();
  const runId = resumed?.runId ?? options.runId ?? invocationId;
+ const boardRoot = dirname(data.solutionsRoot);
+ const board = createBoard(boardRoot, record);
+ const producerModel = options.model ?? (await loadPipelineConfig()).config.defaultModel;
+ const boardActor = {taskId, datasetSha256: data.datasetSha256, author: {role: "lead" as const, runId, invocationId}, producerModel};
  const limit = resumed?.budget.limit ?? options.maxToolCalls ?? HARNESS_CONFIG.team.lead.maxToolCalls;
  const trainingRoot = resumed?.trainingRoot ?? recoveryTrainingRoot(join(data.root, "training"), runId);
  const now = () => new Date().toISOString();
@@ -423,6 +430,18 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
   composing++;
   const work = feedbackChain.then(async () => {
    const described = (training?.service.describe(id) ?? {}) as Record<string, any>;
+   const keyForBoard = metricKey(configuration);
+   if (described.status && described.status !== "running_or_missing_result") {
+    const origin = described.recovery?.originStageInvocationId as string | undefined;
+    const resultActor = {...boardActor, author: {...boardActor.author, runId: origin ?? runId, invocationId: origin ?? invocationId},
+     producerModel: (origin && origin !== invocationId) || (!origin && resumed) ? undefined : producerModel};
+    await postTrialResult(boardRoot, resultActor, {experimentId: id, source: String(described.directory ?? join(trainingRoot, id)), status: String(described.status),
+     sourceCommit: described.source?.commit, sourceTree: described.source?.tree, scope: described.scope, promotionEligible: described.promotionEligible, requestedFolds: described.requestedFolds, completedFolds: described.completedFolds,
+     metric: configuration.metric, score: keyForBoard ? described[keyForBoard] : undefined,
+     foldScores: (described.foldScores ?? []).map((row: any) => row?.metrics?.[keyForBoard ?? ""]).filter((score: unknown): score is number => typeof score === "number"),
+     elapsedSeconds: view.elapsedSeconds, peakRssMb: view.peakRssMb});
+    record("board_result", {experiment_id: id, task_id: taskId, status: described.status});
+   }
    const prior = progress.trials.find(row => row.experimentId === id);
    // Completion feedback is durable. Replay only the interruption gap; the
    // authoritative champion is reconciled separately even for known results.
@@ -687,6 +706,14 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
   const environmentTool = deps.environmentTool(python, environmentToolPrompt.text, PROJECT_ROOT, {
    pipelineRunId: identity?.pipelineRunId ?? runId, stageInvocationId: identity?.stageInvocationId ?? runId, attempt: 1, sessionId: pythonSessionId });
   const shared = prompts.render("team.shared", {});
+  const recall = await board.recall(taskId, readFileSync(data.taskPath, "utf8"));
+  const previousBoard = progress.board;
+  progress.board = {cursor: previousBoard?.cursor ?? recall.cursor, ids: [...new Set([...(previousBoard?.ids ?? []), ...recall.entries.map(row => row.id)])].slice(-24)};
+  save();
+  const boardIntro = prompts.render("team.board-context", {recall: JSON.stringify({...recall, previous: previousBoard})});
+  const boardTools = createBoardTools(board, boardActor, prompts, (cursor, ids) => {
+   progress.board = {cursor, ids: [...new Set([...(progress.board?.ids ?? []), ...ids])].slice(-24)}; save();
+  });
   const isolation = prompts.render("solve.isolation", { workspace: agentRoot });
   const followUpNote = followUp ? prompts.render("team.lead-follow-up", { branch: followUp.branch, champion: followUp.champion.slice(0, 12), previous: followUp.previous }) : undefined;
   const resume = resumed ? prompts.render("team.lead-resume", { progress: renderProgress(prompts, progress).text }) : undefined;
@@ -696,7 +723,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
    foldRecommendation: `${shape.folds}-fold ${data.recommendation.scheme}, ${shape.repeats} repeat(s)`, budget: limit,
    resources: "", followUp: followUpNote?.text, resume: resume?.text, guidance: options.guidance });
   const system = opening.system;
-  const promptReferences = [...opening.promptReferences, ...scoutSkills.references, shared.reference, isolation.reference, environmentToolPrompt.reference,
+  const promptReferences = [...opening.promptReferences, ...scoutSkills.references, shared.reference, boardIntro.reference, ...(["team.board-read", "team.board-write", "team.board-resolve"] as const).map(id => prompts.render(id, {}).reference), isolation.reference, environmentToolPrompt.reference,
    ...(followUpNote ? [followUpNote.reference] : []), ...(resume ? [resume.reference] : []),
    prompts.render("team.lead-checkpoint", { progress: renderProgress(prompts, progress).text }).reference, ...training.toolPrompts, ...GIT_BLOCK_PROMPT_IDS.map(id => prompts.render(id, {}).reference)];
   let generations = 0;
@@ -721,14 +748,14 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
    prompt_snapshot_sha256: prompts.fingerprint, prompts: promptReferences });
   try {
    const { agentRunId } = await deps.runAgentSession({
-    prompts, system, skills: scoutSkills.skills, prompt: [opening.prompt, shared.text, isolation.text].join("\n\n"), promptReferences,
+    prompts, system, skills: scoutSkills.skills, prompt: [opening.prompt, shared.text, isolation.text, boardIntro.text].join("\n\n"), promptReferences,
     feedback: options.feedback, reportInput: report ? input => report.input(input) : undefined, model: options.model,
     cwd: PROJECT_ROOT, env: { SOLVE_WORKSPACE: agentRoot }, pythonSessionId, tools: [],
-    customTools: [...training.tools, ...isolatedSolveTools(sandbox, { root: join(data.root, "shell-calls") }), environmentTool, scoutTool, handOverTool],
+    customTools: [...training.tools, ...boardTools, ...isolatedSolveTools(sandbox, { root: join(data.root, "shell-calls") }), environmentTool, scoutTool, handOverTool],
     wakeTarget: session => { inbox.bind(session); return inbox; },
     onSessionReady: (session, ids) => { training!.bindSession(session); if (ids.agentRunId) leadAgentRunId = ids.agentRunId; },
     // A replacement session after a context handoff starts from the harness's record.
-    sessionContext: () => generations++ ? renderProgress(prompts, progress).text : "",
+    sessionContext: () => generations++ ? [renderProgress(prompts, progress).text, boardIntro.text, JSON.stringify(progress.board)].join("\n\n") : "",
     continueWhenIdle,
     extensionFactories: [budget.extension(), progressExtension, createGitHistoryGuard(prompts, (type, payload) => record(type, payload))],
     ...(options.signal ? { signal: options.signal } : {}),
