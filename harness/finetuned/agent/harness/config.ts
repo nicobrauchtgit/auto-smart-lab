@@ -36,7 +36,9 @@ export function parseHarnessConfig(raw: unknown): HarnessConfig {
 	const guard = object(team.scoutGuard, ["stallMs", "wallMs"], "team.scoutGuard");
 	for (const key of ["stallMs", "wallMs"]) { positive(guard[key], `team.scoutGuard.${key}`); if (guard[key] > 2_147_483_647) throw new Error("Timeout exceeds timer range"); }
 	if (guard.stallMs > guard.wallMs) throw new Error("team.scoutGuard.stallMs exceeds wallMs");
-	positive(object(team.lead, ["maxToolCalls"], "team.lead").maxToolCalls, "team.lead.maxToolCalls");
+	const lead = object(team.lead, ["maxToolCalls", "warningRemainingPercent", "finalWarningRemainingPercent"], "team.lead");
+	for (const key of ["maxToolCalls", "warningRemainingPercent", "finalWarningRemainingPercent"]) positive(lead[key], `team.lead.${key}`);
+	if (lead.warningRemainingPercent >= 100 || lead.finalWarningRemainingPercent >= lead.warningRemainingPercent) throw new Error("Lead warning percentages must satisfy 0 < final < first < 100");
 	const scouts = object(team.scouts, ["data", "ideas", "validation", "maxConcurrent"], "team.scouts");
 	for (const role of ["data", "ideas", "validation"]) {
 		const scout = object(scouts[role], role === "ideas" ? ["maxToolCalls", "webSearches"] : ["maxToolCalls"], `team.${role}`);

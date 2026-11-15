@@ -11,20 +11,24 @@ const call = (id: string, name = "read") => ({type: "toolCall", id, name, argume
 
 test('lead warnings select the strongest band across boundaries, batches and resume', () => {
  const counter = (used: number, limit = 100) => new ScoutBudget(limit, prompts, { used, finishPrompt: 'team.lead-finish' }).counter();
- expect(counter(49)).not.toContain('warning');
- expect(counter(50)).toContain('Budget warning: your remaining tool-call budget is 50');
+ expect(counter(39)).not.toContain('warning');
+ expect(counter(40)).toContain('Budget warning: your remaining tool-call budget is 60');
+ expect(counter(40)).toContain('(60% or less of your allowance)');
+ expect(counter(59, 150)).not.toContain('warning');
+ expect(counter(60, 150)).toContain('Budget warning: your remaining tool-call budget is 90');
  expect(counter(84)).toContain('Budget warning: your remaining tool-call budget is 16');
  expect(counter(85)).toContain('Final budget warning: your remaining tool-call budget is 15');
+ expect(counter(85)).toContain('(15% or less of your allowance)');
  expect(counter(99)).toContain('Final budget warning: your remaining tool-call budget is 1');
  expect(counter(100)).toContain('Tool-call limit reached');
  expect(counter(100)).not.toContain('budget warning');
  // Persisted older runs scale their warnings without receiving more calls.
  expect(counter(68, 80)).toContain('Final budget warning: your remaining tool-call budget is 12');
- const budget = new ScoutBudget(100, prompts, { used: 49, finishPrompt: 'team.lead-finish', freeTools: ['hand_over'] });
+ const budget = new ScoutBudget(100, prompts, { used: 39, finishPrompt: 'team.lead-finish', freeTools: ['hand_over'] });
  budget.assistant({ role: 'assistant', content: [call('a'), call('b'), call('c'), call('checkpoint', 'hand_over')] });
- expect(budget.used).toBe(52);
- expect(budget.counter()).toContain('Budget warning: your remaining tool-call budget is 48');
- expect(budget.counter()).toBe(counter(52));
+ expect(budget.used).toBe(42);
+ expect(budget.counter()).toContain('Budget warning: your remaining tool-call budget is 58');
+ expect(budget.counter()).toBe(counter(42));
  budget.end(); expect(budget.counter()).not.toContain('warning');
  expect(new ScoutBudget(100, prompts, { used: 85 }).counter()).not.toContain('warning');
 });

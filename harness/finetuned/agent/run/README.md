@@ -21,8 +21,12 @@ The controller stores `runs/finetuned/<task>/lead/PROGRESS.json` outside writabl
 agent mounts. It retains the original run/training root, dataset identity,
 trials/hypotheses, champion, released Ladder feedback, session identities and
 budget. Default lead budget is 150 calls. Lead result counters show a warning at
-50% remaining and a stronger final warning at 15% remaining (75 and 22 calls
-under the default). The strongest active warning stays visible on subsequent
+60% remaining and a stronger final warning at 15% remaining (90 and 22 calls
+under the default). The thresholds are configured by
+`team.lead.warningRemainingPercent` and `team.lead.finalWarningRemainingPercent`
+in `harness.config.json`; the warning templates render those configured percentages.
+Restart the runner to load changed settings; an active run keeps its snapshot.
+The strongest active warning stays visible on subsequent
 results, including after parallel batches and restart. Warnings add no calls or
 exemptions; resumed runs retain their original persisted limit. Each admission persists before tool
 execution, including rejected/unknown tool calls; replacement sessions keep

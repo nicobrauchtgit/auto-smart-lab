@@ -50,6 +50,9 @@ test("invalid tuning values fail before starting sessions", () => {
 		(value: any) => { value.subagents.waitTimeoutMs = value.subagents.maxWaitTimeoutMs + 1; },
 		(value: any) => { value.foldRecommendations[1].belowRows = 1; },
 		(value: any) => { value.solve.typo = 30; },
+		(value: any) => { value.team.lead.warningRemainingPercent = 100; },
+		(value: any) => { value.team.lead.finalWarningRemainingPercent = 0; },
+		(value: any) => { value.team.lead.finalWarningRemainingPercent = value.team.lead.warningRemainingPercent; },
 	]) {
 		const input = structuredClone(HARNESS_CONFIG); mutate(input);
 		expect(() => parseHarnessConfig(input)).toThrow();

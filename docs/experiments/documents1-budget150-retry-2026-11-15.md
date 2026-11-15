@@ -39,12 +39,13 @@ Data preparation occurs before the timed run controller and is recorded separate
 
 ## Run contract and validation
 
-The intended experimental change is the lead limit, 100 to 150. Authored prompt
-templates, accounting, scout budgets, model, folds/seed policy, boundaries and
-completion/fallback behavior are unchanged. The prompt renders the new limit.
-Warnings remain at 50% and 15% remaining (75 and 22 calls). Earlier persisted
-runs retain their recorded limits. No new requirement to try more challengers
-or modeling hints is added.
+The requested changes are the lead limit, 100 to 150, and (after launch of a
+partial attempt) warnings at 60% and 15% remaining: 90 and 22 calls. Thresholds
+now live in `team.lead.warningRemainingPercent` and
+`team.lead.finalWarningRemainingPercent`; existing warning templates render
+those values. Other accounting, scout budgets, model, folds/seed policy,
+boundaries and completion/fallback behavior are unchanged. No requirement to
+try more challengers or modeling hints is added.
 
 Fast suite after updating configured-budget expectations: 595 passed, two
 platform skips, no failures (164.62 s). Typecheck and whitespace checks passed.
@@ -59,5 +60,29 @@ The runtime remains offline MythLLM `qwen3.8-flash-next-a5b`, with the existing
 session safety bound, no extra diagnostic deadline and a 2 GiB disk reserve.
 
 Launch/observation records:
-`runs/launches/2026-11-15T13-30-21Z-documents1-budget150/`.
+`runs/launches/2026-11-15T13-46-14Z-documents1-budget150-warning60/`.
 Outcome will be recorded after the authorized retry completes.
+
+
+## User-requested warning change and restart
+
+The first 150-call attempt started at 13:31 UTC with the original 50%/15%
+warning policy. Its outer controller ended during a conversation interruption,
+while the separately supervised pipeline continued. On the user's explicit
+restart request, the existing supervisor was reattached to its recorded process
+birth identities and stopped the owned tree. No duplicate model run was started.
+This partial attempt used 23 calls and completed no trials; it is censored, not
+reported as a completed experiment. Its task state and complete solutions tree
+are preserved in
+`runs/archives/2026-11-15T13-45-01Z-documents1-budget150-before-warning-change/`.
+
+The fresh restart restores `d889538` again and verifies the same split and
+immutable development ZIP. Its controller is launched detached so conversation
+interruptions do not end monitoring. Final warning/config/template tests passed:
+595 tests passed, two platform skips, zero failures (169.44 s); focused tests
+and typecheck also passed. Threshold ordering/range is checked before sessions.
+
+The host now reports about 23 GiB total RAM; iteration 1 reported about 15 GiB.
+This is an observed hardware difference, not a change made by the controller.
+Source/data baseline equality does not make timing or resource comparisons a
+pure test of the larger tool budget. Data preparation is outside timed launch.

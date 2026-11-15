@@ -1,5 +1,6 @@
 import type { InlineExtension } from "@earendil-works/pi-coding-agent";
 import type { PromptSnapshot } from "../prompts/loader.js";
+import { HARNESS_CONFIG } from "../harness/config.js";
 
 type Content = { type: string; id?: string; name?: string };
 type AnyMessage = { role: string; content?: unknown; stopReason?: string };
@@ -100,9 +101,11 @@ export class ScoutBudget {
   if (!remaining) return `${counter} ${this.prompts.render(this.finish, {}).text.trim()}`;
   // Show the strongest active warning on every result: batches and restarts cannot skip it.
   if (this.finish === "team.lead-finish") {
-   const warning = remaining / this.limit <= 0.15 ? "team.lead-budget-final"
-    : remaining / this.limit <= 0.5 ? "team.lead-budget-half" : undefined;
-   if (warning) return `${counter} ${this.prompts.render(warning, { remaining: String(remaining) }).text.trim()}`;
+   const { warningRemainingPercent, finalWarningRemainingPercent } = HARNESS_CONFIG.team.lead;
+   const final = remaining / this.limit <= finalWarningRemainingPercent / 100;
+   const warning = final ? "team.lead-budget-final"
+    : remaining / this.limit <= warningRemainingPercent / 100 ? "team.lead-budget-half" : undefined;
+   if (warning) return `${counter} ${this.prompts.render(warning, { remaining: String(remaining), remainingPercent: String(final ? finalWarningRemainingPercent : warningRemainingPercent) }).text.trim()}`;
   }
   return counter;
  }

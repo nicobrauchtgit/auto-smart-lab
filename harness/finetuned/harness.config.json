@@ -75,7 +75,7 @@
     "busySilenceCeilingMs": 1800000
   },
   "team": {
-    "lead": { "maxToolCalls": 150 },
+    "lead": { "maxToolCalls": 150, "warningRemainingPercent": 60, "finalWarningRemainingPercent": 15 },
     "scouts": {
       "maxConcurrent": 3,
       "data": { "maxToolCalls": 15 },

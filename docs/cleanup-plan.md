@@ -14,6 +14,8 @@ Google Drive with verified round-trip hashes. Its finetuned state/source are
 archived, and a fresh repository restores exact pre-DOCX source `d889538` with
 the same task bytes and deterministic split. The user requested 150 lead calls;
 that configured allowance and its test/documentation expectations are updated.
+The user subsequently requested configurable 60%/15% warnings and a clean
+restart; the partial attempt is archived and the new controller is detached.
 See the [retry record](experiments/documents1-budget150-retry-2026-11-15.md).
 
 **DOCX completion (2026-11-15).** Both arms delivered all 2,969 predictions
