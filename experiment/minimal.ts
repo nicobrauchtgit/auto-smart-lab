@@ -9,11 +9,11 @@
  * from its shell tool's environment.
  */
 import { spawn, spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, lstatSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadExperimentConfig, modelReference, type ExperimentConfig } from "./config.js";
-import { minimalSource } from "./source.js";
+import { chainVersion, continuedRun } from "./source.js";
 import { readCourseResources } from "../harness/finetuned/agent/research/resources.js";
 import { checkSolveSandbox, executable, sandboxPolicy, type SandboxMount, type SolveSandbox } from "../harness/finetuned/agent/run/solve_sandbox.js";
 
@@ -45,28 +45,24 @@ export function armModelsJson(config: Pick<ExperimentConfig, "providers">): stri
 }
 
 /** Fresh run directory with the arm's code and links to the course units. No venv yet. */
-export function prepareMinimalRun(options: { projectRoot?: string; stamp: string; sourceFrom?: string }): MinimalRun {
+export function prepareMinimalRun(options: { projectRoot?: string; stamp: string; continueFrom?: string }): MinimalRun {
 	const projectRoot = options.projectRoot ?? PROJECT_ROOT;
-	const retained = options.sourceFrom ? minimalSource(projectRoot, options.sourceFrom) : undefined;
+	if (options.continueFrom) return linkTaskMaterial(projectRoot, continuedRun(projectRoot, options.continueFrom));
 	const armRoot = join(projectRoot, "harness", "minimal");
 	const root = join(projectRoot, "runs", "minimal", options.stamp);
 	if (existsSync(root)) throw new Error(`Run location already exists: ${root}`);
 	mkdirSync(root, { recursive: true });
-	const staleState = ["agent/smartlab/tasks", "agent/smartlab/checkpoints", "agent/memory/memory.json", "agent/submissions"];
-	for (const path of ARM_PATHS) {
-		cpSync(join(armRoot, path), join(root, path), { recursive: true, filter: source => {
-			const name = relative(armRoot, source);
-			return !source.endsWith("__pycache__") && (!retained || !staleState.some(path => name === path || name.startsWith(path + "/")));
-		} });
-	}
-	if (retained) {
-		for (const file of retained.files) {
-			mkdirSync(dirname(join(root, file.path)), { recursive: true });
-			writeFileSync(join(root, file.path), file.content);
-		}
-		writeFileSync(join(root, "source-retention.json"), JSON.stringify({ schemaVersion: 1, sourceRun: retained.sourceRun,
-			files: retained.files.map(({ path, sha256 }) => ({ path, sha256 })) }, null, 2) + "\n");
-	}
+	for (const path of ARM_PATHS) cpSync(join(armRoot, path), join(root, path), { recursive: true });
+	writeFileSync(join(root, "chain-version.json"), JSON.stringify(chainVersion(projectRoot)));
+	return linkTaskMaterial(projectRoot, root);
+}
+
+/**
+ * Task material, not agent knowledge: the model entry, links to the current course units,
+ * the task index and the declared course resources. A continued run gets the current set,
+ * as a single batch would have had every unit from its start; agent-written state is untouched.
+ */
+function linkTaskMaterial(projectRoot: string, root: string): MinimalRun {
 
 	const home = join(root, ".home");
 	const agentDir = join(home, ".pi", "agent");
@@ -75,7 +71,12 @@ export function prepareMinimalRun(options: { projectRoot?: string; stamp: string
 
 	// Only real units. Archives and notes in units/ are not task material.
 	const units = join(root, "units");
-	mkdirSync(units);
+	if (existsSync(units)) for (const name of readdirSync(units)) {
+		const path = join(units, name);
+		if (!lstatSync(path).isSymbolicLink() && name !== "index.json") throw new Error(`Run units/ holds more than links and index.json: ${name}`);
+		rmSync(path);
+	}
+	mkdirSync(units, { recursive: true });
 	const source = join(projectRoot, "units");
 	if (existsSync(source)) for (const name of readdirSync(source)) {
 		if (name.startsWith("_") || name === "README.md") continue;
@@ -96,7 +97,7 @@ export function prepareMinimalRun(options: { projectRoot?: string; stamp: string
 		readCourseResources(unit, join(root, "resources")); // Validate the copied snapshot too.
 	}
 	const modules = join(projectRoot, "node_modules");
-	if (existsSync(modules)) symlinkSync(modules, join(root, "node_modules"));
+	if (existsSync(modules) && !existsSync(join(root, "node_modules"))) symlinkSync(modules, join(root, "node_modules"));
 	return { root, venv: join(root, ".venv"), home, units };
 }
 
@@ -147,7 +148,12 @@ export function minimalPolicy(run: MinimalRun, options: { env?: NodeJS.ProcessEn
 	for (const [name, value] of Object.entries(source)) {
 		if (value !== undefined && PASSED_ENV.test(name)) env[name] = value;
 	}
-	return sandboxPolicy({ mounts, cwd: run.root, env, bwrap: options.bwrap });
+	const temporary = join(run.root, ".tmp");
+	if (existsSync(temporary) && (lstatSync(temporary).isSymbolicLink() || !lstatSync(temporary).isDirectory())) throw new Error("Run .tmp must be a real directory");
+	mkdirSync(temporary, { recursive: true });
+	const policy = sandboxPolicy({ mounts, cwd: run.root, env, bwrap: options.bwrap });
+	const args = policy.args.bind(policy);
+	return { ...policy, args(command) { const result = args(command); const separator = result.indexOf("--"); result.splice(separator + 1, 0, "--bind", temporary, "/tmp"); return result; } };
 }
 
 export function repositoryState(projectRoot = PROJECT_ROOT): { commit: string; branch: string; dirty: string } {
@@ -157,12 +163,12 @@ export function repositoryState(projectRoot = PROJECT_ROOT): { commit: string; b
 }
 
 /** Every missing prerequisite at once, with what to do about it. */
-export function checkMinimalSetup(options: { projectRoot?: string; env?: NodeJS.ProcessEnv; bwrap?: string; model?: string; sourceFrom?: string } = {}): string[] {
+export function checkMinimalSetup(options: { projectRoot?: string; env?: NodeJS.ProcessEnv; bwrap?: string; model?: string; continueFrom?: string } = {}): string[] {
 	const projectRoot = options.projectRoot ?? PROJECT_ROOT;
 	const env = options.env ?? process.env;
 	const problems: string[] = [];
-	if (options.sourceFrom) {
-		try { minimalSource(projectRoot, options.sourceFrom); }
+	if (options.continueFrom) {
+		try { continuedRun(projectRoot, options.continueFrom); }
 		catch (error) { problems.push(`Retained source: ${error instanceof Error ? error.message : String(error)}`); }
 	}
 	try { checkSolveSandbox(options.bwrap); } catch (error) { problems.push(`Filesystem boundary: ${error instanceof Error ? error.message : String(error)}`); }

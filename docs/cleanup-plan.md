@@ -212,20 +212,21 @@ See [cleanup evidence](worktree-cleanup-2026-11-12.md) for the historical merge.
 
 ## Follow-ups and readiness limits
 
-**Cross-unit source retention selected, 2026-11-15.** Both arms retain only their
-own generated source. Finetuned already preserves its shared solutions tree;
-minimal's controller accepts explicit `--source-from runs/minimal/<prior-run>`,
-checks source eligibility before agents start, copies Python solver/helper modules
-into a fresh workspace and bypasses that workspace's initial reset. It retains
-current prompts/framework and fresh task state; source hashes are recorded.
-Verification: fast suite 595 passed, two platform skips, zero failures; final
-focused controller/source/boundary checks 21 passed; typecheck passed. The actual
-minimal source-retention setup check passed without creating a run or starting
-an agent. Logs: `runs/launches/2026-11-15-source-retention-checks/`. The full suite
-remains required before merging; this change has not been merged or run on Unit 2.
-The Unit 2 source selection is recorded in [the readiness plan](experiments/unit2-readiness-2026-11-14.md).
-Encrypted inputs, task metadata/contracts, malware boundaries and task-specific
-preflights remain outstanding. No Unit 2 experiment has started.
+**Cross-unit continuation selected, 2026-11-15 (corrected).** Minimal now uses
+`--continue runs/minimal/<run>` in place with `--reset none`, preserving Leo's
+within-batch knowledge: memory, modules, requirements, predictions, checkpoints,
+scratch, venv, .home and disk-backed .tmp. Version checks reject harness commit
+or solver prompt drift. Sibling snapshots preserve starting state and package
+inventory; chain logs record invocations and a shared total cost cap deducts
+prior spend. See [experiment.md](experiment.md#starting-clean-and-continuing-runs)
+and [source.ts](../experiment/source.ts). Background processes are killed between
+steps (accepted); delivery/log folders differ cosmetically. Finetuned retains
+its own solutions. This replaces the earlier source-only copying policy.
+The minimal documents1/documents2 deliveries came from `--source-from` runs, which
+had the earlier modules but not their memory; they are to be rerun by continuing
+`runs/minimal/2026-11-11T08-29-56` (spam1–3). That folder's framework files were
+refreshed once by hand to the current harness, with its task state kept; see its
+`migration-provenance.json`.
 
 Resolve each before claiming its capability or experiment ready.
 
