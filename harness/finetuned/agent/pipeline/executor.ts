@@ -298,8 +298,6 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
         const prompts = loadPromptSnapshot();
 		// One configuration for the whole chain, resolved before any setup check.
 		const taskConfiguration = resolveTaskConfiguration(options.taskId, undefined, resolved.taskConfigurations[options.taskId]);
-		// Only this task's data is downloaded, and only what is missing; setup then checks it.
-		if (listTasks().some(task => task.taskId === options.taskId)) await ensureTaskData(options.taskId, { record: trace.event, signal: options.signal, offline: !resolved.online });
 		trace.event("pipeline_task_configuration", { source: taskConfiguration.source, sha256: taskConfiguration.sha256, configuration: taskConfiguration.configuration });
 		trace.event("pipeline_prompt_snapshot", { prompt_snapshot_sha256: prompts.fingerprint });
 		const setupSession = new SetupSession();
@@ -323,7 +321,11 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
 			getStage(name).parseOptions({ ...(resolved.settings.stages[name].options as Record<string, unknown> ?? {}),
 				...(options.optionOverrides?.[name] as Record<string, unknown> ?? {}) });
 		}
-		await setupSession.check(setupChecks(["observability", ...planned.flatMap(name => [...(getStage(name).setupRequirements ?? [])])], { telemetry: trace.telemetry,
+		const requirements = planned.flatMap(name => [...(getStage(name).setupRequirements ?? [])]);
+		// Source-only checks and stages without task inputs must not download data.
+		if (requirements.includes("task") && listTasks().some(task => task.taskId === options.taskId))
+			await ensureTaskData(options.taskId, { record: trace.event, signal: options.signal, offline: !resolved.online });
+		await setupSession.check(setupChecks(["observability", ...requirements], { telemetry: trace.telemetry,
 			taskId: options.taskId, taskConfiguration: taskConfiguration.configuration, model: options.model, configPath: options.configPath, prompts,
             candidateProducedUpstream: planned.includes("lead"), refitTrainingRoot: (options.optionOverrides?.refit as { trainingRoot?: string })?.trainingRoot ?? (resolved.effectiveOptions.refit as { trainingRoot?: string })?.trainingRoot,
 		}), options.signal ?? new AbortController().signal, trace.event);
