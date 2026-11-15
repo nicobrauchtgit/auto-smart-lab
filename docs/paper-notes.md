@@ -30,3 +30,36 @@ same wall-clock budget. Trials are already compared on shared, harness-owned
 folds, so results from parallel workers stay comparable; the controller would
 need a configurable worker count. A follow-up study could vary it on a larger
 machine.
+
+## Both arms stay on pi 0.84.1, not the newest release
+
+*Added 2026-11-15.*
+
+Both arms and both models run on the pinned pi 0.84.1 (`package.json`), released
+2026-08-07. By 2026-11-15 pi had reached 1.5.2 (25 releases, including 1.0).
+We did not upgrade, because of time and resources, not because the evidence is
+against it:
+
+- **Porting cost:** the finetuned arm's context hand-off
+  (`harness/finetuned/agent/context/session.ts`) uses `agent.shouldStopAfterTurn`,
+  removed in 0.87.0, and writes `agent.state.messages` directly, which no longer
+  changes the request history since 0.87.0. Further breaking changes cover tool
+  schemas, event types and the provider interface. Both arms would need porting
+  and full retesting, including Leo's minimal arm.
+- **Comparability:** all runs so far used 0.84.1. Upgrading mid-experiment would
+  put units on different runtimes; upgrading only for one model would add a
+  second difference besides the model.
+
+Fixes in the newer releases that could matter for us (from pi's changelog; their
+effect on our runs is not measured): Gemini on Vertex treated tool calls cut off
+at the output limit as normal tool use (0.84.2), used unsupported thinking levels
+(0.86.0) and sent unsupported `const` tool-schema keywords (1.5.0); token-refresh
+retries on Vertex (1.4.0); LiteLLM/vLLM (MythLLM's stack) got fixes for an empty
+tools list (1.5.1), context-overflow detection (1.5.0) and reasoning order
+(1.3.0); compaction summaries no longer fail on long reasoning (1.4.0). The
+1.5.2 catalog also lists `gemini-3.8-flash`, which we declare ourselves with the
+same limits and prices.
+
+Expectation, not measured: a run on the newest pi might be somewhat more robust,
+mainly for Gemini tool calling and context hand-off; a follow-up could repeat a
+unit on both versions.
