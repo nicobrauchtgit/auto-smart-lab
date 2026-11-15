@@ -150,7 +150,7 @@ fallback are unchanged. No experiment run or upload is part of this repair.
 
 ## Work queue (v2 section 11)
 
-**Shared agent message board: implemented and validated on main.**
+**Shared agent message board: implemented and validated in both checkouts.**
 [The staged completion plan](message-board-plan.md) builds on the existing
 durable findings journal and read/add/resolve adapters. It covers shared
 cross-task storage, lead/scout read and contribution tools, startup/resume
@@ -159,8 +159,10 @@ The existing kickoff covers only scout bullet append and repeat-call recall;
 this package completes v2's cross-task learning commitment. The main checkout's
 259 historical entries are imported, and replay adds no duplicates. The
 [operating contract](../harness/finetuned/docs/message-board.md) describes tools,
-limits and per-checkout migration. Experiment comparability does not gate this
-package.
+limits and per-checkout migration. Main full validation passed 747 tests with
+3 skips; both checkouts passed fast validation and typecheck. Google has its own
+empty board and retains its Vertex configuration. Experiment comparability does
+not gate this package.
 
 First priority, implemented and locally verified, 2026-11-13:
 [completion reliability repair](completion-reliability-plan.md).

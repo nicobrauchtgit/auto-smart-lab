@@ -1,6 +1,6 @@
 # Shared agent message board completion plan
 
-Status: implemented and validated on main; Google rollout is next. Requested after the
+Status: implemented and validated on main and the Google checkout. Requested after the
 2026-11-15 journal audit. The landed contract is in
 [message-board operations](../harness/finetuned/docs/message-board.md).
 Experiment comparability is secondary to making the board useful; it is not a prerequisite for this work.
@@ -195,7 +195,9 @@ spam3, with no rejected records or torn tails. A repeated apply appended zero
 records and skipped all 259. Source journals remain unchanged; the local
 `runs/finetuned/findings/import-receipt.json` records source hashes and cursor
 mappings. Runtime data is not committed or copied between checkouts. The Google
-checkout must import its own history after the code cherry-pick.
+checkout completed its own dry-run/apply import after the code cherry-pick.
+It had no legacy journals, so its board starts empty; the main checkout's
+history was not copied.
 
 
 ## Validation
@@ -214,3 +216,13 @@ and split/recovery tests depending on absent fetched archives. The executor now
 prepares data only for requested task requirements, and those tests own
 synthetic archives; their affected suites passed before the branch merge.
 No live modeling experiment was run for this feature.
+
+
+Google rollout: implementation `8cd81b8` was cherry-picked as `ad04be1`, with
+its planning and baseline-fix commits. Google fast validation passed 617 tests
+with 3 skips; typecheck, board preflight and all 4 deterministic split/recovery
+tests passed. The latter initially found missing project-local ZIP utilities;
+the existing `.tools` ZIP/unzip links were restored in that checkout before
+rerunning. Vertex configuration hashes remained unchanged. Both working trees
+were clean after applying the code. The full 750-test suite was run on main;
+Google received fast and focused validation, with no new live model experiment.
