@@ -1,5 +1,8 @@
 # Unit 2 DOCX setup, 2026-11-15
 
+Subsequent execution: [both-arm DOCX completion report](documents1-both-arms-2026-11-15.md).
+The setup-only statements below describe the state before those authorized runs.
+
 DOCX (`documents1`, Unit 2 task 1) is staged for the two sequential offline
 arm runs. No experiment, agent session, fitting, prediction, submission or
 upload was started. PDF, RTF and the mixed bonus are not staged or registered.

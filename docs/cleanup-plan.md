@@ -9,6 +9,15 @@ history (commit 452e1e5).
 
 ## Experiment and current runtime
 
+**DOCX completion (2026-11-15).** Both arms delivered all 2,969 predictions
+with independently verified IDs, hashes and source ZIPs. Minimal took 26m48s;
+finetuned took 1h34m38s and retained its validated original champion after a
+fixed challenger failed the paired promotion test. Both used their own retained
+source and the configured offline model. No other Unit 2 task ran, no safety
+stop or upload occurred, and no runtime changes were made. See the
+[two-arm DOCX report](experiments/documents1-both-arms-2026-11-15.md) for score
+provenance limits, handoff/tool counts and the measured solutions-path ambiguity.
+
 **Unit 2 setup (2026-11-15).** DOCX `documents1` inputs and original training
 labels are staged and hashed, shared task metadata/text are restored without VM
 credentials or modeling coaching, and the finetuned declaration uses the existing
