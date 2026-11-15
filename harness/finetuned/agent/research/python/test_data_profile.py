@@ -1,4 +1,4 @@
-"""Harness data profile on synthetic archives: generic records, leakage, duplicates, text layer."""
+"""Harness data profile on synthetic archives: generic records, duplicates, text layer."""
 import json
 from pathlib import Path
 import subprocess
@@ -55,13 +55,10 @@ class DataProfileTest(unittest.TestCase):
         self.assertNotIn("data/train/", text, "member names must not be stored")
         self.assertNotIn("buy", text, "sample contents must not be stored")
 
-    def test_leakage_duplicates_and_text_layer(self):
+    def test_targets_duplicates_and_text_layer(self):
         evidence = data_profile.profile(self.spec)["evidence"]
         self.assertEqual(evidence["training.targets"]["values"]["counts"], {"0": 7, "1": 5})
-        suffix = evidence["training.name_leakage"]["values"]["suffix"]
-        self.assertEqual(suffix["majority_accuracy"], 1.0)
-        self.assertEqual(suffix["key_equals_target_fraction"], 1.0)
-        self.assertEqual(evidence["training.name_leakage"]["values"]["test_suffixes_distinct"], 1)
+        self.assertNotIn("training.name_leakage", evidence)
         self.assertEqual(evidence["training.duplicates"]["values"]["duplicate_groups"], 2)
         self.assertEqual(evidence["training.duplicate_target_conflicts"]["values"]["conflicting_groups"], 1)
         self.assertEqual(evidence["training_vs_test.exact_overlap"]["values"]["test_samples_matching_training"], 1)

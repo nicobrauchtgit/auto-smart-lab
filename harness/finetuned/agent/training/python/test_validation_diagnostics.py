@@ -33,10 +33,10 @@ class DiagnosticPipeline(Pipeline):
     def diagnostic_perturbations(self, frame, context):
         assert not frame.attrs
         neutral, erased, unknown = frame.copy(), frame.copy(), frame.copy()
-        import zipfile
+        import zipfile, os
         for name, variant, transform in [("lowercase", neutral, str.lower), ("erase", erased, lambda text: "unseen words"),
                                          ("unknown", unknown, lambda text: text.replace("limited offer prize", "project meeting agenda"))]:
-            path = str(frame["input"].iloc[0]["archive"]) + "." + name + ".zip"
+            path = str(frame["input"].iloc[0]["archive"]) + "." + name + "." + str(os.getpid()) + ".zip"
             with zipfile.ZipFile(path, "w") as archive:
                 for descriptor, text in zip(frame["input"], read_text(frame)):
                     archive.writestr(descriptor["member"], transform(text))

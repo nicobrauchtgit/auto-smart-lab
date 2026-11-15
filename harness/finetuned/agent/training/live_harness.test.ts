@@ -59,7 +59,7 @@ test("a supervised pilot can be checked while running and produces non-promotabl
 		root: join(temporary, "experiments"),
 		env: environment(),
 		deliver: (_text, update) => { updates.push(update); },
-		limits: { sampleIntervalMs: 25, updateIntervalMs: 100, stopGraceMs: 1_000 },
+		limits: { sampleIntervalMs: 25, stopGraceMs: 1_000 },
 	});
 	try {
 		const service = new TrainingService({

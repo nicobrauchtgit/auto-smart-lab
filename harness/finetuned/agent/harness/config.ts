@@ -3,15 +3,14 @@ import { createHash } from "node:crypto";
 import document from "../../harness.config.json";
 
 const fields = {
-	orchestrator: ["maxSessions", "maxModelRequests", "maxToolCalls", "maxStages", "maxTrials", "maxRetries", "maxWallMs", "maxSummaryBytes", "maxDetailBytes", "maxNotifications"],
 	setup: ["timeoutMs", "modelMaxTokens"],
 	pipeline: ["maxStageInvocations"],
-	session: ["maxWallMs", "stallMs", "stallRetries", "lessonMaxMs"], context: ["handoffTokens", "maxHandoffBytes"],
-	research: ["injectStartupContext", "maxAttempts", "webSearchCalls", "webSearchResults", "maxReportBytes", "maxAnalysisArtifactBytes", "maxFacts", "maxAlternates", "maxImprovements", "profileTimeoutMs", "profileTextMinPercent", "maxToolCalls", "finalizeToolCalls", "focusAtRemainingPercent", "wrapUpAtRemainingPercent", "bashTimeoutSeconds"],
-	solve: ["maxIterations", "seed", "foldPolicy", "experimentUpdateIntervalSeconds", "idleWakeMs"],
+	session: ["maxWallMs", "stallMs", "stallRetries"], context: ["handoffTokens", "maxHandoffBytes"],
+	research: ["profileTimeoutMs", "profileTextMinPercent"],
+	solve: ["seed", "foldPolicy"],
 	holdout: ["targetSmallestClassRows", "minSmallestClassRows", "maxFraction", "groupFraction"],
 	search: ["confirmAboveSeconds", "overrunFactor", "maxSeconds", "validationTimeoutSeconds"],
-	supervisor: ["updateIntervalMs", "linesPerUpdate", "minStallMs", "stallGapMultiple", "importPreludeMs", "idleCpuPercent", "sampleIntervalMs", "maxConcurrent", "stopGraceMs"],
+	supervision: ["linesPerUpdate", "minStallMs", "stallGapMultiple", "importPreludeMs", "idleCpuPercent", "sampleIntervalMs", "maxConcurrent", "stopGraceMs", "outputCapBytes", "memoryReserveBytes", "swapFullSeconds", "overrunMultiple", "overrunMinMs", "busySilenceCeilingMs"],
 	subagents: ["turnTimeoutMs", "waitTimeoutMs", "maxWaitTimeoutMs", "limits"],
 };
 function object(value: unknown, keys: readonly string[], name: string): Record<string, any> {
@@ -32,20 +31,34 @@ export type HarnessConfig = Omit<typeof document, "solve"> & {
 	solve: Omit<typeof document.solve, "foldPolicy"> & { foldPolicy: "auto" | { folds: number; repeats: number } };
 };
 export function parseHarnessConfig(raw: unknown): HarnessConfig {
-	const value = object(raw, ["version", ...Object.keys(fields), "foldRecommendations"], "harness");
+	const value = object(raw, ["version", ...Object.keys(fields), "foldRecommendations", "team"], "harness");
+	const team = object(value.team, ["lead", "scouts", "scoutGuard", "budgetCounter", "holdoutFeedback"], "team");
+	const guard = object(team.scoutGuard, ["stallMs", "wallMs"], "team.scoutGuard");
+	for (const key of ["stallMs", "wallMs"]) { positive(guard[key], `team.scoutGuard.${key}`); if (guard[key] > 2_147_483_647) throw new Error("Timeout exceeds timer range"); }
+	if (guard.stallMs > guard.wallMs) throw new Error("team.scoutGuard.stallMs exceeds wallMs");
+	const lead = object(team.lead, ["maxToolCalls", "warningRemainingPercent", "finalWarningRemainingPercent"], "team.lead");
+	for (const key of ["maxToolCalls", "warningRemainingPercent", "finalWarningRemainingPercent"]) positive(lead[key], `team.lead.${key}`);
+	if (lead.warningRemainingPercent >= 100 || lead.finalWarningRemainingPercent >= lead.warningRemainingPercent) throw new Error("Lead warning percentages must satisfy 0 < final < first < 100");
+	const scouts = object(team.scouts, ["data", "ideas", "validation", "maxConcurrent"], "team.scouts");
+	for (const role of ["data", "ideas", "validation"]) {
+		const scout = object(scouts[role], role === "ideas" ? ["maxToolCalls", "webSearches"] : ["maxToolCalls"], `team.${role}`);
+		positive(scout.maxToolCalls, `team.${role}.maxToolCalls`);
+	}
+	positive(scouts.maxConcurrent, "team.scouts.maxConcurrent");
+	positive(scouts.ideas.webSearches, "team.ideas.webSearches");
+	if (scouts.ideas.webSearches > 3 || team.budgetCounter !== "every_call" || team.holdoutFeedback !== "ladder") throw new Error("Invalid team policy");
 	if (value.version !== 1) throw new Error("Unsupported harness version");
 	for (const [section, keys] of Object.entries(fields)) {
 		const block = object(value[section], keys, section);
 		for (const key of keys) {
-			if (["injectStartupContext", "maxFraction", "groupFraction", "seed", "foldPolicy", "limits", "overrunFactor"].includes(key)) continue;
+			if (["maxFraction", "groupFraction", "seed", "foldPolicy", "limits", "overrunFactor"].includes(key)) continue;
 			positive(block[key], `${section}.${key}`);
 		}
 	}
-	if (typeof value.research.injectStartupContext !== "boolean") throw new Error("Invalid startup context setting");
+	if (value.supervision.idleCpuPercent > 100) throw new Error("supervision.idleCpuPercent must be at most 100");
+	// One character of up to four UTF-8 bytes must fit any capped read.
+	if (value.supervision.outputCapBytes < 4) throw new Error("supervision.outputCapBytes must be at least 4");
 	if (value.research.profileTextMinPercent > 100) throw new Error("research.profileTextMinPercent must be at most 100");
-	if (!(value.research.wrapUpAtRemainingPercent < value.research.focusAtRemainingPercent && value.research.focusAtRemainingPercent < 100)) {
-		throw new Error("research budget tiers must satisfy wrapUpAtRemainingPercent < focusAtRemainingPercent < 100");
-	}
 	for (const key of ["maxFraction", "groupFraction"]) if (!(typeof value.holdout[key] === "number" && value.holdout[key] > 0 && value.holdout[key] < 0.5)) throw new Error(`Invalid holdout.${key}`);
 	if (value.holdout.minSmallestClassRows > value.holdout.targetSmallestClassRows) throw new Error("holdout minimum exceeds target");
 	if (!Number.isSafeInteger(value.solve.seed)) throw new Error("Invalid root seed");
@@ -60,9 +73,8 @@ export function parseHarnessConfig(raw: unknown): HarnessConfig {
 	}
 	const limits = object(value.subagents.limits, ["maxConcurrent", "maxChildren", "maxQueuedMessages", "maxMessageBytes", "maxResultBytes"], "subagents.limits");
 	for (const [key, count] of Object.entries(limits)) positive(count, key);
-	if (value.orchestrator.maxWallMs > 2_147_483_647) throw new Error("Invalid orchestrator timer bound");
 	if (value.subagents.waitTimeoutMs > value.subagents.maxWaitTimeoutMs) throw new Error("Wait timeout exceeds maximum");
-	for (const timeout of [value.setup.timeoutMs, value.session.maxWallMs, value.session.stallMs, value.session.lessonMaxMs, value.solve.idleWakeMs, value.subagents.turnTimeoutMs, value.subagents.maxWaitTimeoutMs]) {
+	for (const timeout of [value.supervision.sampleIntervalMs, value.supervision.stopGraceMs, value.setup.timeoutMs, value.session.maxWallMs, value.session.stallMs, value.subagents.turnTimeoutMs, value.subagents.maxWaitTimeoutMs]) {
 		if (timeout > 2_147_483_647) throw new Error("Timeout exceeds timer range");
 	}
 	if (!Array.isArray(value.foldRecommendations) || !value.foldRecommendations.length) throw new Error("Missing fold recommendations");

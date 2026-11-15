@@ -1,37 +1,26 @@
-# Draft expert prompts
+# Draft prompts (seeds for v2)
 
-Drafts for [expert-team.md](../../expert-team.md). Not registered. In wave 2,
-P7a moves the expert drafts to `agent/prompts/experts/` and registers them; P7b
-replaces the content of `agent/prompts/orchestrator/system.md`. The
-`label-free/` fragments belong to P7c.
+Drafts written for the first expert-team design. They are not
+registered and not used at runtime. Under
+[expert-team-v2.md](../../expert-team-v2.md) they are seeds for the lead and
+scout prompts that P7a writes in `agent/prompts/team/`. The literature,
+modelling and orchestrator drafts were removed: v2 has no orchestrator, the
+lead builds the pipeline, and the ideas scout replaces literature.
 
-| Draft | Prompt ID | Variables | Replaces | Package |
-| --- | --- | --- | --- | --- |
-| `workspace.md` | `experts.workspace` | taskId, solutionsRoot, findingsPath, dataDir, testArchive, executionRules, predictionRules | `solve.isolation`, workspace parts of research/solve prompts | P7a |
-| `data.md` | `experts.data.system` | taskId, taskKind, targets | research.system (data part) | P7a |
-| `literature.md` | `experts.literature.system` | taskId, taskKind, metric, maxIdeas, webSearchCalls | research.system (sources part) | P7a |
-| `modelling.md` | `experts.modelling.system` | taskId, taskContract, foldRecommendation, maxTrials | solve.system, solve.start | P7a |
-| `validation.md` | `experts.validation.system` | taskId, taskKind, metric | review.system | P7a |
-| `orchestrator-system.md` | `orchestrator.system` | none | orchestrator.system | P7b |
-| `label-free/orchestrator.md` | `orchestrator.label-free` | none | the label-free sentences of orchestrator.system | P7c |
-| `label-free/data.md` | `experts.data.label-free` | none | none | P7c |
-| `label-free/validation.md` | `experts.validation.label-free` | none | none | P7c |
+| Draft | Seed for (v2) | Notes |
+| --- | --- | --- |
+| `workspace.md` | shared workspace notes for the lead and scouts | Variables `executionRules` and `predictionRules` come from `execution/` |
+| `data.md` | data scout | v2 scouts return bullets with sources, not readers or checks |
+| `validation.md` | validation scout | Runs on the champion's trial snapshot; returns `ok` / `fix` / `advice` |
+| `execution/inductive.md`, `execution/batch.md` | execution contract fragment | Selected from `configuration.execution` |
+| `execution/scalar.md`, `execution/partition.md` | prediction-domain fragment | Selected from the prediction domain |
+| `label-free/data.md`, `label-free/validation.md` | P7c evidence-label fragments | See [expert-team.md section 7](../../expert-team.md#7-p7c-verification-beyond-binary-classification) |
+| `label-free/orchestrator.md` | P7c label-free text for the lead | Written for the retired orchestrator |
 
-Each expert's system prompt is: role prompt, `experts.workspace`, P1's machine
-prompt, `shared.python-environment`, then the tool prompts it uses. Opening
-messages carry typed inputs only (task text, configuration facts, finding IDs
-from the orchestrator, guidance). The review guides per task kind
-(`review.guide*`) stay and follow the validation prompt. The existing
-`solve.follow-up` prompt stays for follow-up rounds.
-
-Execution fragments in `execution/` are selected from typed configuration,
-then supplied as `executionRules` and `predictionRules` to `experts.workspace`.
-`inductive.md` or `batch.md` follows `configuration.execution`; `scalar.md` or
-`partition.md` follows the prediction domain. These are selected authored text,
-not free-form controller guidance. Every expert receives exactly one of each.
-The scalar and partition fragments use `predictionDomain`. P7a tests fully
-assembled family-clustering batch and label-free image batch prompts, plus
-inductive/scalar variants; tests reject the wrong universal fit ban or raw
-cluster-ID equality. P7c evidence fragments do not override the execution
-contract. P6 provides session-local environment before these prompts are
-integrated; P7a and P7b start only after P6 merges.
+Execution fragments are selected from typed configuration, never free-form
+guidance. Every agent receives exactly one execution and one prediction-domain
+fragment. P7a tests fully assembled family-clustering batch and label-free
+image batch prompts, plus inductive/scalar variants, and rejects a universal
+fit ban or raw cluster-ID equality. Every agent also gets the task text and the
+unit introduction (v2 section 9). P7c evidence fragments do not override the
+execution contract.

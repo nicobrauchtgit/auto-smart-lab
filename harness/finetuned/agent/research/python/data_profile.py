@@ -2,7 +2,7 @@
 
 The research agent receives this profile instead of rewriting the same survey for
 every task. Records are generic (inventory, sizes, content types, duplicates,
-target counts, member-name and order leakage, training vs test) plus a text
+target counts, target by archive order, training vs test) plus a text
 layer that applies when most samples decode as text. Domain analysis stays with
 the agent.
 
@@ -111,22 +111,6 @@ def suffix(name: str) -> str:
     return base.rsplit(".", 1)[-1] if "." in base else ""
 
 
-def directory(name: str) -> str:
-    return name.rsplit("/", 1)[0] if "/" in name else ""
-
-
-def purity(keys: list[str], targets: list) -> dict:
-    """How well a name-derived key alone predicts the target (majority target per key)."""
-    groups: dict[str, Counter] = defaultdict(Counter)
-    for key, target in zip(keys, targets):
-        groups[key][str(target)] += 1
-    correct = sum(counter.most_common(1)[0][1] for counter in groups.values())
-    baseline = Counter(str(target) for target in targets).most_common(1)[0][1]
-    return {"distinct_values": len(groups), "majority_accuracy": round(correct / len(targets), 4),
-            "majority_class_accuracy": round(baseline / len(targets), 4),
-            "key_equals_target_fraction": round(sum(1 for key, target in zip(keys, targets) if key == str(target)) / len(targets), 4)}
-
-
 def zip_profile(spec: dict) -> dict:
     train_ids = archive_ids(spec["trainZip"], spec.get("targetsPath"))
     test_ids = archive_ids(spec["testZip"])
@@ -178,10 +162,6 @@ def zip_profile(spec: dict) -> dict:
             conflicts[train[name]["sha256"]].add(str(targets[name]))
         evidence["training.duplicate_target_conflicts"] = record("training", len(ordered), "Exact-duplicate content groups whose members carry different targets", {
             "conflicting_groups": sum(1 for values in conflicts.values() if len(values) > 1)})
-        evidence["training.name_leakage"] = record("training", len(ordered), "Predicting the target from member-name parts alone (majority target per value)", {
-            "suffix": purity([suffix(name) for name in train_ids], ordered),
-            "directory": purity([directory(name) for name in train_ids], ordered),
-            "test_suffixes_distinct": len({suffix(name) for name in test_ids})})
         by_order = sorted(train_ids, key=lambda name: train[name]["order"])
         quarter = max(1, len(by_order) // 4)
         quarters = [by_order[i * quarter:(i + 1) * quarter if i < 3 else len(by_order)] for i in range(4)]

@@ -1,6 +1,8 @@
 /** Fail-fast prerequisites shared by pipeline and standalone stage execution. */
-import { checkSolveSandbox } from "../run/solve_sandbox.js";
-import { accessSync, constants, statSync, existsSync } from "node:fs";
+import { checkSupervision } from "../experiments/setup.js";
+import { checkReaper } from "../experiments/launcher.js";
+import { checkSandboxScratch, checkSolveSandbox } from "../run/solve_sandbox.js";
+import { accessSync, constants, statSync, existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { initializeModel } from "../model_provider.js";
@@ -11,13 +13,12 @@ import { inspectTaskData, projectPython, type TaskConfiguration } from "./task_c
 import { processIdentity } from "../experiments/ownership.js";
 import { HARNESS_CONFIG } from "../harness/config.js";
 import type { PromptSnapshot } from "../prompts/loader.js";
-import { KnowledgeStore } from "../knowledge/store.js";
-import { selectedKnowledge } from "../knowledge/service.js";
 import { submissionSetupChecks, submissionRecoverySetupChecks } from "../submission/setup.js";
 import type { Telemetry } from "../telemetry/runtime.js";
 import { ARM_ROOT, statePath } from "../paths.js";
+import { readCourseResources } from "../research/resources.js";
 
-export type SetupRequirement = "observability" | "model" | "python" | "task" | "training" | "evaluation" | "refit" | "web-search" | "knowledge" | "knowledge-history" | "submission" | "submission-recovery" | "orchestrator" | "solve-isolation" | "confirmation" | "data-profile";
+export type SetupRequirement = "supervision" | "scouts" | "trial-checks" | "observability" | "model" | "python" | "task" | "training" | "refit" | "web-search" | "submission" | "submission-recovery" | "solve-isolation" | "confirmation" | "data-profile" | "course-resources";
 export interface SetupCheck {
  id: string;
  phase: "local" | "remote";
@@ -25,6 +26,12 @@ export interface SetupCheck {
  run(signal: AbortSignal): void | Promise<void>;
 }
 export interface SetupResult { id: string; status: "passed" | "failed" | "skipped"; remedy?: string }
+
+export function courseResourcesSetupCheck(unit: () => string, root?: string): SetupCheck {
+ return { id: "course-resources", phase: "local",
+  remedy: "Restore resources/<unit>/manifest.json and its declared course PDFs/text files with matching SHA-256 hashes. Research must receive the supplied course material before its agent starts.",
+  run() { readCourseResources(unit(), root); } };
+}
 
 /** Never record arbitrary exception text: SDK/HTTP errors can contain credentials. */
 export class SetupSession {
@@ -87,20 +94,65 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
  taskId: string;
  /** The resolved harness parts: declared, or from pipeline.config.json. */
  taskConfiguration?: TaskConfiguration;
- /** The orchestrator declares the configuration later; its tool validates the data then. */
- taskConfigurationDeclaredLater?: boolean;
  model?: string; configPath?: string; prompts: PromptSnapshot;
  /** Test seam; production reads experiment.config.json at the repository root. */
  experimentConfigPath?: string;
  /** Executable overrides for regression tests; production resolves them from the environment. */
  executables?: { python?: string; git?: string; bwrap?: string };
+ /** Test seam for the process-supervision check; production reads /proc. */
+ supervisionProcRoot?: string;
  candidateProducedUpstream?: boolean; refitTrainingRoot?: string;
- knowledgeRoot?: string;
  submissionPolicy?: import("./types.js").StageInput["submissionPolicy"];
+ /**
+  * Scout journal, unit introduction, and the task text and profile scouts get
+  * from TaskData at runtime. Without these, preflight checks source task
+  * text, the unit introduction and the default findings destination.
+  */
+ scoutPaths?: { journal: string; unitIntro: string; task: string; profile: string };
 }): SetupCheck[] {
  const checks: SetupCheck[] = [];
  const add = (id: string, phase: SetupCheck["phase"], remedy: string, run: SetupCheck["run"]) => checks.push({ id, phase, remedy, run });
  const needs = new Set(requirements);
+ if (["supervision", "model", "training", "refit"].some(requirement => needs.has(requirement as SetupRequirement))) {
+  add("process-supervision", "local", "Enable readable own-user /proc stat, io, status and meminfo and a loadable libc (sysconf) on Linux, or libproc on Darwin. Process birth identities and memory sampling are required before agent or trial execution.", () => checkSupervision(options.supervisionProcRoot));
+  // Every trial and agent shell call runs under the child subreaper, so nothing it leaves behind escapes supervision.
+  add("supervision-launcher", "local", "Run ./dev setup so the project Python exists (the supervision launcher uses its standard library only), on a Linux kernel that allows prctl(PR_SET_CHILD_SUBREAPER); it needs no privileges.", () => checkReaper(options.executables?.python));
+ }
+ if (needs.has("scouts")) add("scout-prompts", "local", "Restore the task prompt, agent/prompts/team and a non-empty unit-intro.md, and make the task findings destination writable; prepared scout artifacts are checked separately after task preparation.", () => {
+  // Preflight validates source inputs, not artifacts created after preflight.
+  // Runtime scout callers can additionally validate their materialized inputs.
+  const task = options.scoutPaths ? undefined : resolveTask({ taskId: options.taskId });
+  const paths = options.scoutPaths ?? { journal: statePath(PROJECT_ROOT, options.taskId, "findings", "journal.jsonl"),
+   unitIntro: join(dirname(task!.taskDir), "unit-intro.md"), task: join(task!.taskDir, "prompt.md") };
+  checkEvidenceDestination(paths.journal);
+  for (const path of [paths.unitIntro, paths.task]) readable(path);
+  if (!readFileSync(paths.unitIntro, "utf8").trim()) throw new Error("Empty unit introduction");
+  for (const id of ["team.shared", "team.empty", "team.finish", "team.scout-tool", "team.probe-question"] as const) options.prompts.render(id, {});
+  options.prompts.render("team.scout-started", {id: "preflight", roles: "data"});
+  options.prompts.render("team.lead-scout-news", {id: "preflight", roles: "data", statuses: "data: completed", bullets: "preflight"});
+  options.prompts.render("team.counter", {used: "0", budget: "1"});
+  options.prompts.render("team.stopped", {reason: "preflight"});
+  options.prompts.render("team.failed", {role: "data", reason: "preflight"});
+  options.prompts.render("team.rejected", {count: "0", reasons: "preflight"});
+  options.prompts.render("team.data", {taskId: options.taskId, budget: "1", dataPaths: "preflight", resources: "preflight"});
+  options.prompts.render("team.ideas", {taskId: options.taskId, budget: "1", webSearches: "3", resources: "preflight"});
+  options.prompts.render("team.start", {task: "preflight", question: "preflight", refs: "none", shown: "0", omitted: "0", earlier: "none"});
+ });
+ if (needs.has("scouts") && options.scoutPaths) add("scout-materialized-inputs", "local", "Restore prepared task.md with the unit introduction, profile.json and the writable findings destination before starting a scout.", () => {
+  const paths = options.scoutPaths!;
+  for (const path of [paths.unitIntro, paths.task, paths.profile]) readable(path);
+  checkEvidenceDestination(paths.journal);
+  const intro = readFileSync(paths.unitIntro, "utf8").trim();
+  if (!intro || !readFileSync(paths.task, "utf8").startsWith(intro)) throw new Error("task.md lacks the unit introduction");
+ });
+ if (needs.has("trial-checks")) add("validation-trial-checks", "local", "Restore training/trial_source.ts, training/trial_checks.ts, evaluation/checks.ts and the validation prompts, and install git: the validation scout resolves measured trial snapshots with git worktrees and runs checks only against them.", () => {
+  for (const name of ["training/trial_source.ts", "training/trial_checks.ts", "evaluation/checks.ts", "workspace/trial_source.ts"]) readable(join(ARM_ROOT, "agent", name));
+  const result = spawnSync(options.executables?.git ?? "git", ["worktree", "-h"], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });
+  if (result.error || (result.status !== 0 && result.status !== 129)) throw new Error("git unavailable");
+  options.prompts.render("team.validation", {taskId: options.taskId, budget: "1", experiment: "preflight", commit: "preflight", checks: "preflight"});
+  options.prompts.render("team.check-tool", {});
+  options.prompts.render("team.probe-validation", {});
+ });
  if (needs.has("observability")) {
   add("langfuse-configuration", "local", "Set LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY and the HTTPS LANGFUSE_BASE_URL in the project .env; run ./dev setup and make the emergency trace destination writable.", () => {
    if (!options.telemetry) throw new Error("Missing shared telemetry runtime");
@@ -111,77 +163,43 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
    await options.telemetry.checkAccess(signal);
   });
  }
- if (needs.has("solve-isolation")) add("solve-filesystem-isolation", "local", "Research and solve require Linux bubblewrap with working user, mount and PID namespaces, plus bash/git/rg/fd/uv. Install bubblewrap through the host administrator or set SOLVE_BWRAP to an existing executable; no agent starts without this boundary.", () => {
+ if (needs.has("solve-isolation")) {
+ add("solve-disk-scratch", "local", "Each sandboxed command gets a private /tmp directory on disk under the host temp directory (TMPDIR, else /tmp); tmpfs/ramfs is refused. If /tmp is RAM-backed, set TMPDIR to a disk-backed directory. Run ./dev setup so the project Python and sandbox_scratch.py helper are available.", () => checkSandboxScratch());
+ add("solve-filesystem-isolation", "local", "Research and solve require Linux bubblewrap with working user, mount and PID namespaces, plus bash/git/rg/fd/uv. Install bubblewrap through the host administrator or set SOLVE_BWRAP to an existing executable; no agent starts without this boundary.", () => {
   checkSolveSandbox(options.executables?.bwrap);
   options.prompts.render("solve.isolation", { workspace: "preflight" });
   options.prompts.render("solve.python-environment-tool", {});
  });
- if (needs.has("orchestrator")) add("orchestrator-prompts", "local", "Restore the registered orchestrator system, opening and control-tool templates, and use the project Bun runtime with kernel file locking.", () => {
-  options.prompts.render("orchestrator.system", {}); options.prompts.render("orchestrator.start", { task: options.taskId, context: "{}" }); options.prompts.render("orchestrator.tool", {});
-  if (!processIdentity(process.pid)) throw new Error("Process identities unavailable");
-  readable(join(ARM_ROOT, "agent/orchestrator/coordinator.ts"));
- });
+ }
  if (needs.has("submission")) checks.push(...submissionSetupChecks({ taskId: options.taskId, taskConfiguration: options.taskConfiguration, policy: options.submissionPolicy, candidateProducedUpstream: options.candidateProducedUpstream }));
  if (needs.has("submission-recovery")) checks.push(...submissionRecoverySetupChecks({ taskId: options.taskId, policy: options.submissionPolicy }));
- if (needs.has("knowledge-history")) add("knowledge-history-git", "local", "Install git through the execution machine's system setup; experiment comparisons read frozen solutions revisions without fitting or changing them.", () => {
-  const result = spawnSync(options.executables?.git ?? "git", ["--version"], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });
-  if (result.error || result.status !== 0) throw new Error("History source comparison requires git");
- });
- if (needs.has("knowledge")) {
-  add("knowledge-skills", "local", "Restore the registered agent/prompts/knowledge skills and tool template; runtime selection requires the validated prompt snapshot.", () => {
-   selectedKnowledge(options.prompts);
-   for (const id of ["knowledge.tool", "knowledge.history-tool", "knowledge.compare-tool", "knowledge.compare-notes-tool"] as const) options.prompts.render(id, {});
-   readable(join(ARM_ROOT, "agent/knowledge/experiments.ts"));
-   readable(join(ARM_ROOT, "agent/knowledge/service.ts"));
-   readable(join(ARM_ROOT, "agent/knowledge/verify_evidence.py"));
-  });
-  add("knowledge-store", "local", "Make the project knowledge/ directory (or its existing parent) readable/writable. Restore a corrupt index; inspect interrupted writers before removing .write-lock. Do not silently reset notes.", () => {
-   new KnowledgeStore(options.knowledgeRoot ?? statePath(PROJECT_ROOT, "knowledge")).preflight();
-  });
-  add("knowledge-evidence-runtime", "local", "Run ./dev setup to sync the project Python environment; knowledge evidence checks require numpy, sklearn and smartlab_eval without fitting.", () => {
-   const result = spawnSync(readPythonEnvironment().executable, ["-I", "-c", "import numpy, sklearn, smartlab_eval"], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });
-   if (result.error || result.status !== 0) throw new Error("Knowledge evidence imports failed");
-  });
- }
- if (needs.has("task")) add(`task:${options.taskId}`, "local", "Fetch the selected unit again; its metadata and prompt must be readable. The task configuration must name readable train/test archives with unique, disjoint sample IDs and a targets file covering exactly the training samples; add it as pipeline.tasks.<task> in pipeline.config.json, or let the orchestrator declare it.", () => {
+ if (needs.has("task")) add(`task:${options.taskId}`, "local", "Fetch the selected unit again; its metadata and prompt must be readable. The task configuration must name readable train/test archives with unique, disjoint sample IDs and a targets file covering exactly the training samples; add it as pipeline.tasks.<task> in pipeline.config.json.", () => {
   const task = resolveTask({ taskId: options.taskId });
   readable(join(task.taskDir, "meta.json"));
   readable(join(task.taskDir, "prompt.md"));
   const configuration = options.taskConfiguration;
-  if (!configuration) {
-   if (options.taskConfigurationDeclaredLater) return;
-   throw new Error("No task configuration");
-  }
+  if (!configuration) throw new Error("No task configuration");
   inspectTaskData(options.taskId, configuration, options.executables?.python ?? projectPython());
  });
  if (needs.has("data-profile")) add("data-profile", "local", "Restore agent/research/python/data_profile.py and agent/training/python/task_samples.py; research profiles the declared data with them before the agent starts.", () => {
   readable(join(ARM_ROOT, "agent/research/python/data_profile.py"));
   readable(join(ARM_ROOT, "agent/training/python/task_samples.py"));
  });
+ if (needs.has("course-resources")) checks.push(courseResourcesSetupCheck(() => resolveTask({ taskId: options.taskId }).unitSlug));
  if (needs.has("task") && options.taskConfiguration?.samples.source === "pcap_tcp_connections") add("pcap-sample-runtime", "local", "Run ./dev setup to install dpkt; restore pcap_samples.py. Captures must contain non-fragmented TCP over Ethernet, raw IP or Linux cooked capture, with complete packet headers.", () => {
   readable(join(ARM_ROOT, "agent/training/python/pcap_samples.py"));
   const result = spawnSync(options.executables?.python ?? projectPython(), ["-c", "import dpkt"], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });
   if (result.error || result.status !== 0) throw new Error("PCAP sample dependency unavailable");
  });
- if (needs.has("confirmation") || ((needs.has("evaluation") || needs.has("refit")) && options.taskConfiguration?.kind === "binary_classification")) add("holdout-confirmation-runtime", "local", "Restore confirm.py, confirmation service/receipt modules and shared metric/canary helpers; run ./dev setup for numpy/pandas/sklearn. Confirmation requires git worktrees and verified process-group ownership.", () => {
-  for (const file of ["training/python/confirm.py", "training/python/runner.py", "confirmation/service.ts", "confirmation/receipt.ts", "training/python/smartlab_trial/id_leakage.py"]) readable(join(ARM_ROOT, "agent", file));
+ if (needs.has("confirmation") || (needs.has("refit") && options.taskConfiguration?.kind === "binary_classification")) add("holdout-confirmation-runtime", "local", "Restore confirm.py, confirmation service/receipt modules and shared metric helpers; run ./dev setup for numpy/pandas/sklearn. Confirmation requires git worktrees and verified process-group ownership.", () => {
+  for (const file of ["training/python/confirm.py", "training/python/runner.py", "confirmation/service.ts", "confirmation/receipt.ts"]) readable(join(ARM_ROOT, "agent", file));
   const result = spawnSync(options.executables?.python ?? projectPython(), ["-c", "import numpy,pandas,sklearn,fcntl"], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });
   if (result.error || result.status !== 0 || !processIdentity(process.pid)) throw new Error("Confirmation runtime unavailable");
  });
  if (needs.has("python")) add("python-environment", "local", "Run ./dev setup; declarations, lockfile and installed packages must agree.", () => { readPythonEnvironment(); });
- if (needs.has("evaluation")) {
-  if (options.taskConfiguration?.kind === "anomaly_detection" && options.taskConfiguration.selection) add("evaluation-anomaly-prompt", "local", "Restore the registered agent/prompts/review/guide-anomaly.md template before starting the requested stage chain.", () => {
-   options.prompts.render("review.guide-anomaly", {});
-  });
-  add("evaluation-diagnostics", "local", "Restore agent/evaluation/diagnostics.py and run ./dev setup; sklearn and smartlab_eval must import successfully.", () => {
-   readable(join(ARM_ROOT, "agent/evaluation/diagnostics.py"));
-   const result = spawnSync(readPythonEnvironment().executable, ["-c", "from sklearn.metrics import roc_curve, precision_recall_curve, precision_recall_fscore_support; from smartlab_eval import load_labels"], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });
-   if (result.error || result.status !== 0) throw new Error("Evaluation imports failed");
-  });
- }
  if (needs.has("training")) {
   if (options.taskConfiguration?.selection) add(`training-selection:${options.taskId}`, "local", "Restore the evidence-selection prompt and make runs/<task>/solve/agent/evidence.json writable. The agent creates evidence; missing evidence labels are checked at trial acceptance, not at setup.", () => {
-   options.prompts.render("solve.evidence-selection", { evidencePath: statePath(PROJECT_ROOT, options.taskId, "solve", "agent", "evidence.json"), metric: options.taskConfiguration!.selection!.metric });
+   options.prompts.render("team.lead-evidence-selection", { evidencePath: statePath(PROJECT_ROOT, options.taskId, "solve", "agent", "evidence.json"), metric: options.taskConfiguration!.selection!.metric });
    checkEvidenceDestination(statePath(PROJECT_ROOT, options.taskId, "solve", "agent", "evidence.json"));
   });
   add("training-recovery", "local", "Run solve on Linux (/proc) or Darwin (libproc) with process birth identities and local flock support; durable worker recovery requires both. Use the project Devbox Python (fcntl is standard library).", () => {
@@ -196,6 +214,12 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
    const python = options.executables?.python ?? readPythonEnvironment().executable;
    const result = spawnSync(python, [join(ARM_ROOT, "agent/training/python/check_measurement.py"), "--check-imports"], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });
    if (result.error || result.status !== 0) throw new Error("Imports failed");
+  });
+  add("training-trial-services", "local", "Run ./dev setup and restore smoke.py, solve/workspace_check.py and trial source services; parallel fold processes need POSIX signal masks.", () => {
+   for (const name of ["training/python/smoke.py", "solve/workspace_check.py", "training/trial_source.ts", "training/trial_checks.ts", "run/sandbox.ts"]) readable(join(ARM_ROOT, "agent", name));
+   const python = options.executables?.python ?? readPythonEnvironment().executable;
+   const result = spawnSync(python, ["-c", "import ast, zipfile, signal, subprocess, numpy, pandas; signal.pthread_sigmask"], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });
+   if (result.error || result.status !== 0) throw new Error("Trial services Python prerequisites unavailable");
   });
   add("training-optuna", "local", "Run ./dev setup; optuna is a declared dependency used for harness-owned hyperparameter search.", () => {
    const python = options.executables?.python ?? readPythonEnvironment().executable;
@@ -224,8 +248,6 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
   add(`refit-data:${options.taskId}`, "local", "Restore complete original training labels/train archive and the unlabelled test archive. IDs must be unique, exact, disjoint and test IDs neutral; archives must pass CRC validation.", async () => {
    const { refitInputs, originalRefitData } = await import("./stages/refit.js");
    const configuration = options.taskConfiguration;
-   // An orchestrator declares the configuration later; refit checks it again at invocation.
-   if (!configuration && options.taskConfigurationDeclaredLater) return;
    if (!configuration) throw new Error("No task configuration");
    const inputs = refitInputs(options.taskId, configuration);
    const result = spawnSync(options.executables?.python ?? inputs.pythonExecutable, [join(ARM_ROOT, "agent/refit/worker.py"), "--inspect-json", JSON.stringify(originalRefitData(inputs))], { env: inputs.env, timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });

@@ -5,19 +5,18 @@ and runs so later work can import earlier work.
 
 One convention: `solutions/tasks/<task_id>.py` is the orchestration entrypoint
 for a task. It defines a factory — `build_pipeline()` unless `metrics.json` says
-otherwise — returning an **unfitted** estimator with `fit(X, y)` and `predict(X)`,
-where `X` is a pandas DataFrame with `id` and `input` columns. Each `input` names
-a zip archive and member; the pipeline reads and represents the raw bytes itself.
+otherwise — returning an **unfitted** estimator with `fit(X, y)` and `predict(X)`
+(for batch clustering, `fit_predict(X)` alone), where `X` is a pandas DataFrame
+with `id` and `input` columns. Each `input` names a zip archive and member; the
+pipeline reads and represents the raw bytes itself.
 
-That convention exists so the harness can re-run the pipeline for the leakage
-canary and the paired champion comparison. It is not a design constraint:
+That convention exists so the harness can re-run the pipeline for its own fits
+and the paired champion comparison. It is not a design constraint:
 everything else here is the agent's to organise, and shared modules can live
 wherever it finds useful.
 
-The `id` column is present so the canary can prove the pipeline ignores it. A
-model must never use the id, path, filename, or extension — for the spam tasks
-those encode the training label exactly.
-
-Model code persists locally for reuse across runs. Only this README is tracked;
-agent-generated implementations are excluded from Git. Per-run outputs live in
-`runs/<task>/solve/` and are also local.
+Search INDEX.md and existing modules before writing code. Record module paths,
+purpose, owner role and importing tasks in INDEX.md. Python belongs in tasks/,
+lib/ or checks/. Each module starts with a two-line purpose/input-output
+docstring. Move shared code into lib/ when a second task imports it. Keep large
+or temporary output in ignored scratch/. Run workspace_check before trials.

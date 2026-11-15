@@ -3,18 +3,22 @@
 > **The finetuned arm of the experiment** (see [the experiment](../../docs/experiment.md)).
 > Paths in this README and in `docs/` are relative to `harness/finetuned/`. Run state
 > lives in `runs/finetuned/` at the repository root: task runs (`runs/finetuned/<task>/`),
-> `solutions/`, `knowledge/` and `deliveries/`.
+> `solutions/` and `deliveries/`.
 > Run all `./dev` commands from the repository root.
 
-Auto SmartLab is an experimental autonomous machine-learning pipeline for the [SmartLab](https://lab-test.smartlab.mlsec.tu-berlin.de/) adversarial-AI platform. It gives an agent the task, local data, research notes, and measured feedback. Deterministic code owns input preparation, metric recomputation, artifact validation, trace recording, refit and authorized submission.
+Auto SmartLab is an experimental autonomous machine-learning pipeline for the [SmartLab](https://lab-test.smartlab.mlsec.tu-berlin.de/) adversarial-AI platform. It gives an agent the task, local data and measured feedback. Deterministic code owns input preparation, metric recomputation, artifact validation, trace recording, refit and authorized submission.
 
-The intended pipeline is:
+**Plan.** The accepted design is [expert-team-v2.md](docs/expert-team-v2.md) (2026-11-11): one lead agent drives the run, calls asynchronous scouts for data, ideas and validation, and measures every pipeline with harness-run trials. There is no LLM orchestrator and no fixed stage chain. The work queue is [docs/cleanup-plan.md](../../docs/cleanup-plan.md).
 
-```text
-resolve task -> orchestrator: research -> solve -> review -> (follow-ups) -> refit (hand-over) [-> submit, online only]
-```
-
-An orchestrator agent runs every task (`scheduling: "agent"`): it chooses the stages, their order and the context each gets, and hands over one refit offline or submits up to three times online (`online` in `experiment.config.json`). Research, solve, evaluation and refit run through the shared pipeline executor. After its work, every agent stage writes a stage report and records lessons in the knowledge store. See [Remaining work](../../docs/cleanup-plan.md) for current run blockers and the single active work queue. Every tuning value (budgets, limits, timeouts, seeds, folds) lives in `harness.config.json` and `pipeline.config.json`; [the configuration reference](docs/configuration.md) explains each key.
+**Current code.** One lead stage drives harness trials and asynchronous scouts,
+then validates its measured delivery selection and runs deterministic terminal
+refit. It tries the current champion, then its recorded validated baseline if
+needed, retaining all integrity gates and existing call accounting. The solve stage/CLI are retired. Both the
+pipeline and standalone `lead-stage` use whole-chain preflight and shared
+telemetry. See [lead execution and limits](agent/run/README.md). The observed spam
+batch delivered spam1 and failed spam2; the integration gate remains unmet.
+The completion fallback repair has local fixture evidence, with no new live run.
+Uploads still require explicit policy.
 
 ## The experiment
 
@@ -26,35 +30,35 @@ A solver should be able to test ideas, observe meaningful progress, stop unprodu
 
 - task and configuration validation;
 - sealed-label handling and metric recomputation;
-- leakage checks and artifact validation;
+- artifact validation;
 - pipeline and agent telemetry;
 - submission authorization, accounting, and packaging.
 
-Start with [Remaining work](../../docs/cleanup-plan.md). Older handovers and roadmaps are historical inputs. The design contract is in [Pipeline integration and observability](docs/pipeline-integration.md), and operational checks are in the [telemetry runbook](docs/telemetry.md).
+Start with [the work queue](../../docs/cleanup-plan.md) and [expert-team-v2.md](docs/expert-team-v2.md). The current code's design contract is in [Pipeline integration and observability](docs/pipeline-integration.md), and operational checks are in the [telemetry runbook](docs/telemetry.md).
 
 ## Current state
 
 | Area | Status |
 | --- | --- |
 | Task resolution and unit fetching | Implemented |
-| Research stage | Registered, instrumented, and enabled |
-| Solve stage | Registered, instrumented, and enabled |
-| Evaluation stage | Registered, instrumented, advisory |
+| Lead stage | Registered; harness trials, blocking scouts, durable progress and validated hand-over |
 | Submission stage | Registered; explicit controller upload policy required |
-| Langfuse Cloud observability | Shared pipeline, standalone and orchestration instrumentation |
+| Langfuse Cloud observability | Shared pipeline and standalone instrumentation |
 | Emergency JSONL trace | Failure-only; healthy runs create no mirror |
-| Optional subagent sessions | Implemented and tested in isolation, not enabled in the pipeline |
-| Live experiment supervision | Harness-owned processes, progress and recovery |
+| Blocking scouts | Data, ideas and validation, with independent sessions and call budgets |
+| Live experiment supervision | Linux sampler, process ownership, recovery and wake on news |
 | Terminal refit | Registered and deterministic |
 | Blocking controller waits and budget-end hand-over | Implemented; recovery retains refit ownership and actual trial accounting |
-| Observed agent scripts and shared memory pool (P1) | Not integrated; strict trial protection is unresolved |
-| Four experts in one shared workspace | Accepted design and draft prompts; runtime implementation is planned |
+| Global supervision of agent shell calls and machine-protection stop | Implemented by Stream A; security fixes retained |
+| Live task integration gate | Not run; accuracy, latency and reuse remain unmeasured |
 
-The configured chain is research → solve → evaluate → refit and stops before submission.
+The lead stage owns terminal refit and has no automatic successor.
 
 ## Pipeline architecture
 
-The pipeline separates model judgment from execution and validation. The agent can decide what research to perform and what model to build, but it cannot declare a stage successful by saying that its work is complete.
+The executor lifecycle, validation and telemetry rules below apply to the lead. Older solve/refit examples describe the retired chain; use `lead-stage` for current execution.
+
+The pipeline separates model judgment from execution and validation. The agent can decide what to explore and what model to build, but it cannot declare a stage successful by saying that its work is complete.
 
 ```text
 agent/pipeline_cli.ts
@@ -65,11 +69,7 @@ resolve task + load validated configuration
         v
 agent/pipeline/executor.ts
         |
-        +--> research stage --> validated research artifacts
-        |
         +--> solve stage ----> measured candidate + champion artifacts
-        |
-        +--> evaluate -------> advisory review
         |
         +--> refit ----------> frozen terminal artifacts
         |
@@ -89,9 +89,9 @@ The main pieces have narrow responsibilities:
 
 A run has one `pipelineRunId`. Each stage execution gets a `stageInvocationId`, and each model attempt gets its own agent run ID and attempt number. This hierarchy lets Langfuse show which model session produced an artifact without treating model completion as proof that the artifact passed validation.
 
-Artifacts are the handoff between stages. Research returns a validated document and analysis references. Solve consumes those artifacts with the task data and returns measured result files. Evaluation reviews exact evidence and remains advisory; refit freezes the selected pipeline. Submission checks the frozen bundle and an explicit controller policy. A review score does not authorize an upload.
+Artifacts are the handoff between stages. Solve returns measured result files; refit freezes the selected pipeline. Submission checks the frozen bundle and an explicit controller policy.
 
-The executor stops when a stage fails validation, is cancelled, has no enabled successor, or reaches the requested `--stop-after` stage. Standalone research and solve commands call this same executor rather than maintaining a second execution path.
+The executor stops when a stage fails validation, is cancelled, has no enabled successor, or reaches the requested `--stop-after` stage. The standalone solve command calls this same executor rather than maintaining a second execution path.
 
 ### Pi SDK
 
@@ -155,7 +155,7 @@ Edit the ignored `.env` file:
 # Required for agent sessions
 MYTHLLM_API_KEY='...'
 
-# Optional, enables web search in research
+# Optional, enables web search in solve
 TAVILY_API_KEY='...'
 
 # Required only for authenticated SmartLab fetch/submission operations
@@ -231,7 +231,7 @@ Check access with a dry run first, then start a model request:
 
 ```bash
 ./dev bun run pipeline -- spam1 --dry-run --model google-vertex/gemini-3.5-flash
-./dev bun run pipeline -- spam1 --stop-after research --model google-vertex/gemini-3.5-flash
+./dev bun run pipeline -- spam1 --stop-after solve --model google-vertex/gemini-3.5-flash
 ```
 
 The dry run validates local configuration without contacting Google. An HTTP
@@ -271,10 +271,7 @@ A task can be selected by canonical ID or unit/task number:
 
 Long runs belong in a detached process, so a closed terminal does not end them:
 `./dev bun run experiment -- --arm finetuned spam1 --detach` prints the log file
-under `runs/finetuned/spam1/logs/` and returns. `--resume <run-id>` continues an
-orchestrator run (the run ID is on the log's `run ... started` line). See
-[the orchestrator](agent/orchestrator/README.md) for the progress lines and what
-happens at the end of the budget.
+under `runs/finetuned/spam1/logs/` and returns.
 
 ## Run the pipeline
 
@@ -284,11 +281,8 @@ The main command uses `agent/pipeline/executor.ts` for every registered stage. I
 # Run the configured chain through terminal refit.
 ./dev bun run pipeline -- spam1
 
-# Run and stop after research.
-./dev bun run pipeline -- spam1 --stop-after research
-
-# Start directly at solve.
-./dev bun run pipeline -- spam1 --stage solve
+# Run and stop after solve.
+./dev bun run pipeline -- spam1 --stop-after solve
 
 # Print trace events while the run executes.
 ./dev bun run pipeline -- spam1 --echo-events
@@ -297,47 +291,35 @@ The main command uses `agent/pipeline/executor.ts` for every registered stage. I
 The standalone commands below still use the same stage executor:
 
 ```bash
-./dev bun run research -- spam1
-./dev bun run solve-stage -- spam1 --use-existing-research --iterations 3
+./dev bun run lead-stage -- spam1
 ```
 
 Each execution prints its Langfuse Cloud trace link. Stage lifecycle, typed inputs,
 physical sessions, generations, tools, trials and artifact checks share one trace.
 JSONL is created only when delivery fails; see [telemetry](docs/telemetry.md).
 
-### Research output
-
-Research maintains:
-
-```text
-runs/<task-id>/research/
-├── research.md
-├── context.json
-├── analysis/
-└── runs.jsonl
-```
-
-The stage gets the task prompt, a compact dataset manifest, optional measured startup context, filesystem tools, and bounded web search. It validates `research.md` before reporting success.
-
-Preview the startup context without calling a model:
+### Asking the running lead a question
 
 ```bash
-./dev bun run research -- spam1 --preview-context
+./dev bun harness/finetuned/agent/run/ask_lead.ts spam1 "Why have you not used scouts?" --wait 10
 ```
+
+The question reaches the live lead like trial news, framed as a question that does not
+change its task, budget or judging; its next text is the answer. Both are recorded in
+Langfuse (`operator_question`, `operator_answer`) and kept under
+`runs/finetuned/<task>/lead/operator/` (questions, delivered, answers), which no agent
+can write. A question does change the lead's context from then on, so use it in test
+runs, not measured ones. It works only for runs started with this code.
 
 ### Solve output
 
 The solve agent writes an unfitted pipeline under `solutions/`. The harness owns folds, seeds, fits, predictions, measurements and paired champion comparison. Solve gives the agent a development archive and opaque sample manifest; sealed rows and original full labels remain outside its filesystem boundary.
 
-Training trials contain harness-written `trial-result.json`, `metrics.json`, fold measurements and `oof_predictions.csv`. After the agent closes, binary classification also returns a hashed `holdout_confirmation` artifact. The frozen champion fits on development rows and predicts sealed rows once; its receipt reports balanced accuracy, a 95% stratified bootstrap interval, the CV gap, precision and recorded reuse. Evaluation treats this as advisory evidence. Terminal refit checks the confirmed candidate before fitting all training rows.
+Training trials contain harness-written `trial-result.json`, `metrics.json`, fold measurements and `oof_predictions.csv`. After the agent closes, binary classification also returns a hashed `holdout_confirmation` artifact. The frozen champion fits on development rows and predicts sealed rows once; its receipt reports balanced accuracy, a 95% stratified bootstrap interval, the CV gap, precision and recorded reuse. Terminal refit checks the confirmed candidate before fitting all training rows.
 
 See [Held-back confirmation](docs/held-back-confirmation.md), [Solve workspace](agent/solve/README.md) and [Harness-owned training](docs/harness-owned-training.md).
 
-### Filename-leakage canary
-
-Training member names may end in `.0` or `.1`, revealing their labels; test IDs use `.x`. After each classification validation prediction, the harness predicts again with neutral IDs and ZIP member names while preserving sample bytes. It compares both predictions and continuous scores, without another fit. A mismatch excludes the trial from promotion and gives the agent one repair message; matching outputs are silent. The same canary runs during sealed confirmation.
-
-See [ID leakage canary](docs/id-leakage-canary.md) for the checked paths and limits.
+Training member names end in their label and test members in `.x`. By decision of 2026-11-11 this is a stated task fact (each labelled task's text says so), not a leak; the filename-leakage canary was removed ([v2 section 9](docs/expert-team-v2.md#9-datasets-and-the-interface)).
 
 ## Langfuse Cloud observability
 
@@ -369,7 +351,7 @@ usage/cost semantics, payload limits and emergency diagnostics.
 
 Subagents do not yet provide durable workflow recovery:
 
-- they are not wired into research or solve;
+- they are not wired into solve;
 - they share the same filesystem and need explicit file ownership;
 - they cannot spawn grandchildren;
 - they do not replace the durable experiment record;
@@ -384,7 +366,7 @@ Read [agent/subagents/README.md](agent/subagents/README.md) before enabling it. 
 ./dev bun test ./harness/finetuned/agent/subagents/ ./harness/finetuned/agent/prompts/ ./harness/finetuned/agent/run/session_resources.test.ts
 ```
 
-`agent/subagents/live_smoke.ts` makes paid model calls and is not part of the normal test suite. Its original run produced valid artifacts but exited nonzero on a flawed marker assertion. The assertion now distinguishes automatic transcript forwarding from text repeated in a bounded reply. The original failed evidence is preserved, and no corrected live rerun has occurred. See the [handover evidence](docs/HANDOVER.md#live-smoke-evidence).
+`agent/subagents/live_smoke.ts` makes paid model calls and is not part of the normal test suite. Its original run produced valid artifacts but exited nonzero on a flawed marker assertion. The assertion now distinguishes automatic transcript forwarding from text repeated in a bounded reply. The original failed evidence is preserved, and no corrected live rerun has occurred. v2 builds its blocking scouts on this module (P7a).
 
 ## Tests
 
@@ -399,17 +381,16 @@ The TypeScript tests cover pipeline execution, prompt loading, tracing, session 
 
 ```text
 agent/
-├── orchestrator/       Durable decision loop, budgets, recovery and progress
 ├── pipeline/           Shared executor, registry, stages, configuration, and trace lifecycle
 ├── prompts/            Versioned prompt templates and typed loader
-├── research/           Research context preparation and artifact validation
-├── solve/              Measurement, sealed split, canary, and champion comparison
+├── research/           Data profile, task context and course resources (scout inputs)
+├── solve/              Measurement, sealed split and champion comparison
 ├── subagents/          Optional parent/child session manager, not pipeline-enabled
 ├── run/                Shared agent sessions, sandbox and Python environment scopes
 ├── telemetry/          Langfuse runtime, preflight, emergency journal and Cloud smoke
 ├── setup/              Unit fetching, SmartLab helpers, and Python environment manager
 └── observability.ts    Pi event and final-request adapter
-agent/libs/smartlab-eval/  Corpus loading library (solve agent, evaluation diagnostics)
+agent/libs/smartlab-eval/  Corpus loading library (solve agent)
 ../../runs/finetuned/solutions/  Agent-owned reusable model code
 ../../units/            Downloaded task prompts, metadata, and datasets
 ../../runs/finetuned/   Harness artifacts, durable records and emergency traces
@@ -430,16 +411,12 @@ controller policy; stage availability or an evaluation score alone cannot.
 ## Further reading
 
 - [Current work queue and readiness limits](../../docs/cleanup-plan.md)
-- [Accepted expert-team design, implementation planned](docs/expert-team.md)
-- [Historical autonomous experimentation plan](docs/autonomous-experimentation-plan.md)
-- [Historical developer handover](docs/HANDOVER.md)
-- [Historical implementation roadmap](docs/WIP.md)
+- [Accepted v2 design: lead agent and scouts](docs/expert-team-v2.md) and its [contract appendix](docs/expert-team.md)
 - [Telemetry operations and troubleshooting](docs/telemetry.md)
 - [Pipeline integration and observability contract](docs/pipeline-integration.md)
 - [Solve stage harness](agent/solve/README.md)
 - [Prompt management](agent/prompts/README.md)
 - [Optional subagents](agent/subagents/README.md)
-- [Signal implementations and open tools](docs/pipeline-signals.md)
 - [Observable trial fits and experiment control](docs/experiment-supervision.md)
 - [Pi SDK 0.84.1 investigation and upstream links](docs/research/pi-0.84.1/README.md)
 - [Python environment management](agent/runtime/python/README.md)

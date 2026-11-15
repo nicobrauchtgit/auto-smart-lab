@@ -53,6 +53,12 @@ is a measurement error and must be fixed; a prompt hint is a confound and must n
 
 ## 3. How
 
+The experiment controller supplies user-provided course slides as read-only
+`resources/<unit>/` snapshots. `read_challenge` lists the declared PDF/text paths
+and hashes; run conditions and Langfuse metadata record them. Source and snapshot
+checksums are checked before a solver starts. This adds task material, without
+modeling advice or changes to `agent/instructions/solver.md`.
+
 ### 3.1 Components
 
 ```

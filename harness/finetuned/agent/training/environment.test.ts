@@ -110,3 +110,13 @@ describe("training worker environment", () => {
 	});
 });
 
+
+test("session environment overrides are independent", async () => {
+ const { sessionEnvironment } = await import("./environment.js");
+ const base = { PATH: "bin", SEARCH_LOG: "parent" };
+ const first = sessionEnvironment(base, { SEARCH_LOG: "first" });
+ const second = sessionEnvironment(base, { SEARCH_LOG: "second" });
+ expect(first.SEARCH_LOG).toBe("first");
+ expect(second.SEARCH_LOG).toBe("second");
+ expect(base.SEARCH_LOG).toBe("parent");
+});

@@ -1,0 +1,126 @@
+/**
+ * PROGRESS.json: the harness's own record of one lead run (expert-team-v2.md
+ * section 5). Written by the harness after every lead tool call and every
+ * trial result, never by the agent: champion, trials with their one-line
+ * hypotheses, holdout (Ladder) verdicts and budget left. A killed or
+ * compacted lead resumes from it and the solutions/ git history.
+ */
+import { existsSync, readFileSync } from "node:fs";
+import { dirname } from "node:path";
+import { mkdirSync } from "node:fs";
+import { atomicJson } from "../experiments/ownership.js";
+import type { MeasuredCandidateSelection } from "../training/development_selection.js";
+import type { PromptSnapshot } from "../prompts/loader.js";
+
+import type { ValidationCheckResult } from "../team/contracts.js";
+
+export interface LeadTrialRecord {
+ experimentId: string;
+ /** First sentence of the agent's hypothesis, at most 160 characters. */
+ hypothesis: string;
+ status: string;
+ /** The task's primary development metric (mean over folds), when measured. */
+ score?: number;
+ verdict?: string;
+ becameChampion?: boolean;
+ startedAt: string;
+ finishedAt?: string;
+ /** Completion feedback persisted; suppress duplicate news on resume. */
+ feedbackRecorded?: boolean;
+}
+export interface LeadHoldoutRecord {
+ experimentId: string;
+ status: "completed" | "skipped" | "failed";
+ verdict?: string;
+ /** Released only with a significant improvement (Ladder), rounded. */
+ score?: number;
+ queryCount?: number;
+ reason?: string;
+ receipt?: { path: string; sha256: string };
+}
+export interface LeadHandOver {
+ by: "lead" | "harness";
+ /** Why the harness handed over on its own: budget, idle lead, failed session. */
+ reason: string;
+ experimentId: string;
+ selectedCandidate?: MeasuredCandidateSelection;
+ confirmationReceipt?: { path: string; sha256: string };
+ validation: { status: string; fix: string[]; advice: string[]; ok: string[]; checkResults?: ValidationCheckResult[] };
+ at: string;
+}
+export interface LeadProgress {
+ schemaVersion: 1;
+ taskId: string;
+ datasetSha256?: string;
+ /** The run that owns this record; a resumed run keeps it. */
+ runId: string;
+ trainingRoot: string;
+ status: "running" | "handing_over" | "handed_over" | "failed";
+ startedAt: string;
+ /** Every process start of this run (resumes included). */
+ sessions: { startedAt: string; invocationId: string }[];
+ firstTrialAt?: string;
+ champion?: { experimentId: string; score?: number; commit?: string };
+ trials: LeadTrialRecord[];
+ holdout: LeadHoldoutRecord[];
+ budget: { limit: number; used: number };
+ /** Durable call counter only. Pending consultations belong to the current
+  * process and are deliberately not restored after a restart. */
+ scoutCalls: number;
+ phase?: "baseline" | "improvement";
+ baseline?: { experimentId: string; commit: string; trainingRoot?: string; confirmationReceipt?: { path: string; sha256: string }; receiptKey: string; at: string };
+ validationAttempts?: Record<string, { commit: string; tree: string; validation: LeadHandOver["validation"] }>;
+ validationReceipts?: Record<string, { experimentId: string; commit: string; validation: LeadHandOver["validation"]; at: string }>;
+ handOver?: LeadHandOver;
+ delivery?: string;
+ error?: string;
+}
+
+export function readProgress(path: string): LeadProgress | undefined {
+ if (!existsSync(path)) return undefined;
+ const value = JSON.parse(readFileSync(path, "utf8")) as LeadProgress;
+ if (value?.schemaVersion !== 1 || typeof value.runId !== "string" || typeof value.trainingRoot !== "string" || !Array.isArray(value.trials)
+  || !Array.isArray(value.sessions) || !Array.isArray(value.holdout) || typeof value.taskId !== "string"
+  || !["running", "handing_over", "handed_over", "failed"].includes(value.status)
+  || !value.budget || !Number.isSafeInteger(value.budget.used) || value.budget.used < 0
+  || !Number.isSafeInteger(value.budget.limit) || value.budget.limit < 1 || value.budget.used > value.budget.limit
+  || (value.status === "handing_over" && !value.handOver)) throw new Error(`Corrupt lead progress at ${path}; restore or remove it before restarting`);
+ const validReceipt = (receipt: { path: string; sha256: string } | undefined) => !receipt || (typeof receipt.path === "string" && /^[a-f0-9]{64}$/.test(receipt.sha256));
+ if ((value.baseline?.trainingRoot !== undefined && typeof value.baseline.trainingRoot !== "string")
+  || !validReceipt(value.baseline?.confirmationReceipt) || !validReceipt(value.handOver?.confirmationReceipt)
+  || value.holdout.some(row => !validReceipt(row.receipt))) throw new Error(`Corrupt lead confirmation reference at ${path}`);
+ const selected = value.handOver?.selectedCandidate;
+ if (selected && (selected.experimentId !== value.handOver!.experimentId || typeof selected.commit !== "string" || typeof selected.trainingRoot !== "string"))
+  throw new Error(`Corrupt lead delivery selection at ${path}`);
+ if (value.phase !== undefined && value.phase !== "baseline" && value.phase !== "improvement") throw new Error(`Corrupt lead phase at ${path}`);
+ if (value.baseline) {
+  const baseline = value.baseline, receipt = value.validationReceipts?.[baseline.receiptKey];
+  if (value.phase !== "improvement" || !receipt || receipt.experimentId !== baseline.experimentId || receipt.commit !== baseline.commit
+   || receipt.validation.checkResults?.some(check => check.exitCode !== 0)
+   || receipt.validation.status !== "completed" || receipt.validation.fix.length !== 0 || receipt.validation.ok.length + receipt.validation.advice.length === 0)
+   throw new Error(`Corrupt lead baseline evidence at ${path}`);
+ } else if (value.phase === "improvement") throw new Error(`Missing lead baseline evidence at ${path}`);
+ return value;
+}
+export function writeProgress(path: string, progress: LeadProgress): void {
+ mkdirSync(dirname(path), { recursive: true });
+ atomicJson(path, progress);
+}
+/** The first sentence of a hypothesis, at most 160 characters: the one-line record. */
+export function oneLine(text: string): string {
+ const first = text.replace(/\s+/g, " ").trim().split(/(?<=[.!?])\s/)[0] ?? "";
+ return first.length > 160 ? `${first.slice(0, 159)}…` : first;
+}
+const score = (value?: number) => value === undefined ? "unmeasured" : value.toFixed(4);
+/** The record as the lead reads it after a resume or a context handoff. */
+export function renderProgress(prompts: PromptSnapshot, progress: LeadProgress) {
+ const holdout = progress.holdout.length ? progress.holdout.map(row => `${row.experimentId} ${row.status}${row.verdict ? `: ${row.verdict}` : ""}${row.score !== undefined ? ` (${row.score.toFixed(4)})` : ""}${row.reason ? ` (${row.reason})` : ""}`).join("; ")
+  + `; queries used: ${Math.max(0, ...progress.holdout.map(row => row.queryCount ?? 0))}` : "none yet";
+ return prompts.render("team.lead-progress", {
+  phase: progress.phase ?? "baseline",
+  baseline: progress.baseline ? JSON.stringify(progress.baseline) : "not yet validated",
+  champion: progress.champion ? `${progress.champion.experimentId} (${score(progress.champion.score)})` : "none yet",
+  trials: progress.trials.length ? progress.trials.map(trial => `- ${trial.experimentId}: ${trial.status}, ${score(trial.score)}${trial.verdict ? `; ${trial.verdict}` : ""}${trial.becameChampion ? "; became champion" : ""} — ${trial.hypothesis}`).join("\n") : "- none yet",
+  holdout, budget: `${progress.budget.used} of ${progress.budget.limit} used`, scouts: String(progress.scoutCalls),
+ });
+}

@@ -9,10 +9,12 @@
  * from its shell tool's environment.
  */
 import { spawn, spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { cpSync, existsSync, mkdirSync, lstatSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadExperimentConfig, modelReference, type ExperimentConfig } from "./config.js";
+import { chainVersion, continuedRun } from "./source.js";
+import { readCourseResources } from "../harness/finetuned/agent/research/resources.js";
 import { checkSolveSandbox, executable, sandboxPolicy, type SandboxMount, type SolveSandbox } from "../harness/finetuned/agent/run/solve_sandbox.js";
 
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -43,15 +45,24 @@ export function armModelsJson(config: Pick<ExperimentConfig, "providers">): stri
 }
 
 /** Fresh run directory with the arm's code and links to the course units. No venv yet. */
-export function prepareMinimalRun(options: { projectRoot?: string; stamp: string }): MinimalRun {
+export function prepareMinimalRun(options: { projectRoot?: string; stamp: string; continueFrom?: string }): MinimalRun {
 	const projectRoot = options.projectRoot ?? PROJECT_ROOT;
+	if (options.continueFrom) return linkTaskMaterial(projectRoot, continuedRun(projectRoot, options.continueFrom));
 	const armRoot = join(projectRoot, "harness", "minimal");
 	const root = join(projectRoot, "runs", "minimal", options.stamp);
 	if (existsSync(root)) throw new Error(`Run location already exists: ${root}`);
 	mkdirSync(root, { recursive: true });
-	for (const path of ARM_PATHS) {
-		cpSync(join(armRoot, path), join(root, path), { recursive: true, filter: source => !source.endsWith("__pycache__") });
-	}
+	for (const path of ARM_PATHS) cpSync(join(armRoot, path), join(root, path), { recursive: true });
+	writeFileSync(join(root, "chain-version.json"), JSON.stringify(chainVersion(projectRoot)));
+	return linkTaskMaterial(projectRoot, root);
+}
+
+/**
+ * Task material, not agent knowledge: the model entry, links to the current course units,
+ * the task index and the declared course resources. A continued run gets the current set,
+ * as a single batch would have had every unit from its start; agent-written state is untouched.
+ */
+function linkTaskMaterial(projectRoot: string, root: string): MinimalRun {
 
 	const home = join(root, ".home");
 	const agentDir = join(home, ".pi", "agent");
@@ -60,7 +71,12 @@ export function prepareMinimalRun(options: { projectRoot?: string; stamp: string
 
 	// Only real units. Archives and notes in units/ are not task material.
 	const units = join(root, "units");
-	mkdirSync(units);
+	if (existsSync(units)) for (const name of readdirSync(units)) {
+		const path = join(units, name);
+		if (!lstatSync(path).isSymbolicLink() && name !== "index.json") throw new Error(`Run units/ holds more than links and index.json: ${name}`);
+		rmSync(path);
+	}
+	mkdirSync(units, { recursive: true });
 	const source = join(projectRoot, "units");
 	if (existsSync(source)) for (const name of readdirSync(source)) {
 		if (name.startsWith("_") || name === "README.md") continue;
@@ -68,8 +84,20 @@ export function prepareMinimalRun(options: { projectRoot?: string; stamp: string
 		if (statSync(path).isDirectory()) symlinkSync(path, join(units, name));
 		else if (name === "index.json") cpSync(path, join(units, name));
 	}
+	// Only declared course files, never resource tooling or development notes.
+	for (const unit of readdirSync(units).filter(name => statSync(join(units, name)).isDirectory())) {
+		const inputs = readCourseResources(unit, join(projectRoot, "resources"));
+		if (!inputs.length) continue;
+		const destination = join(root, "resources", unit);
+		mkdirSync(destination, { recursive: true });
+		for (const { source } of inputs) cpSync(source, join(destination, basename(source)));
+		writeFileSync(join(destination, "manifest.json"), JSON.stringify({ version: 1, files: inputs.map(({ resource }) => ({
+			...resource, file: resource.path.slice("resources/".length), path: undefined,
+		})) }, null, 2) + "\n");
+		readCourseResources(unit, join(root, "resources")); // Validate the copied snapshot too.
+	}
 	const modules = join(projectRoot, "node_modules");
-	if (existsSync(modules)) symlinkSync(modules, join(root, "node_modules"));
+	if (existsSync(modules) && !existsSync(join(root, "node_modules"))) symlinkSync(modules, join(root, "node_modules"));
 	return { root, venv: join(root, ".venv"), home, units };
 }
 
@@ -97,6 +125,7 @@ export function minimalPolicy(run: MinimalRun, options: { env?: NodeJS.ProcessEn
 		{ source: dirname(realpathSync(process.execPath)) },
 		...tools.map(path => ({ source: path })),
 	];
+	if (existsSync(join(run.root, "resources"))) mounts.push({ source: join(run.root, "resources") });
 	const add = (path: string) => { if (existsSync(path)) mounts.push({ source: path }); };
 	for (const name of readdirSync(run.units)) {
 		const link = join(run.units, name);
@@ -119,7 +148,12 @@ export function minimalPolicy(run: MinimalRun, options: { env?: NodeJS.ProcessEn
 	for (const [name, value] of Object.entries(source)) {
 		if (value !== undefined && PASSED_ENV.test(name)) env[name] = value;
 	}
-	return sandboxPolicy({ mounts, cwd: run.root, env, bwrap: options.bwrap });
+	const temporary = join(run.root, ".tmp");
+	if (existsSync(temporary) && (lstatSync(temporary).isSymbolicLink() || !lstatSync(temporary).isDirectory())) throw new Error("Run .tmp must be a real directory");
+	mkdirSync(temporary, { recursive: true });
+	const policy = sandboxPolicy({ mounts, cwd: run.root, env, bwrap: options.bwrap });
+	const args = policy.args.bind(policy);
+	return { ...policy, args(command) { const result = args(command); const separator = result.indexOf("--"); result.splice(separator + 1, 0, "--bind", temporary, "/tmp"); return result; } };
 }
 
 export function repositoryState(projectRoot = PROJECT_ROOT): { commit: string; branch: string; dirty: string } {
@@ -129,16 +163,25 @@ export function repositoryState(projectRoot = PROJECT_ROOT): { commit: string; b
 }
 
 /** Every missing prerequisite at once, with what to do about it. */
-export function checkMinimalSetup(options: { projectRoot?: string; env?: NodeJS.ProcessEnv; bwrap?: string; model?: string } = {}): string[] {
+export function checkMinimalSetup(options: { projectRoot?: string; env?: NodeJS.ProcessEnv; bwrap?: string; model?: string; continueFrom?: string } = {}): string[] {
 	const projectRoot = options.projectRoot ?? PROJECT_ROOT;
 	const env = options.env ?? process.env;
 	const problems: string[] = [];
+	if (options.continueFrom) {
+		try { continuedRun(projectRoot, options.continueFrom); }
+		catch (error) { problems.push(`Retained source: ${error instanceof Error ? error.message : String(error)}`); }
+	}
 	try { checkSolveSandbox(options.bwrap); } catch (error) { problems.push(`Filesystem boundary: ${error instanceof Error ? error.message : String(error)}`); }
 	try { executable("uv"); } catch { problems.push("uv is missing: run commands through ./dev and run ./dev setup"); }
 	for (const path of ["harness/minimal/agent/run/solve_units.ts", "harness/minimal/requirements.txt", "node_modules/@earendil-works/pi-coding-agent", "node_modules/@langfuse/pi-observability-plugin"]) {
 		if (!existsSync(join(projectRoot, path))) problems.push(`${path} is missing: run ./dev setup`);
 	}
 	if (!existsSync(join(projectRoot, "units", "index.json"))) problems.push("units/index.json is missing: prepare the course units first");
+	const units = join(projectRoot, "units");
+	if (existsSync(units)) for (const unit of readdirSync(units).filter(name => !name.startsWith("_") && !name.startsWith(".") && statSync(join(units, name)).isDirectory())) {
+		try { readCourseResources(unit, join(projectRoot, "resources")); }
+		catch { problems.push(`Course resources for ${unit} are invalid or incomplete: restore resources/${unit}/manifest.json and its declared files with matching checksums`); }
+	}
 	let config: ExperimentConfig;
 	try { config = loadShared(projectRoot); } catch (error) { return [...problems, error instanceof Error ? error.message : String(error)]; }
 	const model = options.model ?? modelReference(config);

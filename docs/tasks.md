@@ -67,7 +67,7 @@ into an agent's workspace.
 
 ## Use in the redesign
 
-`spam1` is the quick check (see [redesign-plan.md](redesign-plan.md)). `code2`
+`spam1` is the quick check (see the [v2 integration gate](../harness/finetuned/docs/expert-team-v2.md#integration-gate-before-p7c)). `code2`
 (clustering of scripts) and `attacks1` (label-free images) are the checks that
 the design is not fitted to spam.
 

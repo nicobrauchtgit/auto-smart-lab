@@ -1,0 +1,1 @@
+Budget warning: your remaining tool-call budget is {{remaining}} ({{remainingPercent}}% or less of your allowance). Review progress against the system prompt's completion policy before starting more work.

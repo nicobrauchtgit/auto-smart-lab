@@ -7,7 +7,6 @@ import { join } from "node:path";
 import { projectPython } from "../pipeline/task_configuration.js";
 import { spamConfiguration } from "../pipeline/task_configuration.testing.js";
 import { setupChecks } from "../pipeline/setup.js";
-import { researchStage } from "../pipeline/stages/research.js";
 import { loadPromptSnapshot } from "../prompts/loader.js";
 import { buildDataProfile, DATA_PROFILE_PATH } from "./profile.js";
 
@@ -40,7 +39,7 @@ test("the harness profile is written to the workspace with the dataset snapshot"
 		expect(status.layers).toEqual(["generic", "text"]);
 		const profile = JSON.parse(readFileSync(join(workspace, DATA_PROFILE_PATH), "utf8"));
 		expect(profile.dataset_snapshot_sha256).toBe("snap");
-		expect(profile.evidence["training.name_leakage"].values.suffix.majority_accuracy).toBe(1);
+		expect(profile.evidence["training.name_leakage"]).toBeUndefined();
 		expect(profile.evidence["training.targets"].values.counts).toEqual({ "0": 4, "1": 4 });
 	} finally { rmSync(root, { recursive: true, force: true }); }
 });
@@ -66,8 +65,7 @@ test("without a task configuration the profile is unavailable, not an error", ()
 	} finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test("research preflight requires the profiler scripts", () => {
-	expect(researchStage.setupRequirements).toContain("data-profile");
+test("the data-profile preflight checks the profiler scripts", () => {
 	const check = setupChecks(["data-profile"], { taskId: "spam1", prompts: loadPromptSnapshot() }).find(c => c.id === "data-profile");
 	expect(check).toBeDefined();
 	expect(check!.phase).toBe("local");

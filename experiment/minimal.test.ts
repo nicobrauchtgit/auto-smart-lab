@@ -1,12 +1,15 @@
+import { invocationArgs } from "./source.js";
 import { afterAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, realpathSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, realpathSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { armModelsJson, checkMinimalSetup, minimalArgs, minimalPolicy, prepareMinimalRun, withModel } from "./minimal.js";
 import { experimentConfigProblems } from "./config.js";
 import { harnessStatePaths, parseExperimentArgs } from "./cli.js";
 import { shellEnvironment } from "../harness/minimal/agent/run/session_runner.js";
+import { courseResources } from "../harness/minimal/agent/run/course_resources.js";
 
 const created: string[] = [];
 afterAll(() => { for (const path of created) rmSync(path, { recursive: true, force: true }); });
@@ -26,6 +29,11 @@ function fixture() {
 	write("units/index.json", "{}\n");
 	write("units/01-spam/task/prompt.md", "the task\n");
 	write("units/_vm-archive/old/prompt.md", "archived\n");
+	const slides = "course slides\n";
+	write("resources/01-spam/slides.txt", slides);
+	write("resources/01-spam/manifest.json", JSON.stringify({ version: 1, files: [{ file: "slides.txt", title: "Slides", media_type: "text/plain", pages: 7,
+		sha256: createHash("sha256").update(slides).digest("hex") }] }));
+	write("resources/README.md", "development notes\n");
 	// Everything the agent must not reach.
 	write(".env", "MYTHLLM_API_KEY=secret\n");
 	write("harness/finetuned/agent/prompts/solve/system.md", "harness coaching\n");
@@ -43,6 +51,41 @@ function inJail(root: string, script: string, env: NodeJS.ProcessEnv = {}) {
 }
 
 describe("minimal arm run location", () => {
+	test("continues in place and refuses identity drift and symlinks", () => {
+ const root = fixture(); const first = prepareMinimalRun({ projectRoot: root, stamp: "first" });
+ writeFileSync(join(first.root, "state.txt"), "memory");
+ expect(prepareMinimalRun({ projectRoot: root, stamp: "unused", continueFrom: "runs/minimal/first" }).root).toBe(first.root);
+ symlinkSync(first.root, join(root, "runs/minimal/link"));
+ expect(() => prepareMinimalRun({ projectRoot: root, stamp: "unused", continueFrom: "runs/minimal/link" })).toThrow();
+ writeFileSync(join(root, "harness/minimal/agent/instructions/solver.md"), "changed");
+ expect(() => prepareMinimalRun({ projectRoot: root, stamp: "unused", continueFrom: "runs/minimal/first" })).toThrow("differs");
+ });
+ test("continuing refreshes task material but keeps agent state", () => {
+ const root = fixture(); const first = prepareMinimalRun({ projectRoot: root, stamp: "material" });
+ mkdirSync(join(first.root, "agent/memory"), { recursive: true });
+ writeFileSync(join(first.root, "agent/memory/memory.json"), "{\"tasks\":{\"spam1\":{}}}");
+ mkdirSync(join(root, "units/02-maldoc/task"), { recursive: true });
+ writeFileSync(join(root, "units/index.json"), "{\"documents1\":\"x\"}\n");
+ const continued = prepareMinimalRun({ projectRoot: root, stamp: "unused", continueFrom: "runs/minimal/material" });
+ expect(lstatSync(join(continued.units, "02-maldoc")).isSymbolicLink()).toBe(true);
+ expect(readFileSync(join(continued.units, "index.json"), "utf8")).toContain("documents1");
+ expect(readFileSync(join(first.root, "agent/memory/memory.json"), "utf8")).toContain("spam1");
+ writeFileSync(join(first.root, "units/agent-file.txt"), "not material");
+ expect(() => prepareMinimalRun({ projectRoot: root, stamp: "unused", continueFrom: "runs/minimal/material" })).toThrow("more than links");
+ });
+ test("tmp survives multiple invocations", () => {
+ const root = fixture(); const run = prepareMinimalRun({ projectRoot: root, stamp: "persist" });
+ const policy = minimalPolicy(run, { env: {} });
+ for (const script of ["echo saved > /tmp/retained", "test $(cat /tmp/retained) = saved"]) expect(spawnSync(policy.executable, policy.args(["bash", "-c", script])).status).toBe(0);
+ });
+ test("chain cap deducts previous invocation spend", () => {
+ const root = fixture(); const run = prepareMinimalRun({ projectRoot: root, stamp: "budget" });
+ expect(invocationArgs(run.root, ["--max-cost", "10"])).toEqual(["--max-cost", "10"]);
+ mkdirSync(join(run.root, "logs/solve-units/first"), { recursive: true });
+ writeFileSync(join(run.root, "logs/solve-units/first/summary.json"), JSON.stringify({ spentUsd: 3 }));
+ expect(invocationArgs(run.root, [])).toEqual(["--max-cost", "7"]);
+ expect(() => invocationArgs(run.root, ["--max-cost", "20"])).toThrow("unchanged");
+ });
 	test("holds the arm's agent code and real units, not its docs or archives", () => {
 		const root = fixture();
 		const run = prepareMinimalRun({ projectRoot: root, stamp: "a" });
@@ -103,6 +146,29 @@ describe("minimal arm boundary", () => {
 		const shell = shellEnvironment({ PATH: "/bin", MYTHLLM_API_KEY: "a", LITELLM_TOKEN: "b", LANGFUSE_SECRET_KEY: "c", LAB_USER: "d", GOOGLE_APPLICATION_CREDENTIALS: "e", TAVILY_API_KEY: "f" });
 		expect(shell).toEqual({ PATH: "/bin" });
 	});
+
+	test("the supplied slides are read-only snapshots with recorded identities", () => {
+		const root = fixture();
+		const result = inJail(root, "set -e; cat resources/01-spam/slides.txt; ! echo changed > resources/01-spam/slides.txt; ! rm resources/01-spam/slides.txt; test ! -e resources/README.md");
+		expect(result.status).toBe(0);
+		expect(result.stdout.trim()).toBe("course slides");
+		const inputs = courseResources("01-spam", result.run.root);
+		expect(inputs).toHaveLength(1);
+		expect(inputs[0]).toMatchObject({ path: "resources/01-spam/slides.txt", title: "Slides", pages: 7, bytes: 14 });
+		writeFileSync(join(root, "resources/01-spam/slides.txt"), "later source change");
+		expect(courseResources(undefined, result.run.root)).toEqual(inputs);
+		expect(courseResources("02-other", result.run.root)).toEqual([]);
+	});
+
+	test("missing or altered declared slides prevent preparing a run", () => {
+		const root = fixture();
+		rmSync(join(root, "resources/01-spam/slides.txt"));
+		expect(checkMinimalSetup({ projectRoot: root, env: {} }).join("\n")).toContain("Course resources for 01-spam are invalid");
+		expect(() => prepareMinimalRun({ projectRoot: root, stamp: "bad" })).toThrow();
+		writeFileSync(join(root, "resources/01-spam/slides.txt"), "changed");
+		expect(() => prepareMinimalRun({ projectRoot: root, stamp: "changed" })).toThrow("checksum mismatch");
+		expect(() => courseResources("01-spam", root)).toThrow("Invalid course resource");
+	});
 });
 
 describe("experiment switch", () => {
@@ -132,6 +198,15 @@ describe("experiment switch", () => {
 		expect(() => parseExperimentArgs(["--arm", "other"])).toThrow("--arm");
 		expect(parseExperimentArgs(["--arm", "minimal", "--offline", "--only", "spam1"])).toMatchObject({ arm: "minimal", rest: ["--offline", "--only", "spam1"], reset: false });
 		expect(parseExperimentArgs(["--arm", "finetuned", "--check-setup"])).toMatchObject({ arm: "finetuned", checkSetup: true, rest: [] });
+	});
+
+	test("source continuation bypasses only the new run's initial reset", () => {
+		const parsed = parseExperimentArgs(["--arm", "minimal", "--continue", "runs/minimal/first", "--only", "documents1"]);
+		expect(parsed).toMatchObject({ arm: "minimal", continueFrom: "runs/minimal/first", reset: false, rest: ["--only", "documents1", "--reset", "none"] });
+		expect(parseExperimentArgs(["--arm", "minimal", "--reset", "none", "--continue", "runs/minimal/first"]).rest).toEqual(["--reset", "none"]);
+		for (const mode of ["once", "each"]) expect(() => parseExperimentArgs(["--arm", "minimal", "--continue", "runs/minimal/first", "--reset", mode])).toThrow("retaining source");
+		expect(() => parseExperimentArgs(["--arm", "finetuned", "--continue", "runs/minimal/first"])).toThrow("only for minimal");
+		expect(() => parseExperimentArgs(["--arm", "minimal", "--continue", "--only", "x"])).toThrow("requires");
 	});
 
 	test("a finetuned reset keeps minimal runs and hand-over files", () => {

@@ -1,28 +1,36 @@
 /** Filesystem boundary for agent file/shell tools, not for trusted harness workers. */
 import { spawn, spawnSync } from "node:child_process";
 import { accessSync, constants, existsSync, mkdirSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { delimiter, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
  createReadToolDefinition, createWriteToolDefinition, createEditToolDefinition,
- createBashToolDefinition, createGrepToolDefinition, createFindToolDefinition, createLsToolDefinition,
+ createGrepToolDefinition, createFindToolDefinition, createLsToolDefinition,
  defineTool, type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 import { liveGroup } from "../experiments/ownership.js";
+import { reaperPython } from "../experiments/launcher.js";
+import { within } from "../experiments/safe_files.js";
 import { sanitizeTrainingEnvironment } from "../training/environment.js";
 import type { SolveWorkspace } from "../solve/workspace.js";
 import type { PythonEnvironment } from "./python_environment.js";
 import { REPO_ROOT } from "../paths.js";
+import { agentBashTool, sandboxShell, type SandboxShellLogs } from "./agent_shell.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const WORKER = join(ROOT, "agent/run/solve_tool_worker.ts");
+const SANDBOX_LAUNCHER = join(ROOT, "agent/run/sandbox_scratch.py");
+/** Each sandboxed command gets its own /tmp directory here, on the host's disk-backed temp storage. */
+const SANDBOX_SCRATCH_ROOT = join(tmpdir(), `auto-smart-lab-sandbox-${process.getuid?.() ?? "user"}`);
+// No raw shell definition here or in the worker: `bash` is always the supervised agent shell.
 const factories = { read: createReadToolDefinition, write: createWriteToolDefinition, edit: createEditToolDefinition,
- bash: createBashToolDefinition, grep: createGrepToolDefinition, find: createFindToolDefinition, ls: createLsToolDefinition };
-export const SOLVE_FILE_TOOLS = Object.keys(factories);
+ grep: createGrepToolDefinition, find: createFindToolDefinition, ls: createLsToolDefinition };
+const SOLVE_FILE_TOOLS = ["read", "write", "edit", "bash", "grep", "find", "ls"];
 type ToolResult = Awaited<ReturnType<ToolDefinition["execute"]>>;
 export interface SandboxMount { source: string; writable?: boolean }
-export interface SolveSandbox { executable: string; cwd: string; mounts: SandboxMount[]; env: Record<string, string>; args(command: string[]): string[] }
+export interface SolveSandbox { executable: string; bwrap: string; scratchRoot: string; cwd: string; mounts: SandboxMount[]; env: Record<string, string>; args(command: string[]): string[] }
 
 /** Basic utilities (mkdir, cat, ...). NixOS has them only in the system profile. */
 const SYSTEM_PATH = ["/run/current-system/sw/bin", "/usr/bin", "/bin"];
@@ -49,22 +57,37 @@ export function findBubblewrap(override?: string): string {
  throw new Error("Install bubblewrap through the host administrator or set SOLVE_BWRAP to an existing executable");
 }
 
-export function sandboxPolicy(options: { mounts: SandboxMount[]; cwd: string; env?: Record<string, string>; bwrap?: string }): SolveSandbox {
+export function sandboxPolicy(options: { mounts: SandboxMount[]; cwd: string; env?: Record<string, string>; bwrap?: string; scratchRoot?: string }): SolveSandbox {
  const bwrap = findBubblewrap(options.bwrap);
+ const scratchRoot = resolve(options.scratchRoot ?? SANDBOX_SCRATCH_ROOT);
  const mounts = [...options.mounts];
  // System runtime only. Never mount /, /home, /etc, host /proc or host /tmp.
  for (const source of ["/usr", "/bin", "/lib", "/lib64", "/nix/store", "/run/current-system/sw",
   "/etc/resolv.conf", "/etc/hosts", "/etc/ssl/certs"]) if (existsSync(source)) mounts.push({ source });
  const unique = [...new Map(mounts.map(mount => [resolve(mount.source), { ...mount, source: resolve(mount.source) }])).values()];
- const env = { HOME: "/tmp/home", TMPDIR: "/tmp", LANG: "C.UTF-8", ...options.env };
- return { executable: bwrap, cwd: options.cwd, mounts: unique, env, args(command) {
+ // Scratch metadata and sibling calls must not be visible in any sandbox mount.
+ for (const mount of unique) if (within(scratchRoot, mount.source) || within(mount.source, scratchRoot)) {
+  throw new Error("Sandbox disk scratch must be outside every sandbox mount");
+ }
+ const env = { HOME: "/tmp/home", LANG: "C.UTF-8", ...options.env,
+  TMPDIR: "/tmp", TMP: "/tmp", TEMP: "/tmp", JOBLIB_TEMP_FOLDER: "/tmp" };
+ return { executable: reaperPython(), bwrap, scratchRoot, cwd: options.cwd, mounts: unique, env, args(command) {
   const args = ["--unshare-all", "--share-net", "--die-with-parent", "--cap-drop", "ALL",
-   "--clearenv", "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--dir", "/tmp/home"];
+   "--clearenv", "--proc", "/proc", "--dev", "/dev"];
   for (const mount of unique) args.push(mount.writable ? "--bind" : "--ro-bind", mount.source, mount.source);
   for (const [key, value] of Object.entries(env)) args.push("--setenv", key, value);
   args.push("--chdir", options.cwd, "--", ...command);
-  return args;
+  return ["-I", "-S", SANDBOX_LAUNCHER, scratchRoot, bwrap, "--", ...args];
  } };
+}
+
+/** The same disk, helper and private-directory checks used by every actual invocation. */
+export function checkSandboxScratch(root = SANDBOX_SCRATCH_ROOT): void {
+ accessSync(reaperPython(), constants.X_OK);
+ accessSync(SANDBOX_LAUNCHER, constants.R_OK);
+ const result = spawnSync(reaperPython(), ["-I", "-S", SANDBOX_LAUNCHER, "--check", root],
+  { timeout: 5_000, stdio: ["ignore", "ignore", "pipe"], encoding: "utf8" });
+ if (result.error || result.status !== 0) throw new Error(`Sandbox scratch requires a private (mode 0700), disk-backed ${root} directory; tmpfs/ramfs is refused. If /tmp is RAM-backed on this host, set TMPDIR to a disk-backed directory`);
 }
 
 export function checkSolveSandbox(bwrap?: string): void {
@@ -84,7 +107,7 @@ export function prepareSolveSandbox(workspace: SolveWorkspace, python: PythonEnv
  const runtimePython = dirname(dirname(realpathSync(python.executable)));
  const mounts: SandboxMount[] = [
   { source: agentRoot, writable: true }, { source: workspace.solutionsRoot, writable: true },
-  ...[workspace.devZip, workspace.testZip, workspace.sampleManifestPath, workspace.taskPath, workspace.researchDir]
+  ...[workspace.devZip, workspace.testZip, workspace.sampleManifestPath, workspace.taskPath]
    .filter(existsSync).map(source => ({ source })),
   { source: python.prefix }, { source: dirname(runtimePython) }, { source: WORKER },
   ...[join(dirname(python.prefix), "agent/libs/smartlab-eval")].filter(existsSync).map(source => ({ source })),
@@ -102,26 +125,6 @@ export function prepareSolveSandbox(workspace: SolveWorkspace, python: PythonEnv
  return { ...policy, agentRoot };
 }
 
-/** Research reads this task's material and writes only its own workspace. */
-export function prepareResearchSandbox(workspace: string, taskDir: string, python: PythonEnvironment): SolveSandbox {
- const binaries = ["bash", "git", "rg", "fd", "uv"].map(executable);
- const runtimePython = dirname(dirname(realpathSync(python.executable)));
- const mounts: SandboxMount[] = [
-  { source: workspace, writable: true }, { source: taskDir },
-  { source: python.prefix }, { source: dirname(runtimePython) }, { source: WORKER },
-  { source: join(REPO_ROOT, "node_modules") }, { source: realpathSync(join(REPO_ROOT, "node_modules")) },
-  { source: dirname(realpathSync(process.execPath)) },
-  ...binaries.map(path => ({ source: dirname(path) })),
-  ...["pyproject.toml", "uv.lock", "agent/setup/python_environment.py", "agent/libs/smartlab-eval"]
-   .map(path => ({ source: join(ROOT, path) })).filter(mount => existsSync(mount.source)),
- ];
- const env: Record<string, string> = { PATH: [join(python.prefix, "bin"), ...binaries.map(dirname), ...SYSTEM_PATH].join(delimiter),
-  VENV_DIR: python.prefix, VIRTUAL_ENV: python.prefix, UV_PROJECT_ENVIRONMENT: python.prefix,
-  UV_PYTHON: python.executable, UV_PYTHON_DOWNLOADS: "never", PYTHONNOUSERSITE: "1" };
- for (const name of ["NIX_LD", "NIX_LD_LIBRARY_PATH", "LD_LIBRARY_PATH"]) if (process.env[name]) env[name] = process.env[name]!;
- return sandboxPolicy({ mounts, cwd: workspace, env });
-}
-
 function persistentWrite(policy: SolveSandbox, value: unknown): boolean {
  if (typeof value !== "string") return false;
  const path = resolve(policy.cwd, value);
@@ -134,11 +137,18 @@ function persistentWrite(policy: SolveSandbox, value: unknown): boolean {
  });
 }
 
-/** Every SDK filesystem tool runs in a fresh restricted mount/PID namespace. */
-export function isolatedSolveTools(policy: SolveSandbox): ToolDefinition[] {
+/**
+ * Every SDK filesystem tool runs in a fresh restricted mount/PID namespace.
+ * `bash` is the supervised agent shell with the sandbox as its process
+ * (run/agent_shell.ts); the other tools run through the sandboxed worker.
+ * `shellLogs` says where its calls keep their logs (harness-owned, outside
+ * every writable mount) and where the agent reads a copy of each (by default
+ * `.shell-calls` in the first writable mount).
+ */
+export function isolatedSolveTools(policy: SolveSandbox, shellLogs?: SandboxShellLogs): ToolDefinition[] {
  // The SDK tool registry erases each factory's parameter schema. Preserve the
  // factory renderers; dispatch still validates parameters through that schema.
- return Object.entries(factories).map(([name, factory]) => ({ ...factory(policy.cwd), async execute(id: string, params: unknown, signal: AbortSignal | undefined, onUpdate: Parameters<ToolDefinition["execute"]>[3]) {
+ return SOLVE_FILE_TOOLS.map((name) => name === "bash" ? agentBashTool(sandboxShell(policy, shellLogs)) : ({ ...factories[name as keyof typeof factories](policy.cwd), async execute(id: string, params: unknown, signal: AbortSignal | undefined, onUpdate: Parameters<ToolDefinition["execute"]>[3]) {
   signal?.throwIfAborted();
   if (["write", "edit"].includes(name) && !persistentWrite(policy, (params as any).path)) throw new Error("Write outside the persistent solve workspace is unavailable");
   return await new Promise<ToolResult>((accept, reject) => {
@@ -157,10 +167,12 @@ export function isolatedSolveTools(policy: SolveSandbox): ToolDefinition[] {
     }
    });
    child.stderr.on("data", bytes => { if (stderr.length < 4096) stderr += bytes.toString(); });
-   const abort = () => child.kill("SIGKILL");
+   let forceTimer: ReturnType<typeof setTimeout> | undefined;
+   const abort = () => { child.kill("SIGTERM"); forceTimer ??= setTimeout(() => child.kill("SIGKILL"), 4000); };
    signal?.addEventListener("abort", abort, { once: true });
    child.on("error", reject);
    child.on("close", code => {
+    if (forceTimer) clearTimeout(forceTimer);
     signal?.removeEventListener("abort", abort);
     if (signal?.aborted) reject(new Error("Tool cancelled"));
     else if (failure || code !== 0 || !result) reject(new Error(failure ?? `Isolated tool failed (${code}): ${stderr}`));
@@ -172,12 +184,14 @@ export function isolatedSolveTools(policy: SolveSandbox): ToolDefinition[] {
 }
 
 /** Trusted narrow service: dependency management stays outside filesystem tools. */
-export interface PythonManagerIdentity { pipelineRunId?: string; stageInvocationId?: string; attempt?: number; sessionId?: string }
+interface PythonManagerIdentity { pipelineRunId?: string; stageInvocationId?: string; attempt?: number; sessionId?: string }
 export function pythonManagerEnvironment(python: PythonEnvironment, managerRoot: string, identity: PythonManagerIdentity = {}): Record<string, string> {
  return { ...sanitizeTrainingEnvironment(process.env, identity), VENV_DIR: python.prefix,
   UV_CACHE_DIR: join(managerRoot, ".tools/uv/cache"), UV_PYTHON_INSTALL_DIR: join(managerRoot, ".tools/uv/python"),
   ...(identity.attempt === undefined ? {} : { PIPELINE_AGENT_ATTEMPT: String(identity.attempt) }),
-  ...((identity.sessionId ?? process.env.PIPELINE_PYTHON_SESSION_ID) ? { PIPELINE_PYTHON_SESSION_ID: identity.sessionId ?? process.env.PIPELINE_PYTHON_SESSION_ID! } : {}) };
+  // Attribution comes only from the explicit session identity; the process
+  // environment of the harness never carries a session ID.
+  ...(identity.sessionId ? { PIPELINE_PYTHON_SESSION_ID: identity.sessionId } : {}) };
 }
 export function solvePythonEnvironmentTool(python: PythonEnvironment, description: string, managerRoot = ROOT, identity: PythonManagerIdentity = {}): ToolDefinition {
  return defineTool({ name: "python_environment", label: "Shared Python environment", description,
@@ -228,6 +242,6 @@ export function trainingSandboxCommand(base: SolveSandbox, command: string[], in
  mounts.push({ source: join(ROOT, "agent/training/python") });
  mounts.push({ source: input.directory, writable: true });
  for (const source of input.sourceRoots) if (existsSync(source)) mounts.push({ source });
- const policy = sandboxPolicy({ mounts, cwd: base.cwd, env: { ...base.env, PYTHONUNBUFFERED: "1" }, bwrap: base.executable });
+ const policy = sandboxPolicy({ mounts, cwd: base.cwd, env: { ...base.env, PYTHONUNBUFFERED: "1" }, bwrap: base.bwrap ?? base.executable, scratchRoot: base.scratchRoot });
  return [policy.executable, ...policy.args(command)];
 }

@@ -1,0 +1,1 @@
+- advice: The harness stopped this scout ({{reason}}) before it wrote a final answer; it provides no findings.

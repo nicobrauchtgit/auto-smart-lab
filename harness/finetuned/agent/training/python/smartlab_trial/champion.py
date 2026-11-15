@@ -81,11 +81,16 @@ def run_child(spec_path: Path, prepare_data: Callable[[Invocation], tuple[Any, l
     return 0 if status == "completed" else 2
 
 
-def rerun(document: dict[str, Any], invocation: Invocation, worker_path: Path, events: EventWriter) -> dict[str, Any]:
-    """Run the champion in a child interpreter and return its folds and OOF rows."""
+def rerun(document: dict[str, Any], invocation: Invocation, worker_path: Path, events: EventWriter,
+          threads: int | None = None) -> dict[str, Any]:
+    """Run the champion in a child interpreter and return its folds and OOF rows.
+
+    ``threads`` is the challenger trial's recorded threads per fold process;
+    the child applies it so both sides fit with the same thread budget.
+    """
     champion = invocation.champion or {}
     output_dir = invocation.output_dir
-    _atomic_json(output_dir / SPEC_FILE, {"invocation": document})
+    _atomic_json(output_dir / SPEC_FILE, {"invocation": document, **({"threadsPerProcess": threads} if threads else {})})
     process = subprocess.run([sys.executable, str(worker_path), "--champion-rerun", str(output_dir / SPEC_FILE)],
                              stdout=sys.stdout, stderr=sys.stderr, check=False)
     folds: list[dict[str, Any]] = []
@@ -123,11 +128,6 @@ def pair_changes(truth: Sequence[Any], old: Sequence[int], new: Sequence[int]) -
 def compare(challenger_folds: Sequence[dict[str, Any]], challenger_oof: Sequence[dict[str, Any]], champion: dict[str, Any],
             labels_by_id: dict[str, Any], output_dir: Path, task_kind: str = "classification") -> dict[str, Any]:
     """Paired differences: challenger minus champion on identical folds and rows."""
-    leaking = [fold["idLeakage"] for fold in champion.get("folds", []) if fold.get("idLeakage")]
-    if leaking:
-        return {"status": "failed", "championExperimentId": champion.get("experimentId"),
-                "championCommit": champion.get("commit"), "reason": "id_leakage",
-                "idLeakage": {"rows": sum(row["rows"] for row in leaking), "mismatches": sum(row["mismatches"] for row in leaking)}}
     if not champion.get("folds"):
         return {"status": "failed", "championExperimentId": champion.get("experimentId"),
                 "championCommit": champion.get("commit"), "reason": champion.get("reason")}

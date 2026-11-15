@@ -1,4 +1,4 @@
-"""One frozen champion, development-only fit, held-back predictions and canary.
+"""One frozen champion, development-only fit and held-back predictions.
 
 Preparation runs in the trusted controller. The fitting process receives only
 development data and a sealed-only validation archive, never original full labels.
@@ -15,7 +15,6 @@ from smartlab_trial.agent_code import expose_project, _load_module, _factory, _c
 from smartlab_trial.artifacts import _atomic_json, EventWriter
 from smartlab_trial.measurement import load_samples
 from smartlab_trial.metrics import _measure, score_observation
-from smartlab_trial.id_leakage import check as check_id_leakage
 
 
 def sha(path):
@@ -118,7 +117,6 @@ def run(directory):
         assert len(raw) == len(validation) and all(value in (0, 1) for value in raw)
         predicted = [int(value) for value in raw]
         scores, _ = score_observation(estimator, validation)
-        leakage = check_id_leakage(estimator, validation, predicted, scores)
     with (directory / 'predictions.csv').open('w', newline='') as stream:
         writer = csv.writer(stream)
         writer.writerow(['id', 'prediction', 'score'])
@@ -130,7 +128,7 @@ def run(directory):
         'schemaVersion': 1, 'status': 'completed', 'advisoryOnly': True, 'fitCalls': 1,
         'developmentRows': len(dev), 'validationRows': len(validation), 'metrics': metrics, 'interval': interval,
         'gap': freeze['cvMean'] - metrics['balancedAccuracy'], 'likelySelectionOverfit': freeze['cvMean'] > interval['upper'],
-        'seededParameters': seeded, 'idLeakage': leakage,
+        'seededParameters': seeded,
         'freezeSha256': sha(directory / 'freeze.json'), 'predictionsSha256': sha(directory / 'predictions.csv')})
     validate(directory)
 

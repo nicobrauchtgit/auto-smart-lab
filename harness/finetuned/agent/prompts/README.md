@@ -1,12 +1,6 @@
 # Pipeline prompts
 
-The repository-maintained knowledge skills live under `knowledge/*/SKILL.md`.
-`knowledge.task` and `knowledge.refresh` are explicitly selected runtime snapshot
-resources, with `knowledge.tool` supplying their controlled tool description.
-They do not enable ambient skills or development context. See
-[`agent/knowledge/README.md`](../knowledge/README.md) for the API, evidence rules,
-storage and child-session selection, and `knowledge/PROVENANCE.md` for the pinned
-Every adaptation and retained MIT license.
+> Superseded by [expert-team-v2.md](../../docs/expert-team-v2.md) section 11 (P7a: lead and scout prompts in `agent/prompts/team/`) when P6/P7 land. The loading, snapshot and provenance rules below stay.
 
 Edit authored instructions here. Markdown files contain module prompts;
 `tools.json` contains descriptions, guidelines, and parameter descriptions for
@@ -15,14 +9,8 @@ IDs from `registry.ts`. Dataset measurements and validation errors remain data,
 not alternative instruction templates.
 
 `loadPromptSnapshot()` validates and captures all Markdown templates. The
-pipeline executor creates one snapshot per run and shares it with stages and
-research attempts. Tool definitions are immutable for the process lifetime; restart the
+pipeline executor creates one snapshot per run and shares it with stages. Tool definitions are immutable for the process lifetime; restart the
 process to adopt edits to `tools.json`.
-
-Research always starts with `research.start`, regardless of document existence
-or initial validity. Later attempts append `research.validation-feedback` with
-the failed checks. Sound research may remain unchanged if it satisfies the
-contract for the current context, including its fingerprint and revision date.
 
 Solve opens with `solve.start` and `solve.observable-fits`. Measurements reach
 the agent through the harness training tools (`training.*` prompts), computed by
@@ -32,9 +20,8 @@ checks rather than a workflow.
 
 Observed sessions emit `prompt_snapshot` before the first prompt, including
 template IDs and hashes, authored and effective system prompts, the opening
-message, rendered hashes, and the tool-definition hash. Research attempt events
-also include the prompt references; the pipeline records the full snapshot
-fingerprint.
+message, rendered hashes, and the tool-definition hash. The pipeline records
+the full snapshot fingerprint.
 
 Development `AGENTS.md` and `CLAUDE.md` files are excluded by the shared resource
 loader. This is automatic-context exclusion, not a filesystem sandbox.
@@ -45,20 +32,14 @@ These tool descriptions use the same per-run Markdown snapshot. Delegation is
 not enabled in the pipeline. Its caller explicitly chooses the shared runtime
 prompts supplied to children.
 
-## Compatibility during the active research run
-
-The old `agent/instructions/` files are retained unchanged for a research process
-that started before this migration. New module runners do not read them. They
-are legacy copies, not another editable source of truth. Remove them only after
-pre-migration processes have finished and remaining external references have
-been checked. The `pi_sdk.ts` observability experiment still takes its test
-opening prompt from `pipeline.config.json`.
+The `pi_sdk.ts` observability experiment takes its test opening prompt from
+`pipeline.config.json`.
 
 ## Verification
 
 Run `bun test agent/prompts agent/run/session_resources.test.ts agent/research
-agent/pipeline`. These tests use temporary workspaces and do not run a model,
-submit predictions, or write to the live research workspace.
+agent/pipeline`. These tests use temporary workspaces and do not run a model or
+submit predictions.
 
 The [smart context module](../context/README.md) uses `context.handoff` and
 `context.resume` from the same immutable snapshot. `context.task` identifies a
@@ -66,12 +47,7 @@ composed opening request without moving module instructions into application
 code. Handoff and resume references and message contents are recorded with the
 physical session's trace.
 
-Research produces a short solution brief (`research.system`). Its self-check
-tool `check_brief` takes its description from `research.check-brief-tool`. The
-former `research.test-distribution` pass is gone: the harness data profile now
-covers training-vs-test comparisons. See [research workflow](../research/README.md).
-
-Research, solve and advisory review opening templates declare one optional
+The solve opening template declares one optional
 `guidance` variable. The loader treats an omitted value as empty; callers render
 `shared.stage-guidance` from the invocation's validated typed note. Literal braces
 inside note content are never recursively expanded. `shared.stage-feedback` is a
@@ -79,3 +55,31 @@ separate live factual message template. Neither edits prompts at runtime. Note
 hashes and artifact snapshots use supplied-input metadata, while template and
 rendered hashes keep their prompt identities. See the pipeline integration guide
 for provenance, bounds, feedback receipt semantics and deterministic-stage refusal.
+
+## Lead budget policy (2026-11-13)
+
+The shared `team.lead-system` owns budget and completion policy for every lead
+session, including context replacements. Handoff text carries unfinished work,
+not another copy of standing instructions. `team.lead-checkpoint` reports
+readiness state, `team.lead-handover-tool` describes arguments/results, and
+`team.lead-finish` signals exhaustion; they do not repeat the system policy.
+Dynamic counters and harness progress remain factual inputs. This prompt change
+adds no repair allowance or tool-budget exemption and does not implement the
+separate completion fallback plan.
+
+## Lead scout skills (2026-11-12)
+
+`team.skill-data`, `team.skill-ideas` and `team.skill-validation` register the
+Markdown skills in `team/skills/`. Only the lead receives them: Pi includes their
+names, descriptions and paths in its system prompt and reads bodies on demand
+through the lead's sandboxed `read` tool. `scout_skills.ts` renders the run's
+immutable prompt snapshot into a harness-owned `lead-skills/<fingerprint>/`
+directory outside writable agent/solutions folders; the lead mounts it read-only.
+Scouts do not mount it. Skill prompt references (template and rendered hashes)
+join the attempt references and observed prompt snapshots, including Langfuse.
+
+The shared resource loader keeps `noSkills: true` and overrides the resulting
+skill list with only the explicit supplied skills (empty for scouts and other
+sessions). Repository/home skills, configured paths, context files and ambient
+extensions remain excluded. The lead prompt also advises that consulting data
+or ideas before the first pipeline is often useful; consultation remains optional.

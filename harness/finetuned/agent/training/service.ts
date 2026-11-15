@@ -13,17 +13,20 @@ import { selectionSummary } from "./selection_summary.js";
 import { assertDevelopmentCandidate, isTerminalCandidate, selectionClaimAsync } from "./terminal.js";
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, readFileSync, readdirSync, openSync, readSync, closeSync } from "node:fs";
-import { mkdir, rename, rm, unlink, writeFile } from "node:fs/promises";
+import { existsSync, mkdirSync, lstatSync, readFileSync, readdirSync, openSync, readSync, closeSync } from "node:fs";
+import { mkdir, mkdtemp, rename, rm, unlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { atomicJson, claimWorkspace, liveGroup, ownedProcessAlive, type ProcessIdentity } from "../experiments/ownership.js";
-import type { ExperimentRecord } from "../experiments/types.js";
+import type { ExperimentRecord, ExperimentView } from "../experiments/types.js";
 import type { ExperimentSupervisor } from "../experiments/supervisor.js";
-import { ExperimentRequestError, validateExperimentRequest } from "./contract.js";
+import { ExperimentRequestError, preview, validateExperimentRequest } from "./contract.js";
+import { loadPromptSnapshot, type PromptSnapshot } from "../prompts/loader.js";
 import {
 	addWorktree,
+	committedSymlinks,
 	git,
 	isRepositoryRoot,
 	removeWorktree,
@@ -35,13 +38,15 @@ import {
 } from "./git.js";
 import { pairedPromotion } from "./promotion.js";
 import { runPipelineValidation, type PipelineValidator } from "./pipeline_validation.js";
-import { collectTrainingResults } from "./results.js";
+import { collectTrainingResults, trialSupervisionDirectory } from "./results.js";
+import { readRecord } from "../experiments/safe_files.js";
 import { createSeedPlan, deriveTrialSeed, writeSeedPlan } from "./seeds.js";
 import type { ExperimentRequest, JsonValue, MeasurementConfig, ValidationIssue } from "./types.js";
 
 import { HARNESS_CONFIG } from "../harness/config.js";
 const PYTHON_ROOT = join(dirname(fileURLToPath(import.meta.url)), "python");
 import { championTag } from "./development_selection.js";
+import { noiseVerdict } from "./feedback.js";
 export { championTag };
 
 export interface SearchSettings {
@@ -86,7 +91,6 @@ export interface TrainingServiceOptions {
 	caveats?: readonly string[];
 	/** Prose explaining how to reduce a stopped search's cost, from the prompt registry. */
 	runtimeGuidance?: string;
-	idLeakageGuidance?: string;
 	/** Called once the source of a started trial is fixed; recorded as a supplied input. */
 	onTrialStarted?: (trial: StartedTrialRecord) => void;
 	/** Harness decisions mirrored under the shared pipeline identity. */
@@ -98,6 +102,8 @@ export interface TrainingServiceOptions {
 	executionBoundaryFingerprint?: string;
 	/** The Python lock that identifies the training framework; defaults to `<projectRoot>/uv.lock`. */
 	lockPath?: string;
+	/** The run's prompt snapshot, for agent-facing smoke feedback. */
+	prompts?: PromptSnapshot;
 }
 
 export interface StartedTrainingExperiment {
@@ -145,22 +151,32 @@ function scopeSummary(request: ExperimentRequest): string {
 	return `${search}pilot${limits.length ? `: at most ${limits.join(", ")}` : ""}`;
 }
 
+/** A JSON record, never read through a symlink: trial directories are writable by the worker's sandbox. */
 function readJson(path: string): Record<string, any> | undefined {
 	try {
-		const value = JSON.parse(readFileSync(path, "utf8"));
+		const value = JSON.parse(readRecord(path) ?? "");
 		return value && typeof value === "object" && !Array.isArray(value) ? value : undefined;
 	} catch {
 		return undefined;
 	}
 }
 
+/** What a trial does, without why: comparable work for time projections. */
+function workKey(request: ExperimentRequest): string {
+	const { hypothesis: _hypothesis, ...work } = request;
+	return canonical(work);
+}
+
 function readJsonLines(path: string): Record<string, any>[] {
 	try {
-		return readFileSync(path, "utf8").split("\n").filter((line) => line.trim()).map((line) => JSON.parse(line));
+		return (readRecord(path, 256 * 1024 ** 2) ?? "").split("\n").filter((line) => line.trim()).map((line) => JSON.parse(line));
 	} catch {
 		return [];
 	}
 }
+
+/** Whether anything, a symlink included, is at `path`. */
+const present = (path: string) => { try { lstatSync(path); return true; } catch { return false; } };
 
 const mean = (values: number[]) => values.reduce((sum, value) => sum + value, 0) / values.length;
 const primaryScore = (result: Record<string, any> | undefined) => result?.metrics?.selectionScore ?? result?.metrics?.adjustedRandIndex ?? result?.metrics?.balancedAccuracy ?? -Infinity;
@@ -227,6 +243,14 @@ function measurementDeclaration(value: any): unknown {
 export class TrainingService {
 	private started = 0;
 	private readonly trials = new Map<string, StartedTrialRecord>();
+	/**
+	 * Wall time of completed trials, keyed by the work they did: the request
+	 * without its hypothesis. A later trial doing the same work gets it as its
+	 * projection, so "far beyond its projected cost" can be reported. Until such
+	 * a trial has completed in this service there is no projection and the
+	 * supervisor stays silent about time.
+	 */
+	private readonly durations = new Map<string, number>();
 	private readonly finalizing = new Map<string, Promise<void>>();
 	private readonly settings: SearchSettings;
 	private starting: Promise<unknown> = Promise.resolve();
@@ -289,8 +313,11 @@ export class TrainingService {
             for (const name of readdirSync(root)) {
                 if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(name)) continue;
                 const directory = join(root, name);
-                const path = join(directory, "recovery.json");
-                if (!existsSync(path)) continue;
+                const path = join(trialSupervisionDirectory(directory), "recovery.json");
+                if (!existsSync(path)) {
+                    if (present(join(directory, "recovery.json"))) throw new Error(`Legacy worker-writable recovery record at ${directory}; stop surviving workers and inspect records before migration. No fit started.`);
+                    continue;
+                }
                 const meta = readJson(path);
                 if (!meta || meta.schemaVersion !== 1 || meta.trial?.id !== name || meta.trial?.directory !== directory || !Array.isArray(meta.trial?.worktrees) || meta.budgetUnit !== name || !Number.isInteger(meta.attempts) || meta.attempts < 0 || !meta.trial?.request || !Number.isFinite(meta.trial?.startedAt)) {
                     this.options.record?.("training_recovery_refused", { experiment_id: name, directory, reason: "Corrupt recovery metadata. Restore recovery.json from a backup; no fit was started." });
@@ -301,7 +328,7 @@ export class TrainingService {
                 if (Number.isInteger(meta.budgetLimit) && meta.budgetLimit > 0) this.durableBudgetLimit = Math.min(this.durableBudgetLimit ?? Infinity, meta.budgetLimit);
                 await this.recover(name, false);
                 this.options.onTrialStarted?.(meta.trial);
-                const state = readJson(join(directory, "supervisor-state.json"));
+                const state = readJson(join(trialSupervisionDirectory(directory), "supervisor-state.json"));
                 if (state?.status !== "running") await this.finalize(name);
             }
         }
@@ -330,15 +357,16 @@ export class TrainingService {
     }
 
     private launchArguments(directory: string, worker: string, invocationPath: string): string[] {
-        const path = join(directory, "recovery.json");
+        const path = join(trialSupervisionDirectory(directory), "recovery.json");
         const meta = readJson(path)!;
         const token = randomUUID();
+        mkdirSync(trialSupervisionDirectory(directory), { recursive: true });
         atomicJson(path, { ...meta, token, lifecycle: "active" });
         const invocation = readJson(invocationPath)!;
         const command = [this.options.pythonExecutable, worker, "--invocation", invocationPath];
         const workerCommand = this.options.sandboxCommand?.(command, { directory,
             sourceRoots: [invocation.inputs?.sourceRoot, invocation.champion?.sourceRoot].filter((path): path is string => typeof path === "string") }) ?? command;
-        return [this.options.pythonExecutable, join(PYTHON_ROOT, "runner.py"), "--directory", directory,
+        return [this.options.pythonExecutable, join(PYTHON_ROOT, "runner.py"), "--directory", trialSupervisionDirectory(directory),
             "--token", token, "--", ...workerCommand];
     }
 
@@ -357,11 +385,13 @@ export class TrainingService {
     private async recoverTrial(id: string, explicit: boolean, acceptance?: number): Promise<unknown> {
         const trial = this.trials.get(id);
         if (!trial) throw new Error(`Unknown experiment ${id}; use experiment_status to list durable trials.`);
-        const path = join(trial.directory, "recovery.json");
+        const path = join(trialSupervisionDirectory(trial.directory), "recovery.json");
         let meta = readJson(path);
         if (!meta) return;
-        for (const name of ["supervisor-state.json", "worker-owner.json", "worker-exit.json", "worker-runtime.json", "trial-result.json", "search-report.json"]) {
-            if (existsSync(join(trial.directory, name)) && !readJson(join(trial.directory, name))) {
+        const supervision = trialSupervisionDirectory(trial.directory);
+        for (const file of [...["supervisor-state.json", "worker-owner.json", "worker-exit.json", "worker-runtime.json"].map(name => join(supervision, name)), ...["trial-result.json", "search-report.json", "fold-plan.json"].map((name) => join(trial.directory, name))]) {
+            const name = basename(file);
+            if (present(file) && !readJson(file)) {
                 const reason = `Corrupt ${name}; restore its original ownership/lifecycle record before recovery. No fit started.`;
                 atomicJson(path, { ...meta, lifecycle: "refused", diagnosis: reason });
                 this.options.record?.("training_recovery_refused", { experiment_id: id, reason });
@@ -369,10 +399,10 @@ export class TrainingService {
                 return;
             }
         }
-        const state = readJson(join(trial.directory, "supervisor-state.json"));
-        const owner = readJson(join(trial.directory, "worker-owner.json"));
+        const state = readJson(join(supervision, "supervisor-state.json"));
+        const owner = readJson(join(trialSupervisionDirectory(trial.directory), "worker-owner.json"));
         const identity: ProcessIdentity | undefined = owner && owner.token === meta.token ? owner.identity : state?.identity;
-        let processRecord = readJson(join(trial.directory, "experiment.json")) as ExperimentRecord | undefined;
+        let processRecord = readJson(join(supervision, "experiment.json")) as ExperimentRecord | undefined;
         const result = readJson(join(trial.directory, "trial-result.json"));
         const report = readJson(join(trial.directory, "search-report.json"));
         const event = (type: string, details: Record<string, unknown>) => this.options.record?.(type, {
@@ -386,12 +416,12 @@ export class TrainingService {
         };
         if (ownedProcessAlive(identity)) {
             // The runner receipt covers a crash between spawn and the supervisor record write.
-            processRecord = { ...(processRecord ?? {}), id, directory: trial.directory,
-                logPath: join(trial.directory, "output.log"), pid: identity!.pid, pgid: identity!.pgid,
+            processRecord = { ...(processRecord ?? {}), id, directory: supervision,
+                logPath: join(supervision, "output.log"), pid: identity!.pid, pgid: identity!.pgid,
                 argv: processRecord?.argv ?? [], cwd: this.options.projectRoot,
                 hypothesis: trial.request.hypothesis, scope: scopeSummary(trial.request),
                 startedAt: processRecord?.startedAt ?? new Date(trial.startedAt).toISOString() };
-            if (meta.lifecycle === "active" && !state?.stopReason) atomicJson(join(trial.directory, "launch-released.json"), { token: meta.token });
+            if (meta.lifecycle === "active" && !state?.stopReason) atomicJson(join(trialSupervisionDirectory(trial.directory), "launch-released.json"), { token: meta.token });
             attach(true); event("training_recovery_live", { retained: this.describe(id) }); return explicit ? { id, view: this.options.supervisor.status?.(id), reattached: true, budgetConsumed: false } : undefined; }
         if (identity && liveGroup(identity.pgid).length) {
             attach(true); event("training_recovery_blocked", { reason: "Leader exited but process group still has live members; no duplicate or signal to unverified descendants." }); return;
@@ -399,15 +429,23 @@ export class TrainingService {
         attach(false);
         const stop = state?.stopReason;
         const pause = report?.stopReason;
-        const workerExit = readJson(join(trial.directory, "worker-exit.json"));
+        const workerExit = readJson(join(trialSupervisionDirectory(trial.directory), "worker-exit.json"));
         // A normal error exit is deterministic; only missing receipts / signals
         // are unexpected interruption evidence. Do not retry import/launch errors.
-        const deterministicExit = workerExit && workerExit.token === meta.token && workerExit.exitCode > 0;
+        // Exit 2 with an `interrupted` result is a clean pause (stop requested,
+        // a fold process ended from outside, a runtime guard): its completed
+        // folds are checkpointed and it can resume.
+        const ownExit = workerExit && workerExit.token === meta.token;
+        const interruptedExit = ownExit && workerExit.exitCode === 2 && result?.status === "interrupted";
+        const deterministicExit = ownExit && workerExit.exitCode > 0 && !interruptedExit;
         const terminal = meta.lifecycle === "failed_start" || deterministicExit || result?.status === "completed" || result?.status === "failed" || pause === "max_seconds";
-        const intentional = !!stop || meta.lifecycle !== "active" || ["acknowledgement_required", "runtime_overrun"].includes(pause);
+        // A killed fold process is not retried automatically: the cause (often
+        // memory) repeats under the same plan, and automatic attempts would use
+        // up the bounded retries the agent's explicit resume needs.
+        const intentional = !!stop || meta.lifecycle !== "active" || ["acknowledgement_required", "runtime_overrun"].includes(pause) || !!interruptedExit;
         // All report stop reasons are intentional guard pauses except worker death.
         if (terminal || (!explicit && (intentional || pause))) {
-            event("training_recovery_skipped", { reason: stop ?? pause ?? meta.lifecycle, status: result?.status, error: result?.error, exit_code: workerExit?.exitCode });
+            event("training_recovery_skipped", { reason: stop ?? pause ?? result?.interruption?.reason ?? meta.lifecycle, status: result?.status, error: result?.error, exit_code: workerExit?.exitCode });
             if (explicit && terminal) throw new Error(`Experiment ${id} is terminal (${pause ?? result?.status}); it cannot resume.`);
             return;
         }
@@ -433,7 +471,7 @@ export class TrainingService {
             }
             if (!trial.source || !this.options.solutionsRoot) throw new Error("Unversioned source cannot be safely recovered; start a committed trial.");
             assertDevelopmentCandidate(this.options.solutionsRoot, this.options.taskId, trial.source.commit, trial.request.pipeline);
-            const runtime = readJson(join(trial.directory, "worker-runtime.json"));
+            const runtime = readJson(join(trialSupervisionDirectory(trial.directory), "worker-runtime.json"));
             const checkpoint = readJson(join(trial.directory, "search-checkpoint.json"));
             const consumedSeconds = Math.max(checkpoint?.elapsedSeconds ?? 0, (meta.consumedSeconds ?? 0)
                 + (runtime && runtime.token === meta.token ? runtime.seconds + (workerExit?.token === meta.token ? 0 : 0.25) : 0));
@@ -472,10 +510,14 @@ export class TrainingService {
             // Keep paused outputs/history, but do not mistake them for this launch's terminal outcome.
             const history = join(trial.directory, "recovery-history", String(meta.attempts + 1));
             await mkdir(history, { recursive: true });
-            for (const name of ["trial-result.json", "metrics.json", "search-report.json", "supervisor-state.json", "worker-exit.json"]) {
+            for (const name of ["trial-result.json", "metrics.json", "search-report.json"]) {
                 const artifact = join(trial.directory, name);
                 if (existsSync(artifact)) await rename(artifact, join(history, name));
             }
+            // The supervisor's own history stays with its records, outside the worker's mount.
+            const supervisionHistory = join(supervision, "recovery-history", String(meta.attempts + 1));
+            await mkdir(supervisionHistory, { recursive: true });
+            for (const name of ["supervisor-state.json", "worker-exit.json"]) if (present(join(supervision, name))) await rename(join(supervision, name), join(supervisionHistory, name));
             meta = { ...meta, consumedSeconds, attempts: meta.attempts + 1, lifecycle: "active" };
             atomicJson(path, meta);
             this.finalizing.delete(id);
@@ -483,8 +525,8 @@ export class TrainingService {
             const view = this.options.supervisor.start({
                 argv: this.launchArguments(trial.directory, this.options.workerPath ?? join(PYTHON_ROOT, "worker.py"), invocationPath),
                 cwd: this.options.projectRoot, hypothesis: trial.request.hypothesis, scope: scopeSummary(trial.request),
-            }, undefined, id, trial.directory);
-            atomicJson(join(trial.directory, "launch-released.json"), { token: readJson(path)!.token });
+            }, undefined, id, supervision);
+            atomicJson(join(trialSupervisionDirectory(trial.directory), "launch-released.json"), { token: readJson(path)!.token });
             event("training_recovery_started", { attempt: meta.attempts, budget_unit: meta.budgetUnit, budget_consumed: false });
             return { id, view, retained: this.describe(id), budgetConsumed: false };
         } catch (error) {
@@ -499,6 +541,16 @@ export class TrainingService {
 	private moduleRoots(): string[] {
 		if (this.options.solutionsRoot) return [relative(this.options.projectRoot, this.options.solutionsRoot) || "."];
 		return [...(this.options.allowedModuleRoots ?? ["solutions"])];
+	}
+
+	/** New API paths match INDEX.md; persisted worker paths retain their historical base. */
+	private resolveRequestModules(request: ExperimentRequest): ExperimentRequest {
+		if (!this.options.solutionsRoot) return request;
+		const prefix = relative(this.options.projectRoot, this.options.solutionsRoot).split(sep).join("/");
+		if (!prefix) return request;
+		const module = (path: string) => path.startsWith(`${prefix}/`) ? path : `${prefix}/${path}`;
+		return { ...request, pipeline: { ...request.pipeline, module: module(request.pipeline.module) },
+			cv: request.cv.kind === "factory" ? { ...request.cv, module: module(request.cv.module) } : request.cv };
 	}
 
 	/** Every module must live under an allowed root and exist in the code the trial will run. */
@@ -524,7 +576,9 @@ export class TrainingService {
 				if (git(this.options.solutionsRoot, ["cat-file", "-e", `${source.commit}:${inside}`]).status !== 0) {
 					issues.push({ path, problem: `does not exist in commit ${source.commit.slice(0, 12)}`, received: module,
 						expected: "a file committed at the requested commit",
-						hint: `Commit it (git -C ${roots[0]} add ${inside} && git -C ${roots[0]} commit -m "<idea>"), or check the path and commit.` });
+						hint: (this.options.prompts ?? loadPromptSnapshot()).render("training.module-path-hint", {
+							root: this.options.solutionsRoot, path: inside, example: `tasks/${this.options.taskId}.py`,
+						}).text });
 				}
 			} else if (!existsSync(absolute)) {
 				issues.push({ path, problem: "does not exist", received: relative(this.options.projectRoot, absolute),
@@ -556,6 +610,11 @@ export class TrainingService {
 			issues.push({ path: "commit", problem: "no such commit", received: requested,
 				expected: `a revision that exists in ${name}/`,
 				hint: `Use HEAD, a branch from git -C ${name} branch, or a hash from git -C ${name} log --oneline.` });
+		}
+		if (source) for (const path of committedSymlinks(root, source.commit)) {
+			issues.push({ path: "source", problem: "unsafe source path: committed symlink cannot be frozen for terminal delivery",
+				received: path, expected: "a committed source tree containing no symlinks",
+				hint: (this.options.prompts ?? loadPromptSnapshot()).render("training.source-symlink", { path, commit: source.commit }).text });
 		}
 		return { source, issues };
 	}
@@ -604,6 +663,86 @@ export class TrainingService {
 		return { experimentId: message.experimentId, commit: tag.commit, pipeline: message.pipeline };
 	}
 
+    async workspaceCheck() {
+        if (!this.options.solutionsRoot) throw new Error("Workspace checks require the shared solutions repository");
+        const { checkWorkspace } = await import("../solve/workspace_check.js");
+        return checkWorkspace(this.options.solutionsRoot, this.options.taskId);
+    }
+    get taskKind() { return this.options.measurement?.kind; }
+
+    /**
+     * Cheap explicit execution; never reserves a trial or consumes its budget.
+     * The pipeline always runs; workspace_check findings are reported beside
+     * it and only findings that make a trial invalid block. Work lives
+     * outside the trial root, so an interrupted smoke never looks like a trial.
+     */
+    async smoke(raw: unknown): Promise<{ passed: boolean; budgetConsumed: false; issues: unknown[]; notice?: string; workspace?: Record<string, unknown> }> {
+        const parsed = validateExperimentRequest(raw);
+        if (!parsed.request) return { passed: false, budgetConsumed: false, issues: parsed.issues };
+        const request = this.resolveRequestModules(parsed.request);
+        const checked = this.sourceIssues(request);
+        checked.issues.push(...this.moduleIssues(request, checked.source));
+        if (checked.issues.length || !checked.source || !this.options.solutionsRoot) return { passed: false, budgetConsumed: false, issues: checked.issues };
+        const solutionsRoot = this.options.solutionsRoot;
+        const prompts = this.options.prompts ?? (await import("../prompts/loader.js")).loadPromptSnapshot();
+        const { checkWorkspace } = await import("../solve/workspace_check.js");
+        let workspace: Record<string, unknown>;
+        let blocking: ValidationIssue[] = [];
+        try {
+            const found = await checkWorkspace(solutionsRoot, this.options.taskId);
+            workspace = { valid: found.valid, errors: found.errors, warnings: found.warnings, blocking: found.blocking,
+                ...(found.errors.length || found.warnings.length ? { note: prompts.render("training.smoke-workspace", {}).text } : {}) };
+            blocking = found.blocking.map(problem => ({ path: "workspace", problem, received: problem, expected: "regular files inside solutions/", hint: prompts.render("training.smoke-workspace", {}).text }));
+        } catch (error) {
+            workspace = { valid: false, errors: [error instanceof Error ? error.message : String(error)], warnings: [], blocking: [] };
+        }
+        const directory = await mkdtemp(join(tmpdir(), "smartlab-smoke-"));
+        const sourceRoot = join(directory, "source");
+        const worktree = join(sourceRoot, relative(this.options.projectRoot, solutionsRoot));
+        // Worktree changes are serialised with trial starts on the shared repository.
+        const serialised = <T>(work: () => T | Promise<T>): Promise<T> => {
+            const next = this.starting.then(async () => { const release = await selectionClaimAsync(solutionsRoot); try { return await work(); } finally { release(); } });
+            this.starting = next.catch(() => undefined);
+            return next;
+        };
+        let added = false;
+        try {
+            await serialised(() => { addWorktree(solutionsRoot, worktree, checked.source!.commit); added = true; });
+            const { readTaskData } = await import("../solve/task_data.js");
+            const { repoRootOf } = await import("../paths.js");
+            const data = readTaskData(this.options.taskId, repoRootOf(solutionsRoot));
+            const scriptPath = join(PYTHON_ROOT, "smoke.py");
+            let notice: string | undefined;
+            const issues = await runPipelineValidation({ pythonExecutable: this.options.pythonExecutable, scriptPath,
+                command: this.options.sandboxCommand?.([this.options.pythonExecutable, scriptPath], { directory, sourceRoots: [sourceRoot] }),
+                sourceRoot, request, measurement: this.checkMeasurement(), testZip: data?.testZip, sampleSource: data?.configuration.samples.source, env: this.options.env,
+                cwd: this.options.projectRoot, timeoutMs: this.settings.validationTimeoutSeconds * 1000,
+                interpret: (output) => {
+                    const value = output as { passed?: unknown; phase?: string; error?: { type?: string; message?: string }; traceback?: string; sample?: { trainRows?: number }; largerSample?: { passed?: boolean; trainRows?: number }; sampleSensitive?: boolean; developmentRows?: number };
+                    if (typeof value?.passed !== "boolean") return undefined;
+                    const error = `${value.error?.type ?? "Error"}: ${value.error?.message ?? ""}`;
+                    if (value.passed) {
+                        if (value.sampleSensitive) notice = prompts.render("training.smoke-sample-sensitive", { phase: String(value.phase), smallRows: String(value.sample?.trainRows), largerRows: String(value.largerSample?.trainRows), error }).text;
+                        return [];
+                    }
+                    const sampleNote = value.largerSample ? prompts.render("training.smoke-sample-defect", { largerRows: String(value.largerSample.trainRows) }).text
+                        : prompts.render("training.smoke-sample-unchecked", {}).text;
+                    return [{ path: "pipeline", problem: `smoke failed in the ${value.phase ?? "unknown"} step: ${error}`.slice(0, 2_000), received: preview(request.pipeline),
+                        expected: "a fit on a development sample and finite, row-aligned predictions of the task's kind",
+                        hint: prompts.render("training.smoke-failed", { phase: String(value.phase ?? "unknown"), trainRows: String(value.sample?.trainRows ?? "unknown"),
+                            developmentRows: String(value.developmentRows ?? "unknown"), sampleNote }).text,
+                        ...(value.traceback ? { message: value.traceback } : {}) }];
+                } });
+            const all = [...issues, ...blocking];
+            this.options.record?.("training_smoke_completed", { passed: !all.length, source: checked.source, budget_consumed: false,
+                sample_sensitive: notice !== undefined, workspace_errors: (workspace.errors as unknown[]).length, workspace_blocking: blocking.length });
+            return { passed: !all.length, budgetConsumed: false, issues: all, ...(notice ? { notice } : {}), workspace };
+        } finally {
+            if (added) await serialised(() => removeWorktree(solutionsRoot, worktree)).catch(() => undefined);
+            await rm(directory, { recursive: true, force: true });
+        }
+    }
+
 	/** Persist identity and inputs before spawning the harness-owned worker. */
 	start(raw: unknown, requestedByToolCallId?: string): Promise<StartedTrainingExperiment> {
 		const work = this.starting.then(async () => { await this.ready(); if (this.closed) throw new Error("training service is closed"); const release = this.options.solutionsRoot ? await selectionClaimAsync(this.options.solutionsRoot) : undefined; try { return await this.startValidated(raw, requestedByToolCallId); } finally { release?.(); } });
@@ -617,7 +756,7 @@ export class TrainingService {
 			this.options.record?.("training_request_rejected", { layer: "structure", issues: structural.issues, tool_call_id: requestedByToolCallId });
 			throw new ExperimentRequestError(structural.issues);
 		}
-		const request = structural.request;
+		const request = this.resolveRequestModules(structural.request);
 		let measurement = this.checkMeasurement();
         if (measurement?.kind === "anomaly_detection" && measurement.selection && !measurement.evidence)
             throw new Error("Explicit evidence selection requires an evidence path and source before trial acceptance");
@@ -775,8 +914,9 @@ export class TrainingService {
             ...(source ? { source } : {}),
             ...(champion ? { champion: { experimentId: champion.experimentId, commit: champion.commit } } : {}),
         };
-        atomicJson(join(directory, "recovery.json"), {
-            schemaVersion: 1, trial: record, budgetCharged: true, budgetUnit: id, budgetLimit: this.options.maxExperiments,
+        mkdirSync(trialSupervisionDirectory(directory), { recursive: true });
+        atomicJson(join(trialSupervisionDirectory(directory), "recovery.json"), {
+            schemaVersion: 1, solutionsRoot: this.options.solutionsRoot, trial: record, budgetCharged: true, budgetUnit: id, budgetLimit: this.options.maxExperiments,
             taskId: this.options.taskId, rootSeed: this.options.rootSeed,
             datasetSha256: this.options.datasetSha256, dataHash: this.dataHash(),
             environmentFingerprint: this.options.environmentFingerprint ?? null,
@@ -794,13 +934,14 @@ export class TrainingService {
 				cwd: this.options.projectRoot,
 				hypothesis: request.hypothesis,
 				scope: scopeSummary(request),
-			}, requestedByToolCallId, id);
+				...(this.durations.has(workKey(request)) ? { projectedDurationMs: this.durations.get(workKey(request)) } : {}),
+			}, requestedByToolCallId, id, trialSupervisionDirectory(directory));
 		} catch (error) {
-            atomicJson(join(directory, "recovery.json"), { ...readJson(join(directory, "recovery.json")), lifecycle: "failed_start", budgetCharged: false, diagnosis: String(error) });
+            atomicJson(join(trialSupervisionDirectory(directory), "recovery.json"), { ...readJson(join(trialSupervisionDirectory(directory), "recovery.json")), lifecycle: "failed_start", budgetCharged: false, diagnosis: String(error) });
 			for (const worktree of worktrees) removeWorktree(this.options.solutionsRoot!, worktree);
 			throw error;
 		}
-        atomicJson(join(directory, "launch-released.json"), { token: readJson(join(directory, "recovery.json"))!.token });
+        atomicJson(join(trialSupervisionDirectory(directory), "launch-released.json"), { token: readJson(join(trialSupervisionDirectory(directory), "recovery.json"))!.token });
 		this.started++;
 		this.trials.set(id, record);
 		this.options.onTrialStarted?.(record);
@@ -811,6 +952,14 @@ export class TrainingService {
 	 * After the worker exits: remove its worktrees, tag a completed promotion,
 	 * and move `champion` to it when its paired lead over the current champion exceeds noise (or to the best open trial when there is none). Idempotent per trial.
 	 */
+	/** Record a cleanly completed trial's wall time from the supervisor's final view. */
+	recordDuration(id: string, view: Pick<ExperimentView, "status" | "exitCode" | "elapsedSeconds">): void {
+		const trial = this.trials.get(id);
+		if (!trial || view.status !== "exited" || view.exitCode !== 0) return;
+		if (readJson(join(trial.directory, "trial-result.json"))?.status !== "completed") return;
+		this.durations.set(workKey(trial.request), view.elapsedSeconds * 1000);
+	}
+
 	async workerFinished(id: string): Promise<void> {
         if (!this.closed) {
             const recovered = await this.recover(id, false);
@@ -829,7 +978,7 @@ export class TrainingService {
             const release = root ? await selectionClaimAsync(root) : undefined;
             try {
             if (root && trial.source) assertDevelopmentCandidate(root, this.options.taskId, trial.source.commit, trial.request.pipeline);
-            const state = readJson(join(trial.directory, "supervisor-state.json"));
+            const state = readJson(join(trialSupervisionDirectory(trial.directory), "supervisor-state.json"));
             if (state?.status === "running" || (state?.identity && liveGroup(state.identity.pgid).length)) return;
 			const result = readJson(join(trial.directory, "trial-result.json"));
             if (result) this.options.record?.("training_trial_result", {
@@ -843,12 +992,7 @@ export class TrainingService {
             });
             if (!root) return;
 			this.cleanupWorktrees(trial);
-			if (result?.idLeakage && !existsSync(join(trial.directory, "id-leakage-notified.json"))) {
-                atomicJson(join(trial.directory, "id-leakage-notified.json"), { experimentId: id });
-                this.options.record?.("training_id_leakage", { experiment_id: id, ...result.idLeakage });
-                if (this.options.idLeakageGuidance) this.options.supervisor.notify?.(id, this.options.idLeakageGuidance);
-            }
-			if (!trial.source || result?.status !== "completed" || result.promotionEligible !== true || trial.request.search) return;
+			if (!trial.source || result?.status !== "completed" || result.promotionEligible !== true) return;
 			const collection = await collectTrainingResults(this.options.trainingRoot);
 			const own = collection.trials.find((entry) => entry.experimentId === id);
 			if (!own?.eligible) return;
@@ -885,7 +1029,7 @@ export class TrainingService {
 				adjustedRandIndex: selected.result?.metrics?.adjustedRandIndex,
 				measurement: selectedTrial.measurement ?? null,
 				selection: selected.result?.selection ?? null,
-				pipeline: selectedTrial.request.pipeline,
+				pipeline: selected.request!.pipeline,
 				cv: selectedTrial.request.cv,
 				subject: selectedTrial.source.subject,
 				trainingRoot: this.options.trainingRoot,
@@ -905,7 +1049,7 @@ export class TrainingService {
 	async close(): Promise<void> {
         this.closed = true;
         for (const trial of this.trials.values()) {
-            const path = join(trial.directory, "recovery.json");
+            const path = join(trialSupervisionDirectory(trial.directory), "recovery.json");
             const meta = readJson(path);
             if (meta?.lifecycle === "active") atomicJson(path, { ...meta, lifecycle: "service_closed" });
         }
@@ -914,7 +1058,7 @@ export class TrainingService {
 		await Promise.all([...this.trials.keys()].map((id) => this.finalize(id)));
 		if (!this.options.solutionsRoot) { this.releaseClaims(); return; }
 		for (const trial of this.trials.values()) {
-			const state = readJson(join(trial.directory, "supervisor-state.json"));
+			const state = readJson(join(trialSupervisionDirectory(trial.directory), "supervisor-state.json"));
             if (state?.identity && liveGroup(state.identity.pgid).length) {
                 this.options.record?.("training_cleanup_blocked", { experiment_id: trial.id, reason: "Live process group; source worktrees retained." });
                 continue;
@@ -956,7 +1100,7 @@ export class TrainingService {
 			commit: trial.source.commit, tree: trial.source.tree, subject: trial.source.subject,
 			...(trial.source.branch ? { branch: trial.source.branch } : {}),
 		} : undefined;
-		const recovery = readJson(join(trial.directory, "recovery.json"));
+		const recovery = readJson(join(trialSupervisionDirectory(trial.directory), "recovery.json"));
         const searchProgress = readJson(join(trial.directory, "search-checkpoint.json"));
         const singleProgress = readJson(join(trial.directory, "single-checkpoint.json"));
         const summary: Record<string, unknown> = {
@@ -975,6 +1119,8 @@ export class TrainingService {
 		if (!result) return { ...summary, status: "running_or_missing_result" };
 		Object.assign(summary, {
 			status: result.status, scope: result.scope, promotionEligible: result.promotionEligible,
+            noiseVerdict: noiseVerdict(result.championComparison),
+            foldScores: readJsonLines(join(trial.directory, "fold-results.jsonl")).map((row: any) => ({ repeat: row.repeat, fold: row.fold, metrics: row.metrics })),
 			completedFolds: result.completedFolds, requestedFolds: result.requestedFolds,
 			balancedAccuracy: result.metrics?.balancedAccuracy,
 			adjustedRandIndex: result.metrics?.adjustedRandIndex,
@@ -982,6 +1128,7 @@ export class TrainingService {
 			diagnostics: compactDiagnostics(result),
 			promotionIneligibleReason: result.promotionIneligibleReason,
 			...(result.error ? { error: result.error } : {}),
+			...(result.interruption ? { interruption: result.interruption } : {}),
 			...(result.search ? { search: result.search } : {}),
 			...(result.runtimeGuard ? { runtimeGuard: result.runtimeGuard } : {}),
 			...(result.championComparison ? { championComparison: result.championComparison } : {}),
@@ -990,7 +1137,10 @@ export class TrainingService {
 		if (report) {
 			summary.searchReport = {
 				path: join(trial.directory, "search-report.json"),
-				leaderboard: Array.isArray(report.leaderboard) ? report.leaderboard.slice(0, 5) : undefined,
+				leaderboard: Array.isArray(report.leaderboard) ? report.leaderboard.slice(0, 5).map((row: any) => {
+					const { foldResults: _results, foldScores: _scores, ...summary } = row;
+					return summary;
+				}) : undefined,
 				parameterImportance: report.parameterImportance,
 				parameterEffects: report.parameterEffects?.summary,
 				bestVersusRunnerUp: report.comparison?.bestVersusRunnerUp,
@@ -1016,7 +1166,7 @@ export class TrainingService {
 				balancedAccuracy: result?.metrics?.balancedAccuracy,
 				adjustedRandIndex: result?.metrics?.adjustedRandIndex,
                 selection: selectionSummary(result),
-				diagnostics: compactDiagnostics(result),
+				diagnostics: result?.diagnostics ? compactDiagnostics({ ...result, diagnostics: { ...result.diagnostics, folds: undefined } }) : undefined,
 				promotionEligible: result?.promotionEligible ?? false,
 				...(trial.source ? {
 					commit: trial.source.commit.slice(0, 12), subject: trial.source.subject,

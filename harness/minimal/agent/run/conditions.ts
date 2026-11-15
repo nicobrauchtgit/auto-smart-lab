@@ -13,6 +13,7 @@ import { hostname } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { detectPythonRuntime } from "./runtime_env.js";
+import { courseResources, type CourseResource } from "./course_resources.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(HERE, "..", "..");
@@ -30,6 +31,7 @@ export interface RunConditions {
 	python: { executable: string; version: string; packages: number; virtualenv: boolean } | null;
 	/** Flags that change behaviour: target, attempt/cost/time caps, eval mode, ... */
 	caps: Record<string, string | number | boolean | null>;
+	courseResources?: CourseResource[];
 }
 
 function git(args: string[], trim = true): string | null {
@@ -69,6 +71,7 @@ export function collectConditions(caps: RunConditions["caps"]): RunConditions {
 		pi,
 		python: py ? { executable: py.executable, version: py.version, packages: py.packages.length, virtualenv: py.inVirtualenv } : null,
 		caps,
+		courseResources: courseResources(),
 	};
 }
 

@@ -1,0 +1,1 @@
+Resident memory reached {{rssMb}} MB across {{processes}} process(es). Available RAM is {{headroomMb}} MB above the {{reserveMb}} MB reserve; below the reserve the harness stops the largest running process.

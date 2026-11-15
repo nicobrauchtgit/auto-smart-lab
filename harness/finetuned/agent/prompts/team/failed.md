@@ -1,0 +1,1 @@
+- error: The {{role}} scout failed ({{reason}}); it returned no bullets.

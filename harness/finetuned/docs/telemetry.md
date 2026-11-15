@@ -44,8 +44,7 @@ Pipeline, orchestration and standalone stage commands print a Cloud trace link
 `stageInvocationId`, `attempt`, `agentRunId` and `piSessionId` metadata to find work.
 
 Each process execution has a root trace. Durable `pipelineRunId` is the Langfuse
-session ID. Orchestrator resumes persist the new trace ID in the coordinator
-journal and attach `previousTraceId`; physical context replacements remain
+session ID. Physical context replacements remain
 separate agent observations within the same attempt and trace.
 
 The hierarchy is execution → stage → attempt → physical Pi session → generations
@@ -67,6 +66,12 @@ stays in `agent/prompts/`.
 `metadata.final`. `evaluation_readiness` is advisory. Harness metric scores carry
 data, fold and source provenance; failed/worse attempts remain visible. Scores
 do not select champions, authorize uploads or replace harness measurements.
+Each readiness check (`lead_validation`, `lead_validation_reused`) adds a
+categorical `validation_status` score: `passed`, `fix`,
+`verification_incomplete`, `failed`, `stopped`, `empty`, `unavailable` or
+`not_run`. Traces carry the minimal arm's static tags `auto-smart-lab`,
+`task:<id>` and `model:<provider>/<id>` (from `experiment.config.json`). Both arms
+read `LANGFUSE_TRACING_ENVIRONMENT`; set it in `.env` so they share one environment.
 
 ## Emergency JSONL
 

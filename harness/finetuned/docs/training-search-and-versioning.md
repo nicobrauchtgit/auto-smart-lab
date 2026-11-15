@@ -1,5 +1,7 @@
 # Pipeline versioning and hyperparameter search
 
+> Superseded by [expert-team-v2.md](expert-team-v2.md) section 8 when P6/P7 land (a search winner counts once measured on the shared folds; no mandatory second confirmation run). Accurate for the current code until then.
+
 Status: implemented with deterministic local acceptance coverage, 2026-10-05.
 The five delivery phases below are wired into the registered solve path. It extends the [harness-owned training contract](harness-owned-training.md).
 
@@ -23,7 +25,7 @@ explains.
 | Transparency | Live per-configuration events and a final report that explains which parameters mattered. |
 | Promotion | A search winner is never promoted directly. It needs a confirmation trial on fresh folds. |
 | Runtime | The harness projects cost from measured fit times and stops for an explicit acknowledgement above a threshold. |
-| Confirmation | The solve agent acknowledges expensive searches. The orchestrator takes this over once it exists. |
+| Confirmation | The solve agent acknowledges expensive searches. Under v2 the lead agent acknowledges them. |
 | Validation | Every request is validated before any fit, and every rejection states exactly what is wrong and how to fix it. |
 
 ## Pipeline versioning with git
@@ -252,8 +254,7 @@ reports paired differences.
 - **Hard cap:** `search.maxSeconds` ends any search gracefully, regardless of
   acknowledgement.
 
-The solve agent sets `acceptEstimatedSeconds`. Once the orchestrator exists,
-this acknowledgement moves to it.
+The solve agent sets `acceptEstimatedSeconds`. Under v2 the lead agent sets it.
 
 ## Validation
 

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -10,8 +10,6 @@ import type { ExperimentRequest } from "./types.js";
 import { ensureSolutionsRepository, git, tagCommit } from "./git.js";
 import { championSelection, handoverChampion } from "./development_selection.js";
 import { candidateIdentity, terminalPath } from "./terminal.js";
-import { initialState, StateStore } from "../orchestrator/state.js";
-import { Coordinator } from "../orchestrator/coordinator.js";
 import { loadPromptSnapshot } from "../prompts/loader.js";
 import { resolvePipelineSettings } from "../pipeline/config.js";
 
@@ -123,6 +121,37 @@ async function writeTrial(root: string, id: string, options: TrialFixtureOptions
 }
 
 describe("collectTrainingResults", () => {
+	test("refuses worker-planted artifact symlinks without returning host contents or hashes", async () => {
+		const root = await mkdtemp(join(tmpdir(), "artifact-symlink-"));
+		try {
+			const marker = "HARMLESS_HOST_MARKER_plain_text";
+			const host = join(root, "host-marker.txt");
+			await writeFile(host, marker);
+			for (const file of ["request.json", "invocation.json", "seed-plan.json", "fold-manifest.json", "fold-results.jsonl", "oof_predictions.csv", "metrics.json", "trial-result.json"]) {
+				const training = join(root, file);
+				const directory = await writeTrial(training, "trial");
+				await rm(join(directory, file));
+				await symlink(host, join(directory, file));
+				const collection = await collectTrainingResults(training);
+				expect(collection.valid).toBe(false);
+				expect(collection.errors.some(error => error.file === file && error.code === "unreadable_file")).toBe(true);
+				expect(JSON.stringify(collection)).not.toContain(marker);
+				expect(collection.artifacts.some(artifact => artifact.sha256 === digest(marker))).toBe(false);
+			}
+		} finally { await rm(root, { recursive: true, force: true }); }
+	});
+
+	test("JSON parse diagnostics never echo artifact contents", async () => {
+		const root = await mkdtemp(join(tmpdir(), "artifact-json-"));
+		try {
+			const directory = await writeTrial(root, "trial");
+			await writeFile(join(directory, "metrics.json"), "HARMLESS_PRIVATE_PARSE_MARKER");
+			const collection = await collectTrainingResults(root);
+			expect(collection.errors.some(error => error.code === "invalid_json")).toBe(true);
+			expect(JSON.stringify(collection.errors)).not.toContain("HARMLESS_PRIVATE_PARSE_MARKER");
+		} finally { await rm(root, { recursive: true, force: true }); }
+	});
+
 	test("keeps pilots visible and selects nothing by raw score", async () => {
 		const root = await mkdtemp(join(tmpdir(), "training-results-"));
 		await writeTrial(root, "pilot", { scope: "pilot", score: 1, promotionEligible: false });
@@ -258,6 +287,39 @@ describe("collectTrainingResults", () => {
 			.not.toContainEqual(expect.objectContaining({ code: "missing_file", file: "oof_predictions.csv" }));
 	});
 
+	test("a missing or malformed search report is an artifact error that hides no healthy sibling", async () => {
+		const root = await mkdtemp(join(tmpdir(), "training-results-"));
+		await writeTrial(root, "healthy", { score: 0.84 });
+		/** A promotion-eligible search winner whose report the collector must reread. */
+		const searchTrial = async (id: string) => {
+			const directory = await writeTrial(root, id, { score: 0.9 });
+			const search = { space: { model__C: { type: "categorical", choices: [0.1, 1] } }, sampler: "random", maxConfigs: 2 };
+			for (const file of ["request.json", "invocation.json"]) {
+				const document = await Bun.file(join(directory, file)).json();
+				const request = file === "request.json" ? document : document.request;
+				Object.assign(request, { schemaVersion: 2, search });
+				await writeFile(join(directory, file), `${JSON.stringify(document)}\n`);
+			}
+			const result = await Bun.file(join(directory, "trial-result.json")).json();
+			result.winningPipeline = { module: "solutions/tasks/task.py", factory: "build_pipeline", parameters: { id } };
+			for (const file of ["trial-result.json", "metrics.json"]) await writeFile(join(directory, file), `${JSON.stringify(result)}\n`);
+			return directory;
+		};
+		await writeFile(join(await searchTrial("malformed-report"), "search-report.json"), "{not-json\n");
+		await searchTrial("missing-report");
+
+		const collection = await collectTrainingResults(root);
+
+		expect(collection.trials.map((trial) => trial.experimentId)).toEqual(["healthy", "malformed-report", "missing-report"]);
+		expect(collection.trials.filter((trial) => trial.eligible).map((trial) => trial.experimentId)).toEqual(["healthy"]);
+		expect(collection.valid).toBe(true);
+		const errors = (id: string) => collection.trials.find((trial) => trial.experimentId === id)!.errors;
+		expect(errors("malformed-report")).toContainEqual(expect.objectContaining({ code: "invalid_json", file: "search-report.json" }));
+		expect(errors("malformed-report")).toContainEqual(expect.objectContaining({ code: "invalid_search_winner", file: "search-report.json" }));
+		expect(errors("missing-report")).toContainEqual(expect.objectContaining({ code: "missing_file", file: "search-report.json" }));
+		expect(errors("missing-report")).toContainEqual(expect.objectContaining({ code: "invalid_search_winner", file: "search-report.json" }));
+	});
+
 	test("turns an unreadable root into a factual collection failure", async () => {
 		const root = join(tmpdir(), `absent-training-results-${crypto.randomUUID()}`);
 		const collection = await collectTrainingResults(root);
@@ -268,62 +330,4 @@ describe("collectTrainingResults", () => {
 			artifacts: [],
 		});
 	});
-});
-
-
-test("a frozen champion reconciles an existing hand-over while remaining closed to development", async () => {
- const root = await mkdtemp(join(tmpdir(), "terminal-handover-")), repository = join(root, "solutions");
- let coordinator: Coordinator | undefined;
- try {
-  ensureSolutionsRepository(repository);
-  await writeFile(join(repository, "pipeline.py"), "# selected source\n");
-  git(repository, ["add", "-A"]);
-  git(repository, ["-c", "commit.gpgsign=false", "commit", "-qm", "fixture"]);
-  const commit = git(repository, ["rev-parse", "HEAD"]).stdout.trim();
-  const directory = await writeTrial(root, "winner"), invocationPath = join(directory, "invocation.json");
-  const invocation = JSON.parse(await readFile(invocationPath, "utf8"));
-  invocation.source = { repository, commit };
-  await writeFile(invocationPath, JSON.stringify(invocation));
-  tagCommit(repository, "champion/task", commit, JSON.stringify({ experimentId: "winner", trainingRoot: root }), true);
-  const identity = candidateIdentity("task", commit, invocation.request.pipeline);
-  await mkdir(join(repository, ".git", "smartlab-terminal"), { recursive: true });
-  await writeFile(terminalPath(repository, identity), JSON.stringify({ schemaVersion: 1, identity, taskId: "task", source: { commit }, pipeline: invocation.request.pipeline }));
-  expect((await championSelection(await collectTrainingResults(root), repository, "task")).selected).toBeUndefined();
-  expect((await handoverChampion(repository, "task"))?.experimentId).toBe("winner");
-
-  const prompts = loadPromptSnapshot();
-  const config = resolvePipelineSettings({ defaultModel: "fixture/model", providers: {}, agent: { cwd: root, agentDir: root, initialPrompt: "" }, pipeline: { entryStage: "research", stages: { research: { enabled: true } } } } as any);
-  const store = new StateStore(join(root, "controller"), initialState({ taskId: "task", taskFingerprint: "a".repeat(64), config, promptTemplates: prompts.serialize(), promptFingerprint: prompts.fingerprint, authorized: false }));
-  await writeFile(join(directory, "recovery.json"), JSON.stringify({ originPipelineRunId: store.state.runId, originStageInvocationId: "solve" }));
-  store.transaction("completed-refit-before-final-transaction", {}, state => {
-   for (const id of ["solve", "refit"]) state.actions.push({ id, kind: "stage_start", requestHash: "fixture", revision: state.revision + 1, receipt: {} });
-   state.works.push({ id: "solve", actionId: "solve", stage: "solve", status: "terminal", objective: "fixture", upstream: [] });
-   state.works.push({ id: "refit", actionId: "refit", stage: "refit", status: "terminal", origin: "budget_end", objective: "fixture", upstream: [],
-    result: { stage: "refit", invocationId: "refit", stageVersion: 1, options: {}, startedAt: "now", finishedAt: "now", outcome: "success", artifacts: [], validation: { valid: true, errors: [] }, attempts: 0 } });
-  });
-  coordinator = new Coordinator(store, { trainingDirectory: join(root, "absent"), promotedChampion: () => handoverChampion(repository, "task"), start() { throw new Error("Completed hand-over must not launch a second refit"); } });
-  expect(await coordinator.handOverAtBudgetEnd("resume after crash", { cancelLive: false })).toMatchObject({ handedOver: true, invocationId: "refit" });
-  expect(coordinator.state.status).toBe("finished");
-  expect(coordinator.state.works.filter(work => work.stage === "refit")).toHaveLength(1);
-  expect((await championSelection(await collectTrainingResults(root), repository, "task")).selected).toBeUndefined();
- } finally { coordinator?.close(); await rm(root, { recursive: true, force: true }); }
-});
-
-test("eligible claims are rejected when either summary or fold records ID leakage", async () => {
- for (const location of ["summary", "fold"]) {
-  const root = await mkdtemp(join(tmpdir(), "leakage-result-"));
-  const directory = await writeTrial(root, "leaky");
-  if (location === "summary") {
-   for (const name of ["trial-result.json", "metrics.json"]) {
-    const path = join(directory, name), document = JSON.parse(await readFile(path, "utf8"));
-    document.idLeakage = { rows: 2, mismatches: 1 }; await writeFile(path, JSON.stringify(document));
-   }
-  } else {
-   const path = join(directory, "fold-results.jsonl"), rows = (await readFile(path, "utf8")).trim().split("\n").map(line => JSON.parse(line));
-   rows[0].idLeakage = { rows: 1, mismatches: 1 }; await writeFile(path, rows.map(row => JSON.stringify(row)).join("\n") + "\n");
-  }
-  const collection = await collectTrainingResults(root);
-  expect(collection.trials[0].eligible).toBe(false);
-  expect(collection.errors.some(error => error.message.includes("ID leakage"))).toBe(true);
- }
 });

@@ -50,7 +50,8 @@ test("runtime prompt supplies declared constraints, file identity, and compatibl
 	assert.match(prepared.prompt.text, /update PACKAGE --reason/);
 	assert.match(prepared.prompt.text, /Installation failures can leave partial changes/);
 	assert.match(prepared.prompt.text, /Do not record package inventories/);
-	assert.match(prepared.prompt.text, /knowledge_capture/);
+	// The knowledge store was removed for v2; the prompt must not name its tools.
+	assert.doesNotMatch(prepared.prompt.text, /knowledge_capture/);
 	assert.doesNotMatch(prepared.prompt.text, /NOTES.md/);
 	assert.equal(prepared.prompt.reference.id, "shared.python-environment");
 	assert.deepEqual(prepared.input.declared_dependencies, inventory().declared_dependencies);

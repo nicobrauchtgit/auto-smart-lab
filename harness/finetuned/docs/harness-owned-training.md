@@ -1,5 +1,7 @@
 # Harness-owned training framework
 
+> Superseded by [expert-team-v2.md](expert-team-v2.md) sections 4, 7 and 8 (trial feedback, `trial_smoke`, changes to the harness) when P6/P7 land. Harness ownership of seeds, folds, fits and predictions stays.
+
 Status: implementation contract, 2026-09-24.
 
 The solve agent designs experiments; the harness executes them. This is the
@@ -129,27 +131,33 @@ for ownership checks, cost accounting, refusal conditions and acceptance tests.
 
 ### Implemented terminal refit
 
-`refit` is a registered deterministic stage and follows `evaluate` when enabled.
+The lead invokes deterministic refit after validation. Standalone `refit` remains
+a registered stage; the former evaluate stage is retired.
 The standalone command uses the same executor and setup path:
 
 ```bash
-npm run refit-stage -- spam1 --check-setup
-npm run refit-stage -- spam1
+./dev bun run refit-stage -- spam1 --check-setup
+./dev bun run refit-stage -- spam1
 # Optional assertion of the chosen tag's evidence root:
-npm run refit-stage -- spam1 --training-root runs/spam1/solve/training/<run-id>
+./dev bun run refit-stage -- spam1 --training-root runs/finetuned/spam1/solve/training/<run-id>
 ```
 
 This command performs local training; it does not start an agent or submit anything.
-Enabling refit in the configured chain makes the authoritative `champion` tag the
-final selection. Evaluation remains advisory; its readiness score neither selects
-a different champion nor authorizes submission.
+Standalone refit defaults to the authoritative `champion/<task>` tag. The lead's
+terminal path may instead select its recorded validated baseline after the newer
+champion fails readiness or integrity. This internal selection carries the exact
+experiment, evidence root and source commit; it never sorts by score or retags
+the statistical champion. Every choice must pass the same read-only refit
+integrity gates before validation approval is reused. See [lead execution](../agent/run/README.md).
 
 The stage resolves the experiment and exact fixed factory/estimator parameters
-from the annotated champion tag. It requires that experiment's eligible completed
+from the annotated champion tag or controller-selected measured evidence. It requires eligible completed
 single-trial evidence, matching commit/tree and dependency inventory, original
-invocation/seed hashes, and development data. Searches require a measured fixed
-confirmation; a search winner itself is never eligible. A different trial with a
-higher score cannot override the chosen tag. Checkpoint checksums, persisted folds,
+invocation/seed hashes, and development data. Completed eligible search winners
+use their measured fixed winning parameters. Interrupted searches remain
+ineligible. Historical held-back confirmation uses the selected candidate's exact
+captured receipt/hash and ledger reservation; fallback issues no new query.
+Checkpoint checksums, persisted folds,
 OOF predictions, fold measurements and development metrics are verified without
 fitting. Earlier measured evidence remains unchanged.
 

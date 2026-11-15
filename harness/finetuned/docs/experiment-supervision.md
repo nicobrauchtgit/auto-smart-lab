@@ -6,12 +6,22 @@ observe and interrupt a fit while it runs. Build this control path before
 removing session deadlines and iteration caps. The existing limits stay in
 place during this work.
 
-The user's main concern is wasted training after early convergence. The default
-agent workflow must begin with a small pilot fit. Do not begin with a huge
-iteration allowance and rely on later intervention to rescue it.
+> **Partly superseded (2026-11-11).** Under
+> [expert-team-v2.md](expert-team-v2.md), a pilot fit is an option, not a rule
+> (v2 section 8), and supervision is the global `supervision` block of v2
+> section 6. The pilot-first rule below and the section
+> [Start small and expand only on evidence](#start-small-and-expand-only-on-evidence)
+> are superseded by v2 sections 4 and 6. The measurements, the stall rule
+> derived from CPU and output gaps, and the wake rules (wake on news only)
+> remain the basis of v2's thresholds.
 
-See [pipeline-signals.md](pipeline-signals.md) for statistical diagnostics and
-[WIP.md](WIP.md) for the current roadmap. The tools below are not implemented.
+The user's main concern was wasted training after early convergence. The
+original policy here was that the default agent workflow begins with a small
+pilot fit (superseded, see above).
+
+Parts of this design are implemented in `agent/experiments/` (see
+its [README](../agent/experiments/README.md)). The work queue is
+[docs/cleanup-plan.md](../../../docs/cleanup-plan.md).
 
 An earlier draft of this document proposed a custom progress event API, a typed
 event ledger, and durable supervisor recovery. Measurement replaced most of it.
@@ -176,6 +186,9 @@ that length is normal, and a heartbeat that does not know about it will report a
 healthy trial as stuck before it has begun.
 
 ## Start small and expand only on evidence
+
+> Superseded by [expert-team-v2.md](expert-team-v2.md) sections 4 and 6: pilots
+> are optional and the lead decides the size of each trial. Kept as background.
 
 Runtime guidance should require the agent to start with a modest trial suited
 to its estimator. A few epochs or optimisation steps can be enough for an

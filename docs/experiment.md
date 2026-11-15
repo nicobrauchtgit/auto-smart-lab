@@ -1,5 +1,7 @@
 # The experiment: minimal agent vs. task-adapted harness
 
+> The finetuned arm's design is superseded by [expert-team-v2.md](../harness/finetuned/docs/expert-team-v2.md) when P7 lands (one lead agent with scouts). Its orchestrator, research and evaluate stages and knowledge store were removed on 2026-11-11; the arm currently runs solve, then refit. This page describes the current code.
+
 **Question:** on the SmartLab tasks, which performs better: a single minimal agent
 that is simply run, or a more complex harness adapted to the task?
 
@@ -8,20 +10,16 @@ Both arms live on this branch. Choose one with a flag; no branch switch.
 ```bash
 ./dev bun run experiment -- --arm minimal --check-setup
 ./dev bun run experiment -- --arm minimal --only spam1,spam2,spam3
+./dev bun run experiment -- --arm minimal --continue runs/minimal/<previous-run> --only documents1 --check-setup
 ./dev bun run experiment -- --arm finetuned --check-setup spam1
 ./dev bun run experiment -- --arm finetuned spam1
 ./dev bun run experiment -- --arm finetuned spam1 --detach                    # survives the terminal
-./dev bun run experiment -- --arm finetuned spam1 --detach --resume <run-id>  # continue a run
 ./dev bun run experiment -- --arm finetuned --reset        # shows what it would delete; add --yes
 ```
 
 `--detach` starts the finetuned run in its own session, writes its output to
 `runs/finetuned/<task>/logs/<stamp>.log`, prints the log path and how to follow,
-stop (`kill -INT <pid>`) and resume it, and returns. Every finetuned run prints one
-progress line per event: run started (with its run ID), stage started (stage and the
-objective's first words), stage finished (outcome, valid or not, duration),
-hand-over, and run end with its outcome. `--resume <run-id>` continues a run with
-its remaining budget.
+and stop it (`kill -INT <pid>`), and returns.
 
 Arguments after the flag go to the arm's own entry point:
 `harness/finetuned/agent/pipeline_cli.ts` for the finetuned arm,
@@ -33,7 +31,7 @@ harness/finetuned/   the task-adapted harness: agent/, pipeline.config.json,
                      harness.config.json, pyproject.toml, uv.lock, .venv, docs/
 experiment/          the switch (cli.ts), run locations and jails, boundary tests
 runs/minimal/        one folder per minimal run
-runs/finetuned/      finetuned run state: <task>/, solutions/, knowledge/, deliveries/
+runs/finetuned/      finetuned run state: <task>/, solutions/, deliveries/
 units/               task data, shared and read-only for both
 experiment.config.json  shared: online or offline, the chosen provider and model, all providers
 ```
@@ -50,23 +48,22 @@ Controller code may sit anywhere. **Agents do not leave their run location.**
 | Session | Run location | Boundary |
 | --- | --- | --- |
 | Minimal solver | `runs/minimal/<stamp>/`: a copy of the arm's `agent/` and `.pi/`, the units, its own venv | The whole arm process runs in bubblewrap (`experiment/minimal.ts`) |
-| Finetuned research | `runs/finetuned/<task>/research/` | Bubblewrap tools (`prepareResearchSandbox`) |
 | Finetuned solve | `runs/finetuned/<task>/solve/agent/`, `runs/finetuned/solutions/` | Bubblewrap tools (`prepareSolveSandbox`) |
-| Finetuned evaluate, orchestrator | none | No file tools, only controller tools |
 
 Neither arm can read the other's code, prompts or state, or `.env`. `experiment/minimal.test.ts`
-and `harness/finetuned/agent/run/research_sandbox.test.ts` prove this; keep them passing.
+and `harness/finetuned/agent/run/arm_boundary.test.ts` prove this; keep them passing.
 
 Known limit: the minimal arm's model key has to be in the arm's process, and its
 shell tool drops credentials from the environment, but a command could still read
 the parent's `/proc/<pid>/environ`. That exposes the model key, not the other arm.
 
-## Starting clean
+## Starting clean and continuing runs
 
-A measured run starts from scratch. The minimal arm gets a fresh location for every
-invocation. The finetuned arm keeps `runs/finetuned/` (task runs, `solutions/`,
-`knowledge/`) between runs on purpose, so run `--arm finetuned --reset --yes` before a
-measured run. Delivered files under `runs/finetuned/deliveries/` survive a reset.
+Fresh minimal invocations create a new confined run. Use `--continue runs/minimal/<stamp>` to resume that folder with Leo's `--reset none`. This retains the same task state as one batch in [solve_units.ts](../harness/minimal/agent/run/solve_units.ts): memory, solvers, predictions, requirements, checkpoints, scratch, .home and .venv. The wrapper mounts the run's .tmp as /tmp on every step. Task material is refreshed on every step (the model entry, links to the current `units/`, `units/index.json` and declared course resources), as one batch has every unit from its start; agent-written state is not touched. Background processes are killed at each step's end (accepted); per-step delivery folders and logs are a cosmetic difference.
+
+[experiment/source.ts](../experiment/source.ts) refuses continuation if the recorded minimal harness commit or solver prompt hash differs. Only real direct runs/minimal children are accepted. --check-setup validates without creating a run or starting agents. Before continuation, a sibling snapshot preserves everything except node_modules and .venv; venv-packages.txt records installed packages. chain.jsonl records invocation arguments and identity. chain-budget.json fixes the total cost cap; earlier solve-units summary spentUsd is deducted from it. --source-from is removed.
+
+Finetuned retains its own solutions; reset it explicitly for an independent repeat. Neither arm reads the other. Continuation is not an independent repeat.
 
 ## What is compared
 
@@ -89,14 +86,15 @@ These are part of what is compared. Do not equalize them; report them with resul
 | | Minimal | Finetuned |
 | --- | --- | --- |
 | Instructions | Environment and protocol facts only, no coaching | Authored prompts per stage, with coaching |
-| Stages | One solver session, then a deterministic check | An orchestrator agent picks the stages: research, solve, a code and evidence review, up to three follow-up rounds, then one refit as the hand-over (online: up to three submissions with score feedback) |
+| Course slides | Same PDFs/text copies in a read-only snapshot; `read_challenge` lists paths and hashes | None for now: research, which received the slides, was removed on 2026-11-11; v2's scouts will receive them (P7a) |
+| Stages | One solver session, then a deterministic check | One lead session with harness trials and blocking scouts, then validated terminal refit |
 | Who trains | The agent runs its own code | The harness runs the agent's pipeline and owns folds, seeds and promotion |
 | Labels | All labels visible to the agent | A sealed split stays hidden until the terminal refit |
-| Budgets | 30-minute sessions, 3 failed sessions per task | 12 hours per task, 6 trials per solve round, 24 trials in all, stall detection |
+| Budgets | 30-minute sessions, 3 failed sessions per task | 6 trials per solve session, stall detection |
 | Installing packages | Plain `pip` in its own venv | `python_environment` tool, recorded in `changes.jsonl` |
 | Extra packages | None beyond the shared base | `optuna`, `dpkt`, `joblib`, `matplotlib`, `beautifulsoup4`, `cloudpickle`, `smartlab-eval` |
 | Model limits | Leo's entry: 262,144 context, 32,768 output, reasoning on, `compat` set | 262,144 context, 32,768 output, reasoning on, same `compat` |
-| Memory within a batch | Later tasks may reuse earlier solvers (`--reset once`) | `solutions/` and `knowledge/` carry over between tasks; every stage writes a report and records lessons in `knowledge/` |
+| Memory within a batch | Later tasks may reuse earlier solvers (`--reset once`) | `solutions/` carries over between tasks |
 
 ## Kept the same
 

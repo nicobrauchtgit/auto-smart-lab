@@ -15,9 +15,8 @@ agent-provided evidence live in `runs/<task>/solve/agent/`. Shared `solutions/`
 remains writable for reusable code and git history; runtime Python notes are
 writable. File edit/write tools reject writes outside those persistent roots.
 Shell commands also get a private temporary filesystem: files created outside
-mounted persistent roots are transient and vanish after that tool call. In
-particular, truncated bash full-output files under `/tmp` are transient; redirect
-important logs into the agent workspace. System runtimes, project `.venv`, its
+mounted persistent roots are transient and vanish after that tool call. Shell results name a persistent agent-readable full-output copy in `.shell-calls/`;
+the authoritative log and supervision records remain outside writable mounts. System runtimes, project `.venv`, its
 managed interpreter, editable `agent/libs/smartlab-eval`, JS dependencies, declarations
 and lockfile are mounted read-only. No separate Python environment is created.
 
@@ -31,7 +30,9 @@ Use it for dependency changes; the sandbox's manager shell path is read-only.
 The trusted training receipt runner stays outside the namespace; only its child
 that loads agent code is sandboxed. Bubblewrap does not create a new host process
 group, so existing supervisor sampling, stop and ownership verification still
-cover it. The worker gets only its own trial output directory writable; source
+cover it. Trusted supervision logs, recovery metadata and runner receipts live in
+`<training root>/.supervision/<trial>/`, outside the worker mount. The worker
+gets only its own trial output directory writable; source
 worktrees and base mounts are read-only. Its subprocesses inherit the namespace,
 including champion reruns and joblib children. A stopped namespace also removes
 its descendants. A declared boundary fingerprint covers mounts, writability,

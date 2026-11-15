@@ -8,12 +8,13 @@ import {
 	statSync,
 	writeFileSync,
 } from "node:fs";
-import { dirname, extname, join, relative, resolve } from "node:path";
+import { basename, dirname, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { summarizeTrainingFamilies, summarizeTrainingLabels, type StartupProfile } from "./startup_context.js";
 import type { TaskConfiguration } from "../pipeline/task_configuration.js";
 import { REPO_ROOT } from "../paths.js";
 import { statePath } from "../paths.js";
+import { readCourseResources, type CourseResource, type CourseResourceInput } from "./resources.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const PROJECT_ROOT = REPO_ROOT;
@@ -41,6 +42,8 @@ export interface ResearchContext {
 	schema_version: 1;
 	generated_at: string;
 	run_date: string;
+	/** Supplied course references; absent in legacy snapshots. */
+	resources?: CourseResource[];
 	startup_profile?: StartupProfile;
 	/** Harness-computed data profile in the workspace; absent for legacy snapshots. */
 	data_profile?: { status: "available" | "unavailable"; path?: string; sha256?: string; layers?: string[]; reason?: string };
@@ -61,15 +64,6 @@ export interface ResearchContext {
 		research_inputs?: ResearchInputs;
 		snapshot_sha256: string;
 	};
-	limits: {
-		web_search_calls: number;
-		max_report_bytes: number;
-		max_analysis_artifact_bytes: number;
-		/** Route caps of the solution brief; bytes are only a safety limit. */
-		max_facts: number;
-		max_alternates: number;
-		max_improvements: number;
-	};
 }
 
 function localIsoDate(date: Date): string {
@@ -85,6 +79,7 @@ function localIsoDate(date: Date): string {
 export interface ResearchContextInput {
 	context: ResearchContext;
 	prompt: string;
+	resources: CourseResourceInput[];
 }
 
 interface TaskLocation {
@@ -126,6 +121,7 @@ export function findTask(taskId: string): TaskLocation {
 export function buildResearchContext(taskId: string, configuration?: TaskConfiguration): ResearchContextInput {
 	const generatedAt = new Date();
 	const task = findTask(taskId);
+	const resources = readCourseResources(basename(dirname(task.dir)));
 	const workspace = statePath(PROJECT_ROOT, taskId, "research");
 	const prompt = readFileSync(join(task.dir, "prompt.md"), "utf8");
 	const dataDir = join(task.dir, "data");
@@ -175,10 +171,12 @@ export function buildResearchContext(taskId: string, configuration?: TaskConfigu
 
 	return {
 		prompt,
+		resources,
 		context: {
 			schema_version: 1,
 			generated_at: generatedAt.toISOString(),
 			run_date: localIsoDate(generatedAt),
+			resources: resources.map(input => input.resource),
 			startup_profile: startupProfile,
 			task: {
 				id: taskId,
@@ -199,14 +197,6 @@ export function buildResearchContext(taskId: string, configuration?: TaskConfigu
 					...(labelPath ? { targets: relative(workspace, labelPath) } : {}),
 				} : undefined),
 				snapshot_sha256: sha256(snapshot),
-			},
-			limits: {
-				web_search_calls: HARNESS_CONFIG.research.webSearchCalls,
-				max_report_bytes: HARNESS_CONFIG.research.maxReportBytes,
-				max_analysis_artifact_bytes: HARNESS_CONFIG.research.maxAnalysisArtifactBytes,
-				max_facts: HARNESS_CONFIG.research.maxFacts,
-				max_alternates: HARNESS_CONFIG.research.maxAlternates,
-				max_improvements: HARNESS_CONFIG.research.maxImprovements,
 			},
 		},
 	};

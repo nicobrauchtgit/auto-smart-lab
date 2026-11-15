@@ -1,19 +1,12 @@
 {
   "pipeline": {
     "version": 1,
-    "entryStage": "research",
-    "scheduling": "agent",
+    "entryStage": "lead",
+    "scheduling": "configured",
     "stages": {
-      "research": {
+      "lead": {
         "enabled": true,
         "options": {}
-      },
-      "solve": {
-        "enabled": true,
-        "options": {}
-      },
-      "evaluate": {
-        "enabled": true
       },
       "submit": {
         "enabled": true
@@ -77,6 +70,48 @@
         "targets": {
           "kind": "binary",
           "file": "webspam-train.labels"
+        },
+        "execution": "inductive",
+        "holdout": "stratified",
+        "metric": "balanced_accuracy",
+        "refit": "fit_training_predict_test",
+        "submission": {
+          "format": "id_semicolon_prediction",
+          "predictions": "binary"
+        }
+      },
+      "documents1": {
+        "schemaVersion": 1,
+        "kind": "binary_classification",
+        "samples": {
+          "source": "zip_members",
+          "train": "docx-train.zip",
+          "test": "docx-test.zip"
+        },
+        "targets": {
+          "kind": "binary",
+          "file": "docx-train.labels"
+        },
+        "execution": "inductive",
+        "holdout": "stratified",
+        "metric": "balanced_accuracy",
+        "refit": "fit_training_predict_test",
+        "submission": {
+          "format": "id_semicolon_prediction",
+          "predictions": "binary"
+        }
+      },
+      "documents2": {
+        "schemaVersion": 1,
+        "kind": "binary_classification",
+        "samples": {
+          "source": "zip_members",
+          "train": "pdf-train.zip",
+          "test": "pdf-test.zip"
+        },
+        "targets": {
+          "kind": "binary",
+          "file": "pdf-train.labels"
         },
         "execution": "inductive",
         "holdout": "stratified",

@@ -1,0 +1,1 @@
+Final budget warning: your remaining tool-call budget is {{remaining}} ({{remainingPercent}}% or less of your allowance). Prioritize final validation and concrete repairs under the system prompt's completion policy.

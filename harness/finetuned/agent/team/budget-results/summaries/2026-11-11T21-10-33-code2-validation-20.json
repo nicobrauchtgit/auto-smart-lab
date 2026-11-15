@@ -1,0 +1,16 @@
+{
+  "taskId": "code2",
+  "role": "validation",
+  "budget": 20,
+  "backend": "pi-child",
+  "status": "completed",
+  "experiment": "a5b692ef-1983-407f-99c5-5c4e9e970691",
+  "used": 20,
+  "attempted": 20,
+  "blockedAfterBudget": 0,
+  "turns": 14,
+  "bullets": 5,
+  "seconds": 224,
+  "outputChars": 2608,
+  "workspace": "2026-11-11T21-10-33-code2-validation-20"
+}

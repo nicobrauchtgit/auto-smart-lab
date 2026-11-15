@@ -89,6 +89,7 @@ export async function invokeStage(options: InvokeStageOptions): Promise<StageInv
 async function executeStage(options: InvokeStageOptions, invocationId: string,
  report: ReturnType<PipelineTrace["stage"]>, feedback: InvocationFeedback): Promise<StageInvocation> {
 	const { config, trace, input } = options;
+	const setupSession = options.setupSession ?? new SetupSession();
 
 	const settings = config.settings.stages[options.stage];
 	if (!settings?.enabled) {
@@ -174,8 +175,10 @@ async function executeStage(options: InvokeStageOptions, invocationId: string,
                 content_sha256: input.guidance.contentSha256, snapshot_sha256: createHash("sha256").update(snapshot).digest("hex"), note_id: input.guidance.id, note_version: input.guidance.version,
                 stage: input.guidance.stage, task_id: input.taskId, author: input.guidance.author, evidence: input.guidance.evidence });
         }
-		await (options.setupSession ?? new SetupSession()).check(
-			setupChecks(["observability", ...(options.mode === "reconcile" ? stage.recoverySetupRequirements ?? [] : stage.setupRequirements ?? [])], { telemetry: trace.telemetry, taskId: input.taskId, taskConfiguration: input.taskConfiguration, model: input.model, configPath: options.configPath, prompts, submissionPolicy: input.submissionPolicy, refitTrainingRoot: options.stage === "refit" ? (effective as { trainingRoot?: string })?.trainingRoot : undefined }),
+		await setupSession.check(
+			setupChecks(["observability", ...(options.mode === "reconcile" ? stage.recoverySetupRequirements ?? [] : stage.setupRequirements ?? [])], { telemetry: trace.telemetry, taskId: input.taskId, taskConfiguration: input.taskConfiguration, model: input.model, configPath: options.configPath, prompts, submissionPolicy: input.submissionPolicy,
+				// The lead produces the champion its own terminal refit uses.
+				candidateProducedUpstream: options.stage === "lead", refitTrainingRoot: options.stage === "refit" ? (effective as { trainingRoot?: string })?.trainingRoot : undefined }),
 			options.signal ?? new AbortController().signal, report.event,
 		);
 		stage.checkInput(input);
@@ -195,7 +198,7 @@ async function executeStage(options: InvokeStageOptions, invocationId: string,
 		const runner = options.mode === "reconcile" ? stage.reconcile : stage.run;
 		if (!runner) throw new Error(`Stage ${options.stage} has no registered reconciliation path`);
 		const result = await runner({ input, options: effective, report, feedback, signal: controller.signal,
-			prompts: options.prompts! });
+			prompts: options.prompts!, setup: { session: setupSession, telemetry: trace.telemetry } });
         if (controller.signal.aborted) return finish("cancelled", { artifacts: result.artifacts, validation: result.validation, attempts: result.attempts, summary: result.summary });
 		const attempts = result.attempts ?? 0;
 		if (result.summary) report.event("stage_summary", result.summary);
@@ -251,8 +254,6 @@ export interface RunPipelineOptions {
 	seedArtifacts?: StageArtifact[];
 	/** Root for the local trace mirror. Defaults to the project `runs/` directory. */
 	runsDir?: string;
-	/** Resume this orchestrator run (scheduling "agent" only). */
-	resumeRunId?: string;
 }
 
 /**
@@ -264,16 +265,6 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
  const seededArtifacts = structuredClone(options.seedArtifacts ?? []);
  const evidenceCatalog = structuredClone(options.evidenceCatalog ?? []);
 	const { resolved } = await loadResolvedPipelineConfig(options.configPath);
-	// Chain options (a start or stop stage, guidance, seeded artifacts) ask for the configured
-	// chain: single-stage commands and development runs. Everything else goes to the orchestrator.
-	const chainRequested = !!(options.entryStage || options.stopAfter || options.guidance !== undefined || options.seedArtifacts?.length || options.evidenceCatalog?.length);
-	if (options.resumeRunId && (resolved.settings.scheduling !== "agent" || chainRequested)) throw new Error("--resume continues an orchestrator run: it needs scheduling \"agent\" and no stage or guidance options");
-	if (resolved.settings.scheduling === "agent" && chainRequested) console.warn("[pipeline] Stage or guidance options given: running the configured chain instead of the orchestrator");
-	if (resolved.settings.scheduling === "agent" && !chainRequested) {
-		const { runOrchestrator } = await import("../orchestrator/run.js");
-		// Submission follows "online" in experiment.config.json and nothing else.
-		return runOrchestrator({ taskId: options.taskId, model: options.model, configPath: options.configPath, noSubmit: !resolved.online, telemetry: options.telemetry, checkSetupOnly: options.checkSetupOnly, signal: options.signal, runsDir: options.runsDir, resumeRunId: options.resumeRunId });
-	}
 	for (const warning of resolved.warnings) console.warn(`[pipeline] ${warning}`);
 
 	const pipelineRunId = crypto.randomUUID();
@@ -307,8 +298,6 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
         const prompts = loadPromptSnapshot();
 		// One configuration for the whole chain, resolved before any setup check.
 		const taskConfiguration = resolveTaskConfiguration(options.taskId, undefined, resolved.taskConfigurations[options.taskId]);
-		// Only this task's data is downloaded, and only what is missing; setup then checks it.
-		if (listTasks().some(task => task.taskId === options.taskId)) await ensureTaskData(options.taskId, { record: trace.event, signal: options.signal, offline: !resolved.online });
 		trace.event("pipeline_task_configuration", { source: taskConfiguration.source, sha256: taskConfiguration.sha256, configuration: taskConfiguration.configuration });
 		trace.event("pipeline_prompt_snapshot", { prompt_snapshot_sha256: prompts.fingerprint });
 		const setupSession = new SetupSession();
@@ -332,9 +321,13 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
 			getStage(name).parseOptions({ ...(resolved.settings.stages[name].options as Record<string, unknown> ?? {}),
 				...(options.optionOverrides?.[name] as Record<string, unknown> ?? {}) });
 		}
-		await setupSession.check(setupChecks(["observability", ...planned.flatMap(name => [...(getStage(name).setupRequirements ?? [])])], { telemetry: trace.telemetry,
+		const requirements = planned.flatMap(name => [...(getStage(name).setupRequirements ?? [])]);
+		// Source-only checks and stages without task inputs must not download data.
+		if (requirements.includes("task") && listTasks().some(task => task.taskId === options.taskId))
+			await ensureTaskData(options.taskId, { record: trace.event, signal: options.signal, offline: !resolved.online });
+		await setupSession.check(setupChecks(["observability", ...requirements], { telemetry: trace.telemetry,
 			taskId: options.taskId, taskConfiguration: taskConfiguration.configuration, model: options.model, configPath: options.configPath, prompts,
-            candidateProducedUpstream: planned.includes("solve"), refitTrainingRoot: (options.optionOverrides?.refit as { trainingRoot?: string })?.trainingRoot ?? (resolved.effectiveOptions.refit as { trainingRoot?: string })?.trainingRoot,
+            candidateProducedUpstream: planned.includes("lead"), refitTrainingRoot: (options.optionOverrides?.refit as { trainingRoot?: string })?.trainingRoot ?? (resolved.effectiveOptions.refit as { trainingRoot?: string })?.trainingRoot,
 		}), options.signal ?? new AbortController().signal, trace.event);
 		if (trace.degraded()) console.warn("[setup] Langfuse delivery degraded; emergency recording is active.");
 		let next: StageName | undefined = options.checkSetupOnly ? undefined : planned[0];

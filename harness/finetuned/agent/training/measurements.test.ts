@@ -131,7 +131,7 @@ test("clustering searches and their fixed confirmation reuse the same measuremen
         expect(invocation.runtime.priorTrainRows).not.toBe(pilotFold.trainRows);
         const searched = await finish(training, started);
         expect(searched.status).toBe("completed");
-        expect(searched.promotionEligible).toBe(false);
+        expect(searched.promotionEligible).toBe(true);
         expect(searched.metrics.adjustedRandIndex).toBe(1);
         expect((await collectTrainingTrial(started.directory)).valid).toBe(true);
         const report = JSON.parse(readFileSync(join(started.directory, "search-report.json"), "utf8"));

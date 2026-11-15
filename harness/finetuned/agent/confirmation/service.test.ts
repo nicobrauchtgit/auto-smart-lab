@@ -14,12 +14,11 @@ import { loadPromptSnapshot } from "../prompts/loader.js";
 import { readPythonEnvironment } from "../run/python_environment.js";
 import { prepareSolveSandbox, trainingSandboxCommand } from "../run/solve_sandbox.js";
 import { prepareRefit, runRefit } from "../refit/service.js";
-import { prepareEvidence } from "../evaluation/evidence.js";
 import { tagMessage, tagCommit } from "../training/git.js";
-import { runHarnessSolveSession } from "../run/harness_solve_session.js";
+import { runLeadSession } from "../run/lead_session.js";
 import type { SolveWorkspace } from "../solve/workspace.js";
 
-async function fixture(delay = 0, leak = false, barrier = false) {
+async function fixture(delay = 0, barrier = false) {
  const p = temporaryProject("holdout-confirmation-");
  const python = readPythonEnvironment();
  const samples = writeSampleManifest(p.root, p.zipPath, p.labelsPath);
@@ -32,19 +31,18 @@ async function fixture(delay = 0, leak = false, barrier = false) {
  const features = join(p.solutionsRoot, "features.py");
  writeFileSync(features, readFileSync(features, "utf8").replace('        if self.delay:', `        if len(frame) == 120:\n            from pathlib import Path\n            assert not Path(${JSON.stringify(full.labelsPath)}).exists(), 'full targets exposed to model'\n            assert not Path(${JSON.stringify(full.zipPath)}).exists(), 'full archive exposed to model'\n            assert set(frame['id']) == set(${JSON.stringify(devIds)}), 'sealed rows entered fit'\n        if self.delay:`));
  if (barrier) writeFileSync(features, readFileSync(features, "utf8").replace('        if self.delay:', `        if len(frame) == 120:\n            from pathlib import Path\n            while not Path(${JSON.stringify(join(p.root, "runs/finetuned/fixture/solve/agent/release"))}).exists():\n                time.sleep(.05)\n        if self.delay:`));
- if (leak) {
-  writeFileSync(join(p.solutionsRoot, "tasks/fixture.py"), `from sklearn.base import BaseEstimator\nclass Model(BaseEstimator):\n    def fit(self, frame, y):\n        self.confirming = len(frame) == 120\n        return self\n    def predict(self, frame):\n        if self.confirming:\n            return [int(str(value).endswith('.1')) for value in frame.id]\n        import zipfile\n        return [int(b'prize' in zipfile.ZipFile(item['archive']).read(item['member'])) for item in frame.input]\ndef build_pipeline(context):\n    return Model()\n`);
- }
  const commit = commitAll(p.solutionsRoot, "Verify confirmation data boundary");
- const root = join(p.root, "runs/finetuned/fixture/solve"); mkdirSync(join(root, "research"), { recursive: true });
+ const root = join(p.root, "runs/finetuned/fixture/solve"); mkdirSync(root, { recursive: true });
  const taskPath = join(root, "task.md"); writeFileSync(taskPath, "Binary classification fixture");
  const workspace: SolveWorkspace = { root, solutionsRoot: p.solutionsRoot, entrypointPath: join(p.solutionsRoot, "tasks/fixture.py"), taskPath,
-  researchDir: join(root, "research"), configuration: spamConfiguration(), sampleManifestPath: samples.sampleManifestPath, measurement: samples.measurement,
+  configuration: spamConfiguration(), sampleManifestPath: samples.sampleManifestPath, measurement: samples.measurement,
   devZip: p.zipPath, trainZip: full.zipPath, testZip, originalTargetsPath: full.labelsPath, sealedPath: join(root, "sealed.txt"), datasetPaths: [p.zipPath, testZip],
   split: { scheme: "stratified", sealedIds: ids, fraction: 20 / 140, seed: 13, sha256: digest(ids), confirmation: { precision: "target", rows: 20, perClass: { "0": 10, "1": 10 } } },
   holdoutSeedPlan: createSeedPlan({ rootSeed: 13, taskId: "fixture", datasetSha256: full.datasetSha256, experimentId: "holdout-split" }),
-  recommendation: { scheme: "stratified_kfold", folds: 2, repeats: 1, rationale: "fixture" }, rowCount: 120, targets: samples.sampleManifestPath, targetSummary: "balanced", researchState: "fixture" };
- mkdirSync(join(root, "data")); writeFileSync(join(root, "data/holdout.json"), JSON.stringify(workspace.split));
+  recommendation: { scheme: "stratified_kfold", folds: 2, repeats: 1, rationale: "fixture" }, rowCount: 120, targets: samples.sampleManifestPath, targetSummary: "balanced" };
+ // The harness-only split record lives where prepareSolveWorkspace writes it.
+ const sealedRoot = join(p.root, "runs/finetuned/fixture/data/sealed");
+ mkdirSync(sealedRoot, { recursive: true }); writeFileSync(join(sealedRoot, "holdout.json"), JSON.stringify(workspace.split));
  const policy = prepareSolveSandbox(workspace, python);
  const trainingRoot = join(root, "training/initial");
  const training = createHarnessTraining({ root: trainingRoot, projectRoot: p.root, solutionsRoot: p.solutionsRoot, pythonExecutable: PYTHON,
@@ -62,19 +60,23 @@ async function fixture(delay = 0, leak = false, barrier = false) {
  return { p, python, workspace, options, refit, trainingRoot, started, commit, request };
 }
 
-test("closed solve confirms once, preserves hidden inputs, evaluation reads it and refit binds its identity", async () => {
+test("closed solve confirms once, preserves hidden inputs and refit binds its identity", async () => {
  const f = await fixture();
  await expect(prepareRefit(f.refit)).rejects.toThrow("required");
  let sessionClosed = false;
- const result = await runHarnessSolveSession("fixture", undefined, { taskConfiguration: f.workspace.configuration, runId: "confirmation-session",
+ const result = await runLeadSession("fixture", { taskConfiguration: f.workspace.configuration, runId: "confirmation-session", progressPath: join(f.p.root, "lead/PROGRESS.json"),
   report: { event() {}, input() {}, agentIdentity: () => ({ pipelineRunId: "c2-pipeline", stageInvocationId: "c2-invocation" }), observation: () => () => {} } as any,
-  dependencies: { prepareWorkspace: () => f.workspace, readPython: () => f.python,
+  dependencies: { prepareData: () => f.workspace as any, readPython: () => f.python,
+   scouts: () => ({ tool: {} as any, report: async () => ({ text: "- ok: frozen pipeline", roles: [{ role: "validation", status: "completed" }] } as any) }), refit: async () => ({ artifacts: [], validation: { valid: true, errors: [] } }),
    runAgentSession: async (options: any) => { expect(options.prompt).not.toContain('holdoutConfirmation'); sessionClosed = true; return { output: "existing champion is sufficient", agentRunId: "inert" } as any; },
    confirm: async options => { expect(sessionClosed).toBe(true); return runConfirmation(options); } } });
  expect(result.valid).toBe(true);
+ // The first champion's Ladder query releases its score; per-row losses stay in the ledger.
+ expect(result.confirmation!.summary).toMatchObject({ verdict: "holdout confirms the improvement", score: 1 });
+ expect(JSON.stringify(result.confirmation!.summary)).not.toContain("losses");
  const record = JSON.parse(readFileSync(result.confirmation!.artifact.path, "utf8"));
  expect(record).toMatchObject({ experimentId: f.started.id, source: { commit: f.commit }, fitCalls: 1, developmentRows: 120, validationRows: 20,
-  readCount: 1, metrics: { balancedAccuracy: 1 }, interval: { lower: 1, upper: 1 }, gap: 0, idLeakage: null });
+  readCount: 1, metrics: { balancedAccuracy: 1 }, interval: { lower: 1, upper: 1 }, gap: 0 });
  const firstBytes = readFileSync(result.confirmation!.artifact.path, "utf8");
  const workerEvents = readFileSync(join(dirname(result.confirmation!.artifact.path), "events.jsonl"), "utf8").trim().split("\n").map(line => JSON.parse(line));
  expect(workerEvents.every(event => event.pipelineRunId === "c2-pipeline" && event.stageInvocationId === "c2-invocation")).toBe(true);
@@ -86,12 +88,6 @@ test("closed solve confirms once, preserves hidden inputs, evaluation reads it a
  ledger.populations[record.population].reads.push({ identity: "f".repeat(64), experimentId: "later-champion" });
  writeFileSync(ledgerPath, JSON.stringify(ledger));
  expect((await runConfirmation(f.options)).summary).toMatchObject({ readCount: 1, populationReadCount: 2 });
- const collection = await collectTrainingResults(f.trainingRoot);
- const trial = collection.trials.find(t => t.experimentId === f.started.id)!;
- const upstream = [...trial.artifacts, { ...trial.artifacts.find(a => a.kind === "training_trial_result")!, kind: "training_selected_result" }, result.confirmation!.artifact];
- const evaluated = await prepareEvidence(upstream, new AbortController().signal, "fixture");
- expect(evaluated.diagnostics.holdoutConfirmation).toMatchObject({ readCount: 1, populationReadCount: 2, metrics: { balancedAccuracy: 1 } });
- expect(evaluated.sources.some(source => source.kind === "holdout_confirmation")).toBe(true);
  const prepared = await prepareRefit(f.refit);
  expect(prepared.evidence.some(entry => entry.path === result.confirmation!.artifact.path)).toBe(true);
  const tag = tagMessage(f.p.solutionsRoot, "champion/fixture")!;
@@ -107,24 +103,16 @@ test("insufficient precision records a skip and consumes no sealed read", async 
  const f = await fixture();
  f.workspace.split = { ...f.workspace.split, sealedIds: [], fraction: 0, confirmation: { rows: 0, perClass: { "0": 0, "1": 0 }, precision: "none", reason: "too small" } };
  f.workspace.trainZip = f.p.zipPath; f.workspace.originalTargetsPath = f.p.labelsPath;
- writeFileSync(join(f.workspace.root, "data/holdout.json"), JSON.stringify(f.workspace.split));
+ writeFileSync(join(f.p.root, "runs/finetuned/fixture/data/sealed/holdout.json"), JSON.stringify(f.workspace.split));
  const output = await runConfirmation(f.options);
  expect(output.summary).toMatchObject({ status: "skipped", precision: "none", reason: "too small", readCount: 0 });
  expect(existsSync(join(f.p.root, "runs/finetuned/fixture/holdout-ledger.json"))).toBe(false);
 }, 60_000);
 
-test("confirmation canary catches a model leaking only after its full-development fit", async () => {
- const f = await fixture(0, true);
- await expect(runConfirmation(f.options)).rejects.toThrow("ID leakage");
- await expect(prepareRefit(f.refit)).rejects.toThrow("valid evidence");
- const ledger = JSON.parse(readFileSync(join(f.p.root, "runs/finetuned/fixture/holdout-ledger.json"), "utf8"));
- expect(Object.values(ledger.populations).flatMap((value: any) => value.reads)).toHaveLength(1);
-}, 60_000);
-
 test("cancellation consumes the attempt and never automatically fits the sealed population again", async () => {
  // Hold the confirmation fit until cancellation; a short sleep can finish
  // during the supervisor's graceful-stop interval on a loaded test run.
- const f = await fixture(0, false, true);
+ const f = await fixture(0, true);
  const controller = new AbortController();
  const events: string[] = [];
  const pending = runConfirmation({ ...f.options, signal: controller.signal,
@@ -150,7 +138,7 @@ test("completed receipt corruption fails closed without another fit", async () =
 }, 60_000);
 
 test("service death reattaches the confirmation worker with one fit and one recorded read", async () => {
- const f = await fixture(0, false, true);
+ const f = await fixture(0, true);
  const input = join(f.p.root, "confirmation-options.json");
  const { sandboxCommand, ...serializable } = f.options;
  writeFileSync(input, JSON.stringify(serializable));

@@ -2,8 +2,8 @@
 
 Write reusable analysis, feature extraction, and modeling code in Python. Use
 installed libraries instead of reimplementing standard ML and statistics unless
-the task requires a custom implementation. Research may write and test feature
-code; the modeling stage remains responsible for training the final pipeline.
+the task requires a custom implementation. Scouts may write and test feature
+code in the shared tree; the harness trains the final pipeline.
 
 Verified Python interpreter: {{pythonExecutable}}
 Declared dependencies from pyproject.toml:
@@ -57,9 +57,8 @@ from the lock, causes the next readiness check to fail, and is removed when the
 environment is synced. Do not modify the manager's implementation or install
 into system Python.
 
-Record package-specific advice, such as an API quirk or a parameter that
-matters, as a lesson with `knowledge_capture`. Do not record package inventories
-or installed versions; the declaration and lock files own those facts. Change reasons belong in the manager's audit records. Keep reusable code
+Do not record package inventories or installed versions; the declaration and
+lock files own those facts. Change reasons belong in the manager's audit records. Keep reusable code
 with the task artifacts and declare any libraries it directly depends on.
 Installed locally does not mean installed on a submission server: check the task
 requirements before producing code intended to execute elsewhere. Local research

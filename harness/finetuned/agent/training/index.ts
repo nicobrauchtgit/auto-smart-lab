@@ -1,6 +1,6 @@
 /** A solve-session scope for harness-owned training. */
 
-import { createExperiments, type Wakeable } from "../experiments/index.js";
+import { createExperiments, type ExperimentView, type Wakeable } from "../experiments/index.js";
 import type { SupervisorOptions } from "../experiments/supervisor.js";
 import type { PromptSnapshot } from "../prompts/loader.js";
 import { sanitizeTrainingEnvironment } from "./environment.js";
@@ -21,19 +21,44 @@ export interface HarnessTrainingOptions extends Omit<SupervisorOptions, "deliver
 	prompts: PromptSnapshot;
 	session?: Wakeable;
 	signal?: AbortSignal;
+	/**
+	 * Called after a finished worker is finalized (champion tagging done), so
+	 * the owner can tell its agent the result. Not called when the worker was
+	 * recovered and runs again. Terminal discovery replays this callback once
+	 * per owner; owners persist their feedback receipt for restart deduplication.
+	 */
+	onTrialFinished?: (id: string, view: ExperimentView) => void | Promise<void>;
+	/** False when `onTrialFinished` sends the owner's own message; see createExperiments. */
+	deliverExits?: boolean;
 }
 
 export function createHarnessTraining(options: HarnessTrainingOptions) {
+ let service: TrainingService | undefined;
+ const finished = new Set<string>();
+ const notifyFinished = async (id: string, view: ExperimentView) => {
+  const result = service?.describe(id);
+  const key = JSON.stringify([id, view.status, result?.status, result?.completedFolds, result?.requestedFolds]);
+  if (finished.has(key)) return;
+  finished.add(key);
+  try { await options.onTrialFinished?.(id, view); }
+  catch (error) { finished.delete(key); throw error; }
+ };
 	const env = sanitizeTrainingEnvironment(options.env, {
 		pipelineRunId: options.pipelineRunId,
 		stageInvocationId: options.stageInvocationId,
 	});
 	// The supervisor exists before the service; finalization binds late.
-	let service: TrainingService | undefined;
 	const processScope = createExperiments({
 		root: options.root,
 		env,
-		onFinished: (id) => service?.workerFinished(id),
+		onFinished: async (id, view) => {
+			service?.recordDuration(id, view);
+			await service?.workerFinished(id);
+			// A recovered worker runs again; it reports when that run ends.
+			if (processScope.supervisor.status(id).status === "running") return;
+			await notifyFinished(id, view);
+		},
+		deliverExits: options.deliverExits,
 		record: options.record,
 		limits: options.limits,
 		environmentFingerprint: options.environmentFingerprint,
@@ -65,7 +90,6 @@ export function createHarnessTraining(options: HarnessTrainingOptions) {
 		env,
 		validatePipeline: options.validatePipeline,
 		search: options.search,
-		idLeakageGuidance: options.prompts.render("training.id-leakage", {}).text,
 		runtimeGuidance: options.prompts.render("training.runtime-guard", {}).text,
 		caveats: options.prompts.render("training.search-caveats", {}).text
 			.split("\n").map((line) => line.replace(/^-\s*/, "").trim()).filter(Boolean),
@@ -75,15 +99,25 @@ export function createHarnessTraining(options: HarnessTrainingOptions) {
 		sandboxCommand: options.sandboxCommand,
 		executionBoundaryFingerprint: options.executionBoundaryFingerprint,
 		lockPath: options.lockPath,
+		prompts: options.prompts,
 	});
 	const tools = createHarnessTrainingTools(service, processScope.supervisor, options.prompts);
-	const toolPrompts = (["training.start-tool", "training.status-tool", "training.output-tool", "training.stop-tool",
-		"training.search-caveats", "training.runtime-guard", "training.resume-tool", "training.id-leakage"] as const)
+	const toolPrompts = ([service.taskKind ? `training.start-${service.taskKind}` as const : "training.start-tool", "training.request-contract", "training.smoke-tool", "training.workspace-check-tool", "training.status-tool", "training.output-tool", "training.stop-tool",
+		"training.search-caveats", "training.runtime-guard", "training.resume-tool"] as const)
 		.map((id) => options.prompts.render(id, {}).reference);
 	const trainingService = service;
 	return {
 		service: trainingService,
-        ready: () => trainingService.ready(),
+        ready: async () => {
+   await trainingService.ready();
+   // Discovery finalizes terminal workers without a new process exit event.
+   // Replay their finalized state to the owner, once per service instance.
+   for (const view of processScope.supervisor.list()) {
+    if (view.status === "running") continue;
+    await trainingService.finalize(view.id);
+    await notifyFinished(view.id, view);
+   }
+  },
 		supervisor: processScope.supervisor,
 		tools,
 		toolPrompts,

@@ -63,3 +63,16 @@ async function selectTaggedChampion(collection: TrainingCollection, repository: 
  return { ...rest, selected: champion, valid: true,
   artifacts: local ? collection.artifacts : [...collection.artifacts, ...champion.artifacts] };
 }
+
+/** Controller-owned delivery selection; statistical promotion remains tag-based. */
+export interface MeasuredCandidateSelection { experimentId: string; trainingRoot: string; commit: string }
+export async function measuredCandidate(repository: string, taskId: string, selected: MeasuredCandidateSelection, allowTerminal = false): Promise<TrainingTrialResult> {
+ if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(selected.experimentId)) throw new Error("Invalid selected experiment identity");
+ const trial = await collectTrainingTrial(join(selected.trainingRoot, selected.experimentId));
+ const source = trial?.invocation?.source as { commit?: string } | undefined;
+ if (!trial?.eligible || !trial.request || source?.commit !== selected.commit || resolve(recordedRepository(trial) ?? "") !== resolve(repository))
+  throw new Error("Selected candidate has no matching eligible measured evidence");
+ if (isTerminalCandidate(repository, taskId, selected.commit, trial.request.pipeline) && !allowTerminal)
+  throw new Error("Selected candidate is already terminal");
+ return trial;
+}

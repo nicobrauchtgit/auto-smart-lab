@@ -1,16 +1,18 @@
 import { expect, test } from "bun:test";
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { availableParallelism } from "node:os";
 import { createHarnessTraining } from "./index.js";
 import { TrainingService } from "./service.js";
 import { loadPromptSnapshot } from "../prompts/loader.js";
 import { atomicJson, claimWorkspace, processIdentity, ownedProcessAlive, liveGroup } from "../experiments/ownership.js";
 import { removeWorktree, tagCommit } from "./git.js";
 import { temporaryProject, commitAll, trainingEnvironment, PYTHON, WORKER, PROJECT_ROOT, until } from "./testing.js";
-import { recoveryTrainingRoot } from "../run/harness_solve_session.js";
+import { recoveryTrainingRoot } from "../run/lead_session.js";
+import { trialSupervisionDirectory } from "./results.js";
 
-const read = (directory: string, name: string) => JSON.parse(readFileSync(join(directory, name), "utf8"));
+const read = (directory: string, name: string) => JSON.parse(readFileSync(join((name.startsWith("worker-") || name === "recovery.json") ? trialSupervisionDirectory(directory) : directory, name), "utf8"));
 const request = (search = true, delay = 0.3) => ({ schemaVersion: 2, hypothesis: "recovery fixture",
  pipeline: { module: "solutions/tasks/fixture.py", factory: "build_pipeline", parameters: { delay } },
  cv: { kind: "builtin", scheme: "stratified_kfold", folds: 3, repeats: 1 }, scope: { kind: "promotion" },
@@ -52,7 +54,7 @@ test("restart reattaches quiet live worker without duplicate, preserves log curs
  let training: ReturnType<typeof createHarnessTraining> | undefined;
  try {
   expect(await until(() => existsSync(join(started.directory, "single-checkpoint.json")))).toBe(true);
-  const owner = read(started.directory, "worker-owner.json"); const cursor = read(started.directory, "supervisor-state.json").cursor;
+  const owner = read(started.directory, "worker-owner.json"); const cursor = read(trialSupervisionDirectory(started.directory), "supervisor-state.json").cursor;
   await crash(child);
   const events: any[] = [];
   training = createHarnessTraining({ ...opts, pipelineRunId: "recovery-run", stageInvocationId: "recovery-invocation", prompts: loadPromptSnapshot(), record: (type, payload) => events.push({ type, ...payload }) });
@@ -105,8 +107,13 @@ test("single trial restart retains atomic completed fold predictions and refits 
   training = createHarnessTraining({ ...opts, prompts: loadPromptSnapshot() }); await training.ready();
   expect(await until(() => training!.supervisor.status(started.id).status !== "running")).toBe(true);
   const after = read(started.directory, "single-checkpoint.json");
-  expect(after.completed.slice(0, before.completed.length)).toEqual(before.completed);
-  expect(after.oof.slice(0, before.oof.length)).toEqual(before.oof);
+  // Parallel folds can complete in any order and the checkpoint keeps manifest
+  // order, so retained folds are matched by (repeat, fold), not by position.
+  const key = (row: any) => `${row.repeat}/${row.fold}`;
+  const retained = new Map(after.completed.map((fold: any) => [key(fold), fold]));
+  for (const fold of before.completed) expect(retained.get(key(fold))).toEqual(fold);
+  const rows = new Map(after.oof.map((row: any) => [`${key(row)}/${row.id}`, row]));
+  for (const row of before.oof) expect(rows.get(`${key(row)}/${row.id}`)).toEqual(row);
   expect(after.completed).toHaveLength(3);
  } finally { if (child.exitCode === null && child.signalCode === null) await crash(child); await training?.close(); await killWorker(started.directory); }
 }, 45000);
@@ -131,10 +138,10 @@ for (const [name, state, result, report, lifecycle] of [
  ["service close", {}, {}, {}, "service_closed"],
 ] as const) test(`${name} does not automatically restart`, async () => {
  const f = await durableFixture(); const dir = f.started.directory;
- atomicJson(join(dir, "supervisor-state.json"), state); atomicJson(join(dir, "trial-result.json"), result); atomicJson(join(dir, "search-report.json"), report);
- atomicJson(join(dir, "recovery.json"), { ...read(dir, "recovery.json"), lifecycle });
+ mkdirSync(trialSupervisionDirectory(dir), { recursive: true }); atomicJson(join(trialSupervisionDirectory(dir), "supervisor-state.json"), state); atomicJson(join(dir, "trial-result.json"), result); atomicJson(join(dir, "search-report.json"), report);
+ atomicJson(join(trialSupervisionDirectory(dir), "recovery.json"), { ...read(dir, "recovery.json"), lifecycle });
  const service = f.make(); try { await service.ready(); expect(f.starts).toBe(1); } finally { await service.close(); }
-});
+}, 30_000); // Fixture and restart each run real Python metadata checks.
 
 test("concurrent workspace claims are exclusive and kernel releases them", async () => {
  const f = await durableFixture(); const release = claimWorkspace(f.opts.root);
@@ -150,8 +157,8 @@ for (const field of ["data", "invocation", "dependency", "metadata"] as const) t
  const f = await durableFixture(); const dir = f.started.directory;
  if (field === "data") writeFileSync(f.project.sampleManifestPath, readFileSync(f.project.sampleManifestPath, "utf8") + " ");
  if (field === "invocation") writeFileSync(join(dir, "invocation.json"), "{}");
- if (field === "dependency") atomicJson(join(dir, "recovery.json"), { ...read(dir, "recovery.json"), environmentFingerprint: "different" });
- if (field === "metadata") writeFileSync(join(dir, "recovery.json"), "broken json");
+ if (field === "dependency") atomicJson(join(trialSupervisionDirectory(dir), "recovery.json"), { ...read(dir, "recovery.json"), environmentFingerprint: "different" });
+ if (field === "metadata") writeFileSync(join(trialSupervisionDirectory(dir), "recovery.json"), "broken json");
  const service = f.make(); try { if (field === "metadata") await expect(service.ready()).rejects.toThrow("Corrupt"); else await service.ready(); expect(f.starts).toBe(1); } finally { await service.close(); }
 });
 test("two attempts bound recovery across restarts without extra experiment budget", async () => {
@@ -209,7 +216,7 @@ test("a live group with unverifiable/reused leader blocks recovery and is never 
  try {
   expect(await until(() => !!processIdentity(child.pid!))).toBe(true);
   const identity = processIdentity(child.pid!)!;
-  atomicJson(join(f.started.directory, "supervisor-state.json"), { identity: { ...identity, birth: identity.birth + "-reused" }, status: "running" });
+  atomicJson(join(trialSupervisionDirectory(f.started.directory), "supervisor-state.json"), { identity: { ...identity, birth: identity.birth + "-reused" }, status: "running" });
   await service.ready(); expect(f.starts).toBe(1); expect(ownedProcessAlive(identity)).toBe(true);
   await service.close(); expect(ownedProcessAlive(identity)).toBe(true);
  } finally { child.kill("SIGKILL"); (service as any).releaseClaims(); }
@@ -229,3 +236,74 @@ test("altered frozen worktree is refused and preserved through cleanup", async (
  const service = f.make(); await service.ready(); await service.close();
  expect(f.starts).toBe(1); expect(readFileSync(path, "utf8")).toBe("# retained edit\n");
 });
+
+/** Log every fit; the first fit to claim the marker parks until it is killed. One-shot: a resume never parks. */
+function enableFoldKillBarrier(project: ReturnType<typeof temporaryProject>) {
+ const path = join(project.solutionsRoot, "features.py");
+ const log = JSON.stringify(join(project.root, "fit-log")); const marker = JSON.stringify(join(project.root, "fit-blocked"));
+ const code = readFileSync(path, "utf8").replace("        if self.delay:",
+  `        import os\n        with open(${log}, "a") as stream:\n            stream.write(f"{os.getpid()}\\n")\n        try:\n            handle = os.open(${marker}, os.O_CREAT | os.O_EXCL | os.O_WRONLY)\n        except FileExistsError:\n            pass\n        else:\n            os.write(handle, str(os.getpid()).encode())\n            os.close(handle)\n            while True:\n                time.sleep(0.05)\n        if self.delay:`);
+ writeFileSync(path, code); project.head = commitAll(project.solutionsRoot, "Fold kill barrier");
+}
+
+test.skipIf(availableParallelism() < 2)("a killed fold process interrupts the trial; experiment_resume fits only the missing folds on the same budget unit", async () => {
+ const project = temporaryProject("recovery-fold-kill-"); enableFoldKillBarrier(project); const opts = options(project); const events: any[] = [];
+ const training = createHarnessTraining({ ...opts, prompts: loadPromptSnapshot(), record: (type, payload) => events.push({ type, ...payload }) });
+ const fits = () => readFileSync(join(project.root, "fit-log"), "utf8").trim().split("\n").length;
+ try {
+  const started = await training.service.start(request(false, 0.2));
+  const blocked = join(project.root, "fit-blocked");
+  expect(await until(() => existsSync(blocked) && readFileSync(blocked, "utf8").length > 0)).toBe(true);
+  expect(await until(() => existsSync(join(started.directory, "single-checkpoint.json")))).toBe(true);
+  const plan = readFileSync(join(started.directory, "fold-plan.json"), "utf8");
+  expect(JSON.parse(plan).processes).toBe(2);
+  // Machine protection kills one fold process; the trial process survives it.
+  process.kill(Number(readFileSync(blocked, "utf8")), "SIGKILL");
+  expect(await until(() => training.supervisor.status(started.id).status !== "running" && existsSync(join(started.directory, "trial-result.json")))).toBe(true);
+  const interrupted = read(started.directory, "trial-result.json");
+  expect(interrupted.status).toBe("interrupted");
+  expect(interrupted.interruption.reason).toBe("fold_process_ended");
+  expect(interrupted.completedFolds).toBeGreaterThanOrEqual(1);
+  expect(interrupted.completedFolds).toBeLessThan(3);
+  expect(read(started.directory, "worker-exit.json").exitCode).toBe(2);
+  // Not retried automatically; the agent decides.
+  expect(events.find(e => e.type === "training_recovery_skipped")?.reason).toBe("fold_process_ended");
+  expect(read(started.directory, "recovery.json").attempts).toBe(0);
+  const before = read(started.directory, "single-checkpoint.json"); const fitsBefore = fits();
+
+  const resumed = await training.service.resume(started.id) as any;
+  expect(resumed.budgetConsumed).toBe(false);
+  expect(await until(() => training.supervisor.status(started.id).status !== "running" && existsSync(join(started.directory, "trial-result.json")))).toBe(true);
+  const result = read(started.directory, "trial-result.json");
+  expect(result.status).toBe("completed");
+  expect(result.completedFolds).toBe(3);
+  // Only the missing folds ran; completed folds are kept unchanged.
+  expect(fits() - fitsBefore).toBe(3 - interrupted.completedFolds);
+  const after = read(started.directory, "single-checkpoint.json");
+  for (const fold of before.completed) expect(after.completed).toContainEqual(fold);
+  for (const row of before.oof) expect(after.oof).toContainEqual(row);
+  expect(readFileSync(join(started.directory, "fold-plan.json"), "utf8")).toBe(plan);
+  expect(read(join(started.directory, "recovery-history", "1"), "trial-result.json").status).toBe("interrupted");
+  // Same budget unit, no second charged trial.
+  const meta = read(started.directory, "recovery.json");
+  expect(meta.attempts).toBe(1); expect(meta.budgetUnit).toBe(started.id);
+  await expect(training.service.start(request(false))).rejects.toThrow("budget exhausted");
+ } finally { await training.close(); }
+}, 60000);
+
+test('completed recovery replays finalized feedback once per owner without another trial charge', async () => {
+ const project=temporaryProject('recovery-feedback-gap-'); const opts={...options(project),prompts:loadPromptSnapshot()};
+ let count=0; let training=createHarnessTraining(opts);
+ try {
+  await training.ready(); const started=await training.service.start(request(false,0));
+  expect(await until(()=>training.service.describe(started.id)?.status==='completed')).toBe(true);
+  await training.close();
+  for(let resume=0;resume<2;resume++) {
+   training=createHarnessTraining({...opts,onTrialFinished(id,view){expect(id).toBe(started.id);expect(view.status).not.toBe('running');expect(training.service.describe(id)?.status).toBe('completed');count++;}});
+   await training.ready(); await training.ready();
+   expect(count).toBe(resume+1);
+   await expect(training.service.start(request(false,0))).rejects.toThrow('budget exhausted');
+   await training.close();
+  }
+ } finally {await training.close();rmSync(project.root,{recursive:true,force:true});}
+},30000);

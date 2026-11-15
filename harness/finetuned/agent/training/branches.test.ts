@@ -131,3 +131,18 @@ test("large untracked files stay out of checkpoint commits", () => {
   expect(git(root, ["ls-tree", "--name-only", "followup/spam1/big"]).stdout).not.toContain("features.npy");
  } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test("a promoted follow-up merges into the base and recovery is idempotent", () => {
+ const { root, commit, head } = repository();
+ try {
+  const champion = commit("a.py", "champion");
+  git(root, ["tag", "champion/spam1", champion]);
+  const start = startFollowUp(root, "spam1", "promoted")!;
+  const promoted = commit("better.py", "improvement");
+  git(root, ["tag", "-f", "champion/spam1", promoted]);
+  expect(finishFollowUp(root, start).restored).toBe(true);
+  expect(head()).toBe("main");
+  expect(git(root, ["ls-tree", "--name-only", "HEAD"]).stdout).toContain("better.py");
+  expect(recoverFollowUp(root)).toEqual({});
+ } finally { rmSync(root, { recursive: true, force: true }); }
+});

@@ -6,18 +6,15 @@
   "scripts": {
     "fetch-unit": "bun harness/finetuned/agent/setup/fetch_unit_cli.ts",
     "pipeline": "bun harness/finetuned/agent/pipeline_cli.ts",
-    "research": "bun harness/finetuned/agent/research_cli.ts",
-    "test:py": "\"${VENV_DIR:-$PWD/harness/finetuned/.venv}/bin/python\" -m unittest discover -s harness/finetuned/agent/setup/tests && \"${VENV_DIR:-$PWD/harness/finetuned/.venv}/bin/python\" -m unittest discover -s harness/finetuned/agent/training/python -p 'test_*.py' && \"${VENV_DIR:-$PWD/harness/finetuned/.venv}/bin/python\" -m unittest discover -s harness/finetuned/agent/evaluation -p 'test_*.py' && \"${VENV_DIR:-$PWD/harness/finetuned/.venv}/bin/python\" -m unittest discover -s harness/finetuned/agent/research/python -p 'test_*.py'",
+    "test:py": "\"${VENV_DIR:-$PWD/harness/finetuned/.venv}/bin/python\" -m unittest discover -s harness/finetuned/agent/setup/tests && \"${VENV_DIR:-$PWD/harness/finetuned/.venv}/bin/python\" -m unittest discover -s harness/finetuned/agent/training/python -p 'test_*.py' && \"${VENV_DIR:-$PWD/harness/finetuned/.venv}/bin/python\" -m unittest discover -s harness/finetuned/agent/research/python -p 'test_*.py'",
     "pi:hi": "bun harness/finetuned/agent/pi_sdk.ts",
     "telemetry:smoke": "bun harness/finetuned/agent/telemetry/smoke.ts",
     "test": "bun test",
+    "test:fast": "bun test --path-ignore-patterns='runs/**' --path-ignore-patterns='harness/finetuned/agent/refit/service.test.ts' --path-ignore-patterns='harness/finetuned/agent/submission/submission.test.ts' --path-ignore-patterns='harness/finetuned/agent/training/search_harness.test.ts' --path-ignore-patterns='harness/finetuned/agent/experiments/supervisor.test.ts' --path-ignore-patterns='harness/finetuned/agent/training/recovery.test.ts' --path-ignore-patterns='harness/finetuned/agent/confirmation/service.test.ts' --path-ignore-patterns='harness/finetuned/agent/solve/task_data.test.ts' --path-ignore-patterns='harness/finetuned/agent/training/measurements.test.ts' --path-ignore-patterns='harness/finetuned/agent/training/smoke.test.ts' --path-ignore-patterns='harness/finetuned/agent/run/solve_sandbox.test.ts' --path-ignore-patterns='harness/finetuned/agent/training/versioned_harness.test.ts' --path-ignore-patterns='harness/finetuned/agent/training/validation.test.ts' --path-ignore-patterns='harness/finetuned/agent/training/development_selection.test.ts' --path-ignore-patterns='harness/finetuned/agent/training/evidence_selection.test.ts' --path-ignore-patterns='harness/finetuned/agent/refit/sample_task.test.ts' --path-ignore-patterns='harness/finetuned/agent/experiments/index.test.ts' --path-ignore-patterns='harness/finetuned/agent/training/trial_checks.test.ts' --path-ignore-patterns='harness/finetuned/agent/training/validation_measurements.test.ts' --path-ignore-patterns='harness/finetuned/agent/training/live_harness.test.ts'",
     "typecheck": "tsc --noEmit",
-    "evaluate-stage": "bun harness/finetuned/agent/evaluate_cli.ts",
-    "solve-stage": "bun harness/finetuned/agent/solve_cli.ts",
     "refit-stage": "bun harness/finetuned/agent/refit_cli.ts",
-    "orchestrate": "bun harness/finetuned/agent/orchestrate_cli.ts",
     "experiment": "bun experiment/cli.ts",
-    "scorecard": "bun harness/finetuned/agent/scorecard_cli.ts"
+    "lead-stage": "bun harness/finetuned/agent/lead_cli.ts"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "0.84.1",

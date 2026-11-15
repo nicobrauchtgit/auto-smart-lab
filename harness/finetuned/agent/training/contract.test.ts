@@ -232,3 +232,10 @@ describe("schema version 2 structural validation", () => {
 		]);
 	});
 });
+
+
+test("long hypotheses are truncated without rejecting the trial request", () => {
+ const raw = { ...validRequest(), hypothesis: "First sentence. Second sentence. Third sentence. " + "x".repeat(30000) };
+ expect(parseExperimentRequest(raw).hypothesis).toBe("First sentence. Second sentence.");
+ expect(parseExperimentRequest({ ...raw, hypothesis: "x".repeat(30000) }).hypothesis).toHaveLength(500);
+});

@@ -31,10 +31,35 @@ export interface Wakeable {
 	): Promise<void>;
 }
 
+/**
+ * Deliver one update to a session through one channel, never both.
+ *
+ * `steer()` delivers after the current turn's tool calls finish and before
+ * the next model call, so it reaches a running agent. An idle agent has no
+ * turn to attach to, and only `triggerTurn` starts one. Sending through both
+ * would deliver the same measurement twice.
+ */
+export async function wake(session: Wakeable, text: string, update: Update): Promise<void> {
+	if (session.isStreaming) {
+		await session.steer(text);
+		return;
+	}
+	await session.sendCustomMessage(
+		{ customType: "experiment_update", content: text, display: true, details: { id: update.id, kind: update.kind } },
+		{ triggerTurn: true },
+	);
+}
+
 export function createExperiments(options: Omit<SupervisorOptions, "deliver"> & {
 	prompts: PromptSnapshot;
 	session?: Wakeable;
 	signal?: AbortSignal;
+	/**
+	 * False when the owner sends its own message when a run ends (the lead's
+	 * trial feedback), so the bare exit note would only repeat it. Findings
+	 * during the run are delivered either way.
+	 */
+	deliverExits?: boolean;
 }) {
 	options.signal?.throwIfAborted();
 	let session = options.session;
@@ -44,29 +69,16 @@ export function createExperiments(options: Omit<SupervisorOptions, "deliver"> & 
 		deliver: (text, update) => deliver(text, update),
 	});
 
-	/**
-	 * One channel, never both.
-	 *
-	 * `steer()` delivers after the current turn's tool calls finish and before
-	 * the next model call, so it reaches a running agent. An idle agent has no
-	 * turn to attach to, and only `triggerTurn` starts one. Sending through both
-	 * would deliver the same measurement twice.
-	 */
+	/** Through `wake` once a session is bound; queued for the opening turn before that. */
 	async function deliver(text: string, update: Update): Promise<void> {
+		if (update.kind === "exited" && options.deliverExits === false) return;
 		if (!session) {
 			pending.push({ text, update });
             if (pending.length > 100) pending.shift();
 			options.record?.("experiment_update_undelivered", { experiment_id: update.id, kind: update.kind });
 			return;
 		}
-		if (session.isStreaming) {
-			await session.steer(text);
-			return;
-		}
-		await session.sendCustomMessage(
-			{ customType: "experiment_update", content: text, display: true, details: { id: update.id, kind: update.kind } },
-			{ triggerTurn: true },
-		);
+		await wake(session, text, update);
 	}
 
 	const tools = createExperimentTools(supervisor, options.prompts);
@@ -97,3 +109,6 @@ export function createExperiments(options: Omit<SupervisorOptions, "deliver"> & 
 		},
 	};
 }
+
+export { createSupervisedBashTool } from "./bash.js";
+export { MachineProtection } from "./protection.js";

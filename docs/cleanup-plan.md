@@ -1,89 +1,274 @@
 # Current state and work queue
 
-Updated 2026-11-10. This file owns the active queue. The
-[redesign plan](redesign-plan.md) explains the accepted direction and package
-dependencies; its future waves are not implemented features. The
-[earlier work log](cleanup-history-2026-11-10.md) preserves run results and older
-plans without competing with this queue.
+Updated 2026-11-15 (DOCX retry completion observation). This file owns the active queue. The design is
+[expert-team-v2.md](../harness/finetuned/docs/expert-team-v2.md) (accepted
+2026-11-11); its contract appendix is
+[expert-team.md](../harness/finetuned/docs/expert-team.md). Superseded plans,
+merge evidence and the earlier work log were removed; they remain in git
+history (commit 452e1e5).
 
 ## Experiment and current runtime
 
+**DOCX budget retry (2026-11-15).** The first iteration is backed up to private
+Google Drive with verified round-trip hashes. Its finetuned state/source are
+archived, and a fresh repository restores exact pre-DOCX source `d889538` with
+the same task bytes and deterministic split. The user requested 150 lead calls;
+that configured allowance and its test/documentation expectations are updated.
+The user subsequently requested configurable 60%/15% warnings and a clean
+restart; the partial attempt is archived and the new controller is detached.
+The restarted run delivered 2,969 verified predictions in 1h43m33s, using
+142/150 calls. Both warnings appeared; a cohort pilot and one challenger
+completed, and paired promotion retained the original validated champion.
+Observation also found local before/after feature scoring, waits for terminated
+background jobs, and readiness accepting a review whose only dynamic check
+failed on its final scout call. Delivery integrity passed; that failed check
+does not become successful validation evidence. No further run or runtime
+remedy followed this observation.
+See the [retry record](experiments/documents1-budget150-retry-2026-11-15.md).
+
+**DOCX completion (2026-11-15).** Both arms delivered all 2,969 predictions
+with independently verified IDs, hashes and source ZIPs. Minimal took 26m48s;
+finetuned took 1h34m38s and retained its validated original champion after a
+fixed challenger failed the paired promotion test. Both used their own retained
+source and the configured offline model. No other Unit 2 task ran, no safety
+stop or upload occurred, and no runtime changes were made. See the
+[two-arm DOCX report](experiments/documents1-both-arms-2026-11-15.md) for score
+provenance limits, handoff/tool counts and the measured solutions-path ambiguity.
+
+**Unit 2 setup (2026-11-15).** DOCX `documents1` inputs and original training
+labels are staged and hashed, shared task metadata/text are restored without VM
+credentials or modeling coaching, and the finetuned declaration uses the existing
+binary primitive. Minimal source-continuation setup and the task-specific
+finetuned production preflight passed. No experiment started; retain each arm's
+own source and run sequentially when requested. PDF/RTF/mixed remain unstaged.
+See [DOCX setup and limitations](experiments/unit2-docx-setup-2026-11-15.md).
+
 The experiment compares a minimal autonomous agent with a task-adapted harness.
-Both arms live in this reviewed integration, based on `merge-arms`. They are
-selected through `experiment/`, with independent
+Both arms are selected through `experiment/`, with independent
 code/configuration and `runs/minimal/` / `runs/finetuned/` state. See
 [the experiment contract](experiment.md).
 
-The current finetuned runtime has an orchestrator calling research, solve,
-evaluate and deterministic refit. The four experts and their shared workspace
-are an accepted design, with draft prompts, awaiting implementation. Artifact
-validation owns stage completion; evaluation remains advisory.
+The old design's orchestrator, research and evaluate stages, knowledge store
+and leakage canary were removed on 2026-11-11 (the clean-slate package below).
+Stream D replaces solve → refit with one lead session calling asynchronous
+scouts (data, ideas, validation) and harness-run trials, followed by validated
+terminal refit. Foundations, scouts and the lead are merged and independently reviewed. See [lead execution](../harness/finetuned/agent/run/README.md).
+
+Readiness clarification (2026-11-12; merged and independently reviewed): `hand_over` defaults to a free validation checkpoint, preserving the
+first verified working baseline and switching the same lead session to
+improvement. Explicit `finalize: true` or the harness end step requests
+validation-gated terminal delivery. Existing immutable measurements and source
+snapshots are reused. This does not establish the paid task integration gate.
+The same change fixes validation snapshot mounts when task state is symlinked;
+it does not broaden scout access. API and label-safety correction are in the
+[lead execution contract](../harness/finetuned/agent/run/README.md).
+
+**Training interface correction (2026-11-12).** The second
+[live tool-choice diagnostic](experiments/spam1-live-tool-choice-repeat-2026-11-12.md)
+exposed ambiguous module roots and a symlink accepted for measurement but
+rejected at terminal freeze. New smoke/trial requests now accept solutions-
+repository-relative pipeline and CV module paths, matching INDEX.md, while
+preserving legacy project-relative requests and recorded worker paths. Smoke
+shares module validation with trial admission. Both reject symlinks in the
+requested commit before fitting, using the same Git-tree check as refit.
+Tool descriptions share explicit path, CV-field and source-eligibility guidance.
+See [training API](../harness/finetuned/agent/training/README.md#module-paths-and-source-eligibility).
+The subsequent [live verification](experiments/spam1-interface-verification-2026-11-12.md)
+used canonical paths without path/schema rejection and delivered within its
+thirty-minute bound. It also observed a validation scout running CV/contract
+checks through bash rather than `run_checks`; that execution-policy violation
+is now addressed at the tool boundary: validation has an explicit file-tool
+allowlist and `run_checks`, with no bash capability or SDK shell fallback.
+Snapshot/check telemetry and hash recording remain in the existing runner.
+This enforces the route; arbitrary Python checks can still perform extra fits
+or CV, so redundant-CV prevention remains a separate limitation. The multi-task
+integration gate remains open.
+
+**Observed completion batch (2026-11-12–13).** After an authorized unsigned
+push of `c746a7a`, a fresh offline finetuned spam1 → spam2 → spam3 batch ran
+under configured budgets, without an external time cutoff. Spam1 delivered
+in 99 min 47 s (development CV 0.99539); spam2 stopped after 60 min 7 s with
+`validation_failed` at the lead's 80-call limit; spam3 was not launched.
+The two final validation concerns involved the scout's visibility of measured
+parameters and a small-sample robustness fix absent from the measured source.
+Authoritative parameters were retained; no terminal spam2 refit executed.
+All seven validation sessions respected the new tool route, with no bash.
+The lead nevertheless executed a local three-candidate comparison in spam2,
+describing it as branch smoke coverage when questioned live. Three operator
+questions and their answers were captured and cross-checked against receipts;
+two details of the final explanation contradicted timing/tool capabilities.
+No further run or speculative remedy followed the failure. The integration
+gate remains unmet. See the [completion and decision-process report](experiments/spam-completion-tool-choice-2026-11-13.md).
+
+Both arms receive the user-supplied spam slides as checksummed, read-only course
+resources with page-labelled text copies ([course resources](../resources/README.md)).
+No modelling hints were added to the minimal solver's instructions.
+
+**Spam batch (stopped).** The observed offline spam1–3 batch of 2026-11-11
+finished in the minimal arm (all three delivered). The user stopped the
+finetuned arm at 12:43 UTC during spam2, after about 2 h 55 min, because the old
+design is being replaced; finetuned spam3 never ran. Its report is
+[experiments/spam-2026-11-11.md](experiments/spam-2026-11-11.md). The finetuned
+spam1 result (9 h 06 min to hand-over against 15–46 min for minimal) is the
+main evidence for v2 (section 1 there).
+
+**Spam1 test runs (2026-11-12, finetuned, 1 h cap each, cancelled at the cap).**
+Unmeasured development runs, not gate results; state archived under
+`runs/archives/2026-11-12T*-spam1-run{1,2,3}*`.
+
+| Run | Harness | First trial | First CV | Best champion CV / holdout | Best unpromotable | Hand-over |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | blocking scouts (cancelled at 24 min for run 2) | 8.9 min | 0.9831 | 0.9831 / 0.9825 | none | none |
+| 2 | + operator questions | 9.6 min | 0.9728 | 0.9941 / 0.9950 | 0.9944 (search, `acknowledgement_required`) | none |
+| 3 | + async parallel scouts, scout skills | 15.9 min | 0.9939 | 0.9939 / 0.9925 | 0.9954 (search, `acknowledgement_required`) | none |
+
+In run 3 the lead consulted data and ideas before its first pipeline; its first
+model came close to target, at the cost of about six minutes to first trial. Asked live
+(operator channel, run 2), the lead said blocking scouts made it consult rarely
+and broadly; it named no imagined deadline. Merged on `v2-clean-slate`: `2a7ad1f`
+disk-backed per-command sandbox `/tmp`, `c385553` operator questions
+(`agent/run/ask_lead.ts`), `7361f2b`, `93e004c` async parallel scouts (blocking
+review: one finding, fixed in `7ea542b`; the fix is not re-reviewed), `7500809` scout skills,
+`4a3a2b6` signal deaths through the scratch wrapper. Full suite after `4a3a2b6`:
+700 pass, 0 fail, 702 tests. Open, user decision: F9 and F10 below.
 
 Offline runs fetch nothing and hand over one validated refit for manual
-submission. Configured chains stop before submit. Merge preparation, data
-access and successful evaluation do not authorize uploads. Keep development
-and official scores separate.
+submission. Configured chains stop before submit. Data access and successful
+evaluation do not authorize uploads. Keep development and official scores
+separate.
 
-## Immediate merge preparation
+## Validation verification repair (2026-11-15)
 
-| Package | State | Required next action |
+Readiness now retains harness check outcomes separately from scout verdicts.
+A failed or unfinished attempted check produces `verification_incomplete`,
+without inventing a pipeline defect or approving the candidate. Repeating the
+existing hand-over sends the same measured snapshot, prior check paths/hashes,
+bounded errors and findings to a fresh validation scout for checker repair and
+rerun. Outstanding failures survive unrelated passes and checker edits;
+pipeline edits still need a new measurement. Budgets and approved-baseline
+fallback are unchanged. No experiment run or upload is part of this repair.
+
+## Work queue (v2 section 11)
+
+**Next planned package: shared agent message board.**
+[The staged completion plan](message-board-plan.md) builds on the existing
+durable findings journal and read/add/resolve adapters. It covers shared
+cross-task storage, lead/scout read and contribution tools, startup/resume
+recall, harness-owned result entries, historical import and production cutover.
+The existing kickoff covers only scout bullet append and repeat-call recall;
+this package completes v2's cross-task learning commitment. Status: planning
+only; implementation has not started. Experiment comparability is secondary
+and does not gate this package.
+
+First priority, implemented and locally verified, 2026-11-13:
+[completion reliability repair](completion-reliability-plan.md).
+The audit reproduced a saved validated baseline followed by a rejected newer
+champion yielding zero refits. The plan makes delivery selection explicit across
+lead, confirmation and refit, supplies truthful review context, and tests actual
+fallback delivery while preserving the prior integrity/isolation fixes. Runtime
+implementation now carries an explicit measured selection through validation,
+confirmation and refit; the real-worker fallback fixture delivers the validated
+baseline without retagging the champion. Independent re-review found no remaining
+blockers. Fast suite: 588 passed, two skips; full suite: 718 passed, two skips;
+both had zero failures. Typecheck passed. A subsequent fresh spam2 run on
+`222781f` delivered in 75 min 27 s at development CV 0.99794, using 93/100 calls.
+Both new warnings appeared; the lead retained its validated champion after an
+interrupted search and explicitly finalized it. No newer champion failed review,
+so the specific older-baseline fallback branch remains covered by synthetic
+regressions rather than this live run. See the
+[fresh spam2 observation](experiments/spam2-completion-repeat-2026-11-14.md).
+
+The subsequently authorized spam3 continuation on `aae2876` retained shared
+solutions and delivered in 41 min 11 s, using 54/100 calls; readiness passed at
+32 min 43 s and development CV was 0.99783. A challenger tied its champion on all
+ten paired folds and did not promote. The delivered pipeline reused spam2's
+unchanged raw-sample reader. Observation also confirmed a local feature-family
+comparison with 90 classifier fits, described by the lead as an overextended
+leakage probe; two live operator answers were cross-checked against scripts,
+tool timings and results. See the
+[spam3 report](experiments/spam3-completion-2026-11-14.md). This successful delivery
+does not establish the entire multi-task timing gate or the newer-champion-fails
+fallback branch.
+
+| Package | State | Next action / completion evidence |
 | --- | --- | --- |
-| P1: observed scripts and shared memory pool | Deferred from this merge by the user; not integrated | Future strict-protection implementation; see [counterexamples and scope decision](p1-memory-pool-blocker.md) |
-| P3: waits, accounting, recovery, hand-over and detached runs | Integrated; final whole-branch validation passed | Live shakedown (F1) |
-| P4: scorecard | Integrated in `d57b703` | Use on the next live shakedown |
-| P5: expert-team design and draft prompts | Integrated in `6901a54` | Keep labelled as design |
-| Reviewer documentation and source inventory | Integrated; independent review, source refresh and navigation checks complete | Keep inventory and status current |
+| P5′: accept v2 (documents) | Done 2026-11-11 | Docs reorganised; draft prompts kept as seeds for P7a |
+| Clean slate | Done 2026-11-11 | Removed the LLM orchestrator, research and evaluate stages, knowledge store and lesson prompts, scorecard, old `agent/instructions/`, the filename-leakage canary and the profile's `name_leakage` measurement; the chain is solve → refit |
+| P6: foundations | Implemented, reviewed and merged; live gate remains open | Task data and persistent split; shared tree, `workspace_check`, follow-up merge; trial snapshots; Linux sampler and global `supervision` block with machine-protection stop; `trial_smoke`; parallel folds; per-session environment. Checks in v2 P6 |
+| P7a: lead and scouts | Implemented, reviewed and merged | Asynchronous lead-facing `scout` (2026-11-12 user decision), built on `agent/subagents/`; tool-call budgets with a counter after every call; lead session with compaction and `PROGRESS.json`; prompts in `agent/prompts/team/`; scout budget test (10 vs 20 calls on spam1–3 and `code2`) |
+| P7b: harness services | Implemented, reviewed and merged | Trial feedback with noise verdict and Ladder holdout check; wake on news only; `hand_over` with validation scout; budget-end hand-over; retire the remaining solve stage chain |
+| Integration gate | Not passed; earlier delivery/time gates failed | spam1 → spam2 → spam3 offline: first trial ≤ 10 min, hand-over ≤ 45 min, spam1 CV balanced accuracy ≥ 0.994 (reference 0.9944–0.9954), no machine-at-risk stop, reader reused; then `code2` to hand-over |
+| P7c: beyond binary classification | After the gate | Withheld-family clustering confirmation; label-free unscored hand-over, then evidence labels ([contract](../harness/finetuned/docs/expert-team.md#7-p7c-verification-beyond-binary-classification)) |
 
-P3 passed type checking and 61 focused tests after its final review fixes:
-terminal champion recovery, charging only launched workers, and recovered
-budget-end refits crossing the deadline. Older persisted harness versions need
-a new run; there is no state migration.
+Scout starting budgets are set from the P7a budget test: data 15, ideas 10,
+validation 10 (v2 section 3). New lead runs default to 100 calls, with visible
+warnings at 50% and 15% remaining. Resumed runs keep their recorded limit; the
+observed spam batch above used 80. The fresh spam2 run above exercised the updated
+allowance and both warnings, with seven calls unused at successful finalization.
 
-Merge preparation is complete in the reduced scope. Independent review found no
-remaining blockers. `./dev mise run test` passed: typecheck, 652 Bun tests with
-four platform skips, and all 155 Python tests. The shared Python environment
-reports 39 healthy packages after repairing its stale editable-package reference.
-The source inventory is fresh; 284 local links/anchors across 19 maintained
-documents and six Mermaid blocks passed structural checks. See
-[the full merge evidence](merge-readiness.md) for the earlier timeout failure,
-its bounded correction, validation scope and remaining limits.
-
-The integration is tracked in [PR #1](https://github.com/nicobrauchtgit/auto-smart-lab/pull/1). P1 remains
-explicitly deferred; neither its implementation nor its production guard is
-included. Use the [review guide](review-guide.md) to inspect the result.
-Live experimental results remain follow-ups below.
+Earlier evidence: the v2 unit-1 runs failed their delivery/time gates
+([run report](experiments/v2-unit1-2026-11-12.md)); the bounded prompt-first spam1
+experiment also failed to deliver within 600 seconds
+([historical report](experiments/prompt-first-spam1-just10min.md)). The later
+checkpoint revision passed independent review and its recorded full suite
+(675 passed, 2 skipped). Its subsequent live spam batch delivered spam1 but failed
+spam2, as reported above. The exact newer-champion-rejected fallback branch has
+synthetic delivery evidence; the fresh spam2 run delivered its retained champion
+after an interrupted search. The subsequent spam3 run establishes reuse of the
+raw-sample reader; the multi-task integration gate and P7c remain unproven.
+The repair itself included no model runs or uploads; the subsequent spam2 and
+spam3 runs were separately authorized.
+See [cleanup evidence](worktree-cleanup-2026-11-12.md) for the historical merge.
 
 ## Follow-ups and readiness limits
 
-These do not by themselves block merging code and documentation. Resolve each
-before claiming its corresponding capability or experiment ready.
+**Cross-unit continuation selected, 2026-11-15 (corrected).** Minimal now uses
+`--continue runs/minimal/<run>` in place with `--reset none`, preserving Leo's
+within-batch knowledge: memory, modules, requirements, predictions, checkpoints,
+scratch, venv, .home and disk-backed .tmp. Version checks reject harness commit
+or solver prompt drift. Sibling snapshots preserve starting state and package
+inventory; chain logs record invocations and a shared total cost cap deducts
+prior spend. See [experiment.md](experiment.md#starting-clean-and-continuing-runs)
+and [source.ts](../experiment/source.ts). Background processes are killed between
+steps (accepted); delivery/log folders differ cosmetically. Finetuned retains
+its own solutions. This replaces the earlier source-only copying policy.
+The minimal documents1/documents2 deliveries came from `--source-from` runs, which
+had the earlier modules but not their memory; they are to be rerun by continuing
+`runs/minimal/2026-11-11T08-29-56` (spam1–3). That folder's framework files were
+refreshed once by hand to the current harness, with its task state kept; see its
+`migration-provenance.json`.
+
+Resolve each before claiming its capability or experiment ready.
 
 | ID | Impact | Next action / completion evidence |
 | --- | --- | --- |
-| F1: live shakedown | Synthetic tests do not prove a real model/controller run completes | Run spam1 offline through hand-over, validate its CSV and inspect its scorecard; wave 2 waits for this gate. Then exercise spam1–3 in both arms as unmeasured shakedowns |
 | F2: measured protocol | Arm comparisons need defined conditions | Agree repetitions, sequential/parallel execution, reset policy and memory across tasks; pass both preflights before measured runs |
 | F3: task coverage and access | Share access does not establish labels, decryption or output contracts | Inventory cloud tasks 01–05, obtain secrets securely, verify instructions/archive identity/labels/CSV contract and disk capacity; update [task readiness](tasks.md) |
-| F4: sealed-score guidance | Keeping sealed values out of prose guidance relies on instructions | Keep the instruction explicit; do not claim an automatic filter. Any enforcement change needs a separate decision and regression evidence |
-| F5: beyond spam | Clustering sealed confirmation and label-free hand-over are incomplete; multiclass Tor is not runnable | Implement P7c after the core experts; verify withheld-family/execution-mode semantics on code2 and label-free behavior on attacks1 |
-| F6: concentration and legacy code | Large controller/training modules and legacy entry points increase maintenance cost | Use code analysis for later refactoring. Audit optional subagents, interactive SmartLab tools and old instructions before wiring/deleting; check running processes and external references |
-| F7: additional primitives | CPU torch, generic experiment tools, service/download metadata and units 5/6 VM tools are unfinished | Add when required with shared setup/observation and task evidence; no automatic proxy fallback |
-| F8: hygiene and typecheck scope | Formatting/indexed-access checking are deferred; root semantic typecheck excludes the minimal arm; full merge-relative whitespace audit reports inherited trailing whitespace/blank EOFs in older training files and archived VM material | Assess coverage/formatting separately from behavior; preserve archived code and patches rather than silently rewriting them |
-| F9: P1 resource supervision | Agent scripts retain current observation/RAM limits; Linux sampling and the shared protected pool are not integrated | P1 is deferred by explicit user choice. Keep its strict acceptance criteria and counterexamples in [the blocker report](p1-memory-pool-blocker.md); do not claim best-effort priority satisfies them |
+| F5: beyond spam | Clustering sealed confirmation and label-free hand-over are incomplete; multiclass Tor is not runnable | P7c after the integration gate; verify withheld-family/execution-mode semantics on code2 and label-free behavior on attacks1 |
+| F9: interrupted searches lose their best configuration | Runs 2 and 3: the best measured configuration (0.9944, 0.9954) became unpromotable after `acknowledgement_required`; the lead re-ran it as a separate trial at the cost of one trial, calls and 10–15 min | Either promote a completed-fold configuration of an interrupted search, or tell the lead about the long-search acknowledgement before it starts a search; verify in a spam1 run |
+| F10: no hand-over within the gate's 45 min | None of the three 2026-11-12 spam1 runs handed over within 60 min; run 3's trial 3 ran over 10 min against 3.5 min for trial 1 | Trace trial 3's cost; re-measure after F9 |
+| F8: hygiene and typecheck scope | Formatting/indexed-access checking are deferred; root semantic typecheck excludes the minimal arm; inherited trailing whitespace/blank EOFs in older training files | Assess coverage/formatting separately from behavior |
+
+### Non-blocking review findings (v2 streams, 2026-11-11)
+
+Recorded instead of fixed under the review bar: only findings that break a
+v2 check block a merge.
+
+| Stream | Follow-up |
+| --- | --- |
+| B | Ladder threshold is one paired standard error, as in Blum & Hardt's parameter-free Ladder; fold promotion keeps the 2-SE rule. Revisit if the lead sees too many "improvements". |
+| B | The old spam1 terminal refit freeze reports "framework drifted" (refit scripts changed); new runs freeze again. Not fixed. |
+| B | A killed fold is not resumed automatically; the agent resumes it with `experiment_resume`. |
+| C | The ideas scout's search counter resets when its session rolls over at the 100k-token handoff. |
+| C | No validation probe has run on a trial with a deliberately planted defect; detection of real defects is unmeasured. |
+| C | Probe call counts before round 1 are admitted calls, not proven executions. |
+| C | Data budget 15 sits between the measured 10 and 20; it is not an optimum. |
 
 Before malware-task runs, establish permitted parsing and network boundaries.
 The lab prohibits external detection services; filesystem isolation alone does
 not enforce network policy. Unit 4.1 needs verified pcap connection identity and
 positive/negative labels. Generated-image anomaly evidence needs immutable
 images, grouped splits and attack provenance before selecting champions.
-Detailed earlier scope is in the [historical log](cleanup-history-2026-11-10.md).
-
-## Later implementation order
-
-After wave 1 is integrated and spam1 reaches hand-over: P6 foundations (one
-workspace/sandbox and shared session contracts), P7a experts/findings/prompts and
-P7b orchestrator, then P7c verification beyond binary classification. P8 lighter
-controller inputs and P9 evidence-backed reusable memory follow. See the
-[package contracts](../harness/finetuned/docs/expert-team.md).
 
 ## Working constraints
 
@@ -94,7 +279,8 @@ Never use raw pip, separate environments or home-installed tools.
 
 The agent chooses features, estimator, parameters and fold design. The harness
 owns execution, seeds/folds, authoritative predictions, comparison, promotion
-and frozen refit. Sealed rows remain hidden until terminal refit; test-input
+and frozen refit. Labels of the withheld rows never reach an agent; under v2
+the lead hears only the Ladder verdict on new champions (planned). Test-input
 access follows the inductive/batch contract. Neither runtime arm may read the
 other. Runtime sessions do not automatically load development context files.
 Keep experiment boundary tests passing.

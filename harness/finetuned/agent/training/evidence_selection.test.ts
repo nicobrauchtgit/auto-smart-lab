@@ -1,5 +1,4 @@
-import { createEvaluateStage } from "../pipeline/stages/evaluate.js";
-import { primaryMetric } from "../run/harness_solve_session.js";
+import { primaryMetric } from "../run/lead_session.js";
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -85,11 +84,6 @@ test("growing evidence is snapshotted; search, paired champion, recovery, valida
   expect(advisory.result).toMatchObject({ status: "completed", promotionEligible: false });
   // New evidence changes neither old measurements nor their durable base identity.
   writeFileSync(liveEvidence, JSON.stringify({ schemaVersion: 1, labels }));
-  const search = await training.service.start({ ...request, pipeline: { module: request.pipeline.module, factory: request.pipeline.factory }, search: { space: { quality: { type: "categorical", choices: [0, 1] } }, sampler: "grid" } });
-  expect(await until(() => training.supervisor.status(search.id).status !== "running")).toBe(true);
-  const searchTrial = await collectTrainingTrial(search.directory);
-  expect(searchTrial.errors).toEqual([]);
-  expect(searchTrial.result).toMatchObject({ status: "completed", promotionEligible: false, metrics: { selectionScore: 1 } });
   const challenger = await training.service.start({ ...request, pipeline: { ...request.pipeline, estimatorParams: { quality: 1 } } });
   expect(await until(() => training.supervisor.status(challenger.id).status !== "running")).toBe(true);
   await training.service.finalize(challenger.id);
@@ -99,6 +93,16 @@ test("growing evidence is snapshotted; search, paired champion, recovery, valida
   expect(readFileSync(join(first.directory, "evidence.json"), "utf8")).toBe(firstBytes);
   expect(JSON.parse(tagMessage(project.solutionsRoot, "champion/fixture")!.message).selection.evidenceSha256).toBe((trial.invocation!.measurement as any).evidenceManifestSha256);
   championDirectory = challenger.directory;
+  // A complete search winner is promotion-eligible on the same evidence (v2
+  // section 8), but a tie with the champion it is paired against keeps that champion.
+  const search = await training.service.start({ ...request, pipeline: { module: request.pipeline.module, factory: request.pipeline.factory }, search: { space: { quality: { type: "categorical", choices: [0, 1] } }, sampler: "grid" } });
+  expect(await until(() => training.supervisor.status(search.id).status !== "running")).toBe(true);
+  await training.service.finalize(search.id);
+  const searchTrial = await collectTrainingTrial(search.directory);
+  expect(searchTrial.errors).toEqual([]);
+  expect(searchTrial.result).toMatchObject({ status: "completed", promotionEligible: true, metrics: { selectionScore: 1 }, winningPipeline: { estimatorParams: { quality: 1 } },
+   championComparison: { status: "completed", leadExceedsNoise: false, meanDifference: 0, metric: "selectionScore" } });
+  expect(JSON.parse(tagMessage(project.solutionsRoot, "champion/fixture")!.message).experimentId).toBe(challenger.id);
   expect(training.service.describe(challenger.id)?.selection).toMatchObject({ basis: "evidence", metric: "evidence_average_precision", value: 1, source: "agent_provided",
    coverage: { unit: "validation_observations", validationRows: 120, labelledRows: 120, positiveRows: 60, negativeRows: 60, labelCoverage: 1 } });
   expect(training.service.leaderboard().find(row => row.experimentId === challenger.id)?.selection).toMatchObject({ metric: "evidence_average_precision", value: 1, evidenceSha256: (trial.invocation!.measurement as any).evidenceManifestSha256 });
@@ -160,37 +164,6 @@ test("growing evidence is snapshotted; search, paired champion, recovery, valida
  try { await resumed.service.ready(); } finally { await resumed.close(); }
  const champion = await collectTrainingTrial(championDirectory);
  expect(champion.eligible).toBe(true);
- const selected = champion.artifacts.find(artifact => artifact.kind === "training_trial_result")!;
- const upstream = [{ ...selected, kind: "training_selected_result" }];
- const diagnostics = JSON.parse(execFileSync(PYTHON, [new URL("../evaluation/diagnostics.py", import.meta.url).pathname, championDirectory], { encoding: "utf8" }));
- expect(diagnostics.curves.available).toBe(false);
- // Old diagnostic artifacts may omit curves; the registered stage handles them too.
- delete diagnostics.curves;
- const beforeReview = tagMessage(project.solutionsRoot, "champion/fixture")!.message;
- const inputs: any[] = [];
- const stage = createEvaluateStage({ prepareEvidence: async () => ({ directory: championDirectory, experimentId: champion.experimentId, sources: champion.artifacts,
-  diagnostics, candidate: { request: champion.request, trialsConsidered: 1, eligibleTrials: 1, measurementKind: "anomaly_detection", selectionRule: "authoritative champion" } }),
-  runSession: async options => {
-   expect(options.promptReferences.map(reference => reference.id)).toContain("review.guide-anomaly");
-   expect(options.promptReferences.map(reference => reference.id)).not.toContain("review.guide");
-   expect(options.prompt).toContain("agent-provided labels into verified truth");
-   expect(options.prompt).toContain("evidence_average_precision");
-   const curves = await options.customTools![0].execute("detail", { section: "curves" }, undefined, undefined, undefined as never);
-   expect(JSON.parse((curves.content[0] as any).text).available).toBe(false);
-   await options.customTools![1].execute("report", { readinessScore: 3, readinessRationale: "Evidence labels are agent-provided and source inspection is incomplete", status: "concerns",
-    assessment: "AP is 1 on the supplied evidence, without verified official accuracy", concerns: [{ severity: "medium", finding: "Unverified labels", evidence: "source=agent_provided" }],
-    limitations: ["Evidence coverage does not establish transfer to unfamiliar attacks"], recommendations: ["Verify representative labels"] }, undefined, undefined, undefined as never);
-   return { output: "Recorded advisory review" };
-  } });
- stage.checkInput({ taskId: "fixture", taskConfiguration: CONFIG, upstream });
- expect(() => stage.checkInput({ taskId: "fixture", taskConfiguration: { ...CONFIG, selection: undefined }, upstream })).toThrow("explicit selection evidence");
- const evaluated = await stage.run({ input: { taskId: "fixture", taskConfiguration: CONFIG, upstream }, prompts: loadPromptSnapshot(), options: {}, signal: new AbortController().signal,
-  report: { input: (input: any) => inputs.push(input), event() {}, agentIdentity: () => ({ stageInvocationId: "fixture-evaluation" }), observation: () => ({}) } as any });
- expect(evaluated.validation?.valid).toBe(true);
- expect(evaluated.summary).toMatchObject({ readiness_score: 3, advisory_only: true, official_metric: { name: "none" }, selection_metric: { metric: "evidence_average_precision", value: 1, source: "agent_provided", coverage: { labelledRows: 120 } } });
- expect(inputs.some(input => input.kind === "training_selection_evidence")).toBe(true);
- expect(JSON.parse(readFileSync(evaluated.artifacts.find(artifact => artifact.kind === "evaluation_report")!.path, "utf8")).advisoryOnly).toBe(true);
- expect(tagMessage(project.solutionsRoot, "champion/fixture")!.message).toBe(beforeReview);
  const testZip = join(project.root, "test.zip");
  execFileSync(PYTHON, ["-c", "import zipfile,sys; a=zipfile.ZipFile(sys.argv[1],'w'); a.writestr('test/a.x','limited prize'); a.writestr('test/b.x','meeting agenda'); a.close()", testZip]);
  const terminal = await runRefit({ taskId: "fixture", projectRoot: project.root, solutionsRoot: project.solutionsRoot, pythonExecutable: PYTHON,

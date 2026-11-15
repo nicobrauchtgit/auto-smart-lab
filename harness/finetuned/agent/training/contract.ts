@@ -147,7 +147,7 @@ function integerAtLeast(value: unknown, minimum: number, path: string, issues: I
 }
 
 function pythonModule(value: unknown, path: string, issues: Issues): string | undefined {
-	const module = requiredString(value, path, issues, "Name a project-relative .py file such as solutions/tasks/spam1.py.");
+	const module = requiredString(value, path, issues, "Name a solutions-repository-relative .py file such as tasks/spam1.py (legacy project-relative paths are accepted).");
 	if (module === undefined) return undefined;
 	// Backslashes have platform-dependent path semantics. Requests use one
 	// portable, project-relative representation regardless of harness host.
@@ -161,7 +161,7 @@ function pythonModule(value: unknown, path: string, issues: Issues): string | un
 		|| !module.endsWith(".py")
 	) {
 		issues.add(path, "not a safe project-relative .py path", module, "a normalized relative path ending in .py, without '..'",
-			"Use a forward-slash path relative to the project root, for example solutions/tasks/spam1.py.");
+			"Use a forward-slash path relative to the solutions repository, for example tasks/spam1.py (legacy project-relative paths are accepted).");
 		return undefined;
 	}
 	return module;
@@ -658,7 +658,8 @@ export function validateExperimentRequest(raw: unknown): { request?: ExperimentR
 		}
 	}
 	rejectUnknown(value, version === 2 ? V2_KEYS : [...V1_KEYS, "commit", "search"], "", issues);
-	const hypothesis = requiredString(value.hypothesis, "hypothesis", issues, "State what this experiment tests and why.");
+	const suppliedHypothesis = requiredString(value.hypothesis, "hypothesis", issues, "State what this experiment tests and why.");
+	const hypothesis = suppliedHypothesis?.trim().split(/(?<=[.!?])\s+/).slice(0, 2).join(" ").slice(0, 500);
 	let commit: string | undefined;
 	if (version === 2 && value.commit !== undefined) {
 		commit = requiredString(value.commit, "commit", issues, "Use HEAD, a branch name, or a commit hash from the solutions repository.");

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { createHarnessTraining } from "../training/index.js";
 import { loadPromptSnapshot } from "../prompts/loader.js";
 import { commitAll, temporaryProject, PYTHON, WORKER, trainingEnvironment, until, writeCorpus, writeSampleManifest } from "../training/testing.js";
@@ -31,14 +31,15 @@ async function fixture(delay = 0, search = false, barrier = false) {
   rootSeed: 13, zipPath: project.zipPath, measurement: project.measurement, prompts: loadPromptSnapshot(), workerPath: WORKER,
   environmentFingerprint: "fixture-environment", limits: { sampleIntervalMs: 25, stopGraceMs: 100 } });
  let request = { schemaVersion: 2, hypothesis: "winning fixed confirmation", pipeline: { module: "solutions/tasks/fixture.py", factory: "build_pipeline", parameters: { delay }, estimatorParams: { model__C: 0.75 } }, cv: { kind: "builtin", scheme: "stratified_kfold", folds: 2, repeats: 1 }, scope: { kind: "promotion" } };
+ let started: Awaited<ReturnType<typeof harness.service.start>>;
  if (search) {
   const searched = await harness.service.start({ ...request, pipeline: { ...request.pipeline, estimatorParams: {} }, search: { space: { model__C: { type: "categorical", choices: [0.25, 0.75] } }, sampler: "grid" } });
   expect(await until(() => harness.supervisor.status(searched.id).status !== "running")).toBe(true);
   await harness.service.finalize(searched.id);
-  expect(tagMessage(project.solutionsRoot, "champion/fixture")).toBeUndefined();
+  expect(tagMessage(project.solutionsRoot, "champion/fixture")).toBeDefined();
+  started = searched;
   request = JSON.parse(readFileSync(join(searched.directory, "search-report.json"), "utf8")).nextStep.confirmationRequest;
- }
- const started = await harness.service.start(request);
+ } else started = await harness.service.start(request);
  expect(await until(() => harness.supervisor.status(started.id).status !== "running")).toBe(true);
  await harness.service.finalize(started.id);
  await harness.close();
@@ -128,7 +129,7 @@ test("opaque terminal fit cancellation retains freeze, retries same identity, an
 }, 90_000);
 
 
-test("search winner reaches terminal refit only through its exact fixed measured confirmation", async () => {
+test("search winner reaches terminal refit directly with its measured winning parameters", async () => {
  const f = await fixture(0, true);
  const frozen = await prepareRefit(f.options);
  expect(frozen.pipeline).toEqual(f.request.pipeline);
@@ -168,7 +169,7 @@ test("dead opaque worker restarts from the same freeze and concurrent invocation
  expect(await until(() => existsSync(join(prepared.directory, "events.jsonl")) && readFileSync(join(prepared.directory, "events.jsonl"), "utf8").includes('terminal_fit'))).toBe(true);
  const exited = new Promise(resolve => child.once("exit", resolve)); child.kill("SIGKILL"); await exited;
  const { ownedProcessAlive, liveGroup } = await import("../experiments/ownership.js");
- const owner = JSON.parse(readFileSync(join(prepared.directory, "worker", "worker-owner.json"), "utf8"));
+ const owner = JSON.parse(readFileSync(join(dirname(prepared.directory), ".supervision", prepared.identity, "worker", "worker-owner.json"), "utf8"));
  expect(ownedProcessAlive(owner.identity)).toBe(true);
  process.kill(-owner.identity.pgid, "SIGKILL");
  expect(await until(() => liveGroup(owner.identity.pgid).length === 0)).toBe(true);
@@ -202,3 +203,21 @@ test("authoritative chosen tag wins when a different eligible trial has a higher
  await runRefit(f.options);
  expect(readFileSync(join(frozen.directory, "predictions.csv"), "utf8").trim().split(/\r?\n/).slice(1).every(line => line.endsWith(",0"))).toBe(true);
 }, 90_000);
+
+test("controller selection refits an older measured source without retagging the statistical champion", async () => {
+ const f=await fixture();
+ const selectedCandidate={experimentId:f.started.id,trainingRoot:f.root,commit:f.head};
+ writeFileSync(join(f.solutionsRoot,'tasks','fixture.py'),"raise RuntimeError('new live source must not run')\n");
+ const newer=commitAll(f.solutionsRoot,'newer source');
+ tagCommit(f.solutionsRoot,'champion/fixture',newer,JSON.stringify({experimentId:'newer',trainingRoot:f.root,pipeline:f.request.pipeline}),true);
+ const options={...f.options,selectedCandidate,expectedExperimentId:f.started.id};
+ const prepared=await prepareRefit(options);expect(prepared.source.commit).toBe(f.head);
+ expect((await runRefit(options)).validation.valid).toBe(true);
+ expect(tagMessage(f.solutionsRoot,'champion/fixture')?.commit).toBe(newer);
+ await expect(prepareRefit({...options,selectedCandidate:{...selectedCandidate,commit:newer}})).rejects.toThrow('source integrity');
+ await expect(prepareRefit({...options,expectedExperimentId:'newer'})).rejects.toThrow('reviewed evidence');
+ await expect(prepareRefit({...options,selectedCandidate:{...selectedCandidate,trainingRoot:join(f.root,'missing')}})).rejects.toThrow('disagrees');
+ const checkpoint=join(f.started.directory,'single-checkpoint.json');const original=readFileSync(checkpoint,'utf8');
+ const corrupt=JSON.parse(original);corrupt.checkpointSha256='0'.repeat(64);writeFileSync(checkpoint,JSON.stringify(corrupt));
+ await expect(prepareRefit(options)).rejects.toThrow();writeFileSync(checkpoint,original);
+},90_000);

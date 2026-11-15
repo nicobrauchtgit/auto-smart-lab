@@ -30,7 +30,7 @@ test("search uses one manifest, one budget unit, journal storage and a complete 
  const project = temporaryProject("search-report-"); const training = harness(project, { maxExperiments: 1 });
  try {
   const started = await training.service.start(request()); const result = await finish(training, started);
-  expect(result.status).toBe("completed"); expect(result.promotionEligible).toBe(false);
+  expect(result.status).toBe("completed"); expect(result.promotionEligible).toBe(true);
   const configs = lines(started.directory, "configs.jsonl"); expect(configs).toHaveLength(4);
   const report = read(started.directory, "search-report.json");
   for (const key of ["leaderboard", "parameterImportance", "parameterEffects", "comparison", "progress", "cost", "caveats", "nextStep"]) expect(report[key]).toBeDefined();
@@ -40,11 +40,11 @@ test("search uses one manifest, one budget unit, journal storage and a complete 
   expect(readFileSync(join(started.directory, "oof_runner_up.csv"), "utf8")).toContain("prediction");
   const manifest = read(started.directory, "fold-manifest.json");
   for (const config of configs) expect(config.foldScores.map((fold: any) => [fold.repeat, fold.fold])).toEqual(manifest.folds.map((fold: any) => [fold.repeat, fold.fold]));
-  const collection = await collectTrainingResults(join(project.root, "training")); expect(collection.trials[0].valid).toBe(true); expect(collection.trials[0].eligible).toBe(false);
+  const collection = await collectTrainingResults(join(project.root, "training")); expect(collection.trials[0].valid).toBe(true); expect(collection.trials[0].eligible).toBe(true);
   expect(collection.artifacts.map(artifact => artifact.kind)).toContain("training_search_report");
   expect(collection.artifacts.map(artifact => artifact.kind)).toContain("training_search_journal");
   await expect(training.service.start(request())).rejects.toThrow("budget exhausted");
-  expect(git(project.solutionsRoot, ["tag", "-l"]).stdout.trim()).toBe("");
+  expect(git(project.solutionsRoot, ["tag", "-l"]).stdout).toContain("champion/fixture");
  } finally { await training.close(); }
 }, 90_000);
 

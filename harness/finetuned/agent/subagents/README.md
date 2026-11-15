@@ -178,8 +178,7 @@ usefulness and concision still need evaluation against fixed tasks.
 The original JSONL and failed summary remain untouched. An offline review of
 that trace passes the corrected transport checks; its 776-byte reply is not
 truncated but repeats the marker. No corrected live rerun has occurred. See
-[the handover](../../docs/HANDOVER.md#live-smoke-evidence) for evidence paths and
-identities, and [telemetry operations](../../docs/telemetry.md) for SQL/API checks.
+[telemetry operations](../../docs/telemetry.md) for SQL/API checks.
 
 Shared logical sessions now support context handovers and session replacement;
 see [Smart context sessions](../context/README.md). Durable workflow recovery
@@ -192,3 +191,17 @@ Rebind the scope with `bindParent(newAgentRunId)` when the parent runner's
 scope and existing children while assigning the new parent to future spawns.
 Existing child spawn provenance is retained; events also identify the current
 parent. Child views track their latest physical session after their own handoff.
+
+## Blocking scout adapter
+
+`createPiChildFactory` also accepts controller-selected `customTools`, inline
+`extensionFactories` and an optional `childInstructions` replacement. A custom
+tool must be explicitly named in `tools`; it may replace a built-in definition
+(for example, a sandboxed read/bash tool). Ambient resources remain disabled.
+These are host configuration options, not model-visible capability changes.
+
+`agent/team/runner.ts` uses this adapter for independent observed scout sessions,
+with role instructions, restricted tools and a shared tool-call budget guard.
+Scouts pass `turnTimeoutMs: null` to disable the legacy request wall timer;
+ordinary children retain the configured timeout. Cancellation still propagates.
+The same budget object survives child context handovers.

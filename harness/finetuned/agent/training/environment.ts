@@ -53,3 +53,10 @@ export function sanitizeTrainingEnvironment(
 	if (identity.stageInvocationId) environment.PIPELINE_STAGE_INVOCATION_ID = identity.stageInvocationId;
 	return environment;
 }
+
+/** Independent environments for concurrent callers; never mutates process.env. */
+export function sessionEnvironment(base: Readonly<Record<string, string | undefined>>, overrides: Readonly<Record<string, string | undefined>> = {}): Record<string, string> {
+ const result: Record<string, string> = {};
+ for (const [key, value] of Object.entries({ ...base, ...overrides })) if (value !== undefined) result[key] = value;
+ return result;
+}
