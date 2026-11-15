@@ -5,14 +5,27 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { prepareSolveWorkspace, archiveRows, archiveMembers, splitDeclaration } from "./workspace.js";
 import { readTaskData } from "./task_data.js";
-import { resolveTask } from "../pipeline/resolve_task.js";
+import { execFileSync } from "node:child_process";
+import { writeCorpus } from "../training/testing.js";
 import { projectPython } from "../pipeline/task_configuration.js";
 import { sealConfirmationSet } from "./folds.js";
+
+/** Own the archives so split/recovery tests do not depend on fetched SmartLab data. */
+function taskFixture(root: string) {
+ const taskDir = join(root, "task"), data = join(taskDir, "data");
+ mkdirSync(data, {recursive: true});
+ writeFileSync(join(taskDir, "prompt.md"), "Deterministic split and recovery fixture.\n");
+ const corpus = writeCorpus(data, 600);
+ copyFileSync(corpus.zipPath, join(data, "spam1-train.zip"));
+ copyFileSync(corpus.labelsPath, join(data, "spam1-train.labels"));
+ execFileSync(projectPython(), ["-c", "import sys, zipfile; z=zipfile.ZipFile(sys.argv[1], 'w'); z.writestr('data/test/sample', 'held out input'); z.close()", join(data, "spam1-test.zip")]);
+ return taskDir;
+}
 
 test("spam1 keeps the original split, resumes missing materialization, rejects changed seed", () => {
  const root = mkdtempSync(join(tmpdir(), "persistent-spam-"));
  try {
-  const options = { configuration: JSON.parse(readFileSync("harness/finetuned/pipeline.config.json", "utf8")).pipeline.tasks.spam1, projectRoot: root, taskDir: resolveTask({ taskId: "spam1" }).taskDir };
+  const options = { configuration: JSON.parse(readFileSync("harness/finetuned/pipeline.config.json", "utf8")).pipeline.tasks.spam1, projectRoot: root, taskDir: taskFixture(root) };
   const first = prepareSolveWorkspace("spam1", options);
   const rows = archiveRows(projectPython(), first.trainZip, first.originalTargetsPath, "binary");
   const old = sealConfirmationSet(rows.ids.map((id, i) => ({ id, label: rows.targets![i] as 0 | 1 })), { seed: first.holdoutSeedPlan!.sealedSeed });
@@ -59,7 +72,7 @@ test("only holdout, targets, seed and archive identity change the split declarat
 test("a stale development archive holding now-sealed rows is rebuilt, never exposed", () => {
  const root = mkdtempSync(join(tmpdir(), "stale-dev-zip-"));
  try {
-  const options = { configuration: JSON.parse(readFileSync("harness/finetuned/pipeline.config.json", "utf8")).pipeline.tasks.spam1, projectRoot: root, taskDir: resolveTask({ taskId: "spam1" }).taskDir };
+  const options = { configuration: JSON.parse(readFileSync("harness/finetuned/pipeline.config.json", "utf8")).pipeline.tasks.spam1, projectRoot: root, taskDir: taskFixture(root) };
   const first = prepareSolveWorkspace("spam1", options);
   // Explicit reset: the harness-only state goes, a full-membership archive remains.
   rmSync(join(root, "runs/finetuned/spam1/data/sealed"), { recursive: true });
@@ -81,7 +94,7 @@ test("pre-v2 development data stay at their measured paths and bytes", () => {
  const fresh = mkdtempSync(join(tmpdir(), "v2-layout-"));
  const root = mkdtempSync(join(tmpdir(), "legacy-layout-"));
  try {
-  const options = { configuration: JSON.parse(readFileSync("harness/finetuned/pipeline.config.json", "utf8")).pipeline.tasks.spam1, taskDir: resolveTask({ taskId: "spam1" }).taskDir };
+  const options = { configuration: JSON.parse(readFileSync("harness/finetuned/pipeline.config.json", "utf8")).pipeline.tasks.spam1, taskDir: taskFixture(fresh) };
   const current = prepareSolveWorkspace("spam1", { ...options, projectRoot: fresh });
   // Emulate the pre-v2 layout: solve/data holds the split, archive and manifest
   // that measured trials and the champion recorded by absolute path and hash.
