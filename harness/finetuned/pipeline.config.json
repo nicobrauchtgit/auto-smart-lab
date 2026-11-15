@@ -100,6 +100,27 @@
           "format": "id_semicolon_prediction",
           "predictions": "binary"
         }
+      },
+      "documents2": {
+        "schemaVersion": 1,
+        "kind": "binary_classification",
+        "samples": {
+          "source": "zip_members",
+          "train": "pdf-train.zip",
+          "test": "pdf-test.zip"
+        },
+        "targets": {
+          "kind": "binary",
+          "file": "pdf-train.labels"
+        },
+        "execution": "inductive",
+        "holdout": "stratified",
+        "metric": "balanced_accuracy",
+        "refit": "fit_training_predict_test",
+        "submission": {
+          "format": "id_semicolon_prediction",
+          "predictions": "binary"
+        }
       }
     }
   },
