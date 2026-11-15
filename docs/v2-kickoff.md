@@ -6,6 +6,10 @@ section 11), its contracts are in
 [expert-team.md](../harness/finetuned/docs/expert-team.md), the queue is
 [cleanup-plan.md](cleanup-plan.md).
 
+Follow-up: [shared message board completion](message-board-plan.md) stages the
+cross-task persistence, agent tools and recall missing from stream C's original
+journal integration. That follow-up is planned, not implemented.
+
 ## How much can run at once
 
 P6, P7a and P7b were written as a sequence, but most of their items touch

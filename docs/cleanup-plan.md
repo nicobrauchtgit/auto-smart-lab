@@ -150,6 +150,16 @@ fallback are unchanged. No experiment run or upload is part of this repair.
 
 ## Work queue (v2 section 11)
 
+**Next planned package: shared agent message board.**
+[The staged completion plan](message-board-plan.md) builds on the existing
+durable findings journal and read/add/resolve adapters. It covers shared
+cross-task storage, lead/scout read and contribution tools, startup/resume
+recall, harness-owned result entries, historical import and production cutover.
+The existing kickoff covers only scout bullet append and repeat-call recall;
+this package completes v2's cross-task learning commitment. Status: planning
+only; implementation has not started. Experiment comparability is secondary
+and does not gate this package.
+
 First priority, implemented and locally verified, 2026-11-13:
 [completion reliability repair](completion-reliability-plan.md).
 The audit reproduced a saved validated baseline followed by a rejected newer
