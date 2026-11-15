@@ -1,6 +1,6 @@
 # Current state and work queue
 
-Updated 2026-11-14 (spam2 and spam3 completion observations). This file owns the active queue. The design is
+Updated 2026-11-15 (DOCX retry completion observation). This file owns the active queue. The design is
 [expert-team-v2.md](../harness/finetuned/docs/expert-team-v2.md) (accepted
 2026-11-11); its contract appendix is
 [expert-team.md](../harness/finetuned/docs/expert-team.md). Superseded plans,
@@ -16,6 +16,14 @@ the same task bytes and deterministic split. The user requested 150 lead calls;
 that configured allowance and its test/documentation expectations are updated.
 The user subsequently requested configurable 60%/15% warnings and a clean
 restart; the partial attempt is archived and the new controller is detached.
+The restarted run delivered 2,969 verified predictions in 1h43m33s, using
+142/150 calls. Both warnings appeared; a cohort pilot and one challenger
+completed, and paired promotion retained the original validated champion.
+Observation also found local before/after feature scoring, waits for terminated
+background jobs, and readiness accepting a review whose only dynamic check
+failed on its final scout call. Delivery integrity passed; that failed check
+does not become successful validation evidence. No further run or runtime
+remedy followed this observation.
 See the [retry record](experiments/documents1-budget150-retry-2026-11-15.md).
 
 **DOCX completion (2026-11-15).** Both arms delivered all 2,969 predictions
