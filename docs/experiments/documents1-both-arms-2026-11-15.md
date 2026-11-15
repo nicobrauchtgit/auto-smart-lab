@@ -1,5 +1,11 @@
 # DOCX on both harnesses, 2026-11-15
 
+Archival update: the finetuned task state and solutions tree were preserved in
+`runs/archives/2026-11-15T13-24-54Z-documents1-iteration1/` for the
+[fresh 150-call retry](documents1-budget150-retry-2026-11-15.md). Deliveries and
+minimal state remain in place. That retry document links the verified private
+Google Drive backup of this iteration.
+
 Both arms delivered verified predictions and source. Finetuned retained its original validated champion after the challenger failed to earn promotion. Neither arm’s run remains active.
 
 The user authorized `documents1` (Unit 2 task 1, DOCX) on both arms, sequentially, retaining each arm's own Unit 1 Python source. No other documents task ran. Both used the configured offline MythLLM `qwen3.8-flash-next-a5b` and unchanged harness budgets, on repository commit `03dd35c`. No model coaching, operator questions, manual process stops, imposed diagnostic deadline, upload or submission was supplied during these runs.

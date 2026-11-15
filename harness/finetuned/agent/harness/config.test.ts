@@ -28,7 +28,7 @@ test("consumers use the immutable central defaults", () => {
 	expect(children).toBe(HARNESS_CONFIG.subagents.limits);
 	expect(SESSION_MAX_WALL_MS).toBe(HARNESS_CONFIG.session.maxWallMs);
 	expect(CONTEXT_HANDOFF_TOKENS).toBe(HARNESS_CONFIG.context.handoffTokens);
-	expect(HARNESS_CONFIG.team.lead.maxToolCalls).toBe(100);
+	expect(HARNESS_CONFIG.team.lead.maxToolCalls).toBe(150);
 	expect(Object.isFrozen(HARNESS_CONFIG.foldRecommendations[0])).toBe(true);
 });
 

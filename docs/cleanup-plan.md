@@ -9,6 +9,13 @@ history (commit 452e1e5).
 
 ## Experiment and current runtime
 
+**DOCX budget retry (2026-11-15).** The first iteration is backed up to private
+Google Drive with verified round-trip hashes. Its finetuned state/source are
+archived, and a fresh repository restores exact pre-DOCX source `d889538` with
+the same task bytes and deterministic split. The user requested 150 lead calls;
+that configured allowance and its test/documentation expectations are updated.
+See the [retry record](experiments/documents1-budget150-retry-2026-11-15.md).
+
 **DOCX completion (2026-11-15).** Both arms delivered all 2,969 predictions
 with independently verified IDs, hashes and source ZIPs. Minimal took 26m48s;
 finetuned took 1h34m38s and retained its validated original champion after a
