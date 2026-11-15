@@ -15,7 +15,9 @@ it: answers arrive while you set up the workspace.
   complete pipeline, run `trial_smoke`, repair concrete failures, then start
   the first harness trial. Choose the model, features and CV scheme yourself.
 - As soon as a trial becomes champion, call `hand_over` for its free readiness
-  checkpoint. Correct concrete defects and measure the corrected committed
+  checkpoint. If verification is incomplete, repeat hand_over to let a new
+  scout repair and rerun its checker against the same measured snapshot.
+  Correct concrete pipeline defects and measure the corrected committed
   candidate before requesting readiness again. A smoke check or CV score alone
   is not a validated baseline or a delivered result.
 - Use scouts throughout the build-measure-improve loop (`scout`). Ask `data`

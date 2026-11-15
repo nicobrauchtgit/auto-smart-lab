@@ -8,7 +8,7 @@ import { assertHarnessOwnedRoot } from "../run/agent_shell.js";
 import { projectPython } from "../pipeline/task_configuration.js";
 import type { SolveSandbox } from "../run/solve_sandbox.js";
 import { resolveCommit, uncommittedFiles } from "./git.js";
-import type { TrialSnapshot } from "../team/contracts.js";
+import type { TrialSnapshot, ValidationCheckResult } from "../team/contracts.js";
 import { openLog, writeCopy } from "../experiments/safe_files.js";
 
 const runner = `import os,sys
@@ -55,7 +55,7 @@ class CheckOutput {
 export const CHECK_CANCEL_GRACE_MS = 2000;
 
 export async function runTrialChecks(snapshot: TrialSnapshot, checkPaths: string[], sandbox: SolveSandbox, signal?: AbortSignal,
- options: { cancelGraceMs?: number } = {}): Promise<{ passed: boolean; checks: { path: string; sha256: string; exitCode: number; outputPath: string; logPath: string; output: string }[] }> {
+ options: { cancelGraceMs?: number; onCheck?(check: ValidationCheckResult): void } = {}): Promise<{ passed: boolean; checks: { path: string; sha256: string; exitCode: number; outputPath: string; logPath: string; output: string }[] }> {
  const grace = options.cancelGraceMs ?? CHECK_CANCEL_GRACE_MS;
  const source = realpathSync(snapshot.sourceRoot), worktree = join(source, "solutions");
  const identity = resolveCommit(worktree, "HEAD");
@@ -74,6 +74,7 @@ export async function runTrialChecks(snapshot: TrialSnapshot, checkPaths: string
   // Read once: these exact bytes are hashed and piped to the runner, so a concurrent
   // rewrite of the live file cannot change what ran under this hash.
   const code = readFileSync(checked), sha256 = createHash("sha256").update(code).digest("hex");
+  options.onCheck?.({path: checked, sha256, exitCode: null, output: "Check execution did not complete"});
   const outputPath = join(outputRoot, `${index}.log`);
   const logPath = join(trustedRoot, `${index}.log`);
   const logFd = openLog(logPath);
@@ -121,6 +122,7 @@ export async function runTrialChecks(snapshot: TrialSnapshot, checkPaths: string
   });
   if (captured.unsafe) throw new Error("Unsafe live solutions import origin; see the retained check log");
   checks.push({ path: checked, sha256, exitCode, outputPath, logPath, output: captured.text() });
+  options.onCheck?.({path: checked, sha256, exitCode, output: captured.text()});
  }
  return { passed: checks.every(check => check.exitCode === 0), checks };
 }

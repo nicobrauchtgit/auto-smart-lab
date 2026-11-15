@@ -266,3 +266,49 @@ test('a transient unresolved reference is retried by the same resolver', async()
  writeFileSync(join(supervision,'recovery.json'),JSON.stringify({trial:{id:'later',source:{commit:f.measured.commit,tree:f.measured.tree},worktrees:[join(f.trials,'later/solutions')]},solutionsRoot:f.live}));
  expect((await f.resolver.status(ref)).status).toBe('resolved');
 });
+
+test("checker crash and repair propagate through scout report to readiness", async () => {
+ const {validationSummary, validationPassed}=await import('../run/lead_session.js');
+ const f=stateFixture();
+ const trial=await f.resolver.snapshot('exp-1');
+ const checks=validationCheckTool({trial,solutionsRoot:f.live,taskId:'fixture',prompts,
+  sandbox:scoutToolset('validation',{sandbox:expertSandbox(f.data,'validation',readPythonEnvironment(false),trial),solutionsRoot:f.live,taskId:'fixture',trial}).checkSandbox!});
+ const path=join(f.live,'checks/fixture/binary.py');
+ writeFileSync(path,'open("document_123")');
+ const scope=createScouts({prompts,taskId:'fixture',task:'task',dataPaths:'dev',resources:'none',
+  journalPath:join(f.state,'journal.jsonl'),datasetSha256:'dataset',runId:'run',invocationId:'invoke',
+  trials:f.resolver,solutionsRoot:f.live,prepare:async()=>{},
+  run:async()=>{await checks.tool.execute('check',{paths:['binary.py']},undefined,undefined,undefined as never);
+   return {text:'- ok: source appears correct',checks:checks.ran,checkResults:[...checks.results.values()]};}});
+ const request={role:'validation' as const,question:'check',refs:[{experiment:'exp-1'}]};
+ const failed=await scope.report(request);
+ expect(failed.roles[0].status).toBe('completed');
+ expect(failed.checkResults![0]).toMatchObject({path:'checks/fixture/binary.py',exitCode:1});
+ expect(failed.checkResults![0].output).toContain('FileNotFoundError');
+ expect(failed.checkResults![0].output.length).toBeLessThanOrEqual(1501);
+ expect(validationPassed(validationSummary(failed))).toBe(false);
+ const failedHash=failed.checkResults![0].sha256;
+ writeFileSync(path,'from solutions.tasks.model import OTHER\npredictions = [OTHER] * 5\nassert all(p in (0,1) for p in predictions)\n');
+ const repaired=await scope.report(request);
+ expect(repaired.checkResults![0].sha256).not.toBe(failedHash);
+ expect(repaired.checkResults![0].exitCode).toBe(0);
+ expect(validationPassed(validationSummary(repaired))).toBe(true);
+ // A runner error in a later batch member retains earlier execution and the failing source hash.
+ writeFileSync(join(f.live,'checks/fixture/unsafe.py'),'print("Unsafe live solutions import: fixture")');
+ await checks.tool.execute('partial',{paths:['binary.py','unsafe.py']},undefined,undefined,undefined as never);
+ expect(checks.results.get('checks/fixture/binary.py')!.exitCode).toBe(0);
+ expect(checks.results.get('checks/fixture/unsafe.py')!).toMatchObject({exitCode:null});
+ expect(checks.results.get('checks/fixture/unsafe.py')!.sha256).toMatch(/^[a-f0-9]{64}$/);
+},60_000);
+
+test("a failed scout session retains harness check outcomes", async () => {
+ const f=stateFixture();
+ const checkResults=[{path:'checks/fixture/unfinished.py',sha256:'a'.repeat(64),exitCode:1,output:'checker crashed'}];
+ const scope=createScouts({prompts,taskId:'fixture',task:'task',dataPaths:'dev',resources:'none',
+  journalPath:join(f.state,'journal.jsonl'),datasetSha256:'dataset',runId:'run',invocationId:'invoke',
+  trials:f.resolver,solutionsRoot:f.live,prepare:async()=>{},
+  run:async()=>({text:'',failed:'session failed',checkResults})});
+ const report=await scope.report({role:'validation',question:'check',refs:[{experiment:'exp-1'}]});
+ expect(report.roles[0].status).toBe('failed');
+ expect(report.checkResults).toEqual(checkResults);
+});

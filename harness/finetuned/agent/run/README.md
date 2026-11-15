@@ -50,8 +50,8 @@ queries no Ladder and performs no terminal refit. The exact `hand_over` control
 call is free for the lead, including at its call limit; ordinary scouts keep
 their budgets. Unknown tools and malformed other calls still count.
 
-The first completed validation with labelled `ok`/`advice` evidence and no `fix`
-records the working baseline's experiment, commit and validation receipt in
+The first completed validation with labelled `ok`/`advice` evidence, no `fix`
+and no outstanding unsuccessful executable checks records the working baseline's experiment, commit and validation receipt in
 PROGRESS, emits `lead_baseline_validated`, and changes the goal from baseline
 to improvement. The same lead session continues. Later candidates use existing
 promotion rules; failed challengers never erase baseline evidence. Resume and
@@ -61,7 +61,14 @@ or private sealed scores. A checkpoint is not a delivered or submitted result.
 Validation receipts persist by experiment/source/tree, development data,
 validation prompt snapshot, execution boundary, Python environment and task-check content hashes.
 Completed defects also persist until that identity changes; unavailable,
-failed, stopped and empty validation can retry. Repeated unchanged successful
+failed, stopped, empty and `verification_incomplete` validation can retry.
+Harness check results retain executed hashes, exit status and bounded output
+independently of scout findings. Failed checks are not pipeline defects by
+themselves and cannot be hidden by unrelated passing checks. A repeated
+hand-over sends the prior findings and check outcomes to a new scout against
+the same measured snapshot; it repairs and reruns existing check paths within
+the usual budget. Editing a checker requires a rerun; changing pipeline source
+requires a new committed measurement. Repeated unchanged successful
 checkpoints reuse the receipt, including across restart, without another scout.
 Every request still verifies eligible measurement and snapshot identity before
 using a receipt; a missing snapshot is never permanently cached as unavailable.

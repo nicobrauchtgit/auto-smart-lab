@@ -1,4 +1,4 @@
-/** Independent observed child sessions; only their final reply crosses the boundary. */
+/** Independent observed child sessions; only final replies and harness check outcomes cross the boundary. */
 import { join, relative, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
@@ -7,7 +7,7 @@ import { defineTool, type InlineExtension, type ToolDefinition } from "@earendil
 import { isolatedSolveTools, sandboxPolicy, type SandboxMount, type SolveSandbox } from "../run/solve_sandbox.js";
 import type { AgentObservation } from "../observability.js";
 import type { PromptSnapshot, RenderedPrompt } from "../prompts/loader.js";
-import type { ScoutRole, TrialSnapshot } from "./contracts.js";
+import type { ScoutRole, TrialSnapshot, ValidationCheckResult } from "./contracts.js";
 import type { ScoutReply, ScoutSessionInput } from "./scouts.js";
 import { scoutRequirements } from "./setup.js";
 import { SetupSession, setupChecks } from "../pipeline/setup.js";
@@ -99,12 +99,15 @@ export function validationCheckTool(options: {
  record?(event: string, payload: Record<string, unknown>): void;
 }) {
  const ran: { path: string; sha256: string }[] = [];
+ const results = new Map<string, ValidationCheckResult>();
  const live = real(options.solutionsRoot), folder = join(live, "checks", options.taskId);
  const tool = defineTool({name: "run_checks", label: "Run checks", description: options.prompts.render("team.check-tool", {}).text,
   parameters: Type.Object({paths: Type.Array(Type.String({minLength: 1}), {minItems: 1, maxItems: 8})}, {additionalProperties: false}),
   async execute(_id, args, signal) {
    const reply = (data: unknown) => ({content: [{type: "text" as const, text: JSON.stringify(data, null, 1)}], details: {}});
    const paths: string[] = [];
+   const attempted = args.paths.map(path => relative(live, resolve(path.startsWith("checks/") ? live : folder, path)).split(sep).join("/"));
+   for (const path of attempted) results.set(path, {path, exitCode: null, output: "Check execution did not complete"});
    for (const path of args.paths) {
     const absolute = resolve(path.startsWith("checks/") ? live : folder, path);
     if (!existsSync(absolute) || !inside(realpathSync(absolute), folder) || !absolute.endsWith(".py")) return reply({error: `${path}: not a .py file in ${folder}`});
@@ -112,18 +115,26 @@ export function validationCheckTool(options: {
    }
    try {
     // The hash is of the bytes runTrialChecks read once and executed, not of the live file afterwards.
-    const result = await runTrialChecks(options.trial, paths, options.sandbox, signal);
+    const result = await runTrialChecks(options.trial, paths, options.sandbox, signal, {onCheck(check) {
+     const path = relative(live, check.path).split(sep).join("/");
+     results.set(path, {...check, path, output: tail(check.output)});
+    }});
     const checks = result.checks.map(check => ({path: relative(live, check.path).split(sep).join("/"), exitCode: check.exitCode, sha256: check.sha256, output: tail(check.output)}));
+    for (const check of checks) results.set(check.path, check);
     for (const check of checks) { const at = ran.findIndex(row => row.path === check.path); if (at >= 0) ran.splice(at, 1); ran.push({path: check.path, sha256: check.sha256}); }
     options.record?.("validation_checks", {experiment_id: options.trial.experimentId, commit: options.trial.commit, passed: result.passed,
      checks: checks.map(({path, exitCode, sha256}, index) => ({path, exitCode, sha256, logPath: result.checks[index].logPath}))});
     return reply({experiment: options.trial.experimentId, passed: result.passed, checks: checks.map(({path, exitCode, output}) => ({path, exitCode, output}))});
    } catch (error) {
     signal?.throwIfAborted();
+    for (const path of attempted) {
+     const check = results.get(path)!;
+     if (check.exitCode === null) results.set(path, {...check, output: tail(error instanceof Error ? error.message : String(error))});
+    }
     return reply({error: (error instanceof Error ? error.message : String(error)).split("\n")[0].slice(0, 300)});
    }
   }});
- return {tool, ran};
+ return {tool, ran, results};
 }
 
 export function createScoutRunner(options: {
@@ -180,14 +191,14 @@ export function createScoutRunner(options: {
    : "stopped" in result ? `stopped:${result.stopped}` : "failure";
   options.record("scout_session_end", {role: input.role, tool_call_id: input.toolCallId, used: input.budget.used, attempted: input.budget.attempted,
    blocked: input.budget.blocked, turns: input.budget.turns, outcome, ...result.cleanup});
-  const ran = checks ? {checks: [...checks.ran]} : {};
+  const ran = checks ? {checks: [...checks.ran], checkResults: [...checks.results.values()]} : {};
   if ("value" in result) return {text: result.value, root: sandbox.cwd, ...ran};
   if ("stopped" in result) {
    const minutes = Math.round((result.stopped === "wall" ? HARNESS_CONFIG.team.scoutGuard.wallMs : HARNESS_CONFIG.team.scoutGuard.stallMs) / 60_000);
    return {text: "", root: sandbox.cwd, stopped: result.stopped === "wall" ? `still running after ${minutes} min` : `no progress for ${minutes} min`, ...ran};
   }
   signal.throwIfAborted();
-  throw new Error("Scout session failed; inspect its observed run");
+  return {text: "", root: sandbox.cwd, failed: "Scout session failed; inspect its observed run", ...ran};
  };
  return Object.assign(run, {prepare});
 }

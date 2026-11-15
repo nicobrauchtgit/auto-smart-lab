@@ -14,8 +14,8 @@ import { CloudExporter } from "./exporter.js";
 import { piUsage, sanitize, sanitizeEventPayload, type TelemetryIdentity, type TelemetryRecord } from "./metadata.js";
 
 export interface ObservationScore {
- id: string; traceId: string; observationId: string; name: string; value: number;
- dataType: "NUMERIC" | "BOOLEAN"; metadata: Record<string, unknown>;
+ id: string; traceId: string; observationId: string; name: string; value: number | string;
+ dataType: "NUMERIC" | "BOOLEAN" | "CATEGORICAL"; metadata: Record<string, unknown>;
 }
 /** Injection is a controller/test API, never a model-controlled option. */
 export interface TelemetryOptions {
@@ -193,6 +193,8 @@ export class Telemetry {
   const context = parent ? trace.setSpan(ROOT_CONTEXT, parent.observation.otelSpan) : ROOT_CONTEXT;
   const span = this.runtime.provider.getTracer("langfuse-sdk.auto-smart-lab").startSpan(name, { attributes: {
    ...createObservationAttributes(type, attributes), "langfuse.trace.name": `pipeline:${this.identity.taskId ?? "agent"}`,
+   // Same static trace tags as the minimal arm, so both arms filter alike.
+   "langfuse.trace.tags": ["auto-smart-lab", ...this.identity.taskId ? [`task:${this.identity.taskId}`] : []],
    "session.id": this.identity.pipelineRunId ?? this.executionId,
   } }, context);
   const Wrapper = type === "generation" ? LangfuseGeneration : type === "agent" ? LangfuseAgent
@@ -225,7 +227,7 @@ export class Telemetry {
   if (!attempt) { attempt = this.start(`attempt:${identity.attempt ?? 1}`, "agent", this.stage(identity), { ...identity }); this.attempts.set(key, attempt); }
   return attempt;
  }
- private score(owner: Handle, name: string, value: number, dataType: ObservationScore["dataType"], metadata: Record<string, unknown> = {}) {
+ private score(owner: Handle, name: string, value: number | string, dataType: ObservationScore["dataType"], metadata: Record<string, unknown> = {}) {
   const score: ObservationScore = { id: createHash("sha256").update(`${this.traceId}:${owner.observation.id}:${name}:${this.scoreSequence++}`).digest("hex"),
    traceId: this.traceId, observationId: owner.observation.id, name, value, dataType,
    metadata: sanitize({ ...owner.metadata, ...metadata }, this.secrets) as Record<string, unknown> };
@@ -356,6 +358,8 @@ export class Telemetry {
    }
   }
   if (type === "stage_summary" && typeof payload.readiness_score === "number") this.score(owner, "evaluation_readiness", payload.readiness_score, "NUMERIC", { advisory: true });
+  if ((type === "lead_validation" || type === "lead_validation_reused") && typeof payload.validation_status === "string")
+   this.score(owner, "validation_status", payload.validation_status, "CATEGORICAL", { experimentId: payload.experiment_id, eventSequence: record.sequence });
   if (type === "artifact_validation" && typeof payload.valid === "boolean") this.score(owner, "artifact_valid", +payload.valid, "BOOLEAN", { final: false, eventSequence: record.sequence });
   const event = this.start(type, "event", owner, metadata, { output: payload,
    level: /error|rejected|refused|failed/.test(type) ? "ERROR" : "DEFAULT" }); this.end(event);

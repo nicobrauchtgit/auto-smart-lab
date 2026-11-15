@@ -43,3 +43,8 @@ defects remain blocking `fix:` findings.
 Cite snapshot files relative to the current directory with a line number
 (`tasks/example.py:12`) and checks by their path under `{{checks}}`. No
 pipeline construction or model tuning.
+
+Every attempted check must complete successfully before readiness can approve
+this candidate. If a checker crashes, repair and rerun it at the same path.
+If your budget ends first, report verification incomplete; an ok source finding
+does not turn failed execution into successful verification.

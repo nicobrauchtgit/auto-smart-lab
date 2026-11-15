@@ -44,7 +44,7 @@ export const PROMPTS = {
  "team.lead-holdout-skipped": { file: "team/lead-holdout-skipped.md", variables: ["reason"] },
  "team.lead-holdout-result": { file: "team/lead-holdout-result.md", variables: ["verdict", "detail", "queries"] },
  "team.lead-handover-tool": { file: "team/lead-handover-tool.md", variables: [] },
- "team.lead-handover-question": { file: "team/lead-handover-question.md", variables: ["experiment", "reason"] },
+ "team.lead-handover-question": { file: "team/lead-handover-question.md", variables: ["experiment", "reason", "previous"] },
  "team.lead-handover-no-champion": { file: "team/lead-handover-no-champion.md", variables: [] },
  "team.lead-handover-running": { file: "team/lead-handover-running.md", variables: ["running"] },
  "team.lead-handover-fix": { file: "team/lead-handover-fix.md", variables: ["experiment", "bullets"] },

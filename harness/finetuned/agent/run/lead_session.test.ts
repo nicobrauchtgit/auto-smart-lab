@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { test, expect } from 'bun:test';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -318,7 +319,7 @@ test('lead on-demand skill metadata is assembled, bodies are sandbox-readable, s
  }finally{session?.dispose();f.close();}
 }, 30_000);
 
-for (const mode of ['budget', 'explicit', 'current-valid', 'both-fail', 'same', 'restart', 'rejected-finalize', 'refit-retry', 'canonical'] as const) test(`delivery selection retains baseline: ${mode}`, async () => {
+for (const mode of ['budget', 'explicit', 'current-valid', 'both-fail', 'same', 'restart', 'rejected-finalize', 'refit-retry', 'canonical', 'incomplete'] as const) test(`delivery selection retains baseline: ${mode}`, async () => {
  const f = fixture(mode==='canonical'); const validated: string[] = [], refitted: string[] = [];
  const path = join(f.root, 'lead/PROGRESS.json'); const controller=new AbortController();let sessions=0;let agentSessions=0;
  try {
@@ -331,7 +332,7 @@ for (const mode of ['budget', 'explicit', 'current-valid', 'both-fail', 'same', 
    scouts: () => ({tool:{name:'scout'} as any,report:async request => {
     const id=(request.refs![0] as {experiment:string}).experiment;validated.push(id);
     const pass = mode === 'current-valid' || (id === 'measured' && !((mode === 'both-fail' || mode === 'rejected-finalize') && validated.length > 1));
-    return {text:pass?'- ok: selected source verified':'- fix: reproducible selected defect',roles:[{role:'validation',status:'completed',bullets:1}]};
+    return {checkResults:mode==='incomplete' && id==='new'?[{path:'checks/spam1/broken.py',exitCode:1,sha256:'a'.repeat(64),output:'FileNotFoundError'}]:[],text:pass || mode==='incomplete'?'- ok: selected source verified':'- fix: reproducible selected defect',roles:[{role:'validation',status:'completed',bullets:1}]};
    }}),
    runAgentSession: async options => {
     agentSessions++;
@@ -367,4 +368,56 @@ for (const mode of ['budget', 'explicit', 'current-valid', 'both-fail', 'same', 
   expect(validated).toEqual(mode==='same'?['measured']:mode==='both-fail'||mode==='rejected-finalize'?['measured','new','measured']:['measured','new']);
   expect(result.progress.budget.used).toBe(mode==='explicit'?0:1);
  }finally{f.close();}
+});
+
+for (const mode of ['repair', 'unrelated', 'not-rerun', 'defect', 'edited-after-run'] as const) test(`unfinished verification handover: ${mode}`, async () => {
+ const f=fixture(); let reviews=0, refits=0;
+ const path=join(f.solutionsRoot,'checks/spam1/contract.py');
+ mkdirSync(join(f.solutionsRoot,'checks/spam1'),{recursive:true});
+ writeFileSync(path,'broken checker');
+ const hash=()=>createHash('sha256').update(readFileSync(path)).digest('hex');
+ const progressPath=join(f.root,'lead/PROGRESS.json');
+ try {
+ const result=await runLeadSession('spam1',{taskConfiguration:spamConfiguration(),progressPath,dependencies:{
+ verifiedCandidate:async()=>({experimentId:'measured',commit:f.commit,tree:'tree',sourceRoot:f.root}),
+ prepareData:()=>f.data,readPython:()=>({prefix:f.root,executable:'/bin/false',fingerprint:'f'} as any),
+ sandbox:()=>({executable:'/bin/false',cwd:f.root,mounts:[],env:{},agentRoot:join(f.root,'agent')} as any),
+ prepareRepository:()=>({initialized:false,head:f.commit,branch:'master'}),environmentTool:()=>({name:'python_environment'} as any),
+ createTraining:()=>({ready:async()=>{},close:async()=>{},tools:[],toolPrompts:[],service:{describe:()=>({})},supervisor:{list:()=>[]},bindSession:()=>{}} as any),
+ scouts:()=>({tool:{name:'scout'} as any,report:async request=>{
+  expect(request.refs).toEqual([{experiment:'measured'}]);
+  reviews++;
+  if(reviews>1) {
+   expect(request.question).toContain('FileNotFoundError');
+   expect(request.question).toContain('checks/spam1/contract.py');
+   expect(request.question).toContain(mode==='defect'?'predictions include 2':'source appears binary');
+  }
+  const checks=reviews===1 ? [{path:'checks/spam1/contract.py',sha256:hash(),exitCode:1,output:'FileNotFoundError: document_123'}]
+   : mode==='not-rerun' ? [] : [{path:mode==='unrelated'?'checks/spam1/other.py':'checks/spam1/contract.py',sha256:hash(),exitCode:0,output:'binary verified'}];
+  if(mode==='edited-after-run' && reviews>1)writeFileSync(path,'edited after execution '+reviews);
+  return {text:mode==='defect'?'- fix: predictions include 2':'- ok: source appears binary',roles:[{role:'validation',status:'completed',bullets:1}],checkResults:checks};
+ }}),
+ runAgentSession:async options=>{
+  mkdirSync(join(f.solutionsRoot,'checks/spam1'),{recursive:true});
+  writeFileSync(path,'broken checker');
+  const tool=options.customTools!.find(t=>t.name==='hand_over')!;
+  const first=await tool.execute('first',{reason:'ready'},undefined,undefined,undefined as never);
+  expect(JSON.stringify(first)).toContain('verification_incomplete');
+  const saved=readProgress(progressPath)!;
+  expect(saved.baseline).toBeUndefined();
+  expect(saved.validationAttempts!.measured.validation.fix).toHaveLength(mode==='defect'?1:0);
+  expect(saved.validationAttempts!.measured.validation.checkResults![0].sha256).toBe(hash());
+  if(mode==='repair'||mode==='not-rerun') writeFileSync(path,'repaired checker');
+  if(mode==='unrelated')writeFileSync(join(f.solutionsRoot,'checks/spam1/other.py'),'broken checker');
+  const second=await tool.execute('second',{reason:'continue verification',finalize:true},undefined,undefined,undefined as never);
+  expect(JSON.stringify(second)).toContain(mode==='repair'?'accepted':'not approved');
+  return {output:'finished',agentRunId:'fixture'} as any;
+ },
+ refit:async()=>{refits++;return {artifacts:[],validation:{valid:true,errors:[]}};},
+ collectResults:async()=>({valid:false,trials:[],artifacts:[],errors:[]}) as any,
+ }});
+ expect(refits).toBe(mode==='repair'?1:0);
+ expect(result.valid).toBe(mode==='repair');
+ expect(reviews).toBe(mode==='repair'||mode==='defect'?2:3); // completed defects are cached
+ } finally {f.close();}
 });

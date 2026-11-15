@@ -12,6 +12,8 @@ import { atomicJson } from "../experiments/ownership.js";
 import type { MeasuredCandidateSelection } from "../training/development_selection.js";
 import type { PromptSnapshot } from "../prompts/loader.js";
 
+import type { ValidationCheckResult } from "../team/contracts.js";
+
 export interface LeadTrialRecord {
  experimentId: string;
  /** First sentence of the agent's hypothesis, at most 160 characters. */
@@ -43,7 +45,7 @@ export interface LeadHandOver {
  experimentId: string;
  selectedCandidate?: MeasuredCandidateSelection;
  confirmationReceipt?: { path: string; sha256: string };
- validation: { status: string; fix: string[]; advice: string[]; ok: string[] };
+ validation: { status: string; fix: string[]; advice: string[]; ok: string[]; checkResults?: ValidationCheckResult[] };
  at: string;
 }
 export interface LeadProgress {
@@ -67,6 +69,7 @@ export interface LeadProgress {
  scoutCalls: number;
  phase?: "baseline" | "improvement";
  baseline?: { experimentId: string; commit: string; trainingRoot?: string; confirmationReceipt?: { path: string; sha256: string }; receiptKey: string; at: string };
+ validationAttempts?: Record<string, { commit: string; tree: string; validation: LeadHandOver["validation"] }>;
  validationReceipts?: Record<string, { experimentId: string; commit: string; validation: LeadHandOver["validation"]; at: string }>;
  handOver?: LeadHandOver;
  delivery?: string;
@@ -93,6 +96,7 @@ export function readProgress(path: string): LeadProgress | undefined {
  if (value.baseline) {
   const baseline = value.baseline, receipt = value.validationReceipts?.[baseline.receiptKey];
   if (value.phase !== "improvement" || !receipt || receipt.experimentId !== baseline.experimentId || receipt.commit !== baseline.commit
+   || receipt.validation.checkResults?.some(check => check.exitCode !== 0)
    || receipt.validation.status !== "completed" || receipt.validation.fix.length !== 0 || receipt.validation.ok.length + receipt.validation.advice.length === 0)
    throw new Error(`Corrupt lead baseline evidence at ${path}`);
  } else if (value.phase === "improvement") throw new Error(`Missing lead baseline evidence at ${path}`);

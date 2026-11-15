@@ -12,7 +12,7 @@
  */
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
-import { delimiter, dirname, join } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type InlineExtension, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 
@@ -285,11 +285,16 @@ export function validationSummary(report: ScoutReport | undefined): LeadHandOver
  if (!report) return { status: "not_run", fix: [], advice: [], ok: [] };
  const bullets = finalBullets(report.text, "", { labelled: true }).filter(Boolean).map(bullet => bullet.replace(/^- /, ""));
  const pick = (kind: string) => bullets.filter(bullet => validationKind(bullet) === kind);
- return { status: report.roles[0]?.status ?? "failed", fix: pick("defect"), advice: pick("idea"), ok: pick("fact") };
+ return { status: report.roles[0]?.status ?? "failed", fix: pick("defect"), advice: pick("idea"), ok: pick("fact"), checkResults: report.checkResults ?? [] };
 }
 
 export function validationPassed(value: LeadHandOver["validation"]): boolean {
- return value.status === "completed" && value.fix.length === 0 && value.ok.length + value.advice.length > 0;
+ return !value.checkResults?.some(check => check.exitCode !== 0) && value.status === "completed" && value.fix.length === 0 && value.ok.length + value.advice.length > 0;
+}
+
+/** One label per readiness check, for observability: passed, fix, verification_incomplete, failed, ... */
+export function validationLabel(value: LeadHandOver["validation"]): string {
+ return validationPassed(value) ? "passed" : value.fix.length ? "fix" : value.status;
 }
 
 export async function runLeadSession(taskId: string, options: RunLeadOptions): Promise<LeadRunResult> {
@@ -541,17 +546,35 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
   try { key = receiptKey(); } catch {
    return { status: "unavailable", fix: [], advice: [], ok: [] };
   }
+  const attempt = progress.validationAttempts?.[experimentId];
+  const previous = attempt?.commit === snapshot.commit && attempt.tree === snapshot.tree ? attempt.validation : undefined;
   const cached = progress.validationReceipts![key];
-  if (cached) { record("lead_validation_reused", { experiment_id: experimentId, commit: snapshot.commit, receipt_key: key }); return cached.validation; }
+  if (cached && !previous?.checkResults?.some(check => check.exitCode !== 0)) { record("lead_validation_reused", { experiment_id: experimentId, commit: snapshot.commit, receipt_key: key, validation_status: validationLabel(cached.validation) }); return cached.validation; }
   let result: ScoutReport | undefined;
   try {
-   result = await getScouts().report({ role: "validation", question: prompts.render("team.lead-handover-question", { experiment: experimentId, reason }).text,
+   result = await getScouts().report({ role: "validation", question: prompts.render("team.lead-handover-question", { experiment: experimentId, reason, previous: previous ? JSON.stringify(previous, null, 2) : "none" }).text,
     refs: [{ experiment: experimentId }] }, signal, toolCallId);
   } catch (error) {
    signal?.throwIfAborted();
    record("lead_validation_failed", { experiment_id: experimentId, message: error instanceof Error ? error.message : String(error) });
   }
   const summary = validationSummary(result);
+  if (previous && summary.fix.length + summary.ok.length + summary.advice.length === 0) {
+   summary.fix = previous.fix; summary.ok = previous.ok; summary.advice = previous.advice;
+  }
+  // Only a rerun at the same path resolves that check's previous failure.
+  const checks = new Map(previous?.checkResults?.map(check => [check.path, check]));
+  for (const check of summary.checkResults ?? []) checks.set(check.path, check);
+  summary.checkResults = [...checks.values()].map(check => {
+   if (check.exitCode !== 0) return check;
+   const path = resolve(data.solutionsRoot, check.path);
+   try { if (existsSync(path) && check.sha256 === sha256(readFileSync(path))) return check; } catch { /* Unreadable source cannot establish successful verification. */ }
+   return {...check, exitCode: null, output: "Check source changed or disappeared after execution; rerun required"};
+  });
+  if (summary.status === "completed" && summary.checkResults.some(check => check.exitCode !== 0))
+   summary.status = "verification_incomplete";
+  (progress.validationAttempts ??= {})[experimentId] = {commit: snapshot.commit, tree: snapshot.tree, validation: summary};
+  save();
   // Unavailable/failed checks may be transient. Completed verdicts are receipts,
   // including defects, and expire when the immutable source or check identity changes.
   if (summary.status === "completed" && summary.fix.length + summary.ok.length + summary.advice.length > 0) {
@@ -567,7 +590,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
    }
    save();
   }
-  record("lead_validation", { experiment_id: experimentId, ...summary });
+  record("lead_validation", { experiment_id: experimentId, validation_status: validationLabel(summary), ...summary });
   return summary;
  };
  const accept = (by: LeadHandOver["by"], reason: string, experimentId: string, validation: LeadHandOver["validation"]) => {
@@ -575,7 +598,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
   progress.handOver = handOver;
   progress.status = "handing_over";
   mkdirSync(dirname(reviewPath), { recursive: true });
-  writeFileSync(reviewPath, `${JSON.stringify({ experimentId, validation: { valid: validation.fix.length === 0 },
+  writeFileSync(reviewPath, `${JSON.stringify({ experimentId, validation: { valid: validationPassed(validation) },
    review: { status: validation.fix.length ? "fix" : validation.status === "completed" ? "ok" : validation.status,
     readinessRationale: `${by === "lead" ? "Lead" : "Harness"} hand-over: ${handOver.reason}`, concerns: validation.fix, recommendations: validation.advice } }, null, 2)}\n`);
   save();
@@ -620,7 +643,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
    if (!champion && (!args.finalize || !progress.baseline)) { record("lead_hand_over_refused", { reason: "no_champion" }); return reply(prompts.render("team.lead-handover-no-champion", {}).text); }
    if (!args.finalize) {
     const validation = await validate(champion!.experimentId, args.reason, signal, toolCallId);
-    if (!validationPassed(validation)) return reply(prompts.render("team.lead-handover-fix", { experiment: champion!.experimentId, bullets: validation.fix.length ? validation.fix.map(row => `- ${row}`).join("\n") : `status: ${validation.status}; labelled findings: ${validation.ok.length + validation.advice.length}` }).text);
+    if (!validationPassed(validation)) return reply(prompts.render("team.lead-handover-fix", { experiment: champion!.experimentId, bullets: `status: ${validation.status}; checks: ${JSON.stringify(validation.checkResults ?? [])}\n${validation.fix.map(row => `- ${row}`).join("\n")}` }).text);
     return reply(prompts.render("team.lead-checkpoint", { progress: renderProgress(prompts, progress).text }).text);
    }
    const selected = await finalize("lead", args.reason, signal, toolCallId);

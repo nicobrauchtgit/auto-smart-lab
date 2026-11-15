@@ -9,7 +9,7 @@ import { REPO_ROOT, statePath } from "../paths.js";
 import { ScoutBudget } from "./budget.js";
 import { appendValidFindings, validRef } from "./journal.js";
 import { earlierFindings } from "./findings.js";
-import type { FindingKind, FindingRef, ScoutRole, TrialSnapshot, TrialReviewContext } from "./contracts.js";
+import type { FindingKind, FindingRef, ScoutRole, TrialSnapshot, TrialReviewContext, ValidationCheckResult } from "./contracts.js";
 import { describeRefs, type TrialResolver } from "./trials.js";
 
 export interface ScoutRequest { role: ScoutRole | ScoutRole[]; question: string; refs?: FindingRef[] }
@@ -29,7 +29,7 @@ export interface ScoutSessionInput {
  * harness's error, stop or empty line.
  */
 export interface ScoutRoleReport { role: ScoutRole; status: "completed" | "empty" | "stopped" | "failed"; bullets: number; reason?: string }
-export interface ScoutReport { text: string; roles: ScoutRoleReport[] }
+export interface ScoutReport { text: string; roles: ScoutRoleReport[]; checkResults?: ValidationCheckResult[] }
 /**
  * One outcome for a whole scout call: success only when every role completed
  * with bullets; otherwise the worst role decides (failure, then stopped, then
@@ -49,7 +49,7 @@ export function scoutOutcome(report: ScoutReport): { outcome: "success" | "empty
  * this session (paths relative to the shared solutions tree, with the hash of
  * the bytes it ran).
  */
-export interface ScoutReply { text: string; root?: string; stopped?: string; checks?: { path: string; sha256: string }[] }
+export interface ScoutReply { text: string; root?: string; stopped?: string; failed?: string; checks?: { path: string; sha256: string }[]; checkResults?: ValidationCheckResult[] }
 export interface ScoutsOptions {
  /** `task` is task.md as stream B wrote it: the unit introduction, then the task text. */
  prompts: PromptSnapshot; taskId: string; task: string; dataPaths: string;
@@ -58,7 +58,7 @@ export interface ScoutsOptions {
  journalPath: string; datasetSha256: string; runId: string; invocationId: string;
  /** State root that journaled file citations are stored relative to; default runs/finetuned. */
  citationBase?: string;
- /** Backend must isolate all tool traffic from the caller; only final text returns. */
+ /** Backend must isolate scout tool traffic; only final text and harness-owned check outcomes return. */
  run(input: ScoutSessionInput): Promise<string | ScoutReply>;
  prepare(roles: readonly ScoutRole[], signal?: AbortSignal): Promise<void>;
  /** Stream B's trial resolver for this task. Without it, validation fails closed and trial refs are unresolved. */
@@ -187,6 +187,7 @@ export function createScouts(options: ScoutsOptions) {
   const shared = options.prompts.render("team.shared", {});
   const output: string[] = [];
   const outcomes: ScoutRoleReport[] = [];
+  const checkResults: ValidationCheckResult[] = [];
   const refs = await describeRefs(request.refs ?? [], options.trials);
   const failed = (role: ScoutRole, error: unknown) => {
    const reason = clip(error instanceof Error ? error.message : "unknown error", 200);
@@ -227,11 +228,12 @@ export function createScouts(options: ScoutsOptions) {
     failed(role, error);
     continue;
    }
+   checkResults.push(...reply.checkResults ?? []);
    // Scout-written items only; the harness's stop or empty line is not a finding and is not journaled.
    const bullets = finalBullets(reply.text, "", { labelled: role === "validation" }).filter(Boolean);
-   outcomes.push({ role, status: reply.stopped ? "stopped" : bullets.length ? "completed" : "empty", bullets: bullets.length, ...reply.stopped ? { reason: reply.stopped } : {} });
+   outcomes.push({ role, status: reply.failed ? "failed" : reply.stopped ? "stopped" : bullets.length ? "completed" : "empty", bullets: bullets.length, ...(reply.failed || reply.stopped) ? { reason: reply.failed || reply.stopped } : {} });
    if (!bullets.length) {
-    output.push((reply.stopped ? options.prompts.render("team.stopped", { reason: reply.stopped }) : options.prompts.render("team.empty", {})).text.trim());
+    output.push((reply.failed ? options.prompts.render("team.failed", {role, reason: reply.failed}) : reply.stopped ? options.prompts.render("team.stopped", { reason: reply.stopped }) : options.prompts.render("team.empty", {})).text.trim());
     continue;
    }
    // Validation bullets must say ok, fix or advice; others are returned but not journaled.
@@ -251,7 +253,7 @@ export function createScouts(options: ScoutsOptions) {
    if (rejected.length) output.push(options.prompts.render("team.rejected", { count: String(rejected.length),
     reasons: rejected.map(row => `"${clip(row.title, 40)}": ${row.reason}`).join("; ") }).text.trim());
   }
-  return { text: output.join("\n"), roles: outcomes };
+  return { text: output.join("\n"), roles: outcomes, checkResults };
  };
  /** Lead-facing text plus each role's outcome, for callers that must tell completed scouts from failed or stopped ones. */
  const report = async (request: ScoutRequest, signal?: AbortSignal, toolCallId: string = randomUUID()): Promise<ScoutReport> => {
@@ -261,7 +263,7 @@ export function createScouts(options: ScoutsOptions) {
   // Synchronous control-path validation is exempt from the background cap.
   await options.prepare(roles, signal);
   return Promise.all(roles.map(role => execute({ ...request, role }, signal, toolCallId))).then(reports => ({
-   text: reports.map(report => report.text).join("\n"), roles: reports.flatMap(report => report.roles),
+   text: reports.map(report => report.text).join("\n"), roles: reports.flatMap(report => report.roles), checkResults: reports.flatMap(report => report.checkResults ?? []),
   }));
  };
  const scout = async (request: ScoutRequest, signal?: AbortSignal, toolCallId?: string) => (await report(request, signal, toolCallId)).text;
@@ -293,10 +295,10 @@ export function createScouts(options: ScoutsOptions) {
   const ready = Promise.resolve().then(() => options.prepare(roles, signal));
   void ready.catch(() => undefined);
   const done = Promise.all(roles.map(role => slot(signal, async () => { await ready; return execute({ ...request, role }, signal, toolCallId); })
-   .catch(error => ({ text: (signal.aborted ? options.prompts.render("team.stopped", { reason: `${role}: consultation cancelled` }) : options.prompts.render("team.failed", { role, reason: clip(error instanceof Error ? error.message : "unknown error", 200) })).text.trim(),
+   .catch((error): ScoutReport => ({ text: (signal.aborted ? options.prompts.render("team.stopped", { reason: `${role}: consultation cancelled` }) : options.prompts.render("team.failed", { role, reason: clip(error instanceof Error ? error.message : "unknown error", 200) })).text.trim(),
     roles: [{ role, status: signal.aborted ? "stopped" as const : "failed" as const, bullets: 0, reason: signal.aborted ? "cancelled" : "session failed" }] }))))
    .then(async reports => {
-    const report = { text: reports.map(report => report.text).join("\n"), roles: reports.flatMap(report => report.roles) };
+    const report = { text: reports.map(report => report.text).join("\n"), roles: reports.flatMap(report => report.roles), checkResults: reports.flatMap(report => report.checkResults ?? []) };
     options.record?.(signal.aborted ? "scout_consultation_cancelled" : "scout_consultation_finished",
      { consultation_id: id, roles, statuses: report.roles, duration_ms: Date.now() - started });
     await options.news?.(id, roles, report);

@@ -201,3 +201,15 @@ Checks:
 ./dev bun test harness/finetuned/agent/team harness/finetuned/agent/subagents harness/finetuned/agent/prompts
 ./dev bun run typecheck
 ```
+
+Validation completion and candidate verification are separate. Harness check
+outcomes (path, executed source hash, exit code and bounded output) accompany
+the scout report. Readiness returns `verification_incomplete` when an attempted
+check remains unsuccessful, even with `ok` findings and no `fix`. This does not
+establish a pipeline defect. Attempts persist in lead progress for the same
+immutable candidate. A later hand-over supplies earlier findings and execution
+outcomes to another scout, which repairs and reruns the existing scripts at the
+same paths. A changed or removed script is not successful evidence until rerun;
+unrelated passing checks cannot clear a failure. Pipeline edits still require a
+new committed and measured candidate. Existing budgets, the terminal end step
+and independently approved baseline fallback remain in place.

@@ -66,6 +66,11 @@ stays in `agent/prompts/`.
 `metadata.final`. `evaluation_readiness` is advisory. Harness metric scores carry
 data, fold and source provenance; failed/worse attempts remain visible. Scores
 do not select champions, authorize uploads or replace harness measurements.
+Each readiness check (`lead_validation`, `lead_validation_reused`) adds a
+categorical `validation_status` score: `passed`, `fix`,
+`verification_incomplete`, `failed`, `stopped`, `empty`, `unavailable` or
+`not_run`. Traces carry the minimal arm's static tags `auto-smart-lab` and
+`task:<id>`.
 
 ## Emergency JSONL
 

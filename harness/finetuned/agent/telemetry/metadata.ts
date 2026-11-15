@@ -87,7 +87,7 @@ export function sanitizeEventPayload(type: string, payload: unknown, secrets: re
  const bounded = mask(payload) as Record<string, unknown>;
  if (bounded?.truncated !== true) return bounded;
  // Oversized domain records still identify their trial and authoritative result.
- for (const key of ["outcome", "experiment_id", "exit_code", "valid", "readiness_score", "status",
+ for (const key of ["outcome", "validation_status", "experiment_id", "exit_code", "valid", "readiness_score", "status",
   "dataset_sha256", "sample_manifest_sha256", "fold_manifest_sha256", "commit"]) {
   if (["string", "number", "boolean"].includes(typeof raw[key])) bounded[key] = mask(raw[key]);
  }

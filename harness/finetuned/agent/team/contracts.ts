@@ -41,3 +41,6 @@ export type FindingResolution = { cursor: number; id: string; status: "supersede
 export type FindingsStatus = { cursor: number; counts: Partial<Record<FindingKind, number>>;
  newEntries: { id: string; title: string }[]; staleRefs: string[] };
 export interface FindingsReader { status(taskId: string, cursor?: number): Promise<FindingsStatus> }
+
+/** Harness execution evidence, independent of written findings. null means execution did not complete. */
+export interface ValidationCheckResult { path: string; sha256?: string; exitCode: number | null; output: string }

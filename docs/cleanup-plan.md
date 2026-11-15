@@ -137,6 +137,17 @@ submission. Configured chains stop before submit. Data access and successful
 evaluation do not authorize uploads. Keep development and official scores
 separate.
 
+## Validation verification repair (2026-11-15)
+
+Readiness now retains harness check outcomes separately from scout verdicts.
+A failed or unfinished attempted check produces `verification_incomplete`,
+without inventing a pipeline defect or approving the candidate. Repeating the
+existing hand-over sends the same measured snapshot, prior check paths/hashes,
+bounded errors and findings to a fresh validation scout for checker repair and
+rerun. Outstanding failures survive unrelated passes and checker edits;
+pipeline edits still need a new measurement. Budgets and approved-baseline
+fallback are unchanged. No experiment run or upload is part of this repair.
+
 ## Work queue (v2 section 11)
 
 First priority, implemented and locally verified, 2026-11-13:
