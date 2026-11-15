@@ -226,3 +226,17 @@ the existing `.tools` ZIP/unzip links were restored in that checkout before
 rerunning. Vertex configuration hashes remained unchanged. Both working trees
 were clean after applying the code. The full 750-test suite was run on main;
 Google received fast and focused validation, with no new live model experiment.
+
+### Shared tool-use example
+
+The shared `team.board-context` startup prompt now contains one worked example:
+search earlier decoding findings across tasks, then optionally post a cited,
+untested idea for the current task. It explains actual entry IDs, stable request
+IDs, identical retries and conditional posting. Lead and all scouts receive it;
+lead context replacement retains it. The scout tool description also describes
+recall across tasks and runs. A fixture executes both example JSON requests
+against the real board tools and checks citation, attribution and retry behavior.
+
+Follow-up validation: 23 focused board/prompt tests passed, fast validation
+passed 618 tests with 3 skips, and typecheck passed. This prompt-only follow-up
+used deterministic fixtures without a live model experiment.

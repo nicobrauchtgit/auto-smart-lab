@@ -5,8 +5,8 @@ you. You may keep working or end your turn to wait. Data inspects inputs; ideas 
 material and searches; validation checks one measured trial and needs exactly
 one `{experiment}` reference (or a `{check, experiment}` reference): it reads
 that trial's frozen source and runs checks against it, never live code, and
-answers with ok, fix or advice bullets. Earlier findings from this run are
-supplied to avoid repetition.
+answers with ok, fix or advice bullets. Relevant earlier findings across tasks
+and runs are supplied to avoid repetition; use the board tools to read more.
 
 Use this tool iteratively: consult data about input uncertainties, ideas about
 a focused hypothesis or measured weakness, and validation about a concrete

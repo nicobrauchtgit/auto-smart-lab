@@ -245,3 +245,25 @@ test("migration imports the complete prefix of a torn source, preserves the tail
  expect(readFileSync(`${source}.preserved`)).toEqual(bytes);
  expect((await readFindings(createBoard(base).path)).entries).toHaveLength(1);
 });
+
+test("the shared prompt example searches another task and posts a cited idea with valid, retryable arguments", async () => {
+ const prompts = loadPromptSnapshot(), board = createBoard(root());
+ const earlier = await board.write(actor("taskA", "data"), {kind: "fact", title: "Input decoding", text: "Several inputs failed strict decoding.", refs: []}, "earlier-decoding");
+ const introduction = prompts.render("team.board-context", {recall: "none"}).text;
+ const examples = [...introduction.matchAll(/```json\n([\s\S]*?)\n```/g)].map(match => JSON.parse(match[1]));
+ expect(examples).toHaveLength(2);
+ const tools = createBoardTools(board, actor("taskB", "ideas"), prompts);
+ const invoke = async (name: string, args: any) => {
+  const reply = await tools.find(tool => tool.name === name)!.execute("example-call", args, undefined, undefined, undefined as never);
+  return JSON.parse((reply.content[0] as {text: string}).text);
+ };
+ const page = await invoke("findings_read", examples[0]);
+ expect(page.entries[0].id).toBe(earlier.id);
+ examples[1].refs[0].entry = page.entries[0].id;
+ examples[1].requestId = "decoding-reuse-example";
+ const written = await invoke("finding_write", examples[1]);
+ expect(written.kind).toBe("idea"); expect(written.taskId).toBe("taskB");
+ expect(written.refs).toEqual([{entry: earlier.id}]);
+ expect((await invoke("finding_write", examples[1])).id).toBe(written.id);
+ expect((await readFindings(board.path)).entries).toHaveLength(2);
+});
