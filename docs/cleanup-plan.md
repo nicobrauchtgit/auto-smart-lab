@@ -150,6 +150,12 @@ fallback are unchanged. No experiment run or upload is part of this repair.
 
 ## Work queue (v2 section 11)
 
+**Observing-agent protocol.** Unit/task/arm requests follow
+[one recorded procedure](experiment-observation.md), with a durable run list,
+observer-authored reports, dataset cleanup after the last consumer, and observer
+context compaction at each task boundary. This is observer guidance and adds no
+runtime instructions to either experiment arm.
+
 **Shared agent message board: implemented and validated in both checkouts.**
 [The staged completion plan](message-board-plan.md) builds on the existing
 durable findings journal and read/add/resolve adapters. It covers shared

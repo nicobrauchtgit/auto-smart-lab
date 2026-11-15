@@ -28,6 +28,33 @@ Design decisions cite research papers only, marked peer-reviewed or preprint.
 Blog posts, vendor docs and opinion pieces are not evidence. Our own measured
 runs count as evidence for this repository but not as general findings.
 
+# Observing experiments
+
+When the user requests units/tasks and arms, follow
+[the observing-agent protocol](docs/experiment-observation.md). This is
+development/observation guidance; keep it out of both arms' runtime prompts.
+
+- Resolve the request into a durable ordered run list before launching. Use the
+  requested checkout/model and each arm's configured settings. Record exact
+  commands, source/configuration identity and continuation state. Run sequentially
+  by task, minimal then finetuned when both are requested, unless the user specifies
+  another order. Continue each arm's own learning within its experiment series.
+- Dataset preparation belongs to the user or the explicitly assigned setup
+  workflow. Do not independently download, stage or repair datasets. Keep the
+  harness's required preflight; report missing prerequisites without bypassing it.
+- Observe without coaching or changing the running experiment. Use the recorded
+  budgets and stop policy; do not add deadlines, retries or runtime fixes.
+- The observing agent owns the evidence-based task report in `docs/experiments/`
+  and the observation ledger. Write the report and preserve result/source evidence
+  before removing task datasets that have finished use by every requested consumer.
+  Record deleted paths, hashes, reclaimed space and any deferred cleanup.
+- After each task/arm/model execution, persist a short handoff and compact the
+  observing agent's context before the next execution. Record actual compaction; a
+  written summary alone does not release context. If the client exposes no way
+  to request compaction, mark it pending and hand back for client-side compaction.
+- After compaction, resume from the durable run list and reports. Do not repeat
+  completed runs or silently change the recorded experiment contract.
+
 # Harness development
 
 The LLM orchestrator, the research and evaluate stages, the knowledge store and

@@ -7,6 +7,11 @@ that is simply run, or a more complex harness adapted to the task?
 
 Both arms live on this branch. Choose one with a flag; no branch switch.
 
+Observing agents execute unit/task/arm requests using the
+[observing-agent protocol](experiment-observation.md): a recorded run list and
+consistent configured conditions, observer-authored experiment reports, dataset
+cleanup after use, and observer context compaction at each task boundary.
+
 ```bash
 ./dev bun run experiment -- --arm minimal --check-setup
 ./dev bun run experiment -- --arm minimal --only spam1,spam2,spam3
