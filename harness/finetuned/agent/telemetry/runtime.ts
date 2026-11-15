@@ -12,6 +12,16 @@ import { checkLangfuseAccess, LangfuseAccessError, telemetryConfig, type Telemet
 import { EmergencyJournal } from "./emergency.js";
 import { CloudExporter } from "./exporter.js";
 import { piUsage, sanitize, sanitizeEventPayload, type TelemetryIdentity, type TelemetryRecord } from "./metadata.js";
+import { loadExperimentConfig, modelReference } from "../../../../experiment/config.js";
+
+/** `model:<provider>/<id>` from the shared experiment configuration, as the minimal arm tags its traces. */
+let modelTagCache: string[] | undefined;
+function modelTag(): string[] {
+ if (!modelTagCache) {
+  try { modelTagCache = [`model:${modelReference(loadExperimentConfig())}`]; } catch { modelTagCache = []; }
+ }
+ return modelTagCache;
+}
 
 export interface ObservationScore {
  id: string; traceId: string; observationId: string; name: string; value: number | string;
@@ -194,7 +204,7 @@ export class Telemetry {
   const span = this.runtime.provider.getTracer("langfuse-sdk.auto-smart-lab").startSpan(name, { attributes: {
    ...createObservationAttributes(type, attributes), "langfuse.trace.name": `pipeline:${this.identity.taskId ?? "agent"}`,
    // Same static trace tags as the minimal arm, so both arms filter alike.
-   "langfuse.trace.tags": ["auto-smart-lab", ...this.identity.taskId ? [`task:${this.identity.taskId}`] : []],
+   "langfuse.trace.tags": ["auto-smart-lab", ...this.identity.taskId ? [`task:${this.identity.taskId}`] : [], ...modelTag()],
    "session.id": this.identity.pipelineRunId ?? this.executionId,
   } }, context);
   const Wrapper = type === "generation" ? LangfuseGeneration : type === "agent" ? LangfuseAgent

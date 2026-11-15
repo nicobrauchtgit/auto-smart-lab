@@ -69,8 +69,9 @@ do not select champions, authorize uploads or replace harness measurements.
 Each readiness check (`lead_validation`, `lead_validation_reused`) adds a
 categorical `validation_status` score: `passed`, `fix`,
 `verification_incomplete`, `failed`, `stopped`, `empty`, `unavailable` or
-`not_run`. Traces carry the minimal arm's static tags `auto-smart-lab` and
-`task:<id>`.
+`not_run`. Traces carry the minimal arm's static tags `auto-smart-lab`,
+`task:<id>` and `model:<provider>/<id>` (from `experiment.config.json`). Both arms
+read `LANGFUSE_TRACING_ENVIRONMENT`; set it in `.env` so they share one environment.
 
 ## Emergency JSONL
 
