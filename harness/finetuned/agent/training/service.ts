@@ -54,6 +54,8 @@ export interface SearchSettings {
 	overrunFactor: number;
 	maxSeconds: number;
 	validationTimeoutSeconds: number;
+	/** Deadline for the delivery-shaped smoke fit of anchored batch clustering, added to the validation timeout. */
+	anchoredSmokeSeconds: number;
 }
 
 export interface TrainingServiceOptions {
@@ -336,6 +338,11 @@ export class TrainingService {
     }
 
     /** Same no-fit metadata/import check before readiness and every trial launch. */
+    private anchoredMeasurement(): boolean {
+        const measurement = this.options.measurement as (MeasurementConfig & { anchorManifestPath?: string }) | undefined;
+        return measurement?.kind === "clustering" && measurement.execution === "batch" && Boolean(measurement.anchorManifestPath);
+    }
+
     private checkMeasurement(declaration: MeasurementConfig = this.options.measurement!, requireEvidence = false): (MeasurementConfig & { sampleManifestSha256: string; hasTargets: boolean; evidenceManifestSha256?: string }) | undefined {
         if (!this.options.measurement) throw new Error("Retired decoded-text training: supply a raw development sample manifest through measurement before starting training.");
         const probe = spawnSync(this.options.pythonExecutable, [join(PYTHON_ROOT, "check_measurement.py"),
@@ -717,7 +724,9 @@ export class TrainingService {
             const issues = await runPipelineValidation({ pythonExecutable: this.options.pythonExecutable, scriptPath,
                 command: this.options.sandboxCommand?.([this.options.pythonExecutable, scriptPath], { directory, sourceRoots: [sourceRoot] }),
                 sourceRoot, request, measurement: this.checkMeasurement(), testZip: data?.testZip, sampleSource: data?.configuration.samples.source, sealedRows: data?.split.sealedIds.length, env: this.options.env,
-                cwd: this.options.projectRoot, timeoutMs: this.settings.validationTimeoutSeconds * 1000,
+                anchorTimeoutSeconds: this.settings.anchoredSmokeSeconds,
+                // A delivery-sized fit on real data takes far longer than the 256-row check (code2: about 18 s, code1 more).
+                cwd: this.options.projectRoot, timeoutMs: (this.settings.validationTimeoutSeconds + (this.anchoredMeasurement() ? this.settings.anchoredSmokeSeconds : 0)) * 1000,
                 interpret: (output) => {
                     const value = output as { passed?: unknown; phase?: string; error?: { type?: string; message?: string }; traceback?: string; sample?: { trainRows?: number }; largerSample?: { passed?: boolean; trainRows?: number }; sampleSensitive?: boolean; developmentRows?: number; testPart?: { available?: boolean; clusterCount?: number; singletonFraction?: number; largestClusterShare?: number; reason?: string } };
                     if (typeof value?.passed !== "boolean") return undefined;

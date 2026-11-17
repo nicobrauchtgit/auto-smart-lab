@@ -9,7 +9,7 @@ const fields = {
 	research: ["profileTimeoutMs", "profileTextMinPercent"],
 	solve: ["seed", "foldPolicy"],
 	holdout: ["targetSmallestClassRows", "minSmallestClassRows", "maxFraction", "groupFraction"],
-	search: ["confirmAboveSeconds", "overrunFactor", "maxSeconds", "validationTimeoutSeconds"],
+	search: ["confirmAboveSeconds", "overrunFactor", "maxSeconds", "validationTimeoutSeconds", "anchoredSmokeSeconds"],
 	supervision: ["linesPerUpdate", "minStallMs", "stallGapMultiple", "importPreludeMs", "idleCpuPercent", "sampleIntervalMs", "maxConcurrent", "stopGraceMs", "outputCapBytes", "memoryReserveBytes", "swapFullSeconds", "overrunMultiple", "overrunMinMs", "busySilenceCeilingMs"],
 	subagents: ["turnTimeoutMs", "waitTimeoutMs", "maxWaitTimeoutMs", "limits"],
 };

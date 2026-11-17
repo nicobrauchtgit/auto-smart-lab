@@ -114,7 +114,7 @@ def anchored_structure(document, root, frame):
     process.start()
     writer.close()
     try:
-        if reader.poll(min(10, document.get('anchorTimeoutSeconds', 10))):
+        if reader.poll(document.get('anchorTimeoutSeconds', 10)):
             return reader.recv()
         return {'available': False, 'reason': 'Timeout'}
     except EOFError:

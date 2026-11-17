@@ -34,7 +34,8 @@
     "confirmAboveSeconds": 900,
     "overrunFactor": 1.5,
     "maxSeconds": 7200,
-    "validationTimeoutSeconds": 60
+    "validationTimeoutSeconds": 60,
+    "anchoredSmokeSeconds": 300
   },
   "foldRecommendations": [
     {
