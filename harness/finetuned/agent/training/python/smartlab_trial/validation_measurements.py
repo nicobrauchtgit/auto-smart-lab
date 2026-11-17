@@ -36,7 +36,9 @@ def _observe(invocation: Any, estimator: Any, frame: Any, fitted_predictions: An
         predicted = estimator.predict(frame)
     if task == "multiclass_classification":
         from .class_labels import predictions as class_predictions
-        predicted = class_predictions(predicted, len(frame), estimator.classes_)
+        # Pipelines need not expose classes_; trial predictions were already checked against the training labels.
+        allowed = getattr(estimator, "classes_", None)
+        predicted = class_predictions(predicted, len(frame), allowed if allowed is not None else sorted({str(value) for value in predicted}))
     else:
         predicted = _labels(predicted, len(frame), task == "classification")
     if task == "classification":

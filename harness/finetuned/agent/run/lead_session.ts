@@ -394,7 +394,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
  const runningTrials = () => (training?.supervisor?.list?.() ?? []).filter(view => view.status === "running");
  const holdoutDone = (experimentId: string) => progress.holdout.some(row => row.experimentId === experimentId);
  const holdoutText = (row: LeadProgress["holdout"][number]) => row.status === "completed"
-  ? configuration.kind === "clustering" ? prompts.render("team.lead-holdout-recorded", {}).text : prompts.render("team.lead-holdout-result", { verdict: row.verdict ?? "no verdict", queries: String(row.queryCount ?? 0),
+  ? configuration.kind !== "binary_classification" ? prompts.render("team.lead-holdout-recorded", {}).text : prompts.render("team.lead-holdout-result", { verdict: row.verdict ?? "no verdict", queries: String(row.queryCount ?? 0),
    detail: row.score !== undefined ? `: score ${row.score.toFixed(4)}` : "" }).text
   : prompts.render("team.lead-holdout-skipped", { reason: row.reason ?? row.status }).text;
  /** One counted Ladder query on the current champion; the withheld labels stay in the controller. */
