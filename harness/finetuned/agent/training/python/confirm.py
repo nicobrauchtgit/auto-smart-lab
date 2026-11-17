@@ -14,6 +14,7 @@ import numpy as np
 from smartlab_trial.agent_code import expose_project, _load_module, _factory, _call_pipeline_factory, _inject_random_states
 from smartlab_trial.artifacts import _atomic_json, EventWriter
 from smartlab_trial.measurement import load_samples
+from smartlab_trial.batch import batch_fit_predict, load_anchor
 from smartlab_trial.metrics import _measure, score_observation
 from smartlab_trial.diagnostics import clustering, finite_vector
 from sklearn.metrics import adjusted_rand_score
@@ -91,6 +92,11 @@ def validate(directory):
         assert sha(path) == expected, 'Confirmation input changed'
     assert result['predictionsSha256'] == sha(directory / 'predictions.csv'), 'Confirmation predictions changed'
     truth, predicted = observations(directory, freeze)
+    if freeze.get('anchorManifestPath'):
+        anchor = load_anchor(freeze)
+        values = finite_vector(result['testPredictions'], len(anchor), 'Test predictions')
+        assert (values == np.floor(values)).all()
+        assert result['testPart'] == clustering(None, values.astype(int).tolist())['structure']
     is_clustering = freeze.get('kind') == 'clustering'
     counts = {str(label): truth.count(label) for label in (set(truth) if is_clustering else (0, 1))}
     expected = freeze['holdout']['perClass']
@@ -123,9 +129,13 @@ def run(directory):
     # Namespace environment clearing does not erase controller observability.
     events.identity = freeze['origin']
     scores = None
+    test_predictions = None
     with events.stage('confirmation_fit', developmentRows=len(dev)):
         if kind == 'clustering' and execution == 'batch':
-            if hasattr(estimator, 'fit_predict'):
+            anchor = load_anchor(freeze, validation)
+            if anchor is not None:
+                raw, test_predictions = batch_fit_predict(estimator, validation, anchor)
+            elif hasattr(estimator, 'fit_predict'):
                 raw = list(estimator.fit_predict(validation))
             else:
                 estimator.fit(validation)
@@ -159,6 +169,7 @@ def run(directory):
         'schemaVersion': 1, 'status': 'completed', 'advisoryOnly': True, 'fitCalls': 1,
         'developmentRows': len(dev), 'validationRows': len(validation), 'metrics': metrics, 'interval': interval,
         'gap': freeze['cvMean'] - score, 'likelySelectionOverfit': freeze['cvMean'] > interval['upper'],
+        **({'testPart': clustering(None, test_predictions)['structure'], 'testPredictions': test_predictions} if test_predictions is not None else {}),
         'seededParameters': seeded,
         'freezeSha256': sha(directory / 'freeze.json'), 'predictionsSha256': sha(directory / 'predictions.csv')})
     validate(directory)

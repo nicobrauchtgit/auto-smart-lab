@@ -92,7 +92,7 @@ export async function runConfirmation(options: ConfirmationOptions): Promise<Con
    const freezePath = join(directory, "freeze.json");
    const trialPath = join(chosen.trainingRoot, prepared.chosenExperimentId);
    const plan = parseSeedPlan(readRecord(join(trialPath, "seed-plan.json")) ?? "");
-   const framework = digest([WORKER, ...["agent_code.py", "metrics.py", "measurement.py", ...(workspace.configuration.kind === "clustering" ? ["diagnostics.py"] : [])].map(name => join(PYTHON_ROOT, "smartlab_trial", name))].map(confirmationHash));
+   const framework = digest([WORKER, ...["agent_code.py", "metrics.py", "measurement.py", ...(workspace.configuration.kind === "clustering" ? ["diagnostics.py", "batch.py"] : [])].map(name => join(PYTHON_ROOT, "smartlab_trial", name))].map(confirmationHash));
    if (!existsSync(freezePath)) {
     if (ledger.populations[population]?.reads?.some((read: any) => read.identity === identity)) throw new Error("Confirmation read was already reserved; refusing a duplicate sealed read");
     options.signal?.throwIfAborted();
@@ -114,10 +114,11 @@ export async function runConfirmation(options: ConfirmationOptions): Promise<Con
     atomicJson(freezePath, { ...common, ...(workspace.configuration.kind === "clustering" ? { kind: "clustering", execution: workspace.configuration.execution } : {}), readCount: count(), sourceRoot, environment: prepared.environment, framework,
      origin: Object.fromEntries(Object.entries({ pipelineRunId: options.report?.agentIdentity(1).pipelineRunId,
       stageInvocationId: options.report?.agentIdentity(1).stageInvocationId }).filter(([, value]) => typeof value === "string" && value)),
-     developmentManifest: measuredDev, validationManifest, seedLineage: plan, holdoutSeedPlan: workspace.holdoutSeedPlan,
+     developmentManifest: measuredDev, validationManifest,
+     ...(workspace.measurement.kind === "clustering" && workspace.measurement.anchorManifestPath ? { anchorManifestPath: workspace.measurement.anchorManifestPath, anchorManifestSha256: workspace.measurement.anchorManifestSha256 } : {}), seedLineage: plan, holdoutSeedPlan: workspace.holdoutSeedPlan,
      seed: deriveTrialSeed(plan, "holdout-confirmation"), bootstrapSeed: deriveBootstrapSeed(plan),
      cvMean: json(join(trialPath, "trial-result.json")).metrics[workspace.configuration.kind === "clustering" ? "adjustedRandIndex" : "balancedAccuracy"],
-     hashes: Object.fromEntries([measuredDev, String(prepared.inputs.devZip), validationManifest, join(directory, "sealed.zip")].map(path => [path, confirmationHash(path)])) });
+     hashes: Object.fromEntries([measuredDev, String(prepared.inputs.devZip), validationManifest, join(directory, "sealed.zip"), ...(workspace.measurement.kind === "clustering" && workspace.measurement.anchorManifestPath ? [workspace.measurement.anchorManifestPath, workspace.testZip] : [])].map(path => [path, confirmationHash(path)])) });
    }
    const frozen = json(freezePath);
    if (!ledger.populations[population]?.reads?.some((read: any) => read.identity === identity && read.experimentId === prepared.chosenExperimentId)

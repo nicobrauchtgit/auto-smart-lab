@@ -1,4 +1,5 @@
 /** Harness-owned terminal refit, with durable freeze and process-group ownership. */
+import { readTaskData } from "../solve/task_data.js";
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
@@ -88,7 +89,7 @@ export function runtimeDependencyHash(options: RefitOptions): string {
 }
 /** Fingerprint every local executable adapter used by terminal refit/recovery. */
 export const REFIT_FRAMEWORK_FILES = ["refit/worker.py", "training/python/runner.py", "refit/evidence.py", "training/python/task_samples.py", "training/python/pcap_samples.py",
- "training/python/confirm.py", "confirmation/receipt.ts", ...["metrics.py", "measurement.py"].map(name => `training/python/smartlab_trial/${name}`)];
+ "training/python/confirm.py", "confirmation/receipt.ts", ...["metrics.py", "measurement.py", "batch.py"].map(name => `training/python/smartlab_trial/${name}`)];
 export function frameworkHash(root = FRAMEWORK_ROOT): string {
  return digest(REFIT_FRAMEWORK_FILES.map(path => hashFile(join(root, path))));
 }
@@ -165,8 +166,13 @@ export async function inspectRefitCandidate(options: RefitOptions): Promise<Refi
  const inputs: Record<string, unknown> = { ...original, task: { ...original.task, execution: options.taskConfiguration.execution, predictions: options.taskConfiguration.submission.predictions,
   ...(options.taskConfiguration.anomaly ? { anomaly: options.taskConfiguration.anomaly } : {}),
   // Exactly the controller context the factory received in its measured trials.
-  measurement: Object.fromEntries(Object.entries(measurement!).filter(([key]) => !["sampleManifestPath", "sampleManifestSha256", "evidence", "evidenceManifestSha256"].includes(key))) },
+  measurement: Object.fromEntries(Object.entries(measurement!).filter(([key]) => !["sampleManifestPath", "sampleManifestSha256", "anchorManifestPath", "anchorManifestSha256", "evidence", "evidenceManifestSha256"].includes(key))) },
   devZip, devManifest: manifest };
+ if (options.taskConfiguration.kind === "clustering" && options.taskConfiguration.execution === "batch") {
+  const taskData = readTaskData(options.taskId, options.projectRoot);
+  if (!taskData) throw new Error("Anchored refit requires workspace split");
+  inputs.sealedIds = [...taskData.split.sealedIds].sort();
+ }
  const data = JSON.parse(python(options, [WORKER, "--inspect-json", JSON.stringify(inputs)]));
  python(options, [WORKER, "--evidence", trial.directory]);
  const identity = candidateIdentity(options.taskId, tag.commit, trial.request.pipeline);
@@ -175,7 +181,7 @@ export async function inspectRefitCandidate(options: RefitOptions): Promise<Refi
  const prepared: RefitFreeze = { schemaVersion: 1, identity, taskId: options.taskId, terminalPath: terminalPath(options.solutionsRoot, identity), directory,
   source: { commit: tag.commit, tree: resolved.tree }, sourceRoot: join(directory, "source"), pipeline: trial.request.pipeline,
   chosenExperimentId: trial.experimentId, environment: { fingerprint: options.environmentFingerprint, runtimeDependencyHash: dependencies, frameworkHash: frameworkHash() },
-  seed: deriveTrialSeed(plan, "terminal-refit"), seedLineage: plan,
+  seed: deriveTrialSeed(plan, options.taskConfiguration.kind === "clustering" && options.taskConfiguration.execution === "batch" ? "holdout-confirmation" : "terminal-refit"), seedLineage: plan,
   evidence: [...new Set(evidencePaths)].map(path => ({ path, sha256: hashFile(path) })), inputs, data,
   origin: { pipelineRunId: options.report?.agentIdentity(1).pipelineRunId, stageInvocationId: options.report?.agentIdentity(1).stageInvocationId } };
  if (existsSync(prepared.terminalPath)) {

@@ -57,6 +57,8 @@ export type MeasurementConfig = {
 	execution: "inductive";
 } | {
 	kind: "clustering";
+	anchorManifestPath?: string;
+	anchorManifestSha256?: string;
 	sampleManifestPath: string;
 	execution: "inductive" | "batch";
 } | {

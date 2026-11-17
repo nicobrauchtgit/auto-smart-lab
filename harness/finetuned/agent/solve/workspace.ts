@@ -239,10 +239,18 @@ export function prepareSolveWorkspace(taskId: string, options: PrepareOptions = 
 		renameSync(temporary, sampleManifestPath);
 	}
 	else if (readFileSync(sampleManifestPath, "utf8") !== manifestBytes) throw new Error(`Development manifest ${sampleManifestPath} differs from the stored split; restore it or reset task state explicitly`);
+    const anchored = configuration.kind === "clustering" && configuration.execution === "batch";
+    const anchorManifestPath = join(dataOut, "test-samples.json");
+    if (anchored) {
+        const test = archiveRows(python, paths.testZip, undefined, "none", configuration.samples.source);
+        const bytes = JSON.stringify({ schemaVersion: 1, samples: test.samples }) + "\n";
+        if (existsSync(anchorManifestPath) && readFileSync(anchorManifestPath, "utf8") !== bytes) throw new Error("Test manifest changed");
+        if (!existsSync(anchorManifestPath)) writeFileSync(anchorManifestPath, bytes);
+    }
 	const measurement: MeasurementConfig = configuration.kind === "binary_classification"
 		? { kind: "classification", execution: "inductive", sampleManifestPath }
 		: configuration.kind === "clustering"
-			? { kind: "clustering", execution: configuration.execution, sampleManifestPath }
+			? { kind: "clustering", execution: configuration.execution, sampleManifestPath, ...(anchored ? { anchorManifestPath, anchorManifestSha256: hashFile(anchorManifestPath).digest("hex") } : {}) }
 			: { kind: "anomaly_detection", execution: configuration.execution, sampleManifestPath, ...configuration.anomaly!, ...(configuration.selection ? { selection: configuration.selection, evidence: { path: join(root, "agent", "evidence.json"), source: "agent_provided" as const } } : {}) };
 	const described = describeTargets(configuration, split.devIds, targets, relative(projectRoot, sampleManifestPath), split.sealedGroups);
 	const groups = configuration.targets.kind === "families" ? new Set(split.devIds.map(id => targets.get(id))).size : undefined;
@@ -261,7 +269,7 @@ export function prepareSolveWorkspace(taskId: string, options: PrepareOptions = 
 		// otherwise recoverable from it as `members - manifest`.
 		datasetPaths: [devZip, ...(existsSync(paths.testZip) ? [paths.testZip] : [])].map(path => relative(projectRoot, path)),
 		split: { sealedIds: split.sealedIds, fraction: split.fraction, seed: split.seed, sha256: split.sha256, scheme: split.scheme, ...("confirmation" in split ? { confirmation: split.confirmation } : {}), ...(split.sealedGroups !== undefined ? { sealedGroups: split.sealedGroups } : {}) },
-		recommendation: configuration.holdout === "stratified" ? recommendFolds(split.devIds.length)
+		recommendation: anchored ? recommendFolds(split.devIds.length, { sealedRows: split.sealedIds.length }) : configuration.holdout === "stratified" ? recommendFolds(split.devIds.length)
 			: groups ? recommendFolds(split.devIds.length, { scheme: "group_kfold", groups })
 				: recommendFolds(split.devIds.length, { scheme: "kfold" }),
 		rowCount: split.devIds.length,

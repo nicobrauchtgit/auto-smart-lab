@@ -26,7 +26,7 @@ export interface FoldRecommendation {
  * with repeats, which cost little when the data is small; large ones do not need
  * them and would pay for the extra fits.
  */
-export function recommendFolds(rows: number, options: { scheme?: FoldRecommendation["scheme"]; groups?: number } = {}): FoldRecommendation {
+export function recommendFolds(rows: number, options: { scheme?: FoldRecommendation["scheme"]; groups?: number; sealedRows?: number } = {}): FoldRecommendation {
 	if (!Number.isInteger(rows) || rows < 1) throw new Error("recommendFolds needs a positive integer row count");
 	const { folds, repeats } = HARNESS_CONFIG.foldRecommendations.find(row => row.belowRows === null || rows < row.belowRows)!;
 	const scheme = options.scheme ?? "stratified_kfold";
@@ -34,7 +34,7 @@ export function recommendFolds(rows: number, options: { scheme?: FoldRecommendat
 	const groupFolds = scheme === "group_kfold" && options.groups !== undefined ? Math.max(2, Math.min(folds, options.groups)) : folds;
 	return {
 		scheme,
-		folds: groupFolds,
+		folds: options.sealedRows !== undefined ? (options.sealedRows > 0 ? Math.max(2, Math.round(rows / options.sealedRows)) : 2) : groupFolds,
 		repeats,
 		rationale: scheme === "group_kfold" ? `${rows} training rows in ${options.groups} groups after sealing` : `${rows} training rows after sealing`,
 	};

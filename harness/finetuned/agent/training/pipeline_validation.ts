@@ -16,6 +16,7 @@ export interface PipelineValidationInput {
 	measurement?: MeasurementConfig;
  testZip?: string;
  sampleSource?: string;
+ sealedRows?: number;
 	env?: Record<string, string>;
 	cwd: string;
 	timeoutMs: number;
@@ -83,5 +84,5 @@ export const runPipelineValidation: PipelineValidator = (input) => new Promise((
 		settle(failure("validation crashed while loading the pipeline",
 			"Run the module locally to reproduce; the last lines of its error output are included.", tail || `exit code ${code}`));
 	});
-	child.stdin.end(JSON.stringify({ sourceRoot: input.sourceRoot, request: input.request, measurement: input.measurement, testZip: input.testZip, sampleSource: input.sampleSource }));
+	child.stdin.end(JSON.stringify({ sourceRoot: input.sourceRoot, request: input.request, measurement: input.measurement, testZip: input.testZip, sampleSource: input.sampleSource, sealedRows: input.sealedRows }));
 });

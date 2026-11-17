@@ -7,6 +7,9 @@ import contextlib
 import json
 import sys
 import traceback
+import signal
+from smartlab_trial.batch import batch_fit_predict, load_anchor
+from smartlab_trial.diagnostics import clustering
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -98,6 +101,37 @@ def smoke(document):
     return _run(document, root, frame, targets, SAMPLE_ROWS[0])
 
 
+def anchored_structure(document, root, frame):
+    measurement = document['measurement']
+    if measurement['kind'] != 'clustering' or measurement['execution'] != 'batch' or not measurement.get('anchorManifestPath'):
+        return None
+    def expired(*_):
+        raise TimeoutError('Anchored smoke deadline exceeded')
+    previous = signal.signal(signal.SIGALRM, expired)
+    signal.setitimer(signal.ITIMER_REAL, document.get('anchorTimeoutSeconds', 10))
+    try:
+        anchor = load_anchor(measurement, frame)
+        count = document.get('sealedRows')
+        if not isinstance(count, int) or count < 1:
+            return {'available': False, 'reason': 'No sealed-sized block available'}
+        indices = np.random.default_rng(0).permutation(len(frame))[:count]
+        labelled = frame.iloc[indices].reset_index(drop=True)
+        labelled.attrs.clear()
+        pipeline = document['request']['pipeline']
+        estimator = _call_pipeline_factory(_factory(_load_module(root, pipeline['module']), pipeline['factory']),
+            dict(parameters=pipeline.get('parameters', {}), seed=0, measurement=measurement))
+        if pipeline.get('estimatorParams'):
+            estimator.set_params(**pipeline['estimatorParams'])
+        _inject_random_states(estimator, 0)
+        _, predictions = batch_fit_predict(estimator, labelled, anchor)
+        return {'available': True, **clustering(None, predictions)['structure']}
+    except Exception as error:
+        return {'available': False, 'reason': 'Timeout' if isinstance(error, TimeoutError) else type(error).__name__}
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+
+
 def outcome(document):
     """Structured result: passed, sizes, and for failures phase/error/traceback and sample sensitivity."""
     root = Path(document['sourceRoot']).resolve()
@@ -106,6 +140,9 @@ def outcome(document):
     result = {'developmentRows': len(frame)}
     try:
         result.update(passed=True, sample=_run(document, root, frame, targets, SAMPLE_ROWS[0]))
+        test_part = anchored_structure(document, root, frame)
+        if test_part is not None:
+            result['testPart'] = test_part
         return result
     except SmokeFailure as failure:
         first = failure
@@ -122,6 +159,9 @@ def outcome(document):
         else:
             # Only the small sample failed: the cause is its size, not the pipeline.
             result.update(passed=True, sampleSensitive=True, largerSample={'passed': True, **larger})
+            test_part = anchored_structure(document, root, frame)
+            if test_part is not None:
+                result['testPart'] = test_part
     return result
 
 

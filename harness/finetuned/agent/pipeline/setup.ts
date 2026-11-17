@@ -9,7 +9,7 @@ import { initializeModel } from "../model_provider.js";
 import { loadPipelineConfig } from "../pipeline_config.js";
 import { readPythonEnvironment } from "../run/python_environment.js";
 import { resolveTask, PROJECT_ROOT } from "./resolve_task.js";
-import { inspectTaskData, projectPython, type TaskConfiguration } from "./task_configuration.js";
+import { inspectTaskData, taskDataPaths, projectPython, type TaskConfiguration } from "./task_configuration.js";
 import { processIdentity } from "../experiments/ownership.js";
 import { HARNESS_CONFIG } from "../harness/config.js";
 import type { PromptSnapshot } from "../prompts/loader.js";
@@ -192,6 +192,10 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
   readable(join(task.taskDir, "prompt.md"));
   const configuration = options.taskConfiguration;
   if (!configuration) throw new Error("No task configuration");
+  if (configuration.kind === "clustering" && configuration.execution === "batch") {
+   checkAnchoredTestArchive(taskDataPaths(options.taskId, configuration).testZip);
+   readable(join(ARM_ROOT, "agent/training/python/smartlab_trial/batch.py"));
+  }
   inspectTaskData(options.taskId, configuration, options.executables?.python ?? projectPython());
  });
  if (needs.has("data-profile")) add("data-profile", "local", "Restore agent/research/python/data_profile.py and agent/training/python/task_samples.py; research profiles the declared data with them before the agent starts.", () => {
@@ -312,4 +316,9 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
   });
  }
  return checks;
+}
+
+/** Shared preflight prerequisite: batch clustering always fits all test inputs. */
+export function checkAnchoredTestArchive(path: string): void {
+ try { readable(path); } catch { throw new Error("Anchored clustering requires a readable test archive"); }
 }

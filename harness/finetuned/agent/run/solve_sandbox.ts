@@ -107,7 +107,8 @@ export function prepareSolveSandbox(workspace: SolveWorkspace, python: PythonEnv
  const runtimePython = dirname(dirname(realpathSync(python.executable)));
  const mounts: SandboxMount[] = [
   { source: agentRoot, writable: true }, { source: workspace.solutionsRoot, writable: true },
-  ...[workspace.devZip, workspace.testZip, workspace.sampleManifestPath, workspace.taskPath]
+  ...[workspace.devZip, workspace.testZip, workspace.sampleManifestPath, workspace.taskPath,
+   ...(workspace.measurement?.kind === "clustering" && workspace.measurement.anchorManifestPath ? [workspace.measurement.anchorManifestPath] : [])]
    .filter(existsSync).map(source => ({ source })),
   { source: python.prefix }, { source: dirname(runtimePython) }, { source: WORKER },
   ...[join(dirname(python.prefix), "agent/libs/smartlab-eval")].filter(existsSync).map(source => ({ source })),

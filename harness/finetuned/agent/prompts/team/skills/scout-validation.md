@@ -34,3 +34,5 @@ Each explicit request costs one lead tool call. Validation through `hand_over`
 is free for the lead. Each invocation retains its own fresh configured allowance
 (currently 10 calls); those calls do not consume the lead's allowance. Roles
 share the configured concurrency cap (currently 3); excess roles queue FIFO.
+
+Test inputs inside a batch-clustering fit are the task contract, not a defect.

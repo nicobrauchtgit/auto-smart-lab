@@ -255,3 +255,16 @@ test("dependency manager attribution comes only from the explicit session identi
   if (previous === undefined) delete process.env.PIPELINE_PYTHON_SESSION_ID; else process.env.PIPELINE_PYTHON_SESSION_ID = previous;
  }
 });
+
+
+test("anchored test metadata is readable while sealed metadata stays hidden", async () => {
+ const { workspace, hidden, python } = fixture();
+ const anchorManifestPath = join(dirname(workspace.sampleManifestPath), "test-samples.json");
+ writeFileSync(anchorManifestPath, JSON.stringify({ schemaVersion: 1, samples: [{ id: "test-a", input: {} }] }));
+ workspace.measurement = { kind: "clustering", execution: "batch", sampleManifestPath: workspace.sampleManifestPath,
+  anchorManifestPath, anchorManifestSha256: "a".repeat(64) };
+ const policy = prepareSolveSandbox(workspace, python);
+ const tools = isolatedSolveTools(policy);
+ expect(content(await execute(tools, "read", { path: anchorManifestPath }))).toContain("test-a");
+ await expect(execute(tools, "read", { path: hidden[2] })).rejects.toThrow();
+}, 30_000);

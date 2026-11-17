@@ -21,6 +21,7 @@ import zipfile
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'training' / 'python'))
 from smartlab_trial.agent_code import expose_project, _load_module, _factory, _call_pipeline_factory, _inject_random_states
 from smartlab_trial.artifacts import _atomic_json, EventWriter
+from smartlab_trial.batch import batch_fit_predict
 from task_samples import archive_ids, read_targets, sample_descriptors
 
 
@@ -52,6 +53,8 @@ def sample_data(inputs):
     else:
         with zipfile.ZipFile(inputs['trainZip']) as original, zipfile.ZipFile(inputs['devZip']) as measured:
             assert all(original.read(name) == measured.read(name) for name in dev), 'Original training content differs from measured development archive'
+    if inputs['task']['kind'] == 'clustering' and inputs['task']['execution'] == 'batch':
+        assert inputs.get('sealedIds') == sorted(set(train) - set(dev)), 'Sealed IDs differ from measured split'
     keys = ['trainZip', 'testZip', 'devZip', 'devManifest', *(['targetsPath'] if targets_path else [])]
     return {'trainIds': sorted(train), 'testIds': sorted(test), 'trainRows': len(train),
             'developmentRows': len(dev), 'sealedRows': len(train) - len(dev), 'testRows': len(test),
@@ -111,6 +114,13 @@ def fit_samples(estimator, freeze, events):
             predicted = [int(value) for value in estimator.predict(test)]
         assert len(predicted) == len(test) and all(value in (0, 1) for value in predicted), 'Invalid predictions'
         return predicted, len(train), len(test)
+    if task['kind'] == 'clustering' and task['execution'] == 'batch':
+        ids = freeze['inputs']['sealedIds']
+        assert ids == sorted(set(ids)) and set(ids) <= set(train['id']), 'Invalid sealed IDs'
+        labelled = train.set_index('id', drop=False).loc[ids].reset_index(drop=True)
+        with events.stage('terminal_fit', fitRows=len(labelled) + len(test), execution='batch'):
+            _, predicted = batch_fit_predict(estimator, labelled, test)
+        return predicted, len(labelled) + len(test), len(test)
     if task['execution'] == 'batch':
         with events.stage('terminal_fit', fitRows=len(test), execution='batch'):
             if callable(getattr(estimator, 'fit_predict', None)):

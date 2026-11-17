@@ -20,6 +20,8 @@ if __name__ == "__main__":
             raise SystemExit(0)
         config = validate_config(json.loads(args.config))
         frame, targets, digest = load_samples(config)
+        from smartlab_trial.batch import load_anchor
+        load_anchor(config, frame)
         evidence = frame.attrs.get("diagnosticEvidence")
         print(json.dumps({"rows": len(frame), "hasTargets": targets is not None, "sha256": digest,
                           "evidenceManifestSha256": evidence["sha256"] if evidence else None,

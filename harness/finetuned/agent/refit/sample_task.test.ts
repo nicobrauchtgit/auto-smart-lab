@@ -92,8 +92,8 @@ test.skipIf(!hasZip)("a declared clustering task runs from sealed families throu
 	expect(workspace.split.sealedIds).toHaveLength(6);
 	expect([...sealedFamilies].some(family => devFamilies.has(`family-${family.slice(1)}`))).toBe(false);
 	expect(manifest.samples[0].input).toEqual({ archive: workspace.devZip, member: manifest.samples[0].id });
-	expect(workspace.measurement).toEqual({ kind: "clustering", execution: "batch", sampleManifestPath: workspace.sampleManifestPath });
-	expect(workspace.recommendation.scheme).toBe("group_kfold");
+	expect(workspace.measurement).toMatchObject({ kind: "clustering", execution: "batch", sampleManifestPath: workspace.sampleManifestPath, anchorManifestSha256: expect.stringMatching(/^[a-f0-9]{64}$/) });
+	expect(workspace.recommendation.scheme).toBe("stratified_kfold");
 	expect("devLabelsPath" in workspace).toBe(false);
 
 	writeFileSync(join(project.solutionsRoot, "tasks", "fixture.py"), PIPELINE);
@@ -129,8 +129,8 @@ test.skipIf(!hasZip)("a declared clustering task runs from sealed families throu
 	}
 	expect(new Set(clusters.values()).size).toBe(3);
 	const terminal = JSON.parse(readFileSync(refit.artifacts.find(a => a.kind === "terminal_refit_result")!.path, "utf8"));
-	// All original training rows, sealed family included, are bound by the freeze; the batch fit used the test rows.
-	expect(terminal).toMatchObject({ trainRows: 60, testRows: 12, fitRows: 12, fitCalls: 1 });
+	// All original training rows, sealed family included, are bound by the freeze; the batch fit used sealed and test inputs.
+	expect(terminal).toMatchObject({ trainRows: 60, testRows: 12, fitRows: 18, fitCalls: 1 });
 
 	// A refit under a different configuration than the champion was measured with is refused.
 	await expect(runRefit({ taskId: "fixture", projectRoot: project.root, solutionsRoot: project.solutionsRoot, pythonExecutable: PYTHON,

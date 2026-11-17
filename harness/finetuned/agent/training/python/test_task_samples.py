@@ -130,7 +130,7 @@ class SampleRefitTest(SampleFixture):
         self.inputs = {'kind': 'samples', 'task': {'kind': 'clustering', 'targets': 'families', 'execution': 'batch',
                                                     'predictions': 'cluster_id', 'measurement': {'kind': 'clustering', 'execution': 'batch'}},
                        'trainZip': str(self.root / 'train.zip'), 'testZip': str(self.root / 'test.zip'),
-                       'targetsPath': str(self.targets), 'devZip': str(self.root / 'dev.zip'), 'devManifest': str(manifest)}
+                       'sealedIds': sorted(self.train)[6:], 'targetsPath': str(self.targets), 'devZip': str(self.root / 'dev.zip'), 'devManifest': str(manifest)}
 
     def test_sample_data_binds_the_measured_development_subset(self):
         data = worker.data(self.inputs)
@@ -146,15 +146,15 @@ class SampleRefitTest(SampleFixture):
         frame = worker.sample_frame(str(self.root / 'train.zip'), sorted(self.train), sidecar=str(self.targets))
         self.assertEqual(list(frame['id']), sorted(self.train))
 
-    def test_batch_clustering_fits_the_test_batch_only(self):
+    def test_batch_clustering_fits_sealed_and_test_inputs(self):
         freeze = {'inputs': self.inputs, 'data': worker.data(self.inputs)}
         events = Events()
         predicted, fit_rows, test_rows = worker.fit_samples(FamilyFromContent(), freeze, events)
-        self.assertEqual((predicted, fit_rows, test_rows), ([0, 0, 1], 3, 3))
+        self.assertEqual((predicted, fit_rows, test_rows), ([1, 1, 2], 5, 3))
         self.assertEqual(events.stages, ['terminal_fit'])
         # A clusterer without fit_predict is fitted and predicted on the same batch.
         predicted, _, _ = worker.fit_samples(FamilyFromContent(with_fit_predict=False), freeze, Events())
-        self.assertEqual(predicted, [0, 0, 1])
+        self.assertEqual(predicted, [1, 1, 2])
 
     def test_inductive_fit_uses_all_training_samples_without_targets(self):
         self.inputs['task'].update(execution='inductive')

@@ -73,9 +73,12 @@ new controller invocation and dataset identity.
 - **Inductive clustering:** harness `fit(training_inputs)` then
   `predict(validation_inputs)`. Family targets are used for splitting/scoring,
   never passed to `fit`.
-- **Batch clustering:** harness `fit_predict(validation_inputs)`, allowing
+- **Batch clustering:** harness `fit_predict(validation_inputs ∪ test_inputs)`, allowing
   transductive clusterers without `predict`. The fitted representation and
-  clusters may use that validation batch's inputs, never its family targets.
+  clusters may use that batch's inputs, never its family targets. Test inputs
+  come from the hashed `anchorManifestPath` / `anchorManifestSha256` manifest;
+  the shared helper concatenates labelled rows first and test rows second.
+  ARI and OOF predictions cover labelled validation rows only.
   This measures discovery in a new batch, not prediction from a train-only fit.
 - **Inductive detection:** harness `fit(training_inputs)` then the declared
   score method on disjoint validation inputs; `predict` is optional.
@@ -90,6 +93,11 @@ and convergence. Batch `trainRows` records the split's other rows, not fitted
 rows; `fitRows` is the authoritative fit scope.
 Search cost projections use this fitted scope for both prior pilot measurements
 and the requested batches, rather than treating unused batch training rows as fit work.
+
+For anchored batch clustering, the recommendation is stratified k-fold with
+`max(2, round(developmentRows / sealedRows))` and the existing table's repeats.
+Without a seal, two folds are suggested. Custom CV still receives every test
+input in every fit. `fitRows` counts the labelled/test union.
 
 Built-in split schemes are `stratified_kfold`, `kfold`, and `group_kfold`.
 Group K-fold holds whole supplied families out and uses harness randomness.
@@ -109,6 +117,19 @@ Matching the lab's exact noise convention remains a task-adapter responsibility.
 Every clustering batch also records cluster count/sizes, singleton fraction,
 largest-cluster share, assigned fraction, and noise fraction. No targets means
 external metrics are explicitly unavailable and promotion is forbidden.
+
+Anchored folds additionally record `fold.diagnostics.testPart`, the structure of
+the test rows only. `diagnostics.testAgreement` records mean/min pairwise ARI
+between test partitions across fits, with the actual `comparisons` count capped
+at 256 in deterministic fit-pair order. Fewer than two fits yields unavailable.
+Test targets never participate. Optional validation-refit diagnostics keep their
+validation-only population.
+
+Smoke adds a deterministic sealed-sized development block plus all test inputs,
+with a 10-second deadline and unavailable on timeout; only test structure is
+returned. Confirmation fits sorted sealed inputs followed by sorted test inputs
+and scores only sealed rows. Terminal batch clustering uses the same order and
+confirmation seed, writes only test predictions, and checks exact test-ID coverage.
 
 The trial's primary score is the mean of batch ARIs. Cluster IDs are arbitrary
 within their fitted batch and are never pooled across folds. The frozen champion

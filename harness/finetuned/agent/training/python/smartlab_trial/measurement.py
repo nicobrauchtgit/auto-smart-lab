@@ -14,7 +14,7 @@ from .invocation import InvocationError
 def validate_config(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise InvocationError("measurement must be a controller-supplied object")
-    allowed = {"kind", "sampleManifestPath", "sampleManifestSha256", "hasTargets", "execution", "scoreMethod", "scoreDirection", "anomalyLabel", "evidence", "evidenceManifestSha256", "selection"}
+    allowed = {"kind", "sampleManifestPath", "sampleManifestSha256", "hasTargets", "execution", "scoreMethod", "scoreDirection", "anomalyLabel", "evidence", "evidenceManifestSha256", "selection", "anchorManifestPath", "anchorManifestSha256"}
     if set(value) - allowed:
         raise InvocationError("measurement contains unknown fields")
     if value.get("kind") not in ("classification", "clustering", "anomaly_detection"):
@@ -48,6 +48,14 @@ def validate_config(value: Any) -> dict[str, Any]:
                 raise InvocationError("Evidence requires a path and explicit trusted/agent_provided source")
     elif any(key in value for key in ("scoreMethod", "scoreDirection", "anomalyLabel", "evidence", "evidenceManifestSha256", "selection")):
         raise InvocationError(f"anomaly score fields do not apply to {value['kind']}")
+    if any(key in value for key in ("anchorManifestPath", "anchorManifestSha256")):
+        if value["kind"] != "clustering" or value["execution"] != "batch":
+            raise InvocationError("Anchors apply only to batch clustering")
+        if not isinstance(value.get("anchorManifestPath"), str) or not value["anchorManifestPath"]:
+            raise InvocationError("Anchor requires a manifest path")
+        digest = value.get("anchorManifestSha256")
+        if not isinstance(digest, str) or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+            raise InvocationError("Anchor requires a SHA-256")
     return dict(value)
 
 

@@ -121,3 +121,8 @@ test("family rows seal a rounded fifth and retain singleton families", () => {
  expect(split.devIds.some(id => split.sealedIds.includes(id))).toBe(false);
  expect(sealFamilies([{ id: "one", group: "one" }], 13).confirmation.precision).toBe("none");
 });
+
+test("anchored clustering recommends sealed-sized blocks and retains the repeat table", () => {
+ expect(recommendFolds(800, { sealedRows: 200 })).toMatchObject({ scheme: "stratified_kfold", folds: 4, repeats: recommendFolds(800).repeats });
+ expect(recommendFolds(3, { sealedRows: 2 }).folds).toBe(2);
+});

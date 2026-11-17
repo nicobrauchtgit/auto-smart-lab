@@ -203,6 +203,7 @@ export function compactDiagnostics(result: Record<string, any> | undefined): Rec
 	if (!signals) return undefined;
 	return { kind: signals.kind, primaryMetric: signals.primaryMetric, proxyEvidence: signals.proxyEvidence,
 		uniqueRows: signals.uniqueRows, observations: signals.observations,
+		testAgreement: signals.testAgreement,
 		foldSpread: signals.foldSpread, ranking: signals.ranking,
 		foldSpreadIsConfidenceInterval: signals.foldSpreadIsConfidenceInterval,
 		rankingAggregation: signals.rankingAggregation,
@@ -715,14 +716,19 @@ export class TrainingService {
             let notice: string | undefined;
             const issues = await runPipelineValidation({ pythonExecutable: this.options.pythonExecutable, scriptPath,
                 command: this.options.sandboxCommand?.([this.options.pythonExecutable, scriptPath], { directory, sourceRoots: [sourceRoot] }),
-                sourceRoot, request, measurement: this.checkMeasurement(), testZip: data?.testZip, sampleSource: data?.configuration.samples.source, env: this.options.env,
+                sourceRoot, request, measurement: this.checkMeasurement(), testZip: data?.testZip, sampleSource: data?.configuration.samples.source, sealedRows: data?.split.sealedIds.length, env: this.options.env,
                 cwd: this.options.projectRoot, timeoutMs: this.settings.validationTimeoutSeconds * 1000,
                 interpret: (output) => {
-                    const value = output as { passed?: unknown; phase?: string; error?: { type?: string; message?: string }; traceback?: string; sample?: { trainRows?: number }; largerSample?: { passed?: boolean; trainRows?: number }; sampleSensitive?: boolean; developmentRows?: number };
+                    const value = output as { passed?: unknown; phase?: string; error?: { type?: string; message?: string }; traceback?: string; sample?: { trainRows?: number }; largerSample?: { passed?: boolean; trainRows?: number }; sampleSensitive?: boolean; developmentRows?: number; testPart?: { available?: boolean; clusterCount?: number; singletonFraction?: number; largestClusterShare?: number; reason?: string } };
                     if (typeof value?.passed !== "boolean") return undefined;
                     const error = `${value.error?.type ?? "Error"}: ${value.error?.message ?? ""}`;
                     if (value.passed) {
                         if (value.sampleSensitive) notice = prompts.render("training.smoke-sample-sensitive", { phase: String(value.phase), smallRows: String(value.sample?.trainRows), largerRows: String(value.largerSample?.trainRows), error }).text;
+                        if (value.testPart) {
+                            const p = value.testPart;
+                            const text = prompts.render("training.smoke-test-part", { structure: p.available ? `${p.clusterCount} clusters, singleton fraction ${p.singletonFraction}, largest share ${p.largestClusterShare}` : `unavailable (${p.reason})` }).text;
+                            notice = [notice, text].filter(Boolean).join("\n");
+                        }
                         return [];
                     }
                     const sampleNote = value.largerSample ? prompts.render("training.smoke-sample-defect", { largerRows: String(value.largerSample.trainRows) }).text

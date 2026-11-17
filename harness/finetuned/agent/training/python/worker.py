@@ -31,6 +31,7 @@ from smartlab_trial.folds import ConcreteFold, _manifest, _materialize_folds, _p
 from smartlab_trial.invocation import SCHEMA_VERSION, InvocationError, Invocation, parse_invocation
 from smartlab_trial.metrics import _measure, _scores, score_observation
 from smartlab_trial import diagnostics
+from smartlab_trial.batch import batch_fit_predict, load_anchor
 from smartlab_trial.measurement import kind as measurement_kind, load_samples, selection_receipt
 from smartlab_trial.extra_measurements import run as extra_measurements, proxy_score
 from smartlab_trial.seeds import _derive_seed
@@ -74,7 +75,7 @@ def _run_fold(invocation: Invocation, pipeline_factory: Any, fold: ConcreteFold,
     context = {"parameters": parameters, "seed": estimator_seed}
     if invocation.measurement:
         context["measurement"] = {key: value for key, value in invocation.measurement.items()
-                                  if key not in ("sampleManifestPath", "sampleManifestSha256", "evidence", "evidenceManifestSha256")}
+                                  if key not in ("sampleManifestPath", "sampleManifestSha256", "anchorManifestPath", "anchorManifestSha256", "evidence", "evidenceManifestSha256")}
     estimator = _call_pipeline_factory(pipeline_factory, context)
     applied = {**invocation.pipeline.estimator_params, **(estimator_params or {})}
     if applied:
@@ -91,16 +92,20 @@ def _run_fold(invocation: Invocation, pipeline_factory: Any, fold: ConcreteFold,
     validation_y = [y[index] for index in fold.validation] if y is not None else None
     task_kind = measurement_kind(invocation)
     batch = invocation.measurement is not None and invocation.measurement["execution"] == "batch"
+    anchor = load_anchor(invocation.measurement, frame) if task_kind == "clustering" and batch else None
+    test_predictions = None
     fit_started = time.monotonic()
     with capture_convergence_warnings() as raised:
         if task_kind == "classification":
             estimator.fit(train_frame, train_y)
+        elif anchor is not None:
+            predictions, test_predictions = batch_fit_predict(estimator, validation_frame, anchor)
         elif batch and callable(getattr(estimator, "fit_predict", None)):
             predictions = estimator.fit_predict(validation_frame)
         else:
             estimator.fit(validation_frame if batch else train_frame)
     fit_seconds = time.monotonic() - fit_started
-    if not (batch and callable(getattr(estimator, "fit_predict", None))):
+    if anchor is None and not (batch and callable(getattr(estimator, "fit_predict", None))):
         predictions = estimator.predict(validation_frame) if callable(getattr(estimator, "predict", None)) else None
     if predictions is not None:
         values = diagnostics.finite_vector(predictions, len(validation_frame), "Predictions")
@@ -119,6 +124,8 @@ def _run_fold(invocation: Invocation, pipeline_factory: Any, fold: ConcreteFold,
         signals = diagnostics.classification(validation_y, predictions, scores, provenance)
     elif task_kind == "clustering":
         signals = diagnostics.clustering(validation_y, predictions)
+        if test_predictions is not None:
+            signals["testPart"] = diagnostics.clustering(None, test_predictions)["structure"]
         measurement = ({"adjustedRandIndex": signals["external"]["adjustedRandIndex"]}
                        if signals["external"]["available"] else {})
     else:
@@ -169,6 +176,9 @@ def _run_fold(invocation: Invocation, pipeline_factory: Any, fold: ConcreteFold,
     if objective:
         result["searchObjective"] = objective
         result["searchScore"] = objective["value"]
+    if test_predictions is not None:
+        result["anchorPredictions"] = test_predictions
+        result["fitRows"] = len(validation_frame) + len(anchor)
     rows: list[dict[str, Any]] = []
     for offset, index in enumerate(fold.validation):
         rows.append({

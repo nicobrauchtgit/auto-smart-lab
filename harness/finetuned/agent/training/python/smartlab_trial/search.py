@@ -147,6 +147,9 @@ class RuntimeGuard:
         self.fits: list[float] = []
         batch = invocation.measurement is not None and invocation.measurement["execution"] == "batch"
         fit_rows = statistics.fmean([len(fold.validation if batch else fold.train) for fold in folds]) if folds else 0
+        if invocation.measurement and invocation.measurement.get("anchorManifestPath"):
+            from .batch import load_anchor
+            fit_rows += len(load_anchor(invocation.measurement))
         self.prior: float | None = None
         if self.spec.prior_fit_seconds is not None:
             # Fit time is assumed to scale linearly with the actually fitted rows.
