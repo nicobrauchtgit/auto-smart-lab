@@ -58,6 +58,7 @@ import { readPythonEnvironment, type PythonEnvironment } from "./python_environm
 import { expertSandbox } from "./sandbox.js";
 import { isolatedSolveTools, solvePythonEnvironmentTool, trainingSandboxCommand, type SolveSandbox } from "./solve_sandbox.js";
 import { runSession } from "./session_runner.js";
+import { trialDigest } from "./trial_digest.js";
 import { oneLine, readProgress, renderProgress, writeProgress, type LeadHandOver, type LeadProgress } from "./lead_progress.js";
 import { messageText, OperatorQuestions } from "./operator_questions.js";
 
@@ -435,7 +436,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
  const trialFinished = (id: string, view: ExperimentView) => {
   composing++;
   const work = feedbackChain.then(async () => {
-   const described = (training?.service.describe(id) ?? {}) as Record<string, any>;
+   const described = (training?.service.describe(id, true) ?? {}) as Record<string, any>;
    const keyForBoard = metricKey(configuration);
    if (described.status && described.status !== "running_or_missing_result") {
     const origin = described.recovery?.originStageInvocationId as string | undefined;
@@ -478,7 +479,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
    const status = [trial.status, described.error ? `error: ${String(described.error.message ?? described.error).split("\n")[0].slice(0, 300)}` : "",
     described.promotionIneligibleReason ? `not eligible for promotion: ${String(described.promotionIneligibleReason).slice(0, 200)}` : "",
     view.stopReason ? `stopped: ${view.stopReason.slice(0, 200)}` : ""].filter(Boolean).join("; ");
-   const text = prompts.render("team.lead-trial", { experiment: id, status, hypothesis: trial.hypothesis || "(none)", folds: folds(described), verdict,
+   const text = prompts.render("team.lead-trial", { experiment: id, status, hypothesis: trial.hypothesis || "(none)", folds: folds(described), digest: trialDigest(configuration.kind, described), verdict,
     champion: champion ? `${champion.experimentId}${isNew ? " (this trial, new)" : ""}${champion.score !== undefined ? `, ${champion.score.toFixed(4)}` : ""}` : "none yet",
     holdout, cost, streak: String(streak), budget: `${budget.used} of ${budget.limit} used` }).text;
    trial.feedbackRecorded = true;
@@ -656,6 +657,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
   }
   return { failures };
  };
+ const currentProgress = () => renderProgress(prompts, progress, progress.champion ? trialDigest(configuration.kind, training?.service.describe(progress.champion.experimentId, true)) : undefined);
  const handOverTool = defineTool({ executionMode: "sequential", name: "hand_over", label: "Hand over", description: prompts.render("team.lead-handover-tool", {}).text,
   parameters: Type.Object({ reason: Type.String({ minLength: 1, maxLength: 1000 }), finalize: Type.Optional(Type.Boolean()) }, { additionalProperties: false }),
   async execute(toolCallId, args, signal) {
@@ -669,7 +671,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
    if (!args.finalize) {
     const validation = await validate(champion!.experimentId, args.reason, signal, toolCallId);
     if (!validationPassed(validation)) return reply(prompts.render("team.lead-handover-fix", { experiment: champion!.experimentId, bullets: `status: ${validation.status}; checks: ${JSON.stringify(validation.checkResults ?? [])}\n${validation.fix.map(row => `- ${row}`).join("\n")}` }).text);
-    return reply(prompts.render("team.lead-checkpoint", { progress: renderProgress(prompts, progress).text }).text);
+    return reply(prompts.render("team.lead-checkpoint", { progress: currentProgress().text }).text);
    }
    const selected = await finalize("lead", args.reason, signal, toolCallId);
    if (!selected.experimentId) return reply(prompts.render("team.lead-handover-fix", { experiment: champion?.experimentId ?? progress.baseline!.experimentId, bullets: selected.failures.join("\n") }).text);
@@ -723,7 +725,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
   });
   const isolation = prompts.render("solve.isolation", { workspace: agentRoot });
   const followUpNote = followUp ? prompts.render("team.lead-follow-up", { branch: followUp.branch, champion: followUp.champion.slice(0, 12), previous: followUp.previous }) : undefined;
-  const resume = resumed ? prompts.render("team.lead-resume", { progress: renderProgress(prompts, progress).text }) : undefined;
+  const resume = resumed ? prompts.render("team.lead-resume", { progress: currentProgress().text }) : undefined;
   const opening = prepareLeadPrompts(prompts, { taskId, configuration, workspace: agentRoot,
    evidencePath: join(agentRoot, "evidence.json"), task: readFileSync(data.taskPath, "utf8").trim(),
    datasetPaths: data.datasetPaths, targets: data.targets, rowCount: data.rowCount, targetSummary: data.targetSummary,
@@ -732,7 +734,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
   const system = opening.system;
   const promptReferences = [...opening.promptReferences, ...scoutSkills.references, shared.reference, boardIntro.reference, ...(["team.board-read", "team.board-write", "team.board-resolve"] as const).map(id => prompts.render(id, {}).reference), isolation.reference, environmentToolPrompt.reference,
    ...(followUpNote ? [followUpNote.reference] : []), ...(resume ? [resume.reference] : []),
-   prompts.render("team.lead-checkpoint", { progress: renderProgress(prompts, progress).text }).reference, ...training.toolPrompts, ...GIT_BLOCK_PROMPT_IDS.map(id => prompts.render(id, {}).reference)];
+   prompts.render("team.lead-checkpoint", { progress: currentProgress().text }).reference, ...training.toolPrompts, ...GIT_BLOCK_PROMPT_IDS.map(id => prompts.render(id, {}).reference)];
   let generations = 0;
   const continueWhenIdle = async (signal?: AbortSignal): Promise<RenderedPrompt | undefined> => {
    for (;;) {
@@ -762,7 +764,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
     wakeTarget: session => { inbox.bind(session); return inbox; },
     onSessionReady: (session, ids) => { training!.bindSession(session); if (ids.agentRunId) leadAgentRunId = ids.agentRunId; },
     // A replacement session after a context handoff starts from the harness's record.
-    sessionContext: () => generations++ ? [renderProgress(prompts, progress).text, boardIntro.text, JSON.stringify(progress.board)].join("\n\n") : "",
+    sessionContext: () => generations++ ? [currentProgress().text, boardIntro.text, JSON.stringify(progress.board)].join("\n\n") : "",
     continueWhenIdle,
     extensionFactories: [budget.extension(), progressExtension, createGitHistoryGuard(prompts, (type, payload) => record(type, payload))],
     ...(options.signal ? { signal: options.signal } : {}),

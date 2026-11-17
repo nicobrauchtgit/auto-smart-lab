@@ -39,7 +39,7 @@ export const PROMPTS = {
  "team.lead-follow-up": { file: "team/lead-follow-up.md", variables: ["branch", "champion", "previous"] },
  "team.lead-resume": { file: "team/lead-resume.md", variables: ["progress"] },
  "team.lead-progress": { file: "team/lead-progress.md", variables: ["phase", "baseline", "champion", "trials", "holdout", "budget", "scouts"] },
- "team.lead-trial": { file: "team/lead-trial.md", variables: ["experiment", "status", "hypothesis", "folds", "verdict", "champion", "holdout", "cost", "streak", "budget"] },
+ "team.lead-trial": { file: "team/lead-trial.md", variables: ["experiment", "status", "hypothesis", "folds", "digest", "verdict", "champion", "holdout", "cost", "streak", "budget"] },
  "team.lead-news": { file: "team/lead-news.md", variables: ["news"] },
  "team.lead-operator-question": { file: "team/lead-operator-question.md", variables: ["id", "question"] },
  "team.lead-checkpoint": { file: "team/lead-checkpoint.md", variables: ["progress"] },

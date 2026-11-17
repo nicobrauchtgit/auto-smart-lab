@@ -198,7 +198,7 @@ function compactDetail(value: any): any {
 	return result;
 }
 
-export function compactDiagnostics(result: Record<string, any> | undefined): Record<string, unknown> | undefined {
+export function compactDiagnostics(result: Record<string, any> | undefined, allFolds = false): Record<string, unknown> | undefined {
 	const signals = result?.diagnostics;
 	if (!signals) return undefined;
 	return { kind: signals.kind, primaryMetric: signals.primaryMetric, proxyEvidence: signals.proxyEvidence,
@@ -212,12 +212,12 @@ export function compactDiagnostics(result: Record<string, any> | undefined): Rec
 			summary: signals.stability.summary, measuredComparisons: signals.stability.measuredComparisons,
 			eligibleComparisons: signals.stability.eligibleComparisons } : undefined,
 		metrics: result?.metrics,
-		folds: Array.isArray(signals.folds) ? signals.folds.slice(0, 8).map((fold: any) => {
+		folds: Array.isArray(signals.folds) ? signals.folds.slice(0, allFolds ? undefined : 8).map((fold: any) => {
 			return { repeat: fold.repeat, fold: fold.fold, metrics: fold.metrics, searchObjective: fold.searchObjective,
 				diagnostics: compactDetail(fold.diagnostics ?? {}) };
 		}) : undefined,
 		completedDiagnosticFolds: signals.folds?.length,
-		shownDiagnosticFolds: Math.min(signals.folds?.length ?? 0, 8),
+		shownDiagnosticFolds: allFolds ? signals.folds?.length ?? 0 : Math.min(signals.folds?.length ?? 0, 8),
 		championComparison: result?.championComparison };
 }
 
@@ -1098,7 +1098,7 @@ export class TrainingService {
 	}
 
 	/** Durable evidence for one trial, compact enough for a tool result. */
-	describe(id: string): Record<string, unknown> | undefined {
+	describe(id: string, allDiagnosticFolds = false): Record<string, unknown> | undefined {
 		const trial = this.trials.get(id);
 		if (!trial) return undefined;
 		const result = readJson(join(trial.directory, "trial-result.json"));
@@ -1131,7 +1131,7 @@ export class TrainingService {
 			balancedAccuracy: result.metrics?.balancedAccuracy,
 			adjustedRandIndex: result.metrics?.adjustedRandIndex,
             selection: selectionSummary(result),
-			diagnostics: compactDiagnostics(result),
+			diagnostics: compactDiagnostics(result, allDiagnosticFolds),
 			promotionIneligibleReason: result.promotionIneligibleReason,
 			...(result.error ? { error: result.error } : {}),
 			...(result.interruption ? { interruption: result.interruption } : {}),

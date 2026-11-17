@@ -197,7 +197,7 @@ test('checkpoint retries transient failure, persists first baseline through rest
  f.data.holdoutSeedPlan={};f.data.split.sealedIds=['sealed'];
  const dependencies:any={confirm:async()=>{confirmations++;throw Error('checkpoint must not query Ladder');},verifiedCandidate:async()=>({experimentId:'measured',commit:f.commit,tree:'tree',sourceRoot:f.root}),
  prepareData:()=>f.data,readPython:()=>({prefix:f.root,executable:'/bin/false',fingerprint:'f'}),sandbox:()=>({executable:'/bin/false',cwd:f.root,mounts:[],env:{},agentRoot:join(f.root,'agent')}),prepareRepository:()=>({initialized:false,head:f.commit,branch:'master'}),environmentTool:()=>({name:'python_environment'}),
- createTraining:()=>({ready:async()=>{},close:async()=>{},tools:[],toolPrompts:[],service:{describe:()=>({})},supervisor:{list:()=>[]},bindSession:()=>{}}),
+ createTraining:()=>({ready:async()=>{},close:async()=>{},tools:[],toolPrompts:[],service:{describe:()=>({diagnostics:{folds:[{diagnostics:{ranking:{rocAuc:0.875}}}]}})},supervisor:{list:()=>[]},bindSession:()=>{}}),
  scouts:()=>({tool:{name:'scout'},report:async()=>{if(++validations===1)throw Error('temporary snapshot unavailable');return {text:'- ok: immutable measured source',roles:[{role:'validation',status:'completed'}]};}}),
  refit:async()=>{refits++;throw Error('checkpoint must not refit');},collectResults:async()=>({valid:false,trials:[],artifacts:[],errors:[]}),
  runAgentSession:async(opts:any)=>{
@@ -210,7 +210,7 @@ test('checkpoint retries transient failure, persists first baseline through rest
    expect(JSON.stringify(await handover.execute('free',{reason:'ready'}))).toContain('not approved');
   } else expect(opts.prompt).toContain('Goal phase: improvement');
   for(let i=0;i<2;i++) {await emit([{type:'toolCall',id:'free',name:'hand_over'}]);await admit('free');
-   expect(JSON.stringify(await handover.execute('free',{reason:'ready'}))).toContain('Readiness checkpoint accepted');}
+   const checkpoint=JSON.stringify(await handover.execute('free',{reason:'ready'})); expect(checkpoint).toContain('Readiness checkpoint accepted'); expect(checkpoint).toContain('Diagnostics: mean ROC AUC 0.875');}
   expect(refits).toBe(0);
   expect(opts.sessionContext()).toBe('');expect(opts.sessionContext()).toContain('Goal phase: improvement');
   await emit([{type:'toolCall',id:'work',name:'experiment_start'}]);await admit('work','experiment_start');

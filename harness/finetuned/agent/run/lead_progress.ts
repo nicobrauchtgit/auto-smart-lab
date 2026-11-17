@@ -116,13 +116,13 @@ export function oneLine(text: string): string {
 }
 const score = (value?: number) => value === undefined ? "unmeasured" : value.toFixed(4);
 /** The record as the lead reads it after a resume or a context handoff. */
-export function renderProgress(prompts: PromptSnapshot, progress: LeadProgress) {
+export function renderProgress(prompts: PromptSnapshot, progress: LeadProgress, championDigest?: string) {
  const holdout = progress.holdout.length ? progress.holdout.map(row => `${row.experimentId} ${row.status}${row.verdict ? `: ${row.verdict}` : ""}${row.score !== undefined ? ` (${row.score.toFixed(4)})` : ""}${row.reason ? ` (${row.reason})` : ""}`).join("; ")
   + `; queries used: ${Math.max(0, ...progress.holdout.map(row => row.queryCount ?? 0))}` : "none yet";
  return prompts.render("team.lead-progress", {
   phase: progress.phase ?? "baseline",
   baseline: progress.baseline ? JSON.stringify(progress.baseline) : "not yet validated",
-  champion: progress.champion ? `${progress.champion.experimentId} (${score(progress.champion.score)})` : "none yet",
+  champion: progress.champion ? `${progress.champion.experimentId} (${score(progress.champion.score)})${championDigest ? `\nDiagnostics: ${championDigest}` : ""}` : "none yet",
   trials: progress.trials.length ? progress.trials.map(trial => `- ${trial.experimentId}: ${trial.status}, ${score(trial.score)}${trial.verdict ? `; ${trial.verdict}` : ""}${trial.becameChampion ? "; became champion" : ""} — ${trial.hypothesis}`).join("\n") : "- none yet",
   holdout, budget: `${progress.budget.used} of ${progress.budget.limit} used`, scouts: String(progress.scoutCalls),
  });

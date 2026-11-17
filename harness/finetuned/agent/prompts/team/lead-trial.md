@@ -1,6 +1,7 @@
 Trial `{{experiment}}` finished: {{status}}.
 Hypothesis: {{hypothesis}}
 Folds: {{folds}}
+Diagnostics: {{digest}}
 Against the champion: {{verdict}}
 Champion now: {{champion}}
 Holdout check: {{holdout}}
