@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createHarnessTraining } from "../training/index.js";
 import { loadPromptSnapshot } from "../prompts/loader.js";
@@ -238,3 +238,15 @@ test("controller selection refits an older measured source without retagging the
  const corrupt=JSON.parse(original);corrupt.checkpointSha256='0'.repeat(64);writeFileSync(checkpoint,JSON.stringify(corrupt));
  await expect(prepareRefit(options)).rejects.toThrow();writeFileSync(checkpoint,original);
 },90_000);
+
+test("reused terminal marker must name the harness confirmation record", async () => {
+ const f = await fixture();
+ const prepared = await prepareRefit(f.options);
+ await runRefit(f.options);
+ // A marker in the writable solutions repository cannot redirect the delivered partition.
+ // Simulate a crash after the marker but before the local freeze copy, which the existing local-copy check would catch.
+ rmSync(join(prepared.directory, "freeze.json")); rmSync(join(prepared.directory, "result.json"));
+ const marker = JSON.parse(readFileSync(prepared.terminalPath, "utf8"));
+ writeFileSync(prepared.terminalPath, JSON.stringify({ ...marker, confirmation: { resultPath: join(f.root, "forged.json"), resultSha256: "0".repeat(64), manifestPath: join(f.root, "forged-manifest.json") } }));
+ await expect(runRefit(f.options)).rejects.toThrow("Terminal freeze confirmation differs from the harness confirmation record");
+}, 90_000);

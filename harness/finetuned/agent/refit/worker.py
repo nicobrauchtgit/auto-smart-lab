@@ -168,6 +168,13 @@ def confirmation_predictions(freeze):
     assert sha(path) == confirmation['resultSha256'], 'Confirmation receipt changed'
     receipt = json.loads(Path(path).read_text())
     assert receipt['status'] == 'completed', 'Confirmation not completed'
+    # The receipt is the delivery source: it must describe this frozen champion and seed.
+    pipeline = lambda value: {'module': value.get('module'), 'factory': value.get('factory'),
+                              'parameters': value.get('parameters') or {}, 'estimatorParams': value.get('estimatorParams') or {}}
+    assert receipt.get('experimentId') == freeze['chosenExperimentId'], 'Confirmation is for another experiment'
+    assert receipt.get('source') == freeze['source'], 'Confirmation source differs from the frozen champion'
+    assert pipeline(receipt.get('pipeline') or {}) == pipeline(freeze['pipeline']), 'Confirmation pipeline differs from the frozen champion'
+    assert receipt.get('seed') == freeze['seed'], 'Confirmation seed differs from the refit seed'
     expected = receipt['testPredictions']
     assert receipt['testIds'] == freeze['data']['testIds'], 'Confirmed test IDs/order differ'
     assert len(expected) == len(freeze['data']['testIds']), 'Confirmed test prediction coverage differs'
@@ -202,6 +209,8 @@ def fit(directory, freeze):
         estimator.set_params(**pipeline['estimatorParams'])
     seeded = _inject_random_states(estimator, freeze['seed'])
     events = EventWriter(directory, freeze['identity'])
+    # The replay must finish: it produces the fitted model artefact. Only its partition is advisory
+    # when a confirmation exists, because the confirmed partition is what is delivered.
     predicted, fit_rows, test_rows = fit_samples(estimator, freeze, events)
     consistency = partition_check(freeze, predicted)
     if consistency is not None:

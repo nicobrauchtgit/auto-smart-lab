@@ -127,6 +127,8 @@ def anchored_structure(document, root, frame):
 
 
 def _anchored_child(writer, document, root, frame):
+    # Agent output goes to stderr, as in the parent; stdout carries only the final JSON line.
+    os.dup2(2, 1)
     try:
         expose_project(root)
         writer.send(_anchored_structure(document, root, frame))
@@ -156,7 +158,7 @@ def _anchored_structure(document, root, frame):
         return {'available': False, 'reason': 'Timeout' if isinstance(error, TimeoutError) else type(error).__name__}
 
 
-def outcome(document, base_complete=None):
+def outcome(document):
     """Structured result: passed, sizes, and for failures phase/error/traceback and sample sensitivity."""
     root = Path(document['sourceRoot']).resolve()
     expose_project(root)
@@ -164,8 +166,6 @@ def outcome(document, base_complete=None):
     result = {'developmentRows': len(frame)}
     try:
         result.update(passed=True, sample=_run(document, root, frame, targets, SAMPLE_ROWS[0]))
-        if base_complete is not None:
-            base_complete(result)
         test_part = anchored_structure(document, root, frame)
         if test_part is not None:
             result['testPart'] = test_part
@@ -185,8 +185,6 @@ def outcome(document, base_complete=None):
         else:
             # Only the small sample failed: the cause is its size, not the pipeline.
             result.update(passed=True, sampleSensitive=True, largerSample={'passed': True, **larger})
-            if base_complete is not None:
-                base_complete(result)
             test_part = anchored_structure(document, root, frame)
             if test_part is not None:
                 result['testPart'] = test_part
@@ -195,15 +193,9 @@ def outcome(document, base_complete=None):
 
 if __name__ == '__main__':
     document = json.load(sys.stdin)
-    def base_complete(result):
-        if document['measurement'].get('anchorManifestPath') and document.get('smokeBasePath'):
-            path = Path(document['smokeBasePath'])
-            temporary = path.with_suffix('.tmp')
-            temporary.write_text(json.dumps({'smokeBase': result}))
-            os.replace(temporary, path)
     try:
         with contextlib.redirect_stdout(sys.stderr):
-            value = outcome(document, base_complete)
+            value = outcome(document)
     except BaseException as error:
         value = {'passed': False, 'phase': 'load', 'error': {'type': type(error).__name__, 'message': str(error)[:2000]},
                  'traceback': traceback.format_exc()[-8000:]}

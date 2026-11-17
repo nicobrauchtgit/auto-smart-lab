@@ -245,7 +245,11 @@ export async function runRefit(options: RefitOptions): Promise<{ artifacts: Stag
   const unlock = selectionClaim(options.solutionsRoot);
   let freeze: RefitFreeze;
   try {
-   if (existsSync(prepared.terminalPath)) freeze = json(prepared.terminalPath);
+   if (existsSync(prepared.terminalPath)) {
+    freeze = json(prepared.terminalPath);
+    // The delivered clustering partition comes from this confirmation; a reused marker must name the harness record.
+    if (canonical(freeze.confirmation ?? null) !== canonical(prepared.confirmation ?? null)) throw new Error("Terminal freeze confirmation differs from the harness confirmation record");
+   }
    else {
     const current = options.selectedCandidate ? { commit: options.selectedCandidate.commit, message: JSON.stringify({ ...options.selectedCandidate, pipeline: prepared.pipeline }) }
      : tagMessage(options.solutionsRoot, championTag(options.taskId));

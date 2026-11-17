@@ -716,7 +716,7 @@ export class TrainingService {
             let notice: string | undefined;
             const issues = await runPipelineValidation({ pythonExecutable: this.options.pythonExecutable, scriptPath,
                 command: this.options.sandboxCommand?.([this.options.pythonExecutable, scriptPath], { directory, sourceRoots: [sourceRoot] }),
-                sourceRoot, request, smokeBasePath: join(directory, "smoke-base.json"), measurement: this.checkMeasurement(), testZip: data?.testZip, sampleSource: data?.configuration.samples.source, sealedRows: data?.split.sealedIds.length, env: this.options.env,
+                sourceRoot, request, measurement: this.checkMeasurement(), testZip: data?.testZip, sampleSource: data?.configuration.samples.source, sealedRows: data?.split.sealedIds.length, env: this.options.env,
                 cwd: this.options.projectRoot, timeoutMs: this.settings.validationTimeoutSeconds * 1000,
                 interpret: (output) => {
                     const value = output as { passed?: unknown; phase?: string; error?: { type?: string; message?: string }; traceback?: string; sample?: { trainRows?: number }; largerSample?: { passed?: boolean; trainRows?: number }; sampleSensitive?: boolean; developmentRows?: number; testPart?: { available?: boolean; clusterCount?: number; singletonFraction?: number; largestClusterShare?: number; reason?: string } };

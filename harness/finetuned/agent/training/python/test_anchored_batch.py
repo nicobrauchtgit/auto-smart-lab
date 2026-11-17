@@ -172,12 +172,13 @@ class AnchoredBatch(unittest.TestCase):
         from smartlab_trial.agent_code import _load_module
         estimator = _load_module(self.root,'model.py').build_pipeline({'seed':13})
         frozen = {'inputs':{'task':{'kind':'clustering','execution':'batch'},'trainZip':str(train_zip),'testZip':str(test_zip),
-            'sealedIds':['sealed-a','sealed-b']},'confirmation':frozen_confirmation,'data':{'trainIds':['dev-a','dev-b','sealed-a','sealed-b'],'testIds':[f'test-{i}' for i in range(7)]}}
+            'sealedIds':['sealed-a','sealed-b']},'confirmation':frozen_confirmation,
+            'chosenExperimentId':'trial','source':{},'pipeline':{'module':'model.py','factory':'build_pipeline'},'seed':13,'data':{'trainIds':['dev-a','dev-b','sealed-a','sealed-b'],'testIds':[f'test-{i}' for i in range(7)]}}
         with contextlib.redirect_stdout(io.StringIO()): predicted, fit_rows, test_rows = refit.fit_samples(estimator,frozen,EventWriter(self.root,'test'))
         self.assertTrue(refit.partition_check(frozen, predicted)['matches'])
         self.assertEqual(predicted, receipt['testPredictions']); self.assertEqual((fit_rows,test_rows),(9,7))
         # Exercise the terminal exact-ID validator, including a checksum-valid duplicate.
-        frozen.update(identity='terminal', source={}, pipeline={}, environment={}, seed=13, seedLineage={}, evidence=[])
+        frozen.update(identity='terminal', source={}, environment={}, seed=13, seedLineage={}, evidence=[])
         frozen['data'].update(trainRows=4, testRows=7, hashes={})
         (self.root/'freeze.json').write_text(json.dumps(frozen))
         import csv
@@ -190,7 +191,7 @@ class AnchoredBatch(unittest.TestCase):
             trainRows=4, fitCalls=1, testRows=7,
             trainIdsSha256=hashlib.sha256(json.dumps(frozen['data']['trainIds'], separators=(',', ':')).encode()).hexdigest(),
             modelSerialization={'status':'unavailable','errorType':'Fixture'}, artifacts={'predictions.csv':refit.sha(predictions)},
-            source={},pipeline={},environment={},seed=13,seedLineage={},evidence=[],data={},
+            source={},pipeline=frozen['pipeline'],environment={},seed=13,seedLineage={},evidence=[],data={},
             deliveredPredictionSource='confirmation', confirmationPartition=refit.partition_check(frozen,predicted))
         (self.root/'result.json').write_text(json.dumps(result))
         refit.validate(self.root, frozen)
@@ -205,8 +206,9 @@ class AnchoredBatch(unittest.TestCase):
         refit = importlib.util.module_from_spec(spec); spec.loader.exec_module(refit)
         ids = ['a', 'b', 'c', 'd']
         receipt = self.root / 'receipt.json'
-        receipt.write_text(json.dumps({'status': 'completed', 'testIds': ids, 'testPredictions': [0, 0, 1, 1]}))
-        frozen = {'confirmation': {'resultPath': str(receipt), 'resultSha256': refit.sha(receipt)},
+        receipt.write_text(json.dumps({'status': 'completed', 'testIds': ids, 'testPredictions': [0, 0, 1, 1],
+                                       'experimentId': 'exp', 'source': {}, 'pipeline': {'module':'x','factory':'x'}, 'seed': 0}))
+        frozen = {'chosenExperimentId': 'exp', 'confirmation': {'resultPath': str(receipt), 'resultSha256': refit.sha(receipt)},
                   'terminalPath': str(self.root/'freeze.json'), 'inputs': {},
                   'data': {'trainIds': [], 'testIds': ids, 'trainRows': 0, 'testRows': 4, 'hashes': {}},
                   'sourceRoot': str(self.root), 'pipeline': {'module':'x','factory':'x'},
@@ -239,11 +241,22 @@ class AnchoredBatch(unittest.TestCase):
         spec = importlib.util.spec_from_file_location('refit_check', Path(__file__).resolve().parents[2] / 'refit/worker.py')
         refit = importlib.util.module_from_spec(spec); spec.loader.exec_module(refit)
         receipt = self.root/'receipt.json'
-        frozen = {'confirmation': {'resultPath': str(receipt)}, 'data': {'testIds': ['a','b']}}
+        identity = {'experimentId': 'exp', 'source': {'commit': 'c'}, 'pipeline': {'module': 'm', 'factory': 'f'}, 'seed': 5}
+        frozen = {'confirmation': {'resultPath': str(receipt)}, 'data': {'testIds': ['a','b']},
+                  'chosenExperimentId': 'exp', 'source': {'commit': 'c'}, 'pipeline': {'module': 'm', 'factory': 'f', 'parameters': {}}, 'seed': 5}
+        receipt.write_text(json.dumps({'status':'completed', 'testIds':['a','b'], 'testPredictions':[0,1], **identity}))
+        frozen['confirmation']['resultSha256'] = refit.sha(receipt)
+        self.assertEqual(refit.confirmation_predictions(frozen), [0, 1])
         for ids, values in [(['b','a'], [0,1]), (['a','b'], [0]), (['a','b'], [0,1.5]), (['a','a'], [0,1])]:
-            receipt.write_text(json.dumps({'status':'completed', 'testIds':ids, 'testPredictions':values}))
+            receipt.write_text(json.dumps({'status':'completed', 'testIds':ids, 'testPredictions':values, **identity}))
             frozen['confirmation']['resultSha256'] = refit.sha(receipt)
             with self.assertRaises(AssertionError): refit.confirmation_predictions(frozen)
+        # A receipt for another champion, source, pipeline or seed is never delivered.
+        for change, message in [({'experimentId': 'other'}, 'another experiment'), ({'source': {'commit': 'd'}}, 'source differs'),
+                                ({'pipeline': {'module': 'm', 'factory': 'g'}}, 'pipeline differs'), ({'seed': 6}, 'seed differs')]:
+            receipt.write_text(json.dumps({'status':'completed', 'testIds':['a','b'], 'testPredictions':[0,1], **identity, **change}))
+            frozen['confirmation']['resultSha256'] = refit.sha(receipt)
+            with self.assertRaisesRegex(AssertionError, message): refit.confirmation_predictions(frozen)
         receipt.write_text('{}')
         with self.assertRaisesRegex(AssertionError, 'receipt changed'): refit.confirmation_predictions(frozen)
 

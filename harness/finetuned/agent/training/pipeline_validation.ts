@@ -1,6 +1,5 @@
 /** Time-bounded Layer 2 validation: build the real pipeline from the trial's worktree, never fit. */
 
-import { readFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 
 import { preview } from "./contract.js";
@@ -18,7 +17,6 @@ export interface PipelineValidationInput {
  testZip?: string;
  sampleSource?: string;
  sealedRows?: number;
- smokeBasePath?: string;
 	env?: Record<string, string>;
 	cwd: string;
 	timeoutMs: number;
@@ -44,7 +42,6 @@ export const runPipelineValidation: PipelineValidator = (input) => new Promise((
 		detached: true,
 	});
 	let stdout = "";
-
 	let stderr = "";
 	let timedOut = false;
 	const timer = setTimeout(() => {
@@ -64,27 +61,13 @@ export const runPipelineValidation: PipelineValidator = (input) => new Promise((
 	});
 	child.on("close", (code) => {
 		clearTimeout(timer);
-		// Smoke commits its passed base check before optional anchored diagnostics.
-  // Preserve that result if the outer deadline expires during the optional work.
-  const lines = stdout.trim().split("\n");
-  if (timedOut && input.interpret && input.measurement?.kind === "clustering" && input.measurement.execution === "batch" && input.measurement.anchorManifestPath) {
-   try {
-     const base = input.smokeBasePath ? JSON.parse(readFileSync(input.smokeBasePath, "utf8")).smokeBase : undefined;
-     if (base?.passed === true) {
-      const issues = input.interpret({...base, testPart: {available:false, reason:"Timeout"}});
-      if (issues) { settle(issues); return; }
-     }
-   } catch { /* No completed base record. */ }
-  }
 		if (timedOut) {
 			settle(failure(`validation did not finish within ${Math.round(input.timeoutMs / 1000)} s`,
 				"Keep module import and factory construction cheap: do not fit, download, or read the dataset at import or build time."));
 			return;
 		}
 		try {
-			let parsed: { issues?: unknown };
-   try { parsed = JSON.parse(stdout); }
-   catch { parsed = JSON.parse(lines.at(-1) ?? ""); }
+			const parsed = JSON.parse(stdout) as { issues?: unknown };
 			const interpreted = code === 0 && input.interpret ? input.interpret(parsed) : undefined;
 			if (interpreted) {
 				settle(interpreted);
@@ -101,5 +84,5 @@ export const runPipelineValidation: PipelineValidator = (input) => new Promise((
 		settle(failure("validation crashed while loading the pipeline",
 			"Run the module locally to reproduce; the last lines of its error output are included.", tail || `exit code ${code}`));
 	});
-	child.stdin.end(JSON.stringify({ sourceRoot: input.sourceRoot, request: input.request, measurement: input.measurement, testZip: input.testZip, sampleSource: input.sampleSource, sealedRows: input.sealedRows, smokeBasePath: input.smokeBasePath }));
+	child.stdin.end(JSON.stringify({ sourceRoot: input.sourceRoot, request: input.request, measurement: input.measurement, testZip: input.testZip, sampleSource: input.sampleSource, sealedRows: input.sealedRows }));
 });
