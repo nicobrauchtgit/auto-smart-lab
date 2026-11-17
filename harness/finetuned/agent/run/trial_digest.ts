@@ -36,7 +36,8 @@ export function trialDigest(kind: string, described: unknown): string {
   return lines.join("\n");
  }
  if (kind === "multiclass_classification") {
-  const metrics = object(result.metrics);
+  // describe() returns compact diagnostics; trial metrics sit under diagnostics.metrics there.
+  const metrics = object(result.metrics ?? diagnostics.metrics);
   const worst = Object.entries(object(metrics.perClassRecall)).sort((a, b) => Number(a[1]) - Number(b[1])).slice(0, 5);
   return `balanced accuracy ${format(metrics.balancedAccuracy)}; worst-recall classes ${worst.map(([label, recall]) => `${label}: ${format(recall)}`).join(", ")}; top confusions ${JSON.stringify(metrics.topConfusions ?? [])}`;
  }

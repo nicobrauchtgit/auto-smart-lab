@@ -73,3 +73,10 @@ test("checkpoint omits absent and incomplete diagnostics", () => {
  }
  expect(checkpointDigest("clustering",described(cluster(2)))).toContain("clusters per batch 2-2");
 });
+
+test("multiclass digest reads metrics from the compact describe() shape", () => {
+ const text = trialDigest("multiclass_classification", { diagnostics: { metrics: { balancedAccuracy: 0.6975, perClassRecall: { a: 0.2, b: 0.9 }, topConfusions: [{ true: "a", predicted: "b", rows: 4 }] }, folds: [] } });
+ expect(text).toContain("balanced accuracy 0.698");
+ expect(text).toContain("a: 0.200");
+ expect(text).toContain('"predicted":"b"');
+});
