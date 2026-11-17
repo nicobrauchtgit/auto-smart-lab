@@ -728,11 +728,13 @@ export class TrainingService {
                 // A delivery-sized fit on real data takes far longer than the 256-row check (code2: about 18 s, code1 more).
                 cwd: this.options.projectRoot, timeoutMs: (this.settings.validationTimeoutSeconds + (this.anchoredMeasurement() ? this.settings.anchoredSmokeSeconds : 0)) * 1000,
                 interpret: (output) => {
-                    const value = output as { passed?: unknown; phase?: string; error?: { type?: string; message?: string }; traceback?: string; sample?: { trainRows?: number }; largerSample?: { passed?: boolean; trainRows?: number }; sampleSensitive?: boolean; developmentRows?: number; testPart?: { available?: boolean; clusterCount?: number; singletonFraction?: number; largestClusterShare?: number; reason?: string } };
+                    const value = output as { passed?: unknown; phase?: string; error?: { type?: string; message?: string }; traceback?: string; sample?: { trainRows?: number; anomalyDecision?: { label: number; frequency: string } }; largerSample?: { passed?: boolean; trainRows?: number; anomalyDecision?: { label: number; frequency: string } }; sampleSensitive?: boolean; developmentRows?: number; testPart?: { available?: boolean; clusterCount?: number; singletonFraction?: number; largestClusterShare?: number; reason?: string } };
                     if (typeof value?.passed !== "boolean") return undefined;
                     const error = `${value.error?.type ?? "Error"}: ${value.error?.message ?? ""}`;
                     if (value.passed) {
                         if (value.sampleSensitive) notice = prompts.render("training.smoke-sample-sensitive", { phase: String(value.phase), smallRows: String(value.sample?.trainRows), largerRows: String(value.largerSample?.trainRows), error }).text;
+                        const decision = value.sample?.anomalyDecision ?? value.largerSample?.anomalyDecision;
+                        if (decision) notice = [notice, prompts.render("training.smoke-anomaly-decisions", { label: String(decision.label), frequency: decision.frequency }).text].filter(Boolean).join("\n");
                         if (value.testPart) {
                             const p = value.testPart;
                             const text = prompts.render("training.smoke-test-part", { structure: p.available ? `${p.clusterCount} clusters, singleton fraction ${p.singletonFraction}, largest share ${p.largestClusterShare}` : `unavailable (${p.reason})` }).text;

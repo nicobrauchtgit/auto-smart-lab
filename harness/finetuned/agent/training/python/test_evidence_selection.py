@@ -46,6 +46,43 @@ class EvidenceSelection(unittest.TestCase):
         self.assertTrue(all(0 < fold['labelCoverage'] < 1 for fold in result['selection']['folds']))
         self.assertTrue(all(fold['positiveRows'] and fold['negativeRows'] for fold in result['selection']['folds']))
 
+    def decision_trial(self, expression, search=False):
+        doc = self.document()
+        doc['measurement']['anomalyLabel'] = 1
+        module = self.fixture.root / 'solutions/generic.py'
+        module.write_text(module.read_text().replace(
+            'return np.array([-1 if x[0] > 1 else 1 for x in frame.input])',
+            'return np.array([' + expression + ' for x in frame.input])'))
+        if search:
+            doc['schemaVersion'] = doc['request']['schemaVersion'] = 2
+            doc['request']['search'] = {'space': {'mode': {'type': 'categorical', 'choices': ['anomaly']}}, 'sampler': 'grid'}
+        return self.execute(doc)
+
+    def test_missing_declared_decisions_block_promotion_despite_perfect_ap(self):
+        result = self.decision_trial('0')
+        self.assertEqual(result['status'], 'completed')
+        self.assertEqual(result['metrics']['selectionScore'], 1)
+        self.assertFalse(result['promotionEligible'])
+        self.assertEqual(result['promotionIneligibleReason'],
+            'predict never returned the declared anomaly label 1 on validation rows')
+
+    def test_all_anomaly_decisions_block_promotion(self):
+        result = self.decision_trial('1')
+        self.assertFalse(result['promotionEligible'])
+        self.assertEqual(result['promotionIneligibleReason'],
+            'predict returned the declared anomaly label 1 for every validation row')
+
+    def test_some_declared_decisions_promote_with_unchanged_ap(self):
+        result = self.decision_trial('1 if x[0] > 1 else 0')
+        self.assertTrue(result['promotionEligible'])
+        self.assertEqual(result['metrics']['selectionScore'], 1)
+
+    def test_search_cannot_override_decision_ineligibility(self):
+        result = self.decision_trial('0', search=True)
+        self.assertFalse(result['promotionEligible'])
+        self.assertIn('never returned', result['promotionIneligibleReason'])
+        self.assertEqual(result['metrics']['selectionScore'], 1)
+
     def test_one_class_and_empty_folds_never_fallback_or_promote(self):
         doc = self.document()
         path = Path(doc['measurement']['evidence']['path'])

@@ -91,6 +91,16 @@ def _run(document, root, frame, targets, rows):
             raise ValueError('Smoke input IDs were changed or duplicated')
     except ValueError as error:
         raise SmokeFailure('output', error) from error
+    if measurement['kind'] == 'anomaly_detection' and callable(getattr(estimator, 'predict', None)):
+        try:
+            decisions = np.asarray(estimator.predict(test))
+            if decisions.shape != (len(test),) or not np.isfinite(decisions.astype(float)).all():
+                raise ValueError('Smoke decisions must be finite and row aligned')
+            label = measurement['anomalyLabel']
+            if len(decisions) and (np.all(decisions != label) or np.all(decisions == label)):
+                sizes['anomalyDecision'] = {'label': label, 'frequency': 'never' if np.all(decisions != label) else 'always'}
+        except BaseException as error:
+            raise SmokeFailure('predict', error) from error
     return sizes
 
 

@@ -39,6 +39,16 @@ class SmokeTests(unittest.TestCase):
         self.assertTrue(result['passed'])
         self.assertEqual(result['sample'], {'trainRows': 20, 'testRows': 20})
 
+    def test_anomaly_decision_notices_do_not_fail_smoke(self):
+        document = self.document(20, kind='anomaly_detection')
+        document['measurement'].update(scoreMethod='score_samples', scoreDirection='lower_is_anomalous', anomalyLabel=1)
+        for label, frequency in [(0, 'never'), (1, 'always')]:
+            code = MODEL.format(fit='pass', label=label).replace(' def predict', ' def score_samples(self, X): return list(range(len(X)))\n def predict')
+            (self.root / 'pipeline.py').write_text(code)
+            result = outcome(document)
+            self.assertTrue(result['passed'])
+            self.assertEqual(result['sample']['anomalyDecision'], {'label': 1, 'frequency': frequency})
+
     def test_sample_supports_ordinary_pipelines(self):
         # A KMeans with dozens of clusters or a min_df of 50 needs more than a handful of rows.
         document = self.document(3000)

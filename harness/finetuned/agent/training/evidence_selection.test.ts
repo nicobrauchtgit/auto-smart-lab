@@ -33,7 +33,7 @@ class Detector(BaseEstimator):
                 values.append(float(b'prize' in archive.read(item['member'])))
         return np.asarray(values) * (1 if self.quality else -1)
     def predict(self, frame):
-        return np.where(self.score_samples(frame) > 0, -1, 1)
+        return np.where(np.abs(self.score_samples(frame)) > 0, -1, 1)
 def build_pipeline(context):
     assert 'evidence' not in context.get('measurement', {})
     detector = Detector()

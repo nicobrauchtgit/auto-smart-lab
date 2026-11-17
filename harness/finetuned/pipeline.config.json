@@ -244,7 +244,7 @@
         "anomaly": {
           "scoreMethod": "score_samples",
           "scoreDirection": "lower_is_anomalous",
-          "anomalyLabel": -1
+          "anomalyLabel": 1
         },
         "selection": {
           "basis": "evidence",

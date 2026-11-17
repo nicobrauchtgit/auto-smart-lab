@@ -245,6 +245,17 @@ def _summarise(invocation: Invocation, folds: Sequence[ConcreteFold], completed:
                                     "limitations": "Agent-provided evidence does not establish official accuracy or label correctness"}
         if not promotion_eligible and (task_kind == "anomaly_detection" or y is None):
             summary["promotionIneligibleReason"] = "incomplete_selection_evidence" if evidence_selection else "unlabelled_proxy_evidence"
+    if task_kind == "anomaly_detection" and oof_rows:
+        label = invocation.measurement["anomalyLabel"]
+        decisions = [row["prediction"] for row in oof_rows]
+        reason = None
+        if all(value != label for value in decisions):
+            reason = f"predict never returned the declared anomaly label {label} on validation rows"
+        elif all(value == label for value in decisions):
+            reason = f"predict returned the declared anomaly label {label} for every validation row"
+        if reason:
+            summary["promotionEligible"] = False
+            summary["promotionIneligibleReason"] = reason
     return summary
 
 
@@ -549,7 +560,7 @@ def execute(document: dict[str, Any]) -> dict[str, Any]:
             outputs = write_search_outputs(invocation, output_dir, outcome, manifest, dict(zip(ids, y)) if y is not None else {}, champion)
             summary = _summarise(invocation, folds, best.folds if best else [], best.oof if best else [],
                                  ids, y, manifest, started, bool(outcome["stopReason"]))
-            summary["promotionEligible"] = bool(best and best.status == "completed" and invocation.scope.kind == "promotion" and not invocation.search.objective and not outcome["stopReason"] and len(best.folds) == len(folds) and summary.get("metrics") and best.oof and all(type(row.get("prediction")) is int for row in best.oof))
+            summary["promotionEligible"] = bool(summary["promotionEligible"] and best and best.status == "completed" and invocation.scope.kind == "promotion" and not invocation.search.objective and not outcome["stopReason"] and len(best.folds) == len(folds) and summary.get("metrics") and best.oof and all(type(row.get("prediction")) is int for row in best.oof))
             if summary["promotionEligible"]:
                 from smartlab_trial.search import confirmation_request
                 summary["winningPipeline"] = confirmation_request(invocation, best)["pipeline"]

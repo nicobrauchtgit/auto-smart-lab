@@ -9,6 +9,7 @@ import { loadPromptSnapshot } from "./loader.js";
 import { PROMPTS, type PromptId } from "./registry.js";
 import { prepareLeadPrompts } from "./lead.js";
 import { spamConfiguration } from "../pipeline/task_configuration.testing.js";
+import { parseTaskConfiguration } from "../pipeline/task_configuration.js";
 import type { TaskConfiguration } from "../pipeline/task_configuration.js";
 
 test("every registered template loads and renders with its declared inputs", () => {
@@ -75,6 +76,9 @@ test("the solve opening selects the task contract of the configured kind", () =>
 	const anomaly: TaskConfiguration = { ...clustering, kind: "anomaly_detection", targets: { kind: "none" }, execution: "inductive", holdout: "none",
 		metric: "none", refit: "fit_training_predict_test", submission: { format: "id_semicolon_prediction", predictions: "binary" },
 		anomaly: { scoreMethod: "score_samples", scoreDirection: "lower_is_anomalous", anomalyLabel: -1 } };
+    const configured = JSON.parse(readFileSync(new URL("../../pipeline.config.json", import.meta.url), "utf8")).pipeline.tasks.attacks1;
+    const attacks = prepareLeadPrompts(snapshot, { ...base, configuration: parseTaskConfiguration(configured) });
+    assert.match(attacks.prompt, /returning `1` for anomalies/);
 	const detected = prepareLeadPrompts(snapshot, { ...base, configuration: anomaly });
 	assert.match(detected.prompt, /returning `-1` for anomalies/);
 	assert.match(detected.prompt, /lower is anomalous/);

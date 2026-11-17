@@ -103,6 +103,7 @@ export const PROMPTS = {
 	"experiments.shell-timeout": { file: "experiments/shell-timeout.md", variables: ["seconds"] },
 	"training.resume-tool": { file: "training/resume-tool.md", variables: [] },
 	"training.workspace-check-tool": { file: "training/workspace-check-tool.md", variables: [] },
+	"training.smoke-anomaly-decisions": { file: "training/smoke-anomaly-decisions.md", variables: ["label", "frequency"] },
 	"training.smoke-test-part": { file: "training/smoke-test-part.md", variables: ["structure"] },
 	"training.smoke-tool": { file: "training/smoke-tool.md", variables: [] },
 	"training.request-contract": { file: "training/request-contract.md", variables: [] },

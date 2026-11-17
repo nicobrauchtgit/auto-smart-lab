@@ -171,6 +171,18 @@ class SampleRefitTest(SampleFixture):
         predicted, _, _ = worker.fit_samples(FamilyFromContent(), freeze, Events())
         self.assertEqual(predicted, [1, 1, 1])
 
+    def test_both_declared_anomaly_labels_map_only_matching_values_to_one(self):
+        class Detector:
+            def fit(self, frame): return self
+            def predict(self, frame): return [1, -1, 7]
+        self.inputs['task'].update(kind='anomaly_detection', targets='none', execution='inductive', predictions='binary')
+        del self.inputs['targetsPath']
+        for label, expected in [(1, [1, 0, 0]), (-1, [0, 1, 0])]:
+            self.inputs['task']['anomaly'] = {'anomalyLabel': label}
+            freeze = {'inputs': self.inputs, 'data': worker.data(self.inputs)}
+            predicted, _, _ = worker.fit_samples(Detector(), freeze, Events())
+            self.assertEqual(predicted, expected)
+
 
 if __name__ == '__main__':
     unittest.main()

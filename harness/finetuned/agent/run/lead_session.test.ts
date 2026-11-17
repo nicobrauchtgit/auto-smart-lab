@@ -433,3 +433,24 @@ for (const mode of ['repair', 'unrelated', 'not-rerun', 'defect', 'edited-after-
  expect(reviews).toBe(mode==='repair'||mode==='defect'?2:3); // completed defects are cached
  } finally {f.close();}
 });
+
+test('ineligible decision reason appears in lead trial feedback', async()=>{
+ const f=fixture();const path=join(f.root,'lead/PROGRESS.json');let feedback=0,confirmations=0;let feedbackText='';let finished:any;let active=new AbortController();
+ const progress:LeadProgress={schemaVersion:1,taskId:'spam1',datasetSha256:undefined,runId:'original',trainingRoot:join(f.root,'training'),status:'running',startedAt:new Date().toISOString(),sessions:[],champion:{experimentId:'obsolete'},trials:[{experimentId:'measured',hypothesis:'recovered trial',status:'running',startedAt:new Date().toISOString()}],holdout:[],budget:{limit:80,used:7},scoutCalls:0};
+ writeProgress(path,progress);
+ f.data.holdoutSeedPlan={};f.data.split.sealedIds=['sealed'];
+ const view:any={id:'measured',status:'exited',elapsedSeconds:1};
+ const dependencies:any={verifiedCandidate:async()=>({experimentId:"measured",commit:f.commit,tree:"tree",sourceRoot:f.root}),
+ prepareData:()=>f.data,readPython:()=>({prefix:f.root,executable:'/bin/false',fingerprint:'f'}),sandbox:()=>({executable:'/bin/false',cwd:f.root,mounts:[],env:{},agentRoot:join(f.root,'agent')}),prepareRepository:()=>({initialized:false,head:f.commit,branch:'master'}),environmentTool:()=>({name:'python_environment'}),
+ createTraining:(opts:any)=>{finished=opts.onTrialFinished;return {ready:async()=>{await finished('measured',view);await finished('measured',view);},close:async()=>{},tools:[],toolPrompts:[],service:{describe:()=>({status:'completed',promotionIneligibleReason:'predict never returned the declared anomaly label 1 on validation rows',balancedAccuracy:1,noiseVerdict:'clear improvement',championComparison:{status:'completed'},foldScores:[{metrics:{balancedAccuracy:1}}]})},supervisor:{list:()=>[view]},bindSession:()=>{}};},
+ confirm:async()=>{confirmations++;return {artifact:{kind:'holdout_confirmation',path:join(f.root,'confirmation.json'),sha256:'a'.repeat(64)},summary:{status:'completed',verdict:'no significant improvement',queryCount:1},privateScore:0.123456,scoutTranscript:'PRIVATE SCOUT'};},
+ scouts:()=>({tool:{name:'scout'},report:async()=>{throw Error('cancelled lead must not validate');}}),refit:async()=>{throw Error('cancelled lead must not refit');},collectResults:async()=>({valid:false,trials:[],artifacts:[],errors:[]}),
+ runAgentSession:async(opts:any)=>{active.abort();return {output:'cancelled',agentRunId:'fixture'};}};
+
+ try {
+  await runLeadSession('spam1',{taskConfiguration:spamConfiguration(),progressPath:path,signal:active.signal,dependencies,
+   report:{event:(type:string,data:any)=>{if(type==='lead_trial_feedback'){feedback++;feedbackText=data.text;}},input(){},agentIdentity(){return {};},observation(){return {};} } as any});
+  expect(feedback).toBe(1);
+  expect(feedbackText).toContain('not eligible for promotion: predict never returned the declared anomaly label 1 on validation rows');
+ } finally { f.close(); }
+});

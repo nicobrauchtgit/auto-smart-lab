@@ -80,3 +80,34 @@ test("concurrent smoke runs and experiment_start on the same tree keep each othe
   expect((await collectTrainingResults(root)).trials.map(entry => entry.experimentId)).toEqual([started.id]);
  } finally { await training.close(); }
 }, 90000);
+
+test("anomaly smoke reports constant delivered decisions without failing", async () => {
+ const project = temporaryProject("anomaly-smoke-");
+ const manifestPath = join(project.root, "anomaly-samples.json");
+ const manifest = JSON.parse(readFileSync(project.measurement.sampleManifestPath, "utf8"));
+ for (const sample of manifest.samples) delete sample.target;
+ writeFileSync(manifestPath, JSON.stringify(manifest));
+ const measurement = { kind: "anomaly_detection" as const, execution: "inductive" as const, sampleManifestPath: manifestPath,
+  scoreMethod: "score_samples" as const, scoreDirection: "higher_is_anomalous" as const, anomalyLabel: 1 };
+ const training = createHarnessTraining({ root: join(project.root, "training"), env: trainingEnvironment(), record() {}, pythonExecutable: PYTHON,
+  projectRoot: project.root, solutionsRoot: project.solutionsRoot, taskId: "fixture", datasetSha256: project.datasetSha256, measurement,
+  rootSeed: 13, zipPath: project.zipPath, prompts: loadPromptSnapshot(), workerPath: WORKER });
+ try {
+  for (const [label, frequency] of [[0, "never"], [1, "always"]] as const) {
+   writeFileSync(join(project.solutionsRoot, "tasks/fixture.py"), `"""Smoke decisions fixture."""
+class Model:
+ def fit(self, X): return self
+ def score_samples(self, X): return list(range(len(X)))
+ def predict(self, X): return [${label}] * len(X)
+def build_pipeline(): return Model()
+`);
+   commitAll(project.solutionsRoot, `Constant decisions ${label}`);
+   const result = await training.service.smoke({ schemaVersion: 2, hypothesis: "decision contract", pipeline: { module: "tasks/fixture.py", factory: "build_pipeline" },
+    cv: { kind: "builtin", scheme: "kfold", folds: 3, repeats: 1 }, scope: { kind: "promotion" } });
+   expect(result.passed).toBe(true);
+   expect(result.issues).toEqual([]);
+   expect(result.notice).toContain(`predict ${frequency} returned the declared anomaly label 1`);
+   expect(training.supervisor.list()).toHaveLength(0);
+  }
+ } finally { await training.close(); }
+}, 60000);
