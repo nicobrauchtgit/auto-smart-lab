@@ -167,6 +167,9 @@ test("confirmation prerequisites are checked before solve execution and scoped t
  expect(ran).toBe(false);
  expect(setupChecks([], { taskId: "fixture", prompts }).some(check => check.id === confirmation.id)).toBe(false);
  expect(setupChecks(["refit"], { taskId: "fixture", prompts, taskConfiguration: spamConfiguration() }).some(check => check.id === confirmation.id)).toBe(true);
+ const multiclass = setupChecks(["refit"], { taskId: "fixture", prompts, taskConfiguration: { ...spamConfiguration(), kind: "multiclass_classification" }, executables: { python: "/missing-confirmation-python" } }).find(check => check.id === confirmation.id)!;
+ expect(multiclass).toBeDefined();
+ await expect(new SetupSession().check([multiclass], signal(), () => {})).rejects.toThrow("holdout-confirmation-runtime");
  const cluster = setupChecks(["refit"], { taskId: "fixture", prompts, taskConfiguration: { ...spamConfiguration(), kind: "clustering" },
   executables: { python: "/missing-confirmation-python" } }).find(check => check.id === confirmation.id)!;
  expect(cluster).toBeDefined();

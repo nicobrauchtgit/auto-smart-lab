@@ -138,7 +138,7 @@ def proxy_score(invocation: Any, estimator: Any, validation: Any, validation_y: 
         function = getattr(estimator, "score", None)
         if not callable(function):
             raise InvocationError("Explicit estimator_score objective requires score()")
-        value = function(validation, validation_y) if kind(invocation) == "classification" else function(validation)
+        value = function(validation, validation_y) if kind(invocation) in ("classification", "multiclass_classification") else function(validation)
         array = np.asarray(value, dtype=float)
         if array.ndim != 0 or not np.isfinite(array):
             raise InvocationError("Estimator search score must be one finite scalar")

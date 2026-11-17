@@ -103,12 +103,12 @@ def rerun(document: dict[str, Any], invocation: Invocation, worker_path: Path, e
     return outcome
 
 
-def _oof_rows(path: Path) -> dict[tuple[str, int], int]:
+def _oof_rows(path: Path, task_kind: str = "classification") -> dict[tuple[str, int], int]:
     import csv
     if not path.exists():
         return {}
     with path.open(encoding="utf-8", newline="") as stream:
-        return {(row["id"], int(row["repeat"])): int(row["prediction"]) for row in csv.DictReader(stream, delimiter=";")}
+        return {(row["id"], int(row["repeat"])): (row["prediction"] if task_kind == "multiclass_classification" else int(row["prediction"])) for row in csv.DictReader(stream, delimiter=";")}
 
 
 def pair_changes(truth: Sequence[Any], old: Sequence[int], new: Sequence[int]) -> dict[str, int]:
@@ -135,18 +135,18 @@ def compare(challenger_folds: Sequence[dict[str, Any]], challenger_oof: Sequence
         return {"status": "failed", "championExperimentId": champion.get("experimentId"),
                 "championCommit": champion.get("commit"), "reason": "Champion fold identities differ from challenger"}
     paired = _paired({"folds": challenger_folds}, fold_scores(champion["folds"]), fold_scores(challenger_folds))
-    champion_predictions = _oof_rows(output_dir / OOF_FILE)
+    champion_predictions = _oof_rows(output_dir / OOF_FILE, task_kind)
     expected = {(row["id"], int(row["repeat"])) for row in challenger_oof}
     if set(champion_predictions) != expected:
         return {"status": "failed", "championExperimentId": champion.get("experimentId"),
                 "championCommit": champion.get("commit"), "reason": "Champion observations do not exactly match challenger IDs and repeats"}
     corrected = introduced = 0
-    for row in challenger_oof if task_kind == "classification" else []:
+    for row in challenger_oof if task_kind in ("classification", "multiclass_classification") else []:
         key = (row["id"], int(row["repeat"]))
         if key not in champion_predictions:
             continue
         truth = labels_by_id[row["id"]]
-        challenger_right = int(row["prediction"]) == truth
+        challenger_right = (row["prediction"] if task_kind == "multiclass_classification" else int(row["prediction"])) == truth
         champion_right = champion_predictions[key] == truth
         corrected += int(challenger_right and not champion_right)
         introduced += int(champion_right and not challenger_right)

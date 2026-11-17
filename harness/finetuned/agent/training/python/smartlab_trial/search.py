@@ -715,8 +715,8 @@ def write_search_outputs(invocation: Invocation, output_dir: Path, outcome: dict
     }
     _atomic_json(output_dir / "search-report.json", _jsonable(report))
     aggregate = None
-    if best is not None and measurement_kind(invocation) == "classification":
-        aggregate = _measure([labels_by_id[row["id"]] for row in best.oof], [int(row["prediction"]) for row in best.oof])
+    if best is not None and measurement_kind(invocation) in ("classification", "multiclass_classification"):
+        aggregate = _measure([labels_by_id[row["id"]] for row in best.oof], [row["prediction"] if measurement_kind(invocation) == "multiclass_classification" else int(row["prediction"]) for row in best.oof])
     elif best is not None and measurement_kind(invocation) == "clustering" and "adjustedRandIndex" in best.folds[0]["metrics"]:
         aggregate = {"adjustedRandIndex": statistics.fmean(primary_score(fold["metrics"]) for fold in best.folds)}
     elif best is not None and measurement_kind(invocation) == "anomaly_detection" and (invocation.measurement or {}).get("selection") and all("selectionScore" in fold["metrics"] for fold in best.folds):

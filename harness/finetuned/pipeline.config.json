@@ -257,6 +257,48 @@
           "format": "id_semicolon_prediction",
           "predictions": "binary"
         }
+      },
+      "tor1": {
+        "schemaVersion": 1,
+        "kind": "multiclass_classification",
+        "samples": {
+          "source": "zip_members",
+          "train": "tor1-train.zip",
+          "test": "tor1-test.zip"
+        },
+        "targets": {
+          "kind": "multiclass",
+          "file": "tor1-train.labels"
+        },
+        "execution": "inductive",
+        "holdout": "stratified",
+        "metric": "balanced_accuracy",
+        "refit": "fit_training_predict_test",
+        "submission": {
+          "format": "id_semicolon_prediction",
+          "predictions": "class_label"
+        }
+      },
+      "tor2": {
+        "schemaVersion": 1,
+        "kind": "binary_classification",
+        "samples": {
+          "source": "zip_members",
+          "train": "tor2-train.zip",
+          "test": "tor2-test.zip"
+        },
+        "targets": {
+          "kind": "binary",
+          "file": "tor2-train.labels"
+        },
+        "execution": "inductive",
+        "holdout": "stratified",
+        "metric": "balanced_accuracy",
+        "refit": "fit_training_predict_test",
+        "submission": {
+          "format": "id_semicolon_prediction",
+          "predictions": "binary"
+        }
       }
     }
   },

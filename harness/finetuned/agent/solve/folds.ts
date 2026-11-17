@@ -197,16 +197,17 @@ function seededShuffle(values: number[], seed: number): void {
 }
 
 /** Deterministic stratified folds of row indices for binary labels. */
-export function createStratifiedFolds(labels: readonly number[], foldCount: number, seed: number): number[][] {
+export function createStratifiedFolds(labels: readonly (number | string)[], foldCount: number, seed: number): number[][] {
 	if (labels.length === 0) throw new Error("Stratified folds require at least one row");
-	if (labels.some((label) => label !== 0 && label !== 1)) {
+	if (labels.some((label) => typeof label !== "string" && label !== 0 && label !== 1)) {
 		throw new Error("Stratified folds currently support binary labels 0 and 1 only");
 	}
 	if (!Number.isInteger(foldCount) || foldCount < 2) {
 		throw new Error("foldCount must be an integer of at least 2");
 	}
-	const byClass: [number[], number[]] = [[], []];
-	labels.forEach((label, index) => byClass[label as 0 | 1].push(index));
+	const classes: (string | number)[] = labels.every(label => typeof label === "string") ? [...new Set(labels)].sort() : [0, 1];
+	const byClass: number[][] = classes.map(() => []);
+	labels.forEach((label, index) => byClass[classes.indexOf(label)].push(index));
 	if (byClass.some((indices) => indices.length < foldCount)) {
 		throw new Error("Each class must have at least foldCount rows");
 	}

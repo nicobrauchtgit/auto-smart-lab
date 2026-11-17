@@ -48,7 +48,7 @@ def make(spec):
     dependencies = json.dumps({'python': platform.python_version(), 'packages': sorted((d.metadata['Name'], d.version) for d in importlib.metadata.distributions())}, sort_keys=True)
     assert hashlib.sha256(dependencies.encode()).hexdigest() == freeze['environment']['runtimeDependencyHash']
     project = Path(spec['projectRoot'])
-    framework_files = ['agent/refit/worker.py', 'agent/training/python/runner.py', 'agent/refit/evidence.py', 'agent/training/python/task_samples.py']
+    framework_files = ['agent/' + name for name in ['refit/worker.py', 'training/python/runner.py', 'refit/evidence.py', 'training/python/task_samples.py', 'training/python/pcap_samples.py', 'training/python/confirm.py', 'confirmation/receipt.ts', *['training/python/smartlab_trial/' + name for name in ['metrics.py', 'measurement.py', 'batch.py', 'class_labels.py']]]]
     hashes = [sha(project / name) for name in framework_files]
     assert hashlib.sha256(json.dumps(hashes, separators=(',', ':')).encode()).hexdigest() == freeze['environment']['frameworkHash']
     assert freeze['evidence'] and freeze['chosenExperimentId']
@@ -72,12 +72,18 @@ def make(spec):
     domain = freeze['inputs'].get('task', {}).get('predictions', 'binary')
     assert spec.get('predictions', domain) == domain
     value = r'[01]' if domain == 'binary' else r'-?\d+'
-    assert all(re.fullmatch(value, row['prediction']) and not row.get(None) for row in rows)
+    if domain == 'class_label':
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'training' / 'python'))
+        from task_samples import read_targets
+        allowed = set(read_targets(freeze['inputs']['targetsPath'], 'multiclass').values())
+        assert all(row['prediction'] in allowed and not row.get(None) for row in rows), 'Prediction outside training class label set'
+    else:
+        assert all(re.fullmatch(value, row['prediction']) and not row.get(None) for row in rows)
     # This adapter supports only tasks whose documented example establishes this format.
     prompt = Path(spec['taskPromptPath']).read_text()
-    examples = re.findall(r'^([^\s;]+\.x);[01]$' if domain == 'binary' else r'^([^\s;]+);-?\d+$', prompt, re.M)
+    examples = re.findall(r'^([^\s;]+\.x);[01]$' if domain == 'binary' and spec['taskId'] != 'tor2' else r'^([^\s;]+);[^;\r\n]+$' if domain == 'class_label' else r'^([^\s;]+);[01]$' if spec['taskId'] == 'tor2' else r'^([^\s;]+);-?\d+$', prompt, re.M)
     assert examples
-    if domain == 'binary' or all('/' in name for name in examples):
+    if (domain == 'binary' and spec['taskId'] != 'tor2') or all('/' in name for name in examples):
         assert all('/' in name for name in examples)
         expected_prefixes = {name.rsplit('/', 1)[0] for name in examples}
         assert len(expected_prefixes) == 1

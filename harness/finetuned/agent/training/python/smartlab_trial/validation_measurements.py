@@ -34,7 +34,11 @@ def _observe(invocation: Any, estimator: Any, frame: Any, fitted_predictions: An
     predicted = fitted_predictions
     if predicted is None and callable(getattr(estimator, "predict", None)):
         predicted = estimator.predict(frame)
-    predicted = _labels(predicted, len(frame), task == "classification")
+    if task == "multiclass_classification":
+        from .class_labels import predictions as class_predictions
+        predicted = class_predictions(predicted, len(frame), estimator.classes_)
+    else:
+        predicted = _labels(predicted, len(frame), task == "classification")
     if task == "classification":
         values, provenance = score_observation(estimator, frame)
     elif task == "anomaly_detection":
@@ -47,6 +51,9 @@ def _observe(invocation: Any, estimator: Any, frame: Any, fitted_predictions: An
 def _assessment(invocation: Any, frame: Any, truth: Any, predicted: Any, values: Any,
                 provenance: dict[str, Any], metadata: dict[str, Any] | None) -> dict[str, Any]:
     task = kind(invocation)
+    if task == "multiclass_classification":
+        from .diagnostics import multiclass
+        return {"metrics": _measure(truth, predicted), "diagnostics": multiclass(truth, predicted), "primaryAvailable": True}
     if task == "classification":
         metrics = _measure(truth, predicted)
         if len(set(truth)) < 2:
@@ -71,12 +78,12 @@ def _fit(invocation: Any, estimator: Any, fold: Any, frame: Any, truth: Any, see
     frame.attrs.clear()
     events = EventWriter(invocation.output_dir, invocation.experiment_id)
     events.emit("diagnostic_fit_started", diagnostic=diagnostic, repeat=fold.repeat, fold=fold.fold,
-                seed=seed, fitRows=len(frame), targetsPassed=kind(invocation) == "classification", **details)
+                seed=seed, fitRows=len(frame), targetsPassed=kind(invocation) in ("classification", "multiclass_classification"), **details)
     started, completed = time.monotonic(), False
     try:
         with capture_convergence_warnings() as raised:
             predicted = None
-            if kind(invocation) == "classification":
+            if kind(invocation) in ("classification", "multiclass_classification"):
                 candidate.fit(frame, truth)
             elif batch and callable(getattr(candidate, "fit_predict", None)):
                 predicted = candidate.fit_predict(frame)

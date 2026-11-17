@@ -96,7 +96,7 @@ def _run_fold(invocation: Invocation, pipeline_factory: Any, fold: ConcreteFold,
     test_predictions = None
     fit_started = time.monotonic()
     with capture_convergence_warnings() as raised:
-        if task_kind == "classification":
+        if task_kind in ("classification", "multiclass_classification"):
             estimator.fit(train_frame, train_y)
         elif anchor is not None:
             predictions, test_predictions = batch_fit_predict(estimator, validation_frame, anchor)
@@ -107,7 +107,10 @@ def _run_fold(invocation: Invocation, pipeline_factory: Any, fold: ConcreteFold,
     fit_seconds = time.monotonic() - fit_started
     if anchor is None and not (batch and callable(getattr(estimator, "fit_predict", None))):
         predictions = estimator.predict(validation_frame) if callable(getattr(estimator, "predict", None)) else None
-    if predictions is not None:
+    if task_kind == "multiclass_classification":
+        from smartlab_trial.class_labels import predictions as class_predictions
+        predictions = class_predictions(predictions, len(validation_frame), train_y)
+    elif predictions is not None:
         values = diagnostics.finite_vector(predictions, len(validation_frame), "Predictions")
         delivered_binary = task_kind == "anomaly_detection" and invocation.measurement["anomalyLabel"] == 1
         if np.any(values != np.floor(values)) and not delivered_binary:
@@ -123,6 +126,9 @@ def _run_fold(invocation: Invocation, pipeline_factory: Any, fold: ConcreteFold,
         scores, provenance = score_observation(estimator, validation_frame)
         measurement = _measure(validation_y, predictions)
         signals = diagnostics.classification(validation_y, predictions, scores, provenance)
+    elif task_kind == "multiclass_classification":
+        measurement = _measure(validation_y, predictions)
+        signals = diagnostics.multiclass(validation_y, predictions)
     elif task_kind == "clustering":
         signals = diagnostics.clustering(validation_y, predictions)
         if test_predictions is not None:
@@ -205,6 +211,9 @@ def _summarise(invocation: Invocation, folds: Sequence[ConcreteFold], completed:
             [labels_by_id[row["id"]] for row in oof_rows],
             [int(row["prediction"]) for row in oof_rows],
         )
+    elif oof_rows and task_kind == "multiclass_classification":
+        labels_by_id = dict(zip(ids, y))
+        aggregate = _measure([labels_by_id[row["id"]] for row in oof_rows], [row["prediction"] for row in oof_rows])
     elif task_kind == "clustering" and y is not None and completed:
         aggregate = {"adjustedRandIndex": float(np.mean([fold["metrics"]["adjustedRandIndex"] for fold in completed])),
                      "aggregation": "mean of validation-batch ARI; cluster IDs never pooled"}
@@ -563,7 +572,7 @@ def execute(document: dict[str, Any]) -> dict[str, Any]:
             outputs = write_search_outputs(invocation, output_dir, outcome, manifest, dict(zip(ids, y)) if y is not None else {}, champion)
             summary = _summarise(invocation, folds, best.folds if best else [], best.oof if best else [],
                                  ids, y, manifest, started, bool(outcome["stopReason"]))
-            summary["promotionEligible"] = bool(summary["promotionEligible"] and best and best.status == "completed" and invocation.scope.kind == "promotion" and not invocation.search.objective and not outcome["stopReason"] and len(best.folds) == len(folds) and summary.get("metrics") and best.oof and all(type(row.get("prediction")) is int for row in best.oof))
+            summary["promotionEligible"] = bool(summary["promotionEligible"] and best and best.status == "completed" and invocation.scope.kind == "promotion" and not invocation.search.objective and not outcome["stopReason"] and len(best.folds) == len(folds) and summary.get("metrics") and best.oof and all(type(row.get("prediction")) is (str if task_kind == "multiclass_classification" else int) for row in best.oof))
             if summary["promotionEligible"]:
                 from smartlab_trial.search import confirmation_request
                 summary["winningPipeline"] = confirmation_request(invocation, best)["pipeline"]

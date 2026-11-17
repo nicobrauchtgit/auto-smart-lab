@@ -89,12 +89,17 @@ def inspect(spec: dict) -> dict:
     if spec.get("neutralTestIds") and not all(name.endswith(".x") for name in test):
         raise TaskDataError("Binary classification test IDs must use the neutral .x suffix")
     summary: dict = {"kind": spec["targets"]}
+    if spec["targets"] == "multiclass":
+        sizes = Counter(train["targets"])
+        if len(sizes) < 2 or min(sizes.values()) < 2:
+            raise TaskDataError("Multiclass targets need at least two classes and two rows per class for sealing")
+        summary["counts"] = dict(sizes)
     if train["targets"] is not None and spec["targets"] == "binary":
         counts = Counter(str(value) for value in train["targets"])
         if set(counts) != {"0", "1"}:
             raise TaskDataError("Binary targets need both classes")
         summary["counts"] = dict(sorted(counts.items()))
-    elif train["targets"] is not None:
+    elif train["targets"] is not None and spec["targets"] != "multiclass":
         sizes = Counter(train["targets"]).values()
         if len(sizes) < 3:
             raise TaskDataError("Family targets need at least three families for group-held-out validation")

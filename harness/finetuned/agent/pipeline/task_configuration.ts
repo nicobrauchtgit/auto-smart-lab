@@ -23,7 +23,7 @@ import { HARNESS_CONFIG } from "../harness/config.js";
 import { PROJECT_ROOT, resolveTask } from "./resolve_task.js";
 import { ARM_ROOT } from "../paths.js";
 
-export type TaskKind = "binary_classification" | "clustering" | "anomaly_detection";
+export type TaskKind = "binary_classification" | "multiclass_classification" | "clustering" | "anomaly_detection";
 
 export interface AnomalyScoring {
 	scoreMethod: "score_samples" | "decision_function" | "negative_outlier_factor_";
@@ -38,7 +38,7 @@ export interface TaskConfiguration {
 	/** Sample identity. Reading sample content stays the agent's code (D9). */
 	samples: { source: "zip_members" | "pcap_tcp_connections"; train: string; test: string };
 	/** Training targets, from a `id;target` file in the task's data directory. */
-	targets: { kind: "binary" | "families"; file: string } | { kind: "none" };
+	targets: { kind: "binary" | "multiclass" | "families"; file: string } | { kind: "none" };
 	/** Whether the harness fits on training rows (inductive) or on the scored batch itself. */
 	execution: "inductive" | "batch";
 	/** How the sealed confirmation rows are drawn from training data. */
@@ -49,7 +49,7 @@ export interface TaskConfiguration {
 	selection?: EvidenceSelection;
 	/** Terminal refit: fit all training rows then predict test, or fit/predict the test batch. */
 	refit: "fit_training_predict_test" | "fit_predict_test_batch";
-	submission: { format: "id_semicolon_prediction"; predictions: "binary" | "cluster_id" };
+	submission: { format: "id_semicolon_prediction"; predictions: "binary" | "class_label" | "cluster_id" };
 }
 
 export interface ConfigurationSummary {
@@ -58,7 +58,7 @@ export interface ConfigurationSummary {
 	source: "declared" | "pipeline_config";
 }
 
-const KINDS = ["binary_classification", "clustering", "anomaly_detection"] as const;
+const KINDS = ["binary_classification", "multiclass_classification", "clustering", "anomaly_detection"] as const;
 
 function object(value: unknown, path: string, keys: readonly string[], optional: readonly string[] = []): Record<string, unknown> {
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${path} must be an object`);
@@ -91,7 +91,7 @@ export function parseTaskConfiguration(raw: unknown): TaskConfiguration {
 	const samples = object(value.samples, "samples", ["source", "train", "test"]);
 	const source = oneOf(samples.source, "samples.source", ["zip_members", "pcap_tcp_connections"] as const);
 	const targetsRaw = value.targets as Record<string, unknown> | undefined;
-	const targetKind = oneOf(targetsRaw?.kind, "targets.kind", ["binary", "families", "none"] as const);
+	const targetKind = oneOf(targetsRaw?.kind, "targets.kind", ["binary", "multiclass", "families", "none"] as const);
 	const targets: TaskConfiguration["targets"] = targetKind === "none"
 		? (object(targetsRaw, "targets", ["kind"]), { kind: "none" })
 		: { kind: targetKind, file: fileName(object(targetsRaw, "targets", ["kind", "file"]).file, "targets.file") };
@@ -107,7 +107,7 @@ export function parseTaskConfiguration(raw: unknown): TaskConfiguration {
 		refit: oneOf(value.refit, "refit", ["fit_training_predict_test", "fit_predict_test_batch"] as const),
 		submission: {
 			format: oneOf(submission.format, "submission.format", ["id_semicolon_prediction"] as const),
-			predictions: oneOf(submission.predictions, "submission.predictions", ["binary", "cluster_id"] as const),
+			predictions: oneOf(submission.predictions, "submission.predictions", ["binary", "class_label", "cluster_id"] as const),
 		},
 	};
 	if (value.anomaly !== undefined) {
@@ -149,8 +149,14 @@ function consistencyErrors(c: TaskConfiguration): string[] {
 		expect(c.metric === "balanced_accuracy", "binary_classification is scored with balanced_accuracy");
 		expect(c.submission.predictions === "binary", "binary_classification submits binary predictions");
 		expect(c.anomaly === undefined, "anomaly scoring applies only to anomaly_detection");
-	} else if (c.kind === "clustering") {
-		expect(c.targets.kind !== "binary", "clustering targets are families or none");
+	} else if (c.kind === "multiclass_classification") {
+        expect(c.targets.kind === "multiclass", "multiclass_classification requires multiclass targets");
+        expect(c.execution === "inductive" && c.holdout === "stratified", "multiclass_classification requires inductive execution and stratified holdout");
+        expect(c.metric === "balanced_accuracy", "multiclass_classification requires balanced_accuracy");
+        expect(c.submission.predictions === "class_label", "multiclass_classification submits class_label predictions");
+        expect(c.anomaly === undefined, "anomaly scoring applies only to anomaly_detection");
+    } else if (c.kind === "clustering") {
+		expect(["families", "none"].includes(c.targets.kind), "clustering targets are families or none");
 		const labelled = c.targets.kind === "families";
 		expect(c.metric === (labelled ? "adjusted_rand_index" : "none"), labelled
 			? "clustering with family targets is scored with adjusted_rand_index"
@@ -215,7 +221,7 @@ export function taskDataPaths(taskId: string, configuration: TaskConfiguration, 
 export interface TaskDataInspection {
 	trainRows: number;
 	testRows: number;
-	targets: { kind: "binary"; counts: Record<string, number> } | { kind: "families"; families: number; largest: number; smallest: number; singletons: number } | { kind: "none" };
+	targets: { kind: "binary" | "multiclass"; counts: Record<string, number> } | { kind: "families"; families: number; largest: number; smallest: number; singletons: number } | { kind: "none" };
 }
 
 export const TASK_SAMPLES_SCRIPT = join(ARM_ROOT, "agent", "training", "python", "task_samples.py");
@@ -245,7 +251,7 @@ export function inspectTaskData(taskId: string, configuration: TaskConfiguration
 	}
 	const result = spawnSync(pythonExecutable, [TASK_SAMPLES_SCRIPT, "--inspect", JSON.stringify({
 		trainZip: paths.trainZip, testZip: paths.testZip, targetsPath: paths.targetsPath ?? null,
-		source: configuration.samples.source, targets: configuration.targets.kind, neutralTestIds: configuration.kind === "binary_classification",
+		source: configuration.samples.source, targets: configuration.targets.kind, neutralTestIds: configuration.kind === "binary_classification" && taskId !== "tor2",
 	})], { encoding: "utf8", timeout: HARNESS_CONFIG.setup.timeoutMs * 4, maxBuffer: 4 * 1024 * 1024 });
 	if (result.error) throw new Error("Task data inspection could not run");
 	const output = JSON.parse(result.stdout.trim().split("\n").at(-1) || "{}");

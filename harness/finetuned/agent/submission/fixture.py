@@ -50,7 +50,7 @@ pipeline = {'module': 'solutions/tasks/fixture.py', 'factory': 'build', 'paramet
 identity = hashlib.sha256(json.dumps({'taskId': 'fixture', 'commit': commit, 'pipeline': pipeline}, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 evidence_path = root / 'evidence.json'
 write(evidence_path, {'eligible': True, 'experimentId': 'mock-confirmation'})
-framework = [sha(project / name) for name in ['agent/refit/worker.py', 'agent/training/python/runner.py', 'agent/refit/evidence.py', 'agent/training/python/task_samples.py']]
+framework = [sha(project / name) for name in ['agent/' + name for name in ['refit/worker.py', 'training/python/runner.py', 'refit/evidence.py', 'training/python/task_samples.py', 'training/python/pcap_samples.py', 'training/python/confirm.py', 'confirmation/receipt.ts', *['training/python/smartlab_trial/' + name for name in ['metrics.py', 'measurement.py', 'batch.py', 'class_labels.py']]]]]
 dependencies = json.dumps({'python': platform.python_version(), 'packages': sorted((d.metadata['Name'], d.version) for d in importlib.metadata.distributions())}, sort_keys=True)
 freeze = {'schemaVersion': 1, 'taskId': 'fixture', 'identity': identity, 'directory': str(root), 'sourceRoot': str(root / 'source'),
           'terminalPath': str(source / '.git' / 'smartlab-terminal' / (identity + '.json')), 'source': {'commit': commit, 'tree': tree},

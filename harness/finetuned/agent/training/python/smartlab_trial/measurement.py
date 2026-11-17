@@ -17,13 +17,13 @@ def validate_config(value: Any) -> dict[str, Any]:
     allowed = {"kind", "sampleManifestPath", "sampleManifestSha256", "hasTargets", "execution", "scoreMethod", "scoreDirection", "anomalyLabel", "evidence", "evidenceManifestSha256", "selection", "anchorManifestPath", "anchorManifestSha256"}
     if set(value) - allowed:
         raise InvocationError("measurement contains unknown fields")
-    if value.get("kind") not in ("classification", "clustering", "anomaly_detection"):
+    if value.get("kind") not in ("classification", "multiclass_classification", "clustering", "anomaly_detection"):
         raise InvocationError("measurement.kind must be classification, clustering or anomaly_detection")
     if not isinstance(value.get("sampleManifestPath"), str) or not value["sampleManifestPath"]:
         raise InvocationError("measurement.sampleManifestPath must name development metadata")
     if value.get("execution") not in ("inductive", "batch"):
         raise InvocationError("measurement.execution must be inductive or batch")
-    if value["kind"] == "classification" and value["execution"] != "inductive":
+    if value["kind"] in ("classification", "multiclass_classification") and value["execution"] != "inductive":
         raise InvocationError("classification fits training rows and predicts validation rows (inductive)")
     if value["kind"] == "anomaly_detection":
         if value.get("scoreMethod") not in ("score_samples", "decision_function", "negative_outlier_factor_"):
@@ -95,6 +95,8 @@ def load_samples(config: dict[str, Any]) -> tuple[Any, list[str] | None, str]:
         raise InvocationError("Label-free anomaly metadata must omit targets; evidence-label scoring is a later adapter")
     if config["kind"] == "classification" and (not all(labelled) or any(type(sample["target"]) is not int or sample["target"] not in (0, 1) for sample in samples)):
         raise InvocationError("Classification metadata requires integer 0/1 targets on every development sample")
+    if config["kind"] == "multiclass_classification" and (not all(labelled) or any(type(sample["target"]) is not str for sample in samples)):
+        raise InvocationError("Multiclass metadata requires string class labels on every sample")
     samples = sorted(samples, key=lambda sample: sample["id"])
     if config["kind"] == "classification":
         targets = [sample["target"] for sample in samples]

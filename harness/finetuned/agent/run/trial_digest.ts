@@ -35,6 +35,11 @@ export function trialDigest(kind: string, described: unknown): string {
   }
   return lines.join("\n");
  }
+ if (kind === "multiclass_classification") {
+  const metrics = object(result.metrics);
+  const worst = Object.entries(object(metrics.perClassRecall)).sort((a, b) => Number(a[1]) - Number(b[1])).slice(0, 5);
+  return `balanced accuracy ${format(metrics.balancedAccuracy)}; worst-recall classes ${worst.map(([label, recall]) => `${label}: ${format(recall)}`).join(", ")}; top confusions ${JSON.stringify(metrics.topConfusions ?? [])}`;
+ }
  if (kind === "binary_classification") {
   const recall = mean(folds.map(fold => {
    const points = available(fold.lowFpr).points;

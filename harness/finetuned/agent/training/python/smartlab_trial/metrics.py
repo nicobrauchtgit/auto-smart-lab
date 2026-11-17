@@ -39,9 +39,12 @@ def score_observation(estimator: Any, validation: Any) -> tuple[list[float] | No
 
 
 def _measure(truth: Sequence[int], predicted: Sequence[int]) -> dict[str, Any]:
-    labels = sorted({int(value) for value in truth} | {int(value) for value in predicted})
+    labels = sorted(set(truth) | set(predicted)) if any(isinstance(v, str) for v in truth) else sorted({int(value) for value in truth} | {int(value) for value in predicted})
     precision, recalls, f1, support = precision_recall_fscore_support(truth, predicted, labels=labels, average=None, zero_division=0)
     return {
+        **({"accuracy": float(np.mean(np.asarray(truth) == np.asarray(predicted))),
+            "topConfusions": sorted([{"true": a, "predicted": b, "rows": sum(t == a and p == b for t, p in zip(truth, predicted))}
+                for a in labels for b in labels if a != b and any(t == a and p == b for t, p in zip(truth, predicted))], key=lambda item: (-item["rows"], item["true"], item["predicted"]))[:10]} if any(isinstance(v, str) for v in truth) else {}),
         "balancedAccuracy": float(balanced_accuracy_score(truth, predicted)),
         "perClassRecall": {str(label): float(value) for label, value in zip(labels, recalls)},
         "confusionMatrix": confusion_matrix(truth, predicted, labels=labels).tolist(),

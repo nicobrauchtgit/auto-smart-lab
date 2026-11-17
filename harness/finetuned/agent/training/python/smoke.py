@@ -32,7 +32,7 @@ class SmokeFailure(Exception):
 
 def _sample(frame, targets, measurement, rows):
     """Fixed, class-balanced development rows; no scoring evidence is returned."""
-    if targets is not None and measurement['kind'] == 'classification':
+    if targets is not None and measurement['kind'] in ('classification', 'multiclass_classification'):
         classes = sorted(set(targets), key=str)
         per_class = max(1, rows // len(classes))
         return [i for value in classes for i in [i for i, y in enumerate(targets) if y == value][:per_class]]
@@ -68,7 +68,7 @@ def _run(document, root, frame, targets, rows):
     batch_decisions = measurement['execution'] == 'batch' and callable(getattr(estimator, 'fit_predict', None))
     phase = 'fit'
     try:
-        if measurement['kind'] == 'classification':
+        if measurement['kind'] in ('classification', 'multiclass_classification'):
             estimator.fit(train, [targets[i] for i in indices])
             phase = 'predict'
             predictions = estimator.predict(test)
@@ -83,7 +83,10 @@ def _run(document, root, frame, targets, rows):
         raise SmokeFailure(phase, error) from error
     values = np.asarray(predictions)
     try:
-        if values.shape != (len(test),) or not np.isfinite(values.astype(float)).all():
+        if measurement['kind'] == 'multiclass_classification':
+            from smartlab_trial.class_labels import predictions as class_predictions
+            class_predictions(predictions, len(test), [targets[i] for i in indices])
+        elif values.shape != (len(test),) or not np.isfinite(values.astype(float)).all():
             raise ValueError('Smoke predictions must be finite and row aligned')
         if measurement['kind'] == 'classification' and not np.isin(values, [0, 1]).all():
             raise ValueError('Smoke binary predictions must be 0 or 1')

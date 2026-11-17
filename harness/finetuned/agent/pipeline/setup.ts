@@ -210,8 +210,8 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
   const result = spawnSync(options.executables?.python ?? projectPython(), ["-c", "import dpkt"], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });
   if (result.error || result.status !== 0) throw new Error("PCAP sample dependency unavailable");
  });
- if (needs.has("confirmation") || (needs.has("refit") && ["binary_classification", "clustering"].includes(options.taskConfiguration?.kind ?? "") && options.taskConfiguration?.holdout !== "none")) add("holdout-confirmation-runtime", "local", "Restore confirm.py, confirmation service/receipt modules and shared metric helpers; run ./dev setup for numpy/pandas/sklearn/scipy. Confirmation requires git worktrees and verified process-group ownership.", () => {
-  for (const file of ["training/python/confirm.py", "training/python/runner.py", "confirmation/service.ts", "confirmation/receipt.ts", "training/python/smartlab_trial/diagnostics.py"]) readable(join(ARM_ROOT, "agent", file));
+ if (needs.has("confirmation") || (needs.has("refit") && ["binary_classification", "multiclass_classification", "clustering"].includes(options.taskConfiguration?.kind ?? "") && options.taskConfiguration?.holdout !== "none")) add("holdout-confirmation-runtime", "local", "Restore confirm.py, confirmation service/receipt modules and shared metric helpers; run ./dev setup for numpy/pandas/sklearn/scipy. Confirmation requires git worktrees and verified process-group ownership.", () => {
+  for (const file of ["training/python/confirm.py", "training/python/runner.py", "confirmation/service.ts", "confirmation/receipt.ts", "training/python/smartlab_trial/diagnostics.py", "training/python/smartlab_trial/class_labels.py"]) readable(join(ARM_ROOT, "agent", file));
   const result = spawnSync(options.executables?.python ?? projectPython(), ["-c", "import numpy,pandas,sklearn,fcntl; from scipy.stats import bootstrap"], { timeout: HARNESS_CONFIG.setup.timeoutMs, stdio: "ignore" });
   if (result.error || result.status !== 0 || !processIdentity(process.pid)) throw new Error("Confirmation runtime unavailable");
  });

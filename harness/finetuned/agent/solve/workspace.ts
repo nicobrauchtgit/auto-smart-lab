@@ -93,7 +93,12 @@ export function archiveRows(pythonExecutable: string, zip: string, targetsPath?:
 
 function seal(configuration: TaskConfiguration, ids: string[], targets: Map<string, string | number>, options: PrepareOptions): (IdSealedSplit & { confirmation?: HoldoutMetadata }) | ReturnType<typeof stratifiedSeal> {
 	const seed = options.seed ?? HARNESS_CONFIG.solve.seed;
-	if (configuration.holdout === "stratified") return configuration.kind === "clustering"
+    if (configuration.kind === "multiclass_classification") {
+        const counts = new Map<string | number, number>();
+        for (const value of targets.values()) counts.set(value, (counts.get(value) ?? 0) + 1);
+        if (counts.size < 2 || [...counts.values()].some(count => count < 2)) throw new Error("Multiclass sealing needs at least two classes and two rows per class");
+    }
+	if (configuration.holdout === "stratified") return ["clustering", "multiclass_classification"].includes(configuration.kind)
         ? sealFamilies(ids.map(id => ({ id, group: String(targets.get(id)) })), seed)
         : stratifiedSeal(ids, targets, options.holdoutPolicy, seed);
 	if (configuration.holdout === "group") {
@@ -120,7 +125,8 @@ function describeTargets(configuration: TaskConfiguration, devIds: string[], tar
 		const share = (label: string) => `class ${label} ${counts.get(label) ?? 0} (${(((counts.get(label) ?? 0) / devIds.length) * 100).toFixed(2)}%)`;
 		return { targets: `binary \`target\` values in ${manifest} (sealed rows absent)`, summary: `Class balance: ${share("0")}, ${share("1")}.` };
 	}
-	const sizes = [...counts.values()].sort((a, b) => b - a);
+	if (configuration.targets.kind === "multiclass") return { targets: `class-name target values in ${manifest} (sealed rows absent)`, summary: `Classes: ${counts.size}; ${[...counts].map(([label, count]) => `${label}: ${count}`).join(", ")}.` };
+    const sizes = [...counts.values()].sort((a, b) => b - a);
 	return { targets: `family \`target\` values in ${manifest} (the harness scores with them; they never reach fit)`,
 		summary: `Families: ${counts.size}; largest ${sizes[0]} rows, smallest ${sizes.at(-1)} rows, ${sizes.filter(size => size === 1).length} singleton families. ${configuration.holdout === "stratified" ? "A fixed share of each non-singleton family is sealed; singleton families stay in development. This does not test unseen families." : `${sealedGroups ?? 0} further families are sealed.`}` };
 }
@@ -253,7 +259,8 @@ export function prepareSolveWorkspace(taskId: string, options: PrepareOptions = 
     }
 	const measurement: MeasurementConfig = configuration.kind === "binary_classification"
 		? { kind: "classification", execution: "inductive", sampleManifestPath }
-		: configuration.kind === "clustering"
+		: configuration.kind === "multiclass_classification" ? { kind: "multiclass_classification", execution: "inductive", sampleManifestPath }
+        : configuration.kind === "clustering"
 			? { kind: "clustering", execution: configuration.execution, sampleManifestPath, ...(anchored ? { anchorManifestPath, anchorManifestSha256: hashFile(anchorManifestPath).digest("hex") } : {}) }
 			: { kind: "anomaly_detection", execution: configuration.execution, sampleManifestPath, ...configuration.anomaly!, ...(configuration.selection ? { selection: configuration.selection, evidence: { path: join(root, "agent", "evidence.json"), source: "agent_provided" as const } } : {}) };
 	const described = describeTargets(configuration, split.devIds, targets, relative(projectRoot, sampleManifestPath), split.sealedGroups);

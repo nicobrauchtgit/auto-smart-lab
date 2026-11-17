@@ -30,8 +30,13 @@ def deliver(directory, output, metadata):
         raise ValueError(f'ids differ from the test set: {len(expected - set(ids))} missing, {len(set(ids) - expected)} extra')
     domain = freeze['inputs'].get('task', {}).get('predictions', 'binary')
     pattern = r'[01]' if domain == 'binary' else r'-?\d+'
+    allowed = None
+    if domain == 'class_label':
+        from worker import read_targets
+        allowed = set(read_targets(freeze['inputs']['targetsPath'], 'multiclass').values())
     for row in rows:
-        if not re.fullmatch(pattern, row['prediction'] or ''):
+        valid = row['prediction'] in allowed if allowed is not None else re.fullmatch(pattern, row['prediction'] or '')
+        if not valid:
             raise ValueError(f'prediction outside the {domain} domain for {row["id"]}')
 
     output.mkdir(parents=True, exist_ok=True)

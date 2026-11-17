@@ -52,7 +52,7 @@ export interface EvidenceSelection {
 /** Controller metadata, never an agent request or a model-design constraint. */
 export type MeasurementConfig = {
 	/** Binary classification over opaque sample descriptors; targets are 0/1. */
-	kind: "classification";
+	kind: "classification" | "multiclass_classification";
 	sampleManifestPath: string;
 	execution: "inductive";
 } | {

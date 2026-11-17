@@ -6,6 +6,7 @@ import { HARNESS_CONFIG } from '../harness/config.js';
 export function taskContract(prompts: PromptSnapshot, taskId: string, configuration: TaskConfiguration, evidencePath: string): RenderedPrompt[] {
  const contract = configuration.kind === "binary_classification"
   ? prompts.render("team.lead-task-binary_classification", { taskId })
+  : configuration.kind === "multiclass_classification" ? prompts.render("team.lead-task-multiclass_classification", { taskId })
   : configuration.kind === "clustering"
    ? prompts.render("team.lead-task-clustering", { taskId, execution: configuration.execution, splitGuidance: configuration.holdout === "none" ? "" : prompts.render(configuration.holdout === "group" ? "team.lead-split-group" : "team.lead-split-stratified", {}).text })
    : prompts.render("team.lead-task-anomaly_detection", { taskId, execution: configuration.execution,

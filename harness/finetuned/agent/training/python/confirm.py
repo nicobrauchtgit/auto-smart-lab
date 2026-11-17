@@ -31,7 +31,7 @@ def prepare(path):
     for source, expected in plan['originalHashes'].items():
         assert sha(source) == expected, 'Original confirmation data drifted'
     ids = plan['sealedIds']
-    targets = read_targets(plan['targetsPath'], 'families' if plan.get('kind') == 'clustering' else 'binary')
+    targets = read_targets(plan['targetsPath'], 'families' if plan.get('kind') == 'clustering' else 'multiclass' if plan.get('kind') == 'multiclass_classification' else 'binary')
     assert len(set(ids)) == len(ids) and set(ids) <= set(targets)
     directory = path.parent
     archive_path = directory / 'sealed.zip'
@@ -53,8 +53,12 @@ def observations(directory, freeze):
     frame, truth, _ = load_samples({'kind': freeze.get('kind', 'classification'), 'execution': freeze.get('execution', 'inductive'),
                                   'sampleManifestPath': freeze['validationManifest']})
     assert [row['id'] for row in rows] == frame['id'].tolist(), 'Held-back prediction coverage differs'
-    predicted = [int(row['prediction']) for row in rows]
-    if freeze.get('kind') != 'clustering':
+    predicted = [row['prediction'] if freeze.get('kind') == 'multiclass_classification' else int(row['prediction']) for row in rows]
+    if freeze.get('kind') == 'multiclass_classification':
+        _, labels, _ = load_samples({'kind': 'multiclass_classification', 'execution': 'inductive', 'sampleManifestPath': freeze['developmentManifest']})
+        from smartlab_trial.class_labels import predictions
+        predictions(predicted, len(frame), labels)
+    elif freeze.get('kind') != 'clustering':
         assert all(row['prediction'] in ('0', '1') for row in rows), 'Invalid held-back predictions'
     return truth, predicted
 
@@ -62,12 +66,13 @@ def observations(directory, freeze):
 def bootstrap(truth, predicted, seed):
     truth, predicted = np.asarray(truth), np.asarray(predicted)
     generator = np.random.default_rng(seed)
-    strata = [np.flatnonzero(truth == label) for label in (0, 1)]
+    classes = np.unique(truth)
+    strata = [np.flatnonzero(truth == label) for label in classes]
     assert all(len(indices) for indices in strata), 'Confirmation needs both classes'
     values = []
     for _ in range(2000):
         values.append(float(np.mean([np.mean(predicted[draw] == label)
-                                    for label, indices in enumerate(strata)
+                                    for label, indices in zip(classes, strata)
                                     for draw in [generator.choice(indices, len(indices), replace=True)]])))
     lower, upper = np.quantile(values, [0.025, 0.975])
     return {'confidence': .95, 'method': 'stratified_percentile_bootstrap', 'replicates': 2000,
@@ -99,7 +104,7 @@ def validate(directory):
         assert (values == np.floor(values)).all()
         assert result['testPart'] == clustering(None, values.astype(int).tolist())['structure']
     is_clustering = freeze.get('kind') == 'clustering'
-    counts = {str(label): truth.count(label) for label in (set(truth) if is_clustering else (0, 1))}
+    counts = {str(label): truth.count(label) for label in (set(truth) if is_clustering or freeze.get('kind') == 'multiclass_classification' else (0, 1))}
     expected = freeze['holdout']['perClass']
     assert counts == {key: value for key, value in expected.items() if value or not is_clustering}, 'Holdout class counts differ'
     assert len(truth) == freeze['holdout']['rows'], 'Holdout row count differs'
@@ -154,10 +159,13 @@ def run(directory):
             values = finite_vector(raw, len(validation), 'Predictions')
             assert (values == np.floor(values)).all(), 'Invalid cluster predictions'
             raw = values.astype(int).tolist()
+        elif kind == 'multiclass_classification':
+            from smartlab_trial.class_labels import predictions
+            raw = predictions(raw, len(validation), labels)
         else:
             assert all(value in (0, 1) for value in raw)
             scores, _ = score_observation(estimator, validation)
-        predicted = [int(value) for value in raw]
+        predicted = raw if kind == 'multiclass_classification' else [int(value) for value in raw]
     with (directory / 'predictions.csv').open('w', newline='') as stream:
         writer = csv.writer(stream)
         writer.writerow(['id', 'prediction', 'score'])

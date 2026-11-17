@@ -210,9 +210,11 @@ def summary(kind: str, folds: Sequence[dict[str, Any]], rows: Sequence[dict[str,
         result["testAgreement"] = test_agreement(folds)
     elif kind == "clustering" and folds and 'testAgreementSummary' in folds[0]:
         result['testAgreement'] = folds[0]['testAgreementSummary']
-    if kind != "classification":
+    if kind not in ("classification", "multiclass_classification"):
         result["stability"] = stability(rows, kind, direction)
         result["proxyEvidence"] = result["primaryMetric"] is None
+    elif kind == "multiclass_classification":
+        result.update(multiclass([], []))
     else:
         result["ranking"] = {
             key: spread([fold["diagnostics"]["ranking"][key] for fold in folds
@@ -220,3 +222,8 @@ def summary(kind: str, folds: Sequence[dict[str, Any]], rows: Sequence[dict[str,
             for key in ("rocAuc", "averagePrecision")}
         result["rankingAggregation"] = "per-fold scores; no pooling of different fitted score scales"
     return result
+
+
+def multiclass(truth, predicted):
+    reason = "Binary-only diagnostic unavailable for multiclass classification"
+    return {key: unavailable(reason) for key in ("ranking", "thresholdSweep", "lowFpr", "calibration")}

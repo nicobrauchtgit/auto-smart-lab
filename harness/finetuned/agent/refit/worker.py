@@ -89,7 +89,10 @@ def validate(directory, freeze):
     assert sorted(row['id'] for row in rows) == freeze['data']['testIds'], 'Prediction coverage mismatch'
     domain = freeze['inputs'].get('task', {}).get('predictions', 'binary')
     valid = (lambda value: value in ('0', '1')) if domain == 'binary' else (lambda value: re.fullmatch(r'-?\d+', value) is not None)
-    assert all(valid(row['prediction']) for row in rows), 'Invalid prediction domain'
+    if domain == 'class_label':
+        allowed = set(read_targets(freeze['inputs']['targetsPath'], 'multiclass').values())
+        valid = lambda value: value in allowed
+    assert all(valid(row['prediction']) for row in rows), 'Invalid prediction domain: training class label set'
     expected = confirmation_predictions(freeze)
     if expected is not None:
         assert [row['id'] for row in rows] == freeze['data']['testIds'], 'Confirmed test order differs'
@@ -116,12 +119,17 @@ def fit_samples(estimator, freeze, events):
     source = task.get('source', 'zip_members')
     train = sample_frame(inputs['trainZip'], freeze['data']['trainIds'], source, inputs.get('targetsPath'))
     test = sample_frame(inputs['testZip'], freeze['data']['testIds'], source)
-    if task['kind'] == 'classification':
-        targets = read_targets(inputs['targetsPath'], 'binary')
+    if task['kind'] in ('classification', 'multiclass_classification'):
+        targets = read_targets(inputs['targetsPath'], task['targets'])
         with events.stage('terminal_fit', fitRows=len(train), execution='inductive'):
             estimator.fit(train, [targets[row_id] for row_id in freeze['data']['trainIds']])
         with events.stage('terminal_predict', testRows=len(test)):
-            predicted = [int(value) for value in estimator.predict(test)]
+            predicted = list(estimator.predict(test))
+        if task['kind'] == 'multiclass_classification':
+            from smartlab_trial.class_labels import predictions
+            predicted = predictions(predicted, len(test), targets.values())
+            return predicted, len(train), len(test)
+        predicted = [int(value) for value in predicted]
         assert len(predicted) == len(test) and all(value in (0, 1) for value in predicted), 'Invalid predictions'
         return predicted, len(train), len(test)
     if task['kind'] == 'clustering' and task['execution'] == 'batch':
@@ -224,7 +232,7 @@ def fit(directory, freeze):
     with tempfile.NamedTemporaryFile(dir=directory, delete=False, mode='w', newline='') as stream:
         writer = csv.writer(stream)
         writer.writerow(['id', 'prediction'])
-        writer.writerows(zip(freeze['data']['testIds'], (int(v) for v in predicted)))
+        writer.writerows(zip(freeze['data']['testIds'], predicted))
         stream.flush(); os.fsync(stream.fileno())
         temporary = stream.name
     os.replace(temporary, directory / 'predictions.csv')
