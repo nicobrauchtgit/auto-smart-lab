@@ -2,7 +2,7 @@ import { invocationArgs } from "./source.js";
 import { afterAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, realpathSync, symlinkSync } from "node:fs";
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, realpathSync, symlinkSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { armModelsJson, checkMinimalSetup, minimalArgs, minimalPolicy, prepareMinimalRun, withModel } from "./minimal.js";
@@ -86,6 +86,13 @@ describe("minimal arm run location", () => {
  expect(invocationArgs(run.root, [])).toEqual(["--max-cost", "7"]);
  expect(() => invocationArgs(run.root, ["--max-cost", "20"])).toThrow("unchanged");
  });
+ test("uncapped continuation does not require cost records", () => {
+ const root = fixture(); const run = prepareMinimalRun({ projectRoot: root, stamp: "uncapped" });
+ const folder = join(run.root, "logs/solve-units/legacy"); mkdirSync(folder, { recursive: true });
+ writeFileSync(join(folder, "summary.json"), JSON.stringify({ results: [{ id: "spam1" }] }));
+ expect(invocationArgs(run.root, ["--only", "documents1"])).toEqual(["--only", "documents1"]);
+ expect(() => invocationArgs(run.root, ["--max-cost", "10"])).toThrow("Invalid recorded spend");
+ });
 	test("holds the arm's agent code and real units, not its docs or archives", () => {
 		const root = fixture();
 		const run = prepareMinimalRun({ projectRoot: root, stamp: "a" });
@@ -145,6 +152,30 @@ describe("minimal arm boundary", () => {
 		expect(result.stdout.trim()).toBe("[secret-key][]");
 		const shell = shellEnvironment({ PATH: "/bin", MYTHLLM_API_KEY: "a", LITELLM_TOKEN: "b", LANGFUSE_SECRET_KEY: "c", LAB_USER: "d", GOOGLE_APPLICATION_CREDENTIALS: "e", TAVILY_API_KEY: "f" });
 		expect(shell).toEqual({ PATH: "/bin" });
+	});
+
+	test("shared catalogue inputs have self-contained, deduplicated snapshots", () => {
+		const root = fixture();
+		const manifest = JSON.parse(readFileSync(join(root, "resources/01-spam/manifest.json"), "utf8"));
+		const entry = manifest.files[0]; entry.asset = `${entry.sha256}.txt`;
+		mkdirSync(join(root, "resources/_assets"));
+		const asset = join(root, "resources/_assets", entry.asset);
+		writeFileSync(asset, readFileSync(join(root, "resources/01-spam/slides.txt")));
+		rmSync(join(root, "resources/01-spam/slides.txt"));
+		mkdirSync(join(root, "units/02-documents/task"), { recursive: true });
+		mkdirSync(join(root, "resources/02-documents"));
+		for (const unit of ["01-spam", "02-documents"]) writeFileSync(join(root, "resources", unit, "manifest.json"), JSON.stringify(manifest));
+		const run = prepareMinimalRun({ projectRoot: root, stamp: "catalogue" });
+		const first = join(run.root, "resources/01-spam/slides.txt"), second = join(run.root, "resources/02-documents/slides.txt");
+		expect(statSync(first).ino).toBe(statSync(second).ino);
+		expect(statSync(first).ino).not.toBe(statSync(asset).ino);
+		expect(courseResources("02-documents", run.root)[0]!.sha256).toBe(entry.sha256);
+		expect(existsSync(join(run.root, "resources/_assets"))).toBe(false);
+		writeFileSync(join(run.root, "resources/01-spam/old-name.txt"), "outdated snapshot");
+		prepareMinimalRun({ projectRoot: root, stamp: "unused", continueFrom: "runs/minimal/catalogue" });
+		expect(existsSync(join(run.root, "resources/01-spam/old-name.txt"))).toBe(false);
+		writeFileSync(asset, "later change");
+		expect(readFileSync(first, "utf8")).toBe("course slides\n");
 	});
 
 	test("the supplied slides are read-only snapshots with recorded identities", () => {

@@ -21,7 +21,7 @@ import type { MeasurementConfig } from "../training/types.js";
 import { createHash } from "node:crypto";
 import { createSeedPlan, type SeedPlan } from "../training/seeds.js";
 import { HARNESS_CONFIG } from "../harness/config.js";
-import { noSeal, recommendFolds, sealConfirmationSet, sealGroups, type FoldRecommendation, type IdSealedSplit, type HoldoutPolicy, type HoldoutMetadata } from "./folds.js";
+import { noSeal, recommendFolds, sealFamilies, sealConfirmationSet, sealGroups, type FoldRecommendation, type IdSealedSplit, type HoldoutPolicy, type HoldoutMetadata } from "./folds.js";
 import { claimWorkspace, atomicJson } from "../experiments/ownership.js";
 import { ensureSolutionsRepository } from "../training/git.js";
 import { canonical } from "../training/terminal.js";
@@ -91,10 +91,17 @@ export function archiveRows(pythonExecutable: string, zip: string, targetsPath?:
 	return JSON.parse(output);
 }
 
-function seal(configuration: TaskConfiguration, ids: string[], targets: Map<string, string | number>, options: PrepareOptions): IdSealedSplit | ReturnType<typeof stratifiedSeal> {
+function seal(configuration: TaskConfiguration, ids: string[], targets: Map<string, string | number>, options: PrepareOptions): (IdSealedSplit & { confirmation?: HoldoutMetadata }) | ReturnType<typeof stratifiedSeal> {
 	const seed = options.seed ?? HARNESS_CONFIG.solve.seed;
-	if (configuration.holdout === "stratified") return stratifiedSeal(ids, targets, options.holdoutPolicy, seed);
-	if (configuration.holdout === "group") return sealGroups(ids.map(id => ({ id, group: String(targets.get(id)) })), { seed });
+	if (configuration.holdout === "stratified") return configuration.kind === "clustering"
+        ? sealFamilies(ids.map(id => ({ id, group: String(targets.get(id)) })), seed)
+        : stratifiedSeal(ids, targets, options.holdoutPolicy, seed);
+	if (configuration.holdout === "group") {
+        const split = sealGroups(ids.map(id => ({ id, group: String(targets.get(id)) })), { seed });
+        const perClass: Record<string, number> = {};
+        for (const id of split.sealedIds) { const family = String(targets.get(id)); perClass[family] = (perClass[family] ?? 0) + 1; }
+        return { ...split, confirmation: { rows: split.sealedIds.length, perClass, precision: "target" as const } };
+    }
 	return noSeal(ids, seed);
 }
 
@@ -115,7 +122,7 @@ function describeTargets(configuration: TaskConfiguration, devIds: string[], tar
 	}
 	const sizes = [...counts.values()].sort((a, b) => b - a);
 	return { targets: `family \`target\` values in ${manifest} (the harness scores with them; they never reach fit)`,
-		summary: `Families: ${counts.size}; largest ${sizes[0]} rows, smallest ${sizes.at(-1)} rows, ${sizes.filter(size => size === 1).length} singleton families. ${sealedGroups ?? 0} further families are sealed.` };
+		summary: `Families: ${counts.size}; largest ${sizes[0]} rows, smallest ${sizes.at(-1)} rows, ${sizes.filter(size => size === 1).length} singleton families. ${configuration.holdout === "stratified" ? "A fixed share of each non-singleton family is sealed; singleton families stay in development. This does not test unseen families." : `${sealedGroups ?? 0} further families are sealed.`}` };
 }
 
 const LEGACY_DEVELOPMENT_ROOT = "solve/data";

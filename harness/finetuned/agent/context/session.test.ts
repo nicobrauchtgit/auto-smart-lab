@@ -31,7 +31,7 @@ async function fixture(thresholdTokens = CONTEXT_HANDOFF_TOKENS) {
 	const sessions: Awaited<ReturnType<typeof createAgentSession>>["session"][] = [];
 	const logical = new SmartContextSession({ prompts, thresholdTokens, create: async () => {
 		created++;
-		const resources = await loadChildResources({ cwd: root, agentDir, instructions: [prompts.render("team.lead-system", { budget: "80", taskId: "fixture" })] });
+		const resources = await loadChildResources({ cwd: root, agentDir, instructions: [prompts.render("team.lead-system", { confirmationFeedback: "", budget: "80", taskId: "fixture" })] });
 		const { session } = await createAgentSession({ cwd: root, agentDir, ...resources,
 			model: provider.getModel(), modelRuntime: runtime, tools: ["read"], sessionManager: SessionManager.inMemory(root) });
 		sessions.push(session);

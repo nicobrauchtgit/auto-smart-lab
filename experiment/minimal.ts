@@ -9,7 +9,7 @@
  * from its shell tool's environment.
  */
 import { spawn, spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, lstatSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, linkSync, lstatSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadExperimentConfig, modelReference, type ExperimentConfig } from "./config.js";
@@ -85,12 +85,20 @@ function linkTaskMaterial(projectRoot: string, root: string): MinimalRun {
 		else if (name === "index.json") cpSync(path, join(units, name));
 	}
 	// Only declared course files, never resource tooling or development notes.
+	const stagedResources = new Map<string, string>();
 	for (const unit of readdirSync(units).filter(name => statSync(join(units, name)).isDirectory())) {
 		const inputs = readCourseResources(unit, join(projectRoot, "resources"));
 		if (!inputs.length) continue;
 		const destination = join(root, "resources", unit);
+		rmSync(destination, { recursive: true, force: true });
 		mkdirSync(destination, { recursive: true });
-		for (const { source } of inputs) cpSync(source, join(destination, basename(source)));
+		for (const { source, resource } of inputs) {
+			const target = join(destination, resource.path.slice("resources/".length));
+			rmSync(target, { force: true });
+			const existing = stagedResources.get(resource.sha256);
+			if (existing) linkSync(existing, target);
+			else { cpSync(source, target); stagedResources.set(resource.sha256, target); }
+		}
 		writeFileSync(join(destination, "manifest.json"), JSON.stringify({ version: 1, files: inputs.map(({ resource }) => ({
 			...resource, file: resource.path.slice("resources/".length), path: undefined,
 		})) }, null, 2) + "\n");

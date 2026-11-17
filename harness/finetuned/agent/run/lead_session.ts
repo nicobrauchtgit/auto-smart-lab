@@ -32,7 +32,7 @@ import { loadPromptSnapshot, type PromptSnapshot, type RenderedPrompt } from "..
 import { prepareRefit, type RefitOptions } from "../refit/service.js";
 import { runConfirmation, type ConfirmationOutput } from "../confirmation/service.js";
 import type { ExperimentView, Wakeable } from "../experiments/index.js";
-import { readCourseResources } from "../research/resources.js";
+import { readCourseResources, reportCourseResources } from "../research/resources.js";
 import type { SolveWorkspace } from "../solve/workspace.js";
 import { prepareTaskData } from "../solve/task_data.js";
 import type { TaskData, TrialSnapshot } from "../team/contracts.js";
@@ -71,9 +71,9 @@ export function datasetFingerprint(workspace: Pick<SolveWorkspace, "devZip" | "s
 /** The selected trial's primary development metric, named by the task configuration. */
 export function primaryMetric(workspace: Pick<SolveWorkspace, "configuration">, metrics: Record<string, unknown> | undefined): Record<string, unknown> {
  const name = metricKey(workspace.configuration);
- return name ? { name: workspace.configuration.metric, value: metrics?.[name] } : { name: "none" };
+ return name ? { name: workspace.configuration.selection?.metric ?? workspace.configuration.metric, value: metrics?.[name] } : { name: "none" };
 }
-const metricKey = (configuration: TaskConfiguration) => configuration.metric === "balanced_accuracy" ? "balancedAccuracy"
+const metricKey = (configuration: TaskConfiguration) => configuration.selection ? "selectionScore" : configuration.metric === "balanced_accuracy" ? "balancedAccuracy"
  : configuration.metric === "adjusted_rand_index" ? "adjustedRandIndex" : undefined;
 
 export function workerEnvironment(python: PythonEnvironment): Record<string, string> {
@@ -152,6 +152,8 @@ export class LeadInbox implements Wakeable {
 
 export interface LeadScouts {
  tool: ToolDefinition;
+ /** Absolute staged paths, also readable from the lead workspace. */
+ courseResources?: string;
  readonly pending?: number;
  cancel?(): Promise<void>;
  report(request: ScoutRequest, signal?: AbortSignal, toolCallId?: string): Promise<ScoutReport>;
@@ -255,18 +257,22 @@ export function productionScouts(options: { prompts: PromptSnapshot; taskId: str
  setup: { session: SetupSession; telemetry: Telemetry }; producerModel?: string }) {
  return (context: LeadScoutContext): LeadScouts => {
   const task = resolveTask({ taskId: options.taskId });
-  const inputs = stageScoutInputs(context.data, readCourseResources(task.unitSlug));
+  const resources = readCourseResources(task.unitSlug);
+  const inputs = stageScoutInputs(context.data, resources);
+  reportCourseResources(options.report, inputs.root, resources.map(input => input.resource));
   const runner = createScoutRunner({ prompts: options.prompts, taskId: options.taskId, taskConfiguration: options.configuration,
    telemetry: options.setup.telemetry, record: options.report.event, setup: options.setup.session,
    scoutPaths: { journal: boardPath(),
     unitIntro: join(dirname(task.taskDir), "unit-intro.md"), task: context.data.taskPath, profile: context.data.profilePath },
    sandbox: (role, trial) => expertSandbox(context.data, role, context.python, trial), solutionsRoot: context.data.solutionsRoot,
    observe: options.report.observation(1), parentAgentRunId: () => context.parentAgentRunId() ?? context.invocationId });
-  return createScouts({ prompts: options.prompts, taskId: options.taskId, task: readFileSync(context.data.taskPath, "utf8"),
+  return Object.assign(createScouts({ prompts: options.prompts, taskId: options.taskId, task: readFileSync(context.data.taskPath, "utf8"),
    dataPaths: inputs.dataPaths, resources: inputs.resources, journalPath: boardPath(),
    boardRoot: statePath(PROJECT_ROOT), producerModel: options.producerModel, datasetSha256: context.data.datasetSha256, runId: context.runId, invocationId: context.invocationId,
    trials: createTrialResolver({ roots: () => taskTrialRoots(statePath(PROJECT_ROOT), options.taskId), solutionsRoot: context.data.solutionsRoot }),
-   solutionsRoot: context.data.solutionsRoot, prepare: runner.prepare, run: runner, signal: context.signal, news: context.news, record: options.report.event });
+   solutionsRoot: context.data.solutionsRoot, prepare: runner.prepare, run: runner, signal: context.signal, news: context.news, record: options.report.event }), {
+    courseResources: resources.map(({ resource }) => `- \`${join(inputs.root, resource.path)}\`: ${resource.title}`).join("\n"),
+   });
  };
 }
 
@@ -387,7 +393,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
  const runningTrials = () => (training?.supervisor?.list?.() ?? []).filter(view => view.status === "running");
  const holdoutDone = (experimentId: string) => progress.holdout.some(row => row.experimentId === experimentId);
  const holdoutText = (row: LeadProgress["holdout"][number]) => row.status === "completed"
-  ? prompts.render("team.lead-holdout-result", { verdict: row.verdict ?? "no verdict", queries: String(row.queryCount ?? 0),
+  ? configuration.kind === "clustering" ? prompts.render("team.lead-holdout-recorded", {}).text : prompts.render("team.lead-holdout-result", { verdict: row.verdict ?? "no verdict", queries: String(row.queryCount ?? 0),
    detail: row.score !== undefined ? `: score ${row.score.toFixed(4)}` : "" }).text
   : prompts.render("team.lead-holdout-skipped", { reason: row.reason ?? row.status }).text;
  /** One counted Ladder query on the current champion; the withheld labels stay in the controller. */
@@ -396,7 +402,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
   if (existing) return holdoutText(existing);
   let row: LeadProgress["holdout"][number];
   let receipt: { path: string; sha256: string } | undefined;
-  if (!data.holdoutSeedPlan || !data.split.sealedIds.length) row = { experimentId, status: "skipped", reason: data.split.confirmation?.reason ?? "this task has no withheld rows" };
+  if (!data.holdoutSeedPlan || (!data.split.confirmation && !data.split.sealedIds.length)) row = { experimentId, status: "skipped", reason: data.split.confirmation?.reason ?? "this task has no withheld rows" };
   else try {
    const output = await deps.confirm({ workspace: data, pythonExecutable: python.executable, environmentFingerprint: python.fingerprint,
     env: workerEnvironment(python), report, ...(options.signal ? { signal: options.signal } : {}),
@@ -423,7 +429,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
   if (!scores.length) return "no completed folds";
   const mean = scores.reduce((sum, value) => sum + value, 0) / scores.length;
   const sd = Math.sqrt(scores.reduce((sum, value) => sum + (value - mean) ** 2, 0) / Math.max(1, scores.length - 1));
-  return `${scores.map(value => value.toFixed(4)).join(", ")}; mean ${mean.toFixed(4)}, sd ${sd.toFixed(4)} (${configuration.metric})`;
+  return `${scores.map(value => value.toFixed(4)).join(", ")}; mean ${mean.toFixed(4)}, sd ${sd.toFixed(4)} (${configuration.selection?.metric ?? configuration.metric})`;
  };
  let feedbackChain: Promise<unknown> = Promise.resolve();
  const trialFinished = (id: string, view: ExperimentView) => {
@@ -700,7 +706,8 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
  if (followUp) record("follow_up_branch_started", { branch: followUp.branch, champion_commit: followUp.champion, previous: followUp.previous });
 
  if (!handOver) {
-  const scoutTool = getScouts().tool;
+  const scoutInputs = getScouts();
+  const scoutTool = scoutInputs.tool;
   const environmentToolPrompt = prompts.render("solve.python-environment-tool", {});
   const pythonSessionId = randomUUID();
   const environmentTool = deps.environmentTool(python, environmentToolPrompt.text, PROJECT_ROOT, {
@@ -721,7 +728,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
    evidencePath: join(agentRoot, "evidence.json"), task: readFileSync(data.taskPath, "utf8").trim(),
    datasetPaths: data.datasetPaths, targets: data.targets, rowCount: data.rowCount, targetSummary: data.targetSummary,
    foldRecommendation: `${shape.folds}-fold ${data.recommendation.scheme}, ${shape.repeats} repeat(s)`, budget: limit,
-   resources: "", followUp: followUpNote?.text, resume: resume?.text, guidance: options.guidance });
+   resources: scoutInputs.courseResources ?? "", followUp: followUpNote?.text, resume: resume?.text, guidance: options.guidance });
   const system = opening.system;
   const promptReferences = [...opening.promptReferences, ...scoutSkills.references, shared.reference, boardIntro.reference, ...(["team.board-read", "team.board-write", "team.board-resolve"] as const).map(id => prompts.render(id, {}).reference), isolation.reference, environmentToolPrompt.reference,
    ...(followUpNote ? [followUpNote.reference] : []), ...(resume ? [resume.reference] : []),

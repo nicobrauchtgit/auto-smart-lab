@@ -86,11 +86,9 @@ export function sealConfirmationSet(
     const perClass: Record<string, number> = {};
     const sealedIds: string[] = [];
     classes.forEach((values, label) => {
-        const indices = values.map((_, index) => index);
-        seededShuffle(indices, seed + label * 9973);
         const count = Math.floor(values.length * fraction + 0.5);
         perClass[String(label)] = count;
-        sealedIds.push(...indices.slice(0, count).map(index => values[index].id));
+        sealedIds.push(...draw(values, count, seed + label * 9973));
     });
     sealedIds.sort();
     const sealed = new Set(sealedIds);
@@ -98,6 +96,37 @@ export function sealConfirmationSet(
         rows: sealedIds.length, perClass, precision,
         ...(precision === "none" ? { reason: "Too few rows in the smallest class for an independent confirmation estimate" } : {}),
         sha256: createHash("sha256").update(JSON.stringify({ version: 2, seed, policy, sealedIds })).digest("hex") };
+}
+
+/** Shared deterministic draw; callers supply sorted rows. */
+function draw(values: readonly { id: string }[], count: number, seed: number): string[] {
+    const indices = values.map((_, index) => index);
+    seededShuffle(indices, seed);
+    return indices.slice(0, count).map(index => values[index].id);
+}
+
+/** Fixed-share family draw; singleton families stay in development. */
+export function sealFamilies(rows: readonly { id: string; group: string }[], seed: number) {
+    if (!rows.length || new Set(rows.map(row => row.id)).size !== rows.length) throw new Error("Holdout needs unique family rows");
+    const fraction = HARNESS_CONFIG.holdout.maxFraction;
+    const ordered = [...rows].sort((a, b) => a.id.localeCompare(b.id));
+    const families = [...new Set(rows.map(row => row.group))].sort();
+    const perClass: Record<string, number> = {};
+    const sealedIds: string[] = [];
+    families.forEach((family, index) => {
+        const values = ordered.filter(row => row.group === family);
+        const count = values.length < 2 ? 0 : Math.max(1, Math.min(values.length - 1, Math.floor(values.length * fraction + 0.5)));
+        perClass[family] = count;
+        sealedIds.push(...draw(values, count, seed + index * 9973));
+    });
+    if (sealedIds.length < 2) { sealedIds.length = 0; for (const family of families) perClass[family] = 0; }
+    sealedIds.sort();
+    const sealed = new Set(sealedIds);
+    return { scheme: "stratified" as const, sealedIds, devIds: ordered.filter(row => !sealed.has(row.id)).map(row => row.id).sort(),
+        sealedGroups: undefined, fraction, seed,
+        sha256: createHash("sha256").update(JSON.stringify({ scheme: "family_rows_v1", seed, fraction, sealedIds })).digest("hex"),
+        confirmation: { rows: sealedIds.length, perClass, precision: sealedIds.length ? "target" as const : "none" as const,
+            ...(!sealedIds.length ? { reason: "Too few non-singleton family rows for a sealed check" } : {}) } };
 }
 
 /** A sealed split over arbitrary IDs; family tasks seal whole families. */

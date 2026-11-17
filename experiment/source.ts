@@ -32,7 +32,7 @@ export function invocationArgs(root: string, original: readonly string[]): strin
  const cap = previous?.cap ?? requested;
  let spent = 0;
  const logs = join(root, "logs/solve-units");
- if (existsSync(logs)) for (const name of readdirSync(logs)) {
+ if (cap !== undefined && existsSync(logs)) for (const name of readdirSync(logs)) {
   const summary = join(logs, name, "summary.json");
   if (existsSync(summary)) { const value = JSON.parse(readFileSync(summary, "utf8")).spentUsd; if (typeof value !== "number" || !Number.isFinite(value) || value < 0) throw new Error("Invalid recorded spend"); spent += value; }
  }

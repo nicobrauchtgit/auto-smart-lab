@@ -120,3 +120,23 @@ test("pre-v2 development data stay at their measured paths and bytes", () => {
   expect(() => prepareSolveWorkspace("spam1", { ...options, projectRoot: root })).toThrow("differs from the stored split");
  } finally { rmSync(root, { recursive: true, force: true }); rmSync(fresh, { recursive: true, force: true }); }
 }, 120000);
+
+test("family stratification is declared, materialized and rejects a policy reset", () => {
+ const root = mkdtempSync(join(tmpdir(), "family-split-"));
+ try {
+  const taskDir = taskFixture(root);
+  const labels = join(taskDir, "data/spam1-train.labels");
+  writeFileSync(labels, readFileSync(labels, "utf8").replace(/;0/g, ";alpha").replace(/;1/g, ";beta"));
+  const base = JSON.parse(readFileSync("harness/finetuned/pipeline.config.json", "utf8")).pipeline.tasks.spam1;
+  const configuration = { ...base, kind: "clustering", targets: { kind: "families", file: "spam1-train.labels" },
+   execution: "batch", metric: "adjusted_rand_index", refit: "fit_predict_test_batch",
+   submission: { format: "id_semicolon_prediction", predictions: "cluster_id" } };
+  const options = { configuration, projectRoot: root, taskDir };
+  const first = prepareSolveWorkspace("spam1", options);
+  expect(first.split.confirmation?.perClass).toEqual({ alpha: 60, beta: 60 });
+  expect(first.targetSummary).toContain("does not test unseen families");
+  expect(first.recommendation.scheme).toBe("stratified_kfold");
+  expect(prepareSolveWorkspace("spam1", options).split).toEqual(first.split);
+  expect(() => prepareSolveWorkspace("spam1", { ...options, configuration: { ...configuration, holdout: "group" } })).toThrow("declaration changed");
+ } finally { rmSync(root, { recursive: true, force: true }); }
+}, 60_000);

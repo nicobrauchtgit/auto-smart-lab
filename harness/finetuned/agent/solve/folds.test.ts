@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { createStratifiedFolds, recommendFolds, sealConfirmationSet } from "./folds.js";
+import { createStratifiedFolds, recommendFolds, sealFamilies, sealConfirmationSet } from "./folds.js";
 import type { TrainingLabelRow } from "../team/contracts.js";
 
 function rows(count: number): TrainingLabelRow[] {
@@ -97,4 +97,27 @@ describe("createStratifiedFolds", () => {
 	test("rejects a fold count larger than either class", () => {
 		expect(() => createStratifiedFolds([0, 0, 1], 2, 13)).toThrow("Each class");
 	});
+});
+
+test("binary split hashes retain the pre-family-draw outputs", () => {
+ const cases = [
+  [8360, 8302, "c08b0fc9121a66ad719c66c12e5aa1a2bb4da75179d749e97a22533a887fe58d"],
+  [13074, 5682, "52c4feeb0fe59f84111ff0486015b7ff89ae05a7e32857b98e83239e2d6edb1a"],
+  [3007, 554, "c0436c37f937b81dce92aa828fa2b49e86299567998fce3944ff3f308981847f"],
+ ] as const;
+ for (const [zero, one, hash] of cases) expect(sealConfirmationSet(Array.from({ length: zero + one },
+  (_, i) => ({ id: `sample-${i}`, label: (i < zero ? 0 : 1) as 0 | 1 }))).sha256).toBe(hash);
+});
+
+test("family rows seal a rounded fifth and retain singleton families", () => {
+ const rows = [538, 73, 25, 21, 1, 2].flatMap((size, family) =>
+  Array.from({ length: size }, (_, i) => ({ id: `${family}/${i}`, group: String(family) })));
+ const split = sealFamilies(rows, 13);
+ expect(split.confirmation.perClass).toEqual({ "0": 108, "1": 15, "2": 5, "3": 4, "4": 0, "5": 1 });
+ expect(split.devIds).toContain("4/0");
+ expect(split.devIds.some(id => id.startsWith("5/"))).toBe(true);
+ expect(sealFamilies([...rows].reverse(), 13)).toEqual(split);
+ expect(new Set([...split.devIds, ...split.sealedIds]).size).toBe(rows.length);
+ expect(split.devIds.some(id => split.sealedIds.includes(id))).toBe(false);
+ expect(sealFamilies([{ id: "one", group: "one" }], 13).confirmation.precision).toBe("none");
 });

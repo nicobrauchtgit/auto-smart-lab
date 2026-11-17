@@ -1,41 +1,63 @@
 # Course resources
 
-`01-spam/` contains the PDFs supplied by the user in this conversation:
+`catalog.json` inventories the supplied course PDFs, source attachments and
+non-video URL activities. Each unique byte sequence lives once under `_assets/`,
+named by SHA-256. The original upload and its complete inventory remain under
+`runs/incoming/`. Duplicate PDF filenames resolve to the same asset identity.
+Source templates and nested ZIPs are preserved without execution or expansion.
 
-| File | Course material | Pages |
+`tasks.json` maps task IDs to resource identities. The assignments follow the
+course's unit-level grouping, as the existing spam resource assignment did:
+
+| Unit manifest | Tasks | Material |
 | --- | --- | --- |
-| `smartlab-spam.pdf` | Konrad Rieck, Intelligent Security Lab: Spam Filtering: Basics | 7 |
-| `mlsec-perf-small.pdf` | Konrad Rieck, Machine Learning for Computer Security: Performance Measures | 23 |
+| `01-spam/manifest.json` | spam1–3 | Spam slides, performance measures, the supplied ML/features/IDS background PDFs |
+| `02-maldoc/manifest.json` | documents1–4 | PDFiD, PDF Parser and XML ElementTree links |
+| `clustering-of-malicious-code/manifest.json` | code1–3 | pefile, PEiD, Drebin and PE-analysis links |
+| `detection-of-unknown-attacks/manifest.json` | attacks1 | Anomaly-detection slides, IDS background and novelty/outlier documentation link |
 
-The original PDFs are unchanged. Each has a page-labelled `.txt` extraction
-for the research agent's text tools. Extraction can lose figures, layout and
-mathematical notation; the originals remain available. `manifest.json` records
-titles, page counts and SHA-256 hashes of both formats, plus extractor identity.
+Offense/defense attachments, including the original Python and robustness ZIP
+source templates, retain their original course-unit associations in the catalogue.
+They are not attached to the task manifests listed above. No video activities or
+video links are imported. The export retains only the Moodle activity URL
+of each link, not its external destination, and that URL is behind the course
+login. Eight destinations were supplied by the user on 2026-11-16
+(`LINK_TARGETS` in `import_course_materials.py`) and are written into those link
+files. Links without a supplied destination (the NumPy and scikit-learn
+tutorials) are not imported; no destination is invented.
 
-Finetuned research automatically selects `resources/<unit-slug>/manifest.json`,
-checks every declared file before agents start, and snapshots the files into
-its workspace's read-only `resources/` directory. `context.json.resources`
-lists the supplied files; Langfuse records each input and content hash. Missing
-or changed declared files fail setup. Units without a resource directory have
-no additional course inputs. Only the selected unit's declared files are supplied.
-The snapshot accompanies the brief when it is copied into solve, keeping its
-course citations readable there as well.
+The original PDFs are unchanged. Their text assets retain page markers and
+extractor identity. Existing spam PDF/text bytes were preserved during migration.
+Extraction may lose diagrams, layout and mathematical notation; originals remain
+available. Import/check provenance is in `docs/course-materials-mapping-2026-11-16.md`.
 
-The research prompt points to the text copies. Briefs can cite
-`[resources/smartlab-spam.txt]` or `[resources/mlsec-perf-small.txt]` for course
-context and methods; these do not count as measured dataset evidence.
+## Runtime delivery
 
-Minimal receives the same declared PDFs and text copies in a read-only snapshot
-at `resources/<unit-slug>/`. Its `read_challenge` tool lists their paths, titles,
-page counts and hashes alongside the task instructions. Setup checks the source
-files and copied snapshot; run conditions and Langfuse metadata record their
-identities. Its authored solver instructions contain no additional modeling advice.
+Per-unit manifests reference hash-addressed assets. The shared resource reader
+validates the selected manifest and every checksum during preflight, then provides
+the same declared files to both arms. A missing, changed, linked or invalid asset
+blocks execution. Runtime paths use readable filenames. Minimal snapshots remain
+self-contained and read-only; shared content is hard-linked within a run, while
+the first snapshot copy remains independent of later source changes. Finetuned
+snapshots retain the existing read-only workspace behavior. Runtime snapshots and
+historical run artifacts are measurement records, separate from this canonical
+source catalogue.
 
-To regenerate the text and refresh checksums after an intentional PDF change:
+Only manifest-declared course files enter snapshots. Catalogue/import tooling,
+runner guidance, scheduling scope and experiment reports do not enter them. No
+solver instruction or modeling advice was added.
+
+## Refresh
+
+Use the existing finetuned Python environment through `./dev`; `pypdf` is already
+locked. Import does not fetch external links or execute supplied source files:
 
 ```bash
-./dev python resources/extract_slides.py resources/01-spam
+./dev python resources/import_course_materials.py runs/incoming/course-materials.zip
 ```
 
-`pypdf` is declared and locked in the finetuned Python environment. No PDF
-extraction or extra executable is required during a pipeline run.
+The importer preserves existing spam text, checks ZIP/member identities, skips
+video activities and writes catalogue/manifests. It rejects unsafe or unknown
+attachments and duplicate canonical contents. `extract_slides.py` remains for
+legacy manifests with unit-local PDFs; catalogue-backed manifests are refreshed
+with the importer so shared identities stay consistent.

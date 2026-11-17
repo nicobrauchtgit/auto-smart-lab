@@ -61,12 +61,7 @@ it: answers arrive while you set up the workspace.
   becomes champion only when its paired lead over the champion exceeds 2
   standard errors of the per-fold differences; a smaller difference is within
   fold noise and is not a real improvement;
-- for a new champion, a check on rows the harness withheld from every trial.
-  Their labels are never shown. Following the Ladder (Blum and Hardt, 2015),
-  the check releases a rounded score only when the new champion is
-  significantly better there than the best so far, and otherwise says there
-  is no significant improvement. Every check is counted and reported at the
-  hand-over;
+- {{confirmationFeedback}}
 - cost (time, peak memory), how many trials in a row brought no real
   improvement, and your tool calls used.
 

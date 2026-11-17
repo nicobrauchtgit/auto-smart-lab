@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "files": [
+    {
+      "file": "docs-xml-elementtree.txt",
+      "asset": "64b9a824d6411aca47bea3abd390aebb64751124dc659b3c6dab83752a9ba143.txt",
+      "title": "Docs: XML ElementTree",
+      "media_type": "text/plain",
+      "pages": 1,
+      "sha256": "64b9a824d6411aca47bea3abd390aebb64751124dc659b3c6dab83752a9ba143"
+    },
+    {
+      "file": "tool-pdf-parser.txt",
+      "asset": "1be13be22406c428765915c07b1d305d8a4ca3c07ff213c8297e5bc43d7914f5.txt",
+      "title": "Tool: PDF Parser",
+      "media_type": "text/plain",
+      "pages": 1,
+      "sha256": "1be13be22406c428765915c07b1d305d8a4ca3c07ff213c8297e5bc43d7914f5"
+    },
+    {
+      "file": "tool-pdfid.txt",
+      "asset": "92613618bc672b55cda00f4f4631996d3acca0d104566f021a4dae26153333b2.txt",
+      "title": "Tool:pdfid",
+      "media_type": "text/plain",
+      "pages": 1,
+      "sha256": "92613618bc672b55cda00f4f4631996d3acca0d104566f021a4dae26153333b2"
+    }
+  ],
+  "extraction": {
+    "library": "pypdf",
+    "version": "7.0.1",
+    "page_markers": true
+  }
+}

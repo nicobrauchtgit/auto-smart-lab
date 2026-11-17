@@ -12,6 +12,10 @@ export function expertSandbox(data: TaskData, role: TeamRole, python: PythonEnvi
  if (role === "validation" && !trial) throw new Error("Validation requires a measured trial snapshot");
  const base = prepareSolveSandbox(data, python);
  const mounts = base.mounts.map(mount => ({ ...mount, ...(realpathSync(mount.source) === realpathSync(data.solutionsRoot) && role === "ideas" ? { writable: false } : {}) }));
+ // Nested read-only mount protects the staged inputs even when solutions are writable.
+ const resources = join(scoutWorkspace(data), "resources");
+ mkdirSync(resources, { recursive: true });
+ mounts.push({ source: resources });
  if (existsSync(data.profilePath)) mounts.push({ source: data.profilePath });
  // Only the lead can read its explicitly staged skill bodies through sandbox tools.
  if (role === "lead" && existsSync(join(data.root, "lead-skills"))) mounts.push({ source: join(data.root, "lead-skills") });

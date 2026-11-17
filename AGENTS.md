@@ -37,8 +37,23 @@ from the saved traces and results, as in past runs.
 After each task, remove datasets no longer needed by any ongoing run, keeping
 results, source and measurement records. Update the report so work can continue
 from it, and compact the observing agent's context when the client supports it.
-Dataset preparation is handled by the user. This guidance stays outside both
-arms' runtime prompts.
+The observing agent handles dataset preparation and stages only the current task.
+After verified completion and backup, remove datasets no ongoing run needs before
+staging the next task. Preparing the next authorized experiment is the observing
+agent's responsibility: retrieve its datasets, unit introduction, task description
+and metadata from the established course share and archived course material, and
+complete the required task registration and setup checks. Missing local files are
+not by themselves a blocker; check those sources and prepare the task before
+stopping. Preserve provenance and distinguish reconstructed task material from
+verbatim originals; do not invent requirements or add modeling advice. If required
+material cannot be obtained or verified from those sources, stop before starting
+an agent and report the concrete blocker. This guidance stays outside both arms'
+runtime prompts.
+
+Keep dataset-availability limits, deferred units and run order in observing-agent
+guidance and experiment reports, never in pipeline prompts or course-resource
+content. The current dataset-backed campaign and Tor deferral are recorded in
+[the runner scope](docs/experiments/dataset-backed-scope-2026-11-16.md).
 
 # Harness development
 

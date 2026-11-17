@@ -167,6 +167,11 @@ test("confirmation prerequisites are checked before solve execution and scoped t
  expect(ran).toBe(false);
  expect(setupChecks([], { taskId: "fixture", prompts }).some(check => check.id === confirmation.id)).toBe(false);
  expect(setupChecks(["refit"], { taskId: "fixture", prompts, taskConfiguration: spamConfiguration() }).some(check => check.id === confirmation.id)).toBe(true);
+ const cluster = setupChecks(["refit"], { taskId: "fixture", prompts, taskConfiguration: { ...spamConfiguration(), kind: "clustering" },
+  executables: { python: "/missing-confirmation-python" } }).find(check => check.id === confirmation.id)!;
+ expect(cluster).toBeDefined();
+ await expect(new SetupSession().check([cluster], signal(), () => {})).rejects.toThrow("holdout-confirmation-runtime");
+
 });
 
 test("missing shared metric prerequisites block the solve stage before execution", async () => {

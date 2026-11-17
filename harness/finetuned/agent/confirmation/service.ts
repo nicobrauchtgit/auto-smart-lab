@@ -66,7 +66,7 @@ export async function runConfirmation(options: ConfirmationOptions): Promise<Con
   assertNoWorkers(chosen.trainingRoot);
   const holdout = { ...workspace.split.confirmation, sha256: workspace.split.sha256,
    fraction: workspace.split.fraction, seed: workspace.split.seed };
-  const identity = digest({ taskId, experimentId: prepared.chosenExperimentId, source: prepared.source, pipeline: prepared.pipeline, holdout });
+  const identity = digest({ taskId, experimentId: prepared.chosenExperimentId, source: prepared.source, pipeline: prepared.pipeline, holdout, ...(workspace.configuration.kind === "clustering" ? { kind: "clustering", execution: workspace.configuration.execution } : {}) });
   const directory = join(root, identity);
   mkdirSync(directory, { recursive: true });
   const resultPath = join(directory, "holdout-confirmation.json");
@@ -84,15 +84,15 @@ export async function runConfirmation(options: ConfirmationOptions): Promise<Con
   if (canonical([...workspace.split.sealedIds].sort()) !== canonical(expectedSealed)) throw new Error("Sealed IDs do not complement champion development data");
   const common = { schemaVersion: 1, taskId, identity, population, experimentId: prepared.chosenExperimentId,
    source: prepared.source, pipeline: prepared.pipeline, holdout, advisoryOnly: true };
-  const skipped = workspace.configuration.kind !== "binary_classification" || !workspace.split.sealedIds.length;
+  const skipped = !["binary_classification", "clustering"].includes(workspace.configuration.kind) || !workspace.split.sealedIds.length;
   if (skipped) {
    if (!existsSync(resultPath)) atomicJson(resultPath, { ...common, status: "skipped", readCount: count(),
-    precision: "none", reason: workspace.split.confirmation?.reason ?? "Binary stratified confirmation does not apply to this task" });
+    precision: "none", reason: workspace.split.confirmation?.reason ?? "This task has no withheld rows to confirm" });
   } else {
    const freezePath = join(directory, "freeze.json");
    const trialPath = join(chosen.trainingRoot, prepared.chosenExperimentId);
    const plan = parseSeedPlan(readRecord(join(trialPath, "seed-plan.json")) ?? "");
-   const framework = digest([WORKER, ...["agent_code.py", "metrics.py", "measurement.py"].map(name => join(PYTHON_ROOT, "smartlab_trial", name))].map(confirmationHash));
+   const framework = digest([WORKER, ...["agent_code.py", "metrics.py", "measurement.py", ...(workspace.configuration.kind === "clustering" ? ["diagnostics.py"] : [])].map(name => join(PYTHON_ROOT, "smartlab_trial", name))].map(confirmationHash));
    if (!existsSync(freezePath)) {
     if (ledger.populations[population]?.reads?.some((read: any) => read.identity === identity)) throw new Error("Confirmation read was already reserved; refusing a duplicate sealed read");
     options.signal?.throwIfAborted();
@@ -101,7 +101,7 @@ export async function runConfirmation(options: ConfirmationOptions): Promise<Con
     const preparation = join(directory, "prepare.json");
     const originalHashes = { [workspace.trainZip]: confirmationHash(workspace.trainZip),
      [workspace.originalTargetsPath!]: confirmationHash(workspace.originalTargetsPath!) };
-    atomicJson(preparation, { originalHashes, trainZip: workspace.trainZip, targetsPath: workspace.originalTargetsPath, sealedIds: workspace.split.sealedIds });
+    atomicJson(preparation, { kind: workspace.configuration.kind, originalHashes, trainZip: workspace.trainZip, targetsPath: workspace.originalTargetsPath, sealedIds: workspace.split.sealedIds });
     probe(options, ["--prepare", preparation]);
     const validationManifest = join(directory, "sealed-samples.json");
     const measuredDev = measuredManifest;
@@ -111,12 +111,12 @@ export async function runConfirmation(options: ConfirmationOptions): Promise<Con
     ledger.populations[population].reads.push({ identity, experimentId: prepared.chosenExperimentId, reservedAt: new Date().toISOString() });
     // Reservation precedes launch; a crash never silently repeats sealed reads.
     atomicJson(ledgerPath, ledger);
-    atomicJson(freezePath, { ...common, readCount: count(), sourceRoot, environment: prepared.environment, framework,
+    atomicJson(freezePath, { ...common, ...(workspace.configuration.kind === "clustering" ? { kind: "clustering", execution: workspace.configuration.execution } : {}), readCount: count(), sourceRoot, environment: prepared.environment, framework,
      origin: Object.fromEntries(Object.entries({ pipelineRunId: options.report?.agentIdentity(1).pipelineRunId,
       stageInvocationId: options.report?.agentIdentity(1).stageInvocationId }).filter(([, value]) => typeof value === "string" && value)),
      developmentManifest: measuredDev, validationManifest, seedLineage: plan, holdoutSeedPlan: workspace.holdoutSeedPlan,
      seed: deriveTrialSeed(plan, "holdout-confirmation"), bootstrapSeed: deriveBootstrapSeed(plan),
-     cvMean: json(join(trialPath, "trial-result.json")).metrics.balancedAccuracy,
+     cvMean: json(join(trialPath, "trial-result.json")).metrics[workspace.configuration.kind === "clustering" ? "adjustedRandIndex" : "balancedAccuracy"],
      hashes: Object.fromEntries([measuredDev, String(prepared.inputs.devZip), validationManifest, join(directory, "sealed.zip")].map(path => [path, confirmationHash(path)])) });
    }
    const frozen = json(freezePath);
@@ -176,7 +176,9 @@ export async function runConfirmation(options: ConfirmationOptions): Promise<Con
   const output = artifact("holdout_confirmation", resultPath);
   atomicJson(join(root, "latest.json"), { path: resultPath, sha256: output.sha256 });
   let summary: Record<string, unknown>;
-  if (result.status === "completed") {
+  if (result.status === "completed" && workspace.configuration.kind === "clustering") {
+   summary = { status: "completed", experimentId: result.experimentId, readCount: result.readCount, populationReadCount: count() };
+  } else if (result.status === "completed") {
    const { ids, losses } = holdoutLosses(dirname(resultPath));
    const queried = ladderQuery(ledger.populations[population]?.ladder, identity, ids, losses);
    ledger.populations[population].ladder = queried.state;

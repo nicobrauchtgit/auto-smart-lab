@@ -1,0 +1,524 @@
+{
+  "version": 1,
+  "archive_sha256": "4f1ae1cd055de60a2500e6526e1d2f2c1679e9a96718cee306d7dd9bda4a02ef",
+  "resources": [
+    {
+      "id": "0404ce45ea250fa0c5cd4e71393b8766c43b8e0c2862eeafb1900716a8148ace",
+      "asset": "0404ce45ea250fa0c5cd4e71393b8766c43b8e0c2862eeafb1900716a8148ace.txt",
+      "title": "MAZE: Data-Free Model Stealing Attack",
+      "media_type": "text/plain",
+      "pages": 10,
+      "bytes": 45673,
+      "sha256": "0404ce45ea250fa0c5cd4e71393b8766c43b8e0c2862eeafb1900716a8148ace",
+      "origins": [
+        "Kurs_WiSe_202526_Lab_Smart_Se..._.3633571/Datei_MAZE_zeroth-order_steal..._.3633607/content/maze-attack.pdf#page-text"
+      ],
+      "units": [
+        "adversarial-machine-learning-offense"
+      ]
+    },
+    {
+      "id": "0d473a870b4b5e2db806cdf17034ce8b9847de9932bdd89cea96249a0ff2ffbc",
+      "asset": "0d473a870b4b5e2db806cdf17034ce8b9847de9932bdd89cea96249a0ff2ffbc.pdf",
+      "title": "Adversarial Examples in the Physical World",
+      "media_type": "application/pdf",
+      "pages": 14,
+      "bytes": 6437171,
+      "sha256": "0d473a870b4b5e2db806cdf17034ce8b9847de9932bdd89cea96249a0ff2ffbc",
+      "origins": [
+        "Kurs_WiSe_202526_Lab_Smart_Se..._.3633571/Datei_BIM_advanced_version_of..._.3633605/content/bim-attack.pdf"
+      ],
+      "units": [
+        "adversarial-machine-learning-offense"
+      ]
+    },
+    {
+      "id": "0fe79d6d906f1ae4a40f33d08b17c48d0b689e10244202afa7513bbb9f5d6cb8",
+      "asset": "0fe79d6d906f1ae4a40f33d08b17c48d0b689e10244202afa7513bbb9f5d6cb8.txt",
+      "title": "Detection of Unknown Attacks",
+      "media_type": "text/plain",
+      "pages": 13,
+      "bytes": 10602,
+      "sha256": "0fe79d6d906f1ae4a40f33d08b17c48d0b689e10244202afa7513bbb9f5d6cb8",
+      "origins": [
+        "Kurs_WiSe_202526_Lab_Smart_Se..._.3633571/Datei_Slides_Detection_of_Unk..._.3633600/content/smartlab-anomaly.pdf#page-text"
+      ],
+      "units": [
+        "detection-of-unknown-attacks"
+      ]
+    },
+    {
+      "id": "1bb5d97845204420f40fe0fc582558734b5cbb6bbc822825979bf81508f4c974",
+      "asset": "1bb5d97845204420f40fe0fc582558734b5cbb6bbc822825979bf81508f4c974.pdf",
+      "title": "Machine Learning in a Nutshell",
+      "media_type": "application/pdf",
+      "pages": 37,
+      "bytes": 17075351,
+      "sha256": "1bb5d97845204420f40fe0fc582558734b5cbb6bbc822825979bf81508f4c974",
+      "origins": [
+        "Kurs_WiSe_202526_Lab_Smart_Se..._.3633571/Datei_Background_Machine_Lear..._.3633585/content/02-mlsec-ml.pdf"
+      ],
+      "units": [
+        "01-spam"
+      ]
+    },
+    {
+      "id": "1be13be22406c428765915c07b1d305d8a4ca3c07ff213c8297e5bc43d7914f5",
+      "asset": "1be13be22406c428765915c07b1d305d8a4ca3c07ff213c8297e5bc43d7914f5.txt",
+      "title": "Tool: PDF Parser",
+      "media_type": "text/plain",
+      "pages": 1,
+      "bytes": 78,
+      "sha256": "1be13be22406c428765915c07b1d305d8a4ca3c07ff213c8297e5bc43d7914f5",
+      "origins": [
+        "Kurs_WiSe_202526_Lab_Smart_Se..._.3633571/LinkURL_Tool_PDF_Parser_.3633590/index.html"
+      ],
+      "units": [
+        "02-maldoc"
+      ]
+    },
+    {
+      "id": "23675e6a26e74df5375ead1c3a6095be11a2bd4aeced56d602ea9af9f160837f",
+      "asset": "23675e6a26e74df5375ead1c3a6095be11a2bd4aeced56d602ea9af9f160837f.txt",
+      "title": "Machine Learning in a Nutshell",
+      "media_type": "text/plain",
+      "pages": 37,
+      "bytes": 14702,
+      "sha256": "23675e6a26e74df5375ead1c3a6095be11a2bd4aeced56d602ea9af9f160837f",
+      "origins": [
+        "Kurs_WiSe_202526_Lab_Smart_Se..._.3633571/Datei_Background_Machine_Lear..._.3633585/content/02-mlsec-ml.pdf#page-text"
+      ],
+      "units": [
+        "01-spam"
+      ]
+    },
+    {
+      "id": "285c19d2e9dc4ed7d3e4a119fcf77c39e07ae6d531ed24f648e7808b53b3699e",
+      "asset": "285c19d2e9dc4ed7d3e4a119fcf77c39e07ae6d531ed24f648e7808b53b3699e.txt",
+      "title": "Spam Filtering: Basics",
+      "media_type": "text/plain",
+      "pages": 7,
+      "bytes": 1990,
+      "sha256": "285c19d2e9dc4ed7d3e4a119fcf77c39e07ae6d531ed24f648e7808b53b3699e",
+      "origins": [
+        "Kurs_WiSe_202526_Lab_Smart_Se..._.3633571/Datei_Slides_Basics_and_Imple..._.3633584/content/smartlab-spam.pdf#page-text"
+      ],
+      "units": [
+        "01-spam"
+      ]
+    },
+    {
+      "id": "379ee9ee928f09e5eea0803180749dd97e0021d3edc5f2addf683e347068b8ad",
+      "asset": "379ee9ee928f09e5eea0803180749dd97e0021d3edc5f2addf683e347068b8ad.pdf",
+      "title": "Features and Feature Spaces",
+      "media_type": "application/pdf",
+      "pages": 35,
+      "bytes": 6900202,
+      "sha256": "379ee9ee928f09e5eea0803180749dd97e0021d3edc5f2addf683e347068b8ad",
+      "origins": [
+        "Kurs_WiSe_202526_Lab_Smart_Se..._.3633571/Datei_Background_Machine_Lear..._.3633585/content/03-mlsec-feat.pdf"
+      ],
+      "units": [
+        "01-spam"
+      ]
+    },
+    {
+      "id": "3c022e5d96b4eabc8a1099294e2eb6c3a2b23a874ec584dcf092e1c20fbe5a48",
+      "asset": "3c022e5d96b4eabc8a1099294e2eb6c3a2b23a874ec584dcf092e1c20fbe5a48.zip",
+      "title": "Robustness Code Template",
+      "media_type": "application/zip",
+      "pages": 0,
+      "bytes": 3740,
+      "sha256": "3c022e5d96b4eabc8a1099294e2eb6c3a2b23a874ec584dcf092e1c20fbe5a48",
+      "origins": [
+        "Kurs_WiSe_202526_Lab_Smart_Se..._.3633571/Datei_Robustess_Code-Template_.3633613/content/robustness.zip"
+      ],
+      "units": [
+        "adversarial-machine-learning-defense"
+      ]
+    },
+    {
+      "id": "3fa4a793dc8239e115ba83aef36a790bf5a02dcd66f798b3489e3aae18f80dee",
+      "asset": "3fa4a793dc8239e115ba83aef36a790bf5a02dcd66f798b3489e3aae18f80dee.txt",
+      "title": "Whitepaper: PE file analysis",
+      "media_type": "text/plain",
+      "pages": 1,
+      "bytes": 62,
+      "sha256": "3fa4a793dc8239e115ba83aef36a790bf5a02dcd66f798b3489e3aae18f80dee",
+      "origins": [
+        "Kurs_WiSe_202526_Lab_Smart_Se..._.3633571/LinkURL_Whitepaper_PE_file_an..._.3633596/index.html"
+      ],
+      "units": [
+        "clustering-of-malicious-code"
+      ]
+    },
+    {
+      "id": "4dd79a42c967a682a056d051b74fc3c385e52852e445f6624e665183e65e3c97",
+      "asset": "4dd79a42c967a682a056d051b74fc3c385e52852e445f6624e665183e65e3c97.pdf",
+      "title": "Anomaly Detection for Intrusion Detection",
+      "media_type": "application/pdf",
+      "pages": 43,
+      "bytes": 8124996,
+      "sha256": "4dd79a42c967a682a056d051b74fc3c385e52852e445f6624e665183e65e3c97",
+      "origins": [
+        "Kurs_WiSe_202526_Lab_Smart_Se..._.3633571/Datei_Background_Anomaly_Dete..._.3633601/content/05-mlsec-ids.pdf",
+        "Kurs_WiSe_202526_Lab_Smart_Se..._.3633571/Datei_Background_Machine_Lear..._.3633585/content/05-mlsec-ids.pdf"
+      ],
+      "units": [
+        "detection-of-unknown-attacks",
+        "01-spam"
+      ]
+    },
+    {
+      "id": "50d3ff2d8ca1c378a7dfb13a4eab8b1e30ed88a2616b2acab90ae4ebe0b4438f",
+      "asset": "50d3ff2d8ca1c378a7dfb13a4eab8b1e30ed88a2616b2acab90ae4ebe0b4438f.pdf",
+      "title": "Detection of Unknown Attacks",
+      "media_type": "application/pdf",
+      "pages": 13,
+      "bytes": 4169941,
+      "sha256": "50d3ff2d8ca1c378a7dfb13a4eab8b1e30ed88a2616b2acab90ae4ebe0b4438f",
+      "origins": [
+        "Kurs_WiSe_202526_Lab_Smart_Se..._.3633571/Datei_Slides_Detection_of_Unk..._.3633600/content/smartlab-anomaly.pdf"
+      ],
+      "units": [
+        "detection-of-unknown-attacks"
+      ]
+    },
+    {
+      "id": "5315f7e4d6cfe234f387ca7dd6e3f2fe5aeac0defbcf786b14eda746281f5332",
+      "asset": "5315f7e4d6cfe234f387ca7dd6e3f2fe5aeac0defbcf786b14eda746281f5332.txt",
+      "title": "Adversarial Machine Learning: Defense",
+      "media_type": "text/plain",
+      "pages": 10,
+      "bytes": 3667,
+      "sha256": "5315f7e4d6cfe234f387ca7dd6e3f2fe5aeac0defbcf786b14eda746281f5332",
+      "origins": [
+        "Kurs_WiSe_202526_Lab_Smart_Se..._.3633571/Datei_Video_Slides_.3633612/content/06b-defense.pdf#page-text"
+      ],
+      "units": [
+        "adversarial-machine-learning-defense"
+      ]
+    },
+    {
+      "id": "54472e63c4bd7e0ce3f628102fa376c4d3f1f82c0f2aae075f19800d057b44ff",
+      "asset": "54472e63c4bd7e0ce3f628102fa376c4d3f1f82c0f2aae075f19800d057b44ff.pdf",
+      "title": "Spam Filtering: Basics",
+      "media_type": "application/pdf",
+      "pages": 7,
+      "bytes": 4293228,
+      "sha256": "54472e63c4bd7e0ce3f628102fa376c4d3f1f82c0f2aae075f19800d057b44ff",
+      "origins": [
+        "Kurs_WiSe_202526_Lab_Smart_Se..._.3633571/Datei_Slides_Basics_and_Imple..._.3633584/content/smartlab-spam.pdf"
+      ],
+      "units": [
+        "01-spam"
+      ]
+    },
+    {
+      "id": "5c633be8589c73edd2d303204b461a225331215acce92f939acd68688a96ecb2",
+      "asset": "5c633be8589c73edd2d303204b461a225331215acce92f939acd68688a96ecb2.txt",
+      "title": "Towards Deep Learning Models Resistant to Adversarial Attacks",
+      "media_type": "text/plain",
+      "pages": 28,
+      "bytes": 71571,
+      "sha256": "5c633be8589c73edd2d303204b461a225331215acce92f939acd68688a96ecb2",
+      "origins": [
+        "Kurs_WiSe_202526_Lab_Smart_Se..._.3633571/Datei_Paper_Adversarial_Training_.3633610/content/Towards Deep Learning Models Resistant to Adversarial Attacks.pdf#page-text"
+      ],
+      "units": [
+        "adversarial-machine-learning-defense"
+      ]
+    },
+    {
+      "id": "64b9a824d6411aca47bea3abd390aebb64751124dc659b3c6dab83752a9ba143",
+      "asset": "64b9a824d6411aca47bea3abd390aebb64751124dc659b3c6dab83752a9ba143.txt",
+      "title": "Docs: XML ElementTree",
+      "media_type": "text/plain",
+      "pages": 1,
+      "bytes": 112,
+      "sha256": "64b9a824d6411aca47bea3abd390aebb64751124dc659b3c6dab83752a9ba143",
+      "origins": [
+        "Kurs_WiSe_202526_Lab_Smart_Se..._.3633571/LinkURL_Docs_XML_ElementTree_.3633591/index.html"
+      ],
+      "units": [
+        "02-maldoc"
+      ]
+    },
+    {
+      "id": "789a17ab075d331ade88f3626c90063f4b6fdc63f3beba022ee864d1dfb33f94",
+      "asset": "789a17ab075d331ade88f3626c90063f4b6fdc63f3beba022ee864d1dfb33f94.py",
+      "title": "Offense Python Template",
+      "media_type": "text/x-python",
+      "pages": 0,
+      "bytes": 1998,
+      "sha256": "789a17ab075d331ade88f3626c90063f4b6fdc63f3beba022ee864d1dfb33f94",
+      "origins": [
+        "Kurs_WiSe_202526_Lab_Smart_Se..._.3633571/Datei_Python-Template_.3633608/content/template.py"
+      ],
+      "units": [
+        "adversarial-machine-learning-offense"
+      ]
+    },
+    {
+      "id": "7f6c0a50475149e11e3b7efc9c0a00383652b7cae62f80facd8ae2684ef251e7",
+      "asset": "7f6c0a50475149e11e3b7efc9c0a00383652b7cae62f80facd8ae2684ef251e7.pdf",
+      "title": "Explaining and Harnessing Adversarial Examples",
+      "media_type": "application/pdf",
+      "pages": 11,
+      "bytes": 1036360,
+      "sha256": "7f6c0a50475149e11e3b7efc9c0a00383652b7cae62f80facd8ae2684ef251e7",
+      "origins": [
+        "Kurs_WiSe_202526_Lab_Smart_Se..._.3633571/Datei_Paper_FGSM_same_as_in_6a_.3633611/content/Explaining and Harnessing Adversarial Examples.pdf",
+        "Kurs_WiSe_202526_Lab_Smart_Se..._.3633571/Datei_FGSM_basic_evasion_attack_.3633604/content/fgsm-attack.pdf"
+      ],
+      "units": [
+        "adversarial-machine-learning-defense",
+        "adversarial-machine-learning-offense"
+      ]
+    },
+    {
+      "id": "833a3b3319026dda460806b15e621e781a55aa7474a86f224e79b804dbb4258d",
+      "asset": "833a3b3319026dda460806b15e621e781a55aa7474a86f224e79b804dbb4258d.pdf",
+      "title": "Towards Evaluating the Robustness of Neural Networks",
+      "media_type": "application/pdf",
+      "pages": 19,
+      "bytes": 1358965,
+      "sha256": "833a3b3319026dda460806b15e621e781a55aa7474a86f224e79b804dbb4258d",
+      "origins": [
+        "Kurs_WiSe_202526_Lab_Smart_Se..._.3633571/Datei_CWL2_more_complex_evasi..._.3633606/content/cwl2-attack.pdf"
+      ],
+      "units": [
+        "adversarial-machine-learning-offense"
+      ]
+    },
+    {
+      "id": "882971b7d3b826d8bd6192ea5db11c36b751d5e8a8e6eed6ea60bae203ae9e93",
+      "asset": "882971b7d3b826d8bd6192ea5db11c36b751d5e8a8e6eed6ea60bae203ae9e93.txt",
+      "title": "Towards Evaluating the Robustness of Neural Networks",
+      "media_type": "text/plain",
+      "pages": 19,
+      "bytes": 84873,
+      "sha256": "882971b7d3b826d8bd6192ea5db11c36b751d5e8a8e6eed6ea60bae203ae9e93",
+      "origins": [
+        "Kurs_WiSe_202526_Lab_Smart_Se..._.3633571/Datei_CWL2_more_complex_evasi..._.3633606/content/cwl2-attack.pdf#page-text"
+      ],
+      "units": [
+        "adversarial-machine-learning-offense"
+      ]
+    },
+    {
+      "id": "92613618bc672b55cda00f4f4631996d3acca0d104566f021a4dae26153333b2",
+      "asset": "92613618bc672b55cda00f4f4631996d3acca0d104566f021a4dae26153333b2.txt",
+      "title": "Tool:pdfid",
+      "media_type": "text/plain",
+      "pages": 1,
+      "bytes": 44,
+      "sha256": "92613618bc672b55cda00f4f4631996d3acca0d104566f021a4dae26153333b2",
+      "origins": [
+        "Kurs_WiSe_202526_Lab_Smart_Se..._.3633571/LinkURL_Toolpdfid_.3633589/index.html"
+      ],
+      "units": [
+        "02-maldoc"
+      ]
+    },
+    {
+      "id": "945f8f899005b6fb50afe03120c764ee73b182749eb5179671b243030228b299",
+      "asset": "945f8f899005b6fb50afe03120c764ee73b182749eb5179671b243030228b299.pdf",
+      "title": "Performance Measures",
+      "media_type": "application/pdf",
+      "pages": 23,
+      "bytes": 1106052,
+      "sha256": "945f8f899005b6fb50afe03120c764ee73b182749eb5179671b243030228b299",
+      "origins": [
+        "Kurs_WiSe_202526_Lab_Smart_Se..._.3633571/Datei_Slides_Performance_Meas..._.3737258/content/mlsec-perf-small.pdf"
+      ],
+      "units": [
+        "01-spam"
+      ]
+    },
+    {
+      "id": "98094edc5c630f28f68e2422f0ddabaf97686d4782c50f7d59b230181f84b296",
+      "asset": "98094edc5c630f28f68e2422f0ddabaf97686d4782c50f7d59b230181f84b296.txt",
+      "title": "Performance Measures",
+      "media_type": "text/plain",
+      "pages": 23,
+      "bytes": 9274,
+      "sha256": "98094edc5c630f28f68e2422f0ddabaf97686d4782c50f7d59b230181f84b296",
+      "origins": [
+        "Kurs_WiSe_202526_Lab_Smart_Se..._.3633571/Datei_Slides_Performance_Meas..._.3737258/content/mlsec-perf-small.pdf#page-text"
+      ],
+      "units": [
+        "01-spam"
+      ]
+    },
+    {
+      "id": "a4c9e55c0404357e630cc2aa926896904787760325d4887432e14fd973f5b35c",
+      "asset": "a4c9e55c0404357e630cc2aa926896904787760325d4887432e14fd973f5b35c.txt",
+      "title": "Explaining and Harnessing Adversarial Examples",
+      "media_type": "text/plain",
+      "pages": 11,
+      "bytes": 47185,
+      "sha256": "a4c9e55c0404357e630cc2aa926896904787760325d4887432e14fd973f5b35c",
+      "origins": [
+        "Kurs_WiSe_202526_Lab_Smart_Se..._.3633571/Datei_Paper_FGSM_same_as_in_6a_.3633611/content/Explaining and Harnessing Adversarial Examples.pdf#page-text",
+        "Kurs_WiSe_202526_Lab_Smart_Se..._.3633571/Datei_FGSM_basic_evasion_attack_.3633604/content/fgsm-attack.pdf#page-text"
+      ],
+      "units": [
+        "adversarial-machine-learning-defense",
+        "adversarial-machine-learning-offense"
+      ]
+    },
+    {
+      "id": "a7f2a4b7876050be1dc1ee88d493d7d7381f6737488e1a24c9478c6bea985163",
+      "asset": "a7f2a4b7876050be1dc1ee88d493d7d7381f6737488e1a24c9478c6bea985163.txt",
+      "title": "Novelty and Outlier Detection (aka Anomaly Detection)",
+      "media_type": "text/plain",
+      "pages": 1,
+      "bytes": 117,
+      "sha256": "a7f2a4b7876050be1dc1ee88d493d7d7381f6737488e1a24c9478c6bea985163",
+      "origins": [
+        "Kurs_WiSe_202526_Lab_Smart_Se..._.3633571/LinkURL_Novelty_and_Outlier_D..._.3633602/index.html"
+      ],
+      "units": [
+        "detection-of-unknown-attacks"
+      ]
+    },
+    {
+      "id": "ab4efa87d640b9488d1e9ff6e804fc6a5a27529c3756d3fd5b2bb465898767a7",
+      "asset": "ab4efa87d640b9488d1e9ff6e804fc6a5a27529c3756d3fd5b2bb465898767a7.txt",
+      "title": "Tool: pefile",
+      "media_type": "text/plain",
+      "pages": 1,
+      "bytes": 50,
+      "sha256": "ab4efa87d640b9488d1e9ff6e804fc6a5a27529c3756d3fd5b2bb465898767a7",
+      "origins": [
+        "Kurs_WiSe_202526_Lab_Smart_Se..._.3633571/LinkURL_Tool_pefile_.3633593/index.html"
+      ],
+      "units": [
+        "clustering-of-malicious-code"
+      ]
+    },
+    {
+      "id": "b44171304e63927059f8d794d670b67e6683b9a8b8e21d07544c49980c23a333",
+      "asset": "b44171304e63927059f8d794d670b67e6683b9a8b8e21d07544c49980c23a333.txt",
+      "title": "Paper: Drebin (Android)",
+      "media_type": "text/plain",
+      "pages": 1,
+      "bytes": 61,
+      "sha256": "b44171304e63927059f8d794d670b67e6683b9a8b8e21d07544c49980c23a333",
+      "origins": [
+        "Kurs_WiSe_202526_Lab_Smart_Se..._.3633571/LinkURL_Paper_Drebin_Android_.3633595/index.html"
+      ],
+      "units": [
+        "clustering-of-malicious-code"
+      ]
+    },
+    {
+      "id": "c985f97c59d698be71281b01d5592d6af0589c229ea57e632332c40ea70f4d49",
+      "asset": "c985f97c59d698be71281b01d5592d6af0589c229ea57e632332c40ea70f4d49.txt",
+      "title": "Tool: PEiD",
+      "media_type": "text/plain",
+      "pages": 1,
+      "bytes": 47,
+      "sha256": "c985f97c59d698be71281b01d5592d6af0589c229ea57e632332c40ea70f4d49",
+      "origins": [
+        "Kurs_WiSe_202526_Lab_Smart_Se..._.3633571/LinkURL_Tool_PEiD_.3633594/index.html"
+      ],
+      "units": [
+        "clustering-of-malicious-code"
+      ]
+    },
+    {
+      "id": "cbf9bf68f543aa351c3ea6aac7b159d58860b0993df2f9b8f938d8594b2601e1",
+      "asset": "cbf9bf68f543aa351c3ea6aac7b159d58860b0993df2f9b8f938d8594b2601e1.pdf",
+      "title": "Towards Deep Learning Models Resistant to Adversarial Attacks",
+      "media_type": "application/pdf",
+      "pages": 28,
+      "bytes": 1581780,
+      "sha256": "cbf9bf68f543aa351c3ea6aac7b159d58860b0993df2f9b8f938d8594b2601e1",
+      "origins": [
+        "Kurs_WiSe_202526_Lab_Smart_Se..._.3633571/Datei_Paper_Adversarial_Training_.3633610/content/Towards Deep Learning Models Resistant to Adversarial Attacks.pdf"
+      ],
+      "units": [
+        "adversarial-machine-learning-defense"
+      ]
+    },
+    {
+      "id": "d6f0c512fdb9a74571ea89a5c1b7832e7ba93be67583239d0799132fa04a8325",
+      "asset": "d6f0c512fdb9a74571ea89a5c1b7832e7ba93be67583239d0799132fa04a8325.pdf",
+      "title": "Adversarial Machine Learning: Defense",
+      "media_type": "application/pdf",
+      "pages": 10,
+      "bytes": 289967,
+      "sha256": "d6f0c512fdb9a74571ea89a5c1b7832e7ba93be67583239d0799132fa04a8325",
+      "origins": [
+        "Kurs_WiSe_202526_Lab_Smart_Se..._.3633571/Datei_Video_Slides_.3633612/content/06b-defense.pdf"
+      ],
+      "units": [
+        "adversarial-machine-learning-defense"
+      ]
+    },
+    {
+      "id": "e1ee3004e9ab91f277903035dcd2e2205e3be176c629cff91bac2ca3cc2d3c29",
+      "asset": "e1ee3004e9ab91f277903035dcd2e2205e3be176c629cff91bac2ca3cc2d3c29.pdf",
+      "title": "MAZE: Data-Free Model Stealing Attack",
+      "media_type": "application/pdf",
+      "pages": 10,
+      "bytes": 1044481,
+      "sha256": "e1ee3004e9ab91f277903035dcd2e2205e3be176c629cff91bac2ca3cc2d3c29",
+      "origins": [
+        "Kurs_WiSe_202526_Lab_Smart_Se..._.3633571/Datei_MAZE_zeroth-order_steal..._.3633607/content/maze-attack.pdf"
+      ],
+      "units": [
+        "adversarial-machine-learning-offense"
+      ]
+    },
+    {
+      "id": "ec413b83802c98d80ee1054e0e3502f8b4bfa77a4ee07d21137743f9e1ad8468",
+      "asset": "ec413b83802c98d80ee1054e0e3502f8b4bfa77a4ee07d21137743f9e1ad8468.txt",
+      "title": "Features and Feature Spaces",
+      "media_type": "text/plain",
+      "pages": 35,
+      "bytes": 31485,
+      "sha256": "ec413b83802c98d80ee1054e0e3502f8b4bfa77a4ee07d21137743f9e1ad8468",
+      "origins": [
+        "Kurs_WiSe_202526_Lab_Smart_Se..._.3633571/Datei_Background_Machine_Lear..._.3633585/content/03-mlsec-feat.pdf#page-text"
+      ],
+      "units": [
+        "01-spam"
+      ]
+    },
+    {
+      "id": "ed9cf3b39c6a56d6490850d0e35486e0e630b4d9a4ba468ab76d7711c5ca0693",
+      "asset": "ed9cf3b39c6a56d6490850d0e35486e0e630b4d9a4ba468ab76d7711c5ca0693.txt",
+      "title": "Adversarial Examples in the Physical World",
+      "media_type": "text/plain",
+      "pages": 14,
+      "bytes": 39917,
+      "sha256": "ed9cf3b39c6a56d6490850d0e35486e0e630b4d9a4ba468ab76d7711c5ca0693",
+      "origins": [
+        "Kurs_WiSe_202526_Lab_Smart_Se..._.3633571/Datei_BIM_advanced_version_of..._.3633605/content/bim-attack.pdf#page-text"
+      ],
+      "units": [
+        "adversarial-machine-learning-offense"
+      ]
+    },
+    {
+      "id": "fd001b6784e8f962b67d7f557b08d5e55ce7b6781bda398c7bbbb7ccad0f942c",
+      "asset": "fd001b6784e8f962b67d7f557b08d5e55ce7b6781bda398c7bbbb7ccad0f942c.txt",
+      "title": "Anomaly Detection for Intrusion Detection",
+      "media_type": "text/plain",
+      "pages": 43,
+      "bytes": 43497,
+      "sha256": "fd001b6784e8f962b67d7f557b08d5e55ce7b6781bda398c7bbbb7ccad0f942c",
+      "origins": [
+        "Kurs_WiSe_202526_Lab_Smart_Se..._.3633571/Datei_Background_Anomaly_Dete..._.3633601/content/05-mlsec-ids.pdf#page-text",
+        "Kurs_WiSe_202526_Lab_Smart_Se..._.3633571/Datei_Background_Machine_Lear..._.3633585/content/05-mlsec-ids.pdf#page-text"
+      ],
+      "units": [
+        "detection-of-unknown-attacks",
+        "01-spam"
+      ]
+    }
+  ]
+}

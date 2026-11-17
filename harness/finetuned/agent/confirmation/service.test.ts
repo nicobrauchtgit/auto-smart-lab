@@ -18,10 +18,10 @@ import { tagMessage, tagCommit } from "../training/git.js";
 import { runLeadSession } from "../run/lead_session.js";
 import type { SolveWorkspace } from "../solve/workspace.js";
 
-async function fixture(delay = 0, barrier = false) {
+async function fixture(delay = 0, barrier = false, clustering = false) {
  const p = temporaryProject("holdout-confirmation-");
  const python = readPythonEnvironment();
- const samples = writeSampleManifest(p.root, p.zipPath, p.labelsPath);
+ const samples: Omit<ReturnType<typeof writeSampleManifest>, "measurement"> & { measurement: import("../training/types.js").MeasurementConfig } = writeSampleManifest(p.root, p.zipPath, p.labelsPath);
  const fullRoot = join(p.root, "full"); mkdirSync(fullRoot);
  const full = writeCorpus(fullRoot, 140);
  const testZip = join(p.root, "test.zip");
@@ -31,13 +31,30 @@ async function fixture(delay = 0, barrier = false) {
  const features = join(p.solutionsRoot, "features.py");
  writeFileSync(features, readFileSync(features, "utf8").replace('        if self.delay:', `        if len(frame) == 120:\n            from pathlib import Path\n            assert not Path(${JSON.stringify(full.labelsPath)}).exists(), 'full targets exposed to model'\n            assert not Path(${JSON.stringify(full.zipPath)}).exists(), 'full archive exposed to model'\n            assert set(frame['id']) == set(${JSON.stringify(devIds)}), 'sealed rows entered fit'\n        if self.delay:`));
  if (barrier) writeFileSync(features, readFileSync(features, "utf8").replace('        if self.delay:', `        if len(frame) == 120:\n            from pathlib import Path\n            while not Path(${JSON.stringify(join(p.root, "runs/finetuned/fixture/solve/agent/release"))}).exists():\n                time.sleep(.05)\n        if self.delay:`));
+ if (clustering) {
+  for (const path of [p.labelsPath, full.labelsPath]) writeFileSync(path, readFileSync(path, "utf8").replace(/;0/g, ";alpha").replace(/;1/g, ";beta"));
+  const manifest = JSON.parse(readFileSync(samples.sampleManifestPath, "utf8"));
+  for (const row of manifest.samples) row.target = row.target === 0 ? "alpha" : "beta";
+  writeFileSync(samples.sampleManifestPath, JSON.stringify(manifest));
+  samples.datasetSha256 = createHash("sha256").update(readFileSync(p.zipPath)).update(readFileSync(samples.sampleManifestPath)).digest("hex");
+  samples.measurement = { ...samples.measurement, kind: "clustering", execution: "batch" };
+  writeFileSync(join(p.solutionsRoot, "tasks/fixture.py"), `class Partition:
+    def fit_predict(self, frame):
+        return [-1 if i % 2 else 7 for i in range(len(frame))]
+def build_pipeline(context):
+    assert context['measurement']['kind'] == 'clustering'
+    assert context['measurement']['execution'] == 'batch'
+    return Partition()
+`);
+ }
  const commit = commitAll(p.solutionsRoot, "Verify confirmation data boundary");
  const root = join(p.root, "runs/finetuned/fixture/solve"); mkdirSync(root, { recursive: true });
  const taskPath = join(root, "task.md"); writeFileSync(taskPath, "Binary classification fixture");
  const workspace: SolveWorkspace = { root, solutionsRoot: p.solutionsRoot, entrypointPath: join(p.solutionsRoot, "tasks/fixture.py"), taskPath,
-  configuration: spamConfiguration(), sampleManifestPath: samples.sampleManifestPath, measurement: samples.measurement,
+  configuration: clustering ? { ...spamConfiguration(), kind: "clustering", targets: { kind: "families", file: "fixture-train.labels" },
+   execution: "batch", metric: "adjusted_rand_index", refit: "fit_predict_test_batch", submission: { format: "id_semicolon_prediction", predictions: "cluster_id" } } : spamConfiguration(), sampleManifestPath: samples.sampleManifestPath, measurement: samples.measurement,
   devZip: p.zipPath, trainZip: full.zipPath, testZip, originalTargetsPath: full.labelsPath, sealedPath: join(root, "sealed.txt"), datasetPaths: [p.zipPath, testZip],
-  split: { scheme: "stratified", sealedIds: ids, fraction: 20 / 140, seed: 13, sha256: digest(ids), confirmation: { precision: "target", rows: 20, perClass: { "0": 10, "1": 10 } } },
+  split: { scheme: "stratified", sealedIds: ids, fraction: 20 / 140, seed: 13, sha256: digest(ids), confirmation: { precision: "target", rows: 20, perClass: clustering ? { alpha: 10, beta: 10 } : { "0": 10, "1": 10 } } },
   holdoutSeedPlan: createSeedPlan({ rootSeed: 13, taskId: "fixture", datasetSha256: full.datasetSha256, experimentId: "holdout-split" }),
   recommendation: { scheme: "stratified_kfold", folds: 2, repeats: 1, rationale: "fixture" }, rowCount: 120, targets: samples.sampleManifestPath, targetSummary: "balanced" };
  // The harness-only split record lives where prepareSolveWorkspace writes it.
@@ -66,7 +83,7 @@ test("closed solve confirms once, preserves hidden inputs and refit binds its id
  let sessionClosed = false;
  const result = await runLeadSession("fixture", { taskConfiguration: f.workspace.configuration, runId: "confirmation-session", progressPath: join(f.p.root, "lead/PROGRESS.json"),
   report: { event() {}, input() {}, agentIdentity: () => ({ pipelineRunId: "c2-pipeline", stageInvocationId: "c2-invocation" }), observation: () => () => {} } as any,
-  dependencies: { prepareData: () => f.workspace as any, readPython: () => f.python,
+  dependencies: { prepareData: () => ({ ...f.workspace, taskId: "fixture", profilePath: join(f.p.root, "profile.json") }) as any, readPython: () => f.python,
    scouts: () => ({ tool: {} as any, report: async () => ({ text: "- ok: frozen pipeline", roles: [{ role: "validation", status: "completed" }] } as any) }), refit: async () => ({ artifacts: [], validation: { valid: true, errors: [] } }),
    runAgentSession: async (options: any) => { expect(options.prompt).not.toContain('holdoutConfirmation'); sessionClosed = true; return { output: "existing champion is sufficient", agentRunId: "inert" } as any; },
    confirm: async options => { expect(sessionClosed).toBe(true); return runConfirmation(options); } } });
@@ -104,7 +121,15 @@ test("insufficient precision records a skip and consumes no sealed read", async 
  f.workspace.split = { ...f.workspace.split, sealedIds: [], fraction: 0, confirmation: { rows: 0, perClass: { "0": 0, "1": 0 }, precision: "none", reason: "too small" } };
  f.workspace.trainZip = f.p.zipPath; f.workspace.originalTargetsPath = f.p.labelsPath;
  writeFileSync(join(f.p.root, "runs/finetuned/fixture/data/sealed/holdout.json"), JSON.stringify(f.workspace.split));
+ const result = await runLeadSession("fixture", { taskConfiguration: f.workspace.configuration, runId: "zero-seal", progressPath: join(f.p.root, "lead/PROGRESS.json"),
+  dependencies: { prepareData: () => ({ ...f.workspace, taskId: "fixture", profilePath: join(f.p.root, "profile.json") }) as any,
+   readPython: () => f.python, scouts: () => ({ tool: {} as any, report: async () => ({ text: "- ok: frozen pipeline", roles: [{ role: "validation", status: "completed" }] } as any) }),
+   runAgentSession: async () => ({ output: "use champion", agentRunId: "inert" }) as any,
+   refit: async () => ({ artifacts: [], validation: { valid: true, errors: [] } }),
+   confirm: options => runConfirmation(options) } });
  const output = await runConfirmation(f.options);
+ expect(result.confirmation?.artifact.sha256).toBe(output.artifact.sha256);
+ expect(JSON.parse(readFileSync(output.artifact.path, "utf8")).status).toBe("skipped");
  expect(output.summary).toMatchObject({ status: "skipped", precision: "none", reason: "too small", readCount: 0 });
  expect(existsSync(join(f.p.root, "runs/finetuned/fixture/holdout-ledger.json"))).toBe(false);
 }, 60_000);
@@ -170,4 +195,20 @@ test("service death reattaches the confirmation worker with one fit and one reco
   writeFileSync(release, "released");
   if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
  }
+}, 60_000);
+
+test("clustering confirms a frozen batch partition without Ladder feedback", async () => {
+ const f = await fixture(0, false, true);
+ const output = await runConfirmation(f.options);
+ expect(output.summary.status).toBe("completed");
+ expect(output.summary).not.toHaveProperty("score");
+ expect(output.summary).not.toHaveProperty("verdict");
+ const record = JSON.parse(readFileSync(output.artifact.path, "utf8"));
+ expect(record).toMatchObject({ status: "completed", validationRows: 20, fitCalls: 1,
+  metrics: { external: { available: true }, structure: { noiseRows: 10 } },
+  interval: { method: "paired_percentile_bootstrap", replicates: 2000 } });
+ const ledger = JSON.parse(readFileSync(join(f.p.root, "runs/finetuned/fixture/holdout-ledger.json"), "utf8"));
+ expect(ledger.populations[record.population]).not.toHaveProperty("ladder");
+ expect((await runConfirmation(f.options)).artifact.sha256).toBe(output.artifact.sha256);
+ expect((await prepareRefit(f.refit)).evidence.some(entry => entry.path === output.artifact.path)).toBe(true);
 }, 60_000);

@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "files": [
+    {
+      "file": "whitepaper-pe-file-analysis.txt",
+      "asset": "3fa4a793dc8239e115ba83aef36a790bf5a02dcd66f798b3489e3aae18f80dee.txt",
+      "title": "Whitepaper: PE file analysis",
+      "media_type": "text/plain",
+      "pages": 1,
+      "sha256": "3fa4a793dc8239e115ba83aef36a790bf5a02dcd66f798b3489e3aae18f80dee"
+    },
+    {
+      "file": "paper-drebin-android.txt",
+      "asset": "b44171304e63927059f8d794d670b67e6683b9a8b8e21d07544c49980c23a333.txt",
+      "title": "Paper: Drebin (Android)",
+      "media_type": "text/plain",
+      "pages": 1,
+      "sha256": "b44171304e63927059f8d794d670b67e6683b9a8b8e21d07544c49980c23a333"
+    },
+    {
+      "file": "tool-peid.txt",
+      "asset": "c985f97c59d698be71281b01d5592d6af0589c229ea57e632332c40ea70f4d49.txt",
+      "title": "Tool: PEiD",
+      "media_type": "text/plain",
+      "pages": 1,
+      "sha256": "c985f97c59d698be71281b01d5592d6af0589c229ea57e632332c40ea70f4d49"
+    },
+    {
+      "file": "tool-pefile.txt",
+      "asset": "ab4efa87d640b9488d1e9ff6e804fc6a5a27529c3756d3fd5b2bb465898767a7.txt",
+      "title": "Tool: pefile",
+      "media_type": "text/plain",
+      "pages": 1,
+      "sha256": "ab4efa87d640b9488d1e9ff6e804fc6a5a27529c3756d3fd5b2bb465898767a7"
+    }
+  ],
+  "extraction": {
+    "library": "pypdf",
+    "version": "7.0.1",
+    "page_markers": true
+  }
+}

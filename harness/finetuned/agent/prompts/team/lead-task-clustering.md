@@ -22,6 +22,5 @@ matters.
 Scored on the adjusted Rand index (ARI) between your clusters and the known
 families, computed per validation batch and averaged. Test families may differ
 from the training families, so a pipeline has to discover groups rather than
-recognize known families. A family-held-out CV design (the built-in
-`group_kfold` holds whole families out) measures that; validation batches with
-several families are needed for a meaningful ARI.
+recognize known families. {{splitGuidance}} Validation batches with several
+families are needed for a meaningful ARI.

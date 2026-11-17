@@ -121,6 +121,142 @@
           "format": "id_semicolon_prediction",
           "predictions": "binary"
         }
+      },
+      "documents3": {
+        "schemaVersion": 1,
+        "kind": "binary_classification",
+        "samples": {
+          "source": "zip_members",
+          "train": "rtf-train.zip",
+          "test": "rtf-test.zip"
+        },
+        "targets": {
+          "kind": "binary",
+          "file": "rtf-train.labels"
+        },
+        "execution": "inductive",
+        "holdout": "stratified",
+        "metric": "balanced_accuracy",
+        "refit": "fit_training_predict_test",
+        "submission": {
+          "format": "id_semicolon_prediction",
+          "predictions": "binary"
+        }
+      },
+      "documents4": {
+        "schemaVersion": 1,
+        "kind": "binary_classification",
+        "samples": {
+          "source": "zip_members",
+          "train": "mix-train.zip",
+          "test": "mix-test.zip"
+        },
+        "targets": {
+          "kind": "binary",
+          "file": "mix-train.labels"
+        },
+        "execution": "inductive",
+        "holdout": "stratified",
+        "metric": "balanced_accuracy",
+        "refit": "fit_training_predict_test",
+        "submission": {
+          "format": "id_semicolon_prediction",
+          "predictions": "binary"
+        }
+      },
+      "code1": {
+        "schemaVersion": 1,
+        "kind": "clustering",
+        "samples": {
+          "source": "zip_members",
+          "train": "android-train.zip",
+          "test": "android-test.zip"
+        },
+        "targets": {
+          "kind": "families",
+          "file": "android-train.labels"
+        },
+        "execution": "batch",
+        "holdout": "stratified",
+        "metric": "adjusted_rand_index",
+        "refit": "fit_predict_test_batch",
+        "submission": {
+          "format": "id_semicolon_prediction",
+          "predictions": "cluster_id"
+        }
+      },
+      "code2": {
+        "schemaVersion": 1,
+        "kind": "clustering",
+        "samples": {
+          "source": "zip_members",
+          "train": "php-train.zip",
+          "test": "php-test.zip"
+        },
+        "targets": {
+          "kind": "families",
+          "file": "php-train.labels"
+        },
+        "execution": "batch",
+        "holdout": "stratified",
+        "metric": "adjusted_rand_index",
+        "refit": "fit_predict_test_batch",
+        "submission": {
+          "format": "id_semicolon_prediction",
+          "predictions": "cluster_id"
+        }
+      },
+      "code3": {
+        "schemaVersion": 1,
+        "kind": "clustering",
+        "samples": {
+          "source": "zip_members",
+          "train": "win-train.zip",
+          "test": "win-test.zip"
+        },
+        "targets": {
+          "kind": "families",
+          "file": "win-train.labels"
+        },
+        "execution": "batch",
+        "holdout": "stratified",
+        "metric": "adjusted_rand_index",
+        "refit": "fit_predict_test_batch",
+        "submission": {
+          "format": "id_semicolon_prediction",
+          "predictions": "cluster_id"
+        }
+      },
+      "attacks1": {
+        "schemaVersion": 1,
+        "kind": "anomaly_detection",
+        "samples": {
+          "source": "zip_members",
+          "train": "adv-train.zip",
+          "test": "adv-test.zip"
+        },
+        "targets": {
+          "kind": "none"
+        },
+        "execution": "inductive",
+        "holdout": "none",
+        "metric": "none",
+        "anomaly": {
+          "scoreMethod": "score_samples",
+          "scoreDirection": "lower_is_anomalous",
+          "anomalyLabel": -1
+        },
+        "selection": {
+          "basis": "evidence",
+          "metric": "evidence_average_precision",
+          "direction": "maximize",
+          "population": "development"
+        },
+        "refit": "fit_training_predict_test",
+        "submission": {
+          "format": "id_semicolon_prediction",
+          "predictions": "binary"
+        }
       }
     }
   },

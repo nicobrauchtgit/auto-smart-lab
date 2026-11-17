@@ -7,7 +7,7 @@ export function taskContract(prompts: PromptSnapshot, taskId: string, configurat
  const contract = configuration.kind === "binary_classification"
   ? prompts.render("team.lead-task-binary_classification", { taskId })
   : configuration.kind === "clustering"
-   ? prompts.render("team.lead-task-clustering", { taskId, execution: configuration.execution })
+   ? prompts.render("team.lead-task-clustering", { taskId, execution: configuration.execution, splitGuidance: configuration.holdout === "none" ? "" : prompts.render(configuration.holdout === "group" ? "team.lead-split-group" : "team.lead-split-stratified", {}).text })
    : prompts.render("team.lead-task-anomaly_detection", { taskId, execution: configuration.execution,
     scoreMethod: configuration.anomaly!.scoreMethod, scoreDirection: configuration.anomaly!.scoreDirection.replaceAll("_", " "),
     anomalyLabel: String(configuration.anomaly!.anomalyLabel) });
@@ -21,7 +21,7 @@ export function prepareLeadPrompts(prompts: PromptSnapshot, input: {
  targets: string; rowCount: number; targetSummary: string; foldRecommendation: string; maxIterations?: number;
  task?: string; resources?: string; followUp?: string; resume?: string; budget?: number; guidance?: StageGuidance;
 }) {
- const system = prompts.render('team.lead-system', { taskId: input.taskId, budget: String(input.budget ?? HARNESS_CONFIG.team.lead.maxToolCalls) });
+ const system = prompts.render('team.lead-system', { taskId: input.taskId, budget: String(input.budget ?? HARNESS_CONFIG.team.lead.maxToolCalls), confirmationFeedback: prompts.render(input.configuration.kind === 'binary_classification' ? 'team.lead-confirmation-binary' : 'team.lead-confirmation-other', {}).text });
  const contract = taskContract(prompts, input.taskId, input.configuration, input.evidencePath ?? `${input.workspace}/evidence.json`);
  const guidance = guidanceBlock(prompts, input.guidance);
  const start = prompts.render('team.lead-start', {

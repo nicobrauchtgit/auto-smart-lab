@@ -57,7 +57,7 @@ describe("runPipeline", () => {
 			...stage("lead", "refit", async () => ({ artifacts: [] })),
 			async run(context) {
 				snapshot = context.prompts;
-				const prompt = snapshot.render("team.lead-system", { budget: "80", taskId: context.input.taskId });
+				const prompt = snapshot.render("team.lead-system", { confirmationFeedback: "", budget: "80", taskId: context.input.taskId });
 				context.report.event("prompt_reference_test", { prompt: prompt.reference });
 				return { artifacts: [] };
 			},
@@ -79,7 +79,7 @@ describe("runPipeline", () => {
 		expect(recorded.find(event => event.event_type === "pipeline_prompt_snapshot")!.payload.prompt_snapshot_sha256)
 			.toBe(snapshot!.fingerprint);
 		const reference = recorded.find(event => event.event_type === "prompt_reference_test");
-		expect(reference!.payload.prompt).toEqual(snapshot!.render("team.lead-system", { budget: "80", taskId: "spam1" }).reference);
+		expect(reference!.payload.prompt).toEqual(snapshot!.render("team.lead-system", { confirmationFeedback: "", budget: "80", taskId: "spam1" }).reference);
 		expect(reference!.pipeline_run_id).toBe(result.pipelineRunId);
 		expect(reference!.stage_invocation_id).toBe(result.invocations[0].invocationId);
 	});

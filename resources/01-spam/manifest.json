@@ -2,38 +2,89 @@
   "version": 1,
   "files": [
     {
-      "file": "smartlab-spam.pdf",
-      "title": "Spam Filtering: Basics",
-      "media_type": "application/pdf",
-      "pages": 7,
-      "sha256": "54472e63c4bd7e0ce3f628102fa376c4d3f1f82c0f2aae075f19800d057b44ff"
-    },
-    {
-      "file": "smartlab-spam.txt",
-      "title": "Spam Filtering: Basics",
-      "media_type": "text/plain",
-      "pages": 7,
-      "sha256": "285c19d2e9dc4ed7d3e4a119fcf77c39e07ae6d531ed24f648e7808b53b3699e"
-    },
-    {
-      "file": "mlsec-perf-small.pdf",
+      "file": "performance-measures.pdf",
+      "asset": "945f8f899005b6fb50afe03120c764ee73b182749eb5179671b243030228b299.pdf",
       "title": "Performance Measures",
       "media_type": "application/pdf",
       "pages": 23,
       "sha256": "945f8f899005b6fb50afe03120c764ee73b182749eb5179671b243030228b299"
     },
     {
-      "file": "mlsec-perf-small.txt",
+      "file": "performance-measures.txt",
+      "asset": "98094edc5c630f28f68e2422f0ddabaf97686d4782c50f7d59b230181f84b296.txt",
       "title": "Performance Measures",
       "media_type": "text/plain",
       "pages": 23,
       "sha256": "98094edc5c630f28f68e2422f0ddabaf97686d4782c50f7d59b230181f84b296"
+    },
+    {
+      "file": "machine-learning-in-a-nutshell.pdf",
+      "asset": "1bb5d97845204420f40fe0fc582558734b5cbb6bbc822825979bf81508f4c974.pdf",
+      "title": "Machine Learning in a Nutshell",
+      "media_type": "application/pdf",
+      "pages": 37,
+      "sha256": "1bb5d97845204420f40fe0fc582558734b5cbb6bbc822825979bf81508f4c974"
+    },
+    {
+      "file": "machine-learning-in-a-nutshell.txt",
+      "asset": "23675e6a26e74df5375ead1c3a6095be11a2bd4aeced56d602ea9af9f160837f.txt",
+      "title": "Machine Learning in a Nutshell",
+      "media_type": "text/plain",
+      "pages": 37,
+      "sha256": "23675e6a26e74df5375ead1c3a6095be11a2bd4aeced56d602ea9af9f160837f"
+    },
+    {
+      "file": "features-and-feature-spaces.pdf",
+      "asset": "379ee9ee928f09e5eea0803180749dd97e0021d3edc5f2addf683e347068b8ad.pdf",
+      "title": "Features and Feature Spaces",
+      "media_type": "application/pdf",
+      "pages": 35,
+      "sha256": "379ee9ee928f09e5eea0803180749dd97e0021d3edc5f2addf683e347068b8ad"
+    },
+    {
+      "file": "features-and-feature-spaces.txt",
+      "asset": "ec413b83802c98d80ee1054e0e3502f8b4bfa77a4ee07d21137743f9e1ad8468.txt",
+      "title": "Features and Feature Spaces",
+      "media_type": "text/plain",
+      "pages": 35,
+      "sha256": "ec413b83802c98d80ee1054e0e3502f8b4bfa77a4ee07d21137743f9e1ad8468"
+    },
+    {
+      "file": "anomaly-detection-for-intrusion-detection.pdf",
+      "asset": "4dd79a42c967a682a056d051b74fc3c385e52852e445f6624e665183e65e3c97.pdf",
+      "title": "Anomaly Detection for Intrusion Detection",
+      "media_type": "application/pdf",
+      "pages": 43,
+      "sha256": "4dd79a42c967a682a056d051b74fc3c385e52852e445f6624e665183e65e3c97"
+    },
+    {
+      "file": "anomaly-detection-for-intrusion-detection.txt",
+      "asset": "fd001b6784e8f962b67d7f557b08d5e55ce7b6781bda398c7bbbb7ccad0f942c.txt",
+      "title": "Anomaly Detection for Intrusion Detection",
+      "media_type": "text/plain",
+      "pages": 43,
+      "sha256": "fd001b6784e8f962b67d7f557b08d5e55ce7b6781bda398c7bbbb7ccad0f942c"
+    },
+    {
+      "file": "spam-filtering-basics.pdf",
+      "asset": "54472e63c4bd7e0ce3f628102fa376c4d3f1f82c0f2aae075f19800d057b44ff.pdf",
+      "title": "Spam Filtering: Basics",
+      "media_type": "application/pdf",
+      "pages": 7,
+      "sha256": "54472e63c4bd7e0ce3f628102fa376c4d3f1f82c0f2aae075f19800d057b44ff"
+    },
+    {
+      "file": "spam-filtering-basics.txt",
+      "asset": "285c19d2e9dc4ed7d3e4a119fcf77c39e07ae6d531ed24f648e7808b53b3699e.txt",
+      "title": "Spam Filtering: Basics",
+      "media_type": "text/plain",
+      "pages": 7,
+      "sha256": "285c19d2e9dc4ed7d3e4a119fcf77c39e07ae6d531ed24f648e7808b53b3699e"
     }
   ],
   "extraction": {
     "library": "pypdf",
     "version": "7.0.1",
-    "mode": "plain",
     "page_markers": true
   }
 }

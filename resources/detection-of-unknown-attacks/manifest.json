@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "files": [
+    {
+      "file": "novelty-and-outlier-detection-aka-anomaly-detection.txt",
+      "asset": "a7f2a4b7876050be1dc1ee88d493d7d7381f6737488e1a24c9478c6bea985163.txt",
+      "title": "Novelty and Outlier Detection (aka Anomaly Detection)",
+      "media_type": "text/plain",
+      "pages": 1,
+      "sha256": "a7f2a4b7876050be1dc1ee88d493d7d7381f6737488e1a24c9478c6bea985163"
+    },
+    {
+      "file": "anomaly-detection-for-intrusion-detection.pdf",
+      "asset": "4dd79a42c967a682a056d051b74fc3c385e52852e445f6624e665183e65e3c97.pdf",
+      "title": "Anomaly Detection for Intrusion Detection",
+      "media_type": "application/pdf",
+      "pages": 43,
+      "sha256": "4dd79a42c967a682a056d051b74fc3c385e52852e445f6624e665183e65e3c97"
+    },
+    {
+      "file": "anomaly-detection-for-intrusion-detection.txt",
+      "asset": "fd001b6784e8f962b67d7f557b08d5e55ce7b6781bda398c7bbbb7ccad0f942c.txt",
+      "title": "Anomaly Detection for Intrusion Detection",
+      "media_type": "text/plain",
+      "pages": 43,
+      "sha256": "fd001b6784e8f962b67d7f557b08d5e55ce7b6781bda398c7bbbb7ccad0f942c"
+    },
+    {
+      "file": "detection-of-unknown-attacks.pdf",
+      "asset": "50d3ff2d8ca1c378a7dfb13a4eab8b1e30ed88a2616b2acab90ae4ebe0b4438f.pdf",
+      "title": "Detection of Unknown Attacks",
+      "media_type": "application/pdf",
+      "pages": 13,
+      "sha256": "50d3ff2d8ca1c378a7dfb13a4eab8b1e30ed88a2616b2acab90ae4ebe0b4438f"
+    },
+    {
+      "file": "detection-of-unknown-attacks.txt",
+      "asset": "0fe79d6d906f1ae4a40f33d08b17c48d0b689e10244202afa7513bbb9f5d6cb8.txt",
+      "title": "Detection of Unknown Attacks",
+      "media_type": "text/plain",
+      "pages": 13,
+      "sha256": "0fe79d6d906f1ae4a40f33d08b17c48d0b689e10244202afa7513bbb9f5d6cb8"
+    }
+  ],
+  "extraction": {
+    "library": "pypdf",
+    "version": "7.0.1",
+    "page_markers": true
+  }
+}

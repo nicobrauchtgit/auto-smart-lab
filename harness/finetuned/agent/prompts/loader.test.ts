@@ -26,12 +26,12 @@ test("rejects unknown IDs, missing inputs, extra inputs, and wrong input types",
 	const snapshot = loadPromptSnapshot();
 	assert.throws(() => snapshot.render("unknown" as PromptId, {} as never), /Unknown prompt/);
 	assert.throws(() => snapshot.render("team.lead-system", {} as never), /missing or non-string/);
-	assert.throws(() => snapshot.render("team.lead-system", { budget: "80", taskId: "spam1", extra: "x" } as never), /unknown \[extra\]/);
-	assert.throws(() => snapshot.render("team.lead-system", { budget: "80", taskId: 1 } as never), /missing or non-string/);
+	assert.throws(() => snapshot.render("team.lead-system", { confirmationFeedback: "", budget: "80", taskId: "spam1", extra: "x" } as never), /unknown \[extra\]/);
+	assert.throws(() => snapshot.render("team.lead-system", { confirmationFeedback: "", budget: "80", taskId: 1 } as never), /missing or non-string/);
 });
 
 test("substitutes data once without interpreting braces or replacement tokens", () => {
-	const rendered = loadPromptSnapshot().render("team.lead-system", { budget: "80", taskId: "{{taskId}} $&" });
+	const rendered = loadPromptSnapshot().render("team.lead-system", { confirmationFeedback: "", budget: "80", taskId: "{{taskId}} $&" });
 	assert.match(rendered.text, /\{\{taskId\}\} \$&/);
 });
 
@@ -45,8 +45,8 @@ test("snapshots survive file edits and reject missing files or malformed declara
 		writeFileSync(path, `${original}\nChanged instructions.\n`);
 		const second = loadPromptSnapshot(root);
 		assert.notEqual(first.fingerprint, second.fingerprint);
-		assert.doesNotMatch(first.render("team.lead-system", { budget: "80", taskId: "spam1" }).text, /Changed instructions/);
-		assert.match(second.render("team.lead-system", { budget: "80", taskId: "spam1" }).text, /Changed instructions/);
+		assert.doesNotMatch(first.render("team.lead-system", { confirmationFeedback: "", budget: "80", taskId: "spam1" }).text, /Changed instructions/);
+		assert.match(second.render("team.lead-system", { confirmationFeedback: "", budget: "80", taskId: "spam1" }).text, /Changed instructions/);
 		writeFileSync(path, "{{undeclared}}\n");
 		assert.throws(() => loadPromptSnapshot(root), /Invalid template/);
 		rmSync(path);

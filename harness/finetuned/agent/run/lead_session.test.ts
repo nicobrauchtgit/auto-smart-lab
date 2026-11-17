@@ -52,7 +52,7 @@ for(const verdict of ['ok','fix','failed','empty','unmeasured'] as const) test(`
  prepareData:()=>f.data,readPython:()=>({prefix:f.root,executable:'/bin/false',fingerprint:'f'} as any),sandbox:()=>({executable:'/bin/false',cwd:f.root,mounts:[],env:{},agentRoot:join(f.root,'agent')} as any),
  prepareRepository:()=>({initialized:false,head:f.commit,branch:'master'}),environmentTool:()=>({name:'python_environment'} as any),
  createTraining:()=>({ready:async()=>{},close:async()=>{},tools:[],toolPrompts:[],service:{describe:()=>({})},supervisor:{list:()=>[]},bindSession:()=>{}} as any),
- scouts:()=>({tool:{name:'scout'} as any,report:async()=>{validations++;return {text:verdict==='ok'?'- ok: frozen trial [experiment: measured]':verdict==='fix'?'- fix: broken feature [experiment: measured]':'', roles:[{role:'validation',status:verdict==='ok'||verdict==='fix'?'completed':verdict==='unmeasured'?'failed':verdict,bullets:1}]};}}),
+ scouts:()=>({tool:{name:'scout'} as any,courseResources:`- \`${join(f.root,'course/resources/slides.txt')}\`: Course resource marker`,report:async()=>{validations++;return {text:verdict==='ok'?'- ok: frozen trial [experiment: measured]':verdict==='fix'?'- fix: broken feature [experiment: measured]':'', roles:[{role:'validation',status:verdict==='ok'||verdict==='fix'?'completed':verdict==='unmeasured'?'failed':verdict,bullets:1}]};}}),
  runAgentSession:async options=>{
  expect(options.skills?.map(skill=>skill.name)).toEqual(['scout-data','scout-ideas','scout-validation']);
  for(const skill of options.skills!) {
@@ -62,6 +62,8 @@ for(const verdict of ['ok','fix','failed','empty','unmeasured'] as const) test(`
   expect(options.promptReferences.find(ref=>ref.id===id)?.rendered_sha256).toMatch(/^[a-f0-9]{64}$/);
  }
  expect(options.prompt).toContain('UNIT INTRO MARKER');expect(options.prompt).toContain('EXPLICIT TASK MARKER');
+ expect(options.prompt).toContain(join(f.root,'course/resources/slides.txt'));
+ expect(options.prompt).toContain('Course resource marker');
  expect(options.prompt).not.toContain('PRIVATE SCOUT TRANSCRIPT');
  if(verdict==='fix') {
   const handover=options.customTools!.find(tool=>tool.name==='hand_over')!;
@@ -293,7 +295,7 @@ test('lead on-demand skill metadata is assembled, bodies are sandbox-readable, s
   const python=readPythonEnvironment();
   const lead=expertSandbox(data,'lead',python);
   const tools=isolatedSolveTools(lead);
-  const system=prompts.render('team.lead-system',{taskId:'spam1',budget:'80'}).text;
+  const system=prompts.render('team.lead-system',{ confirmationFeedback: "",taskId:'spam1',budget:'80'}).text;
   const resourceLoader=createPipelineResourceLoader({cwd,agentDir,settingsManager,systemPrompt:system,
    // Even explicit ambient paths and a caller override cannot broaden the allowlist.
    noSkills:false,additionalSkillPaths:[join(agentDir,'skills')],

@@ -25,7 +25,7 @@ test("child loader includes selected common and child guidance, excluding ambien
 	writeFileSync(join(agentDir, "APPEND_SYSTEM.md"), marker);
 	let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
 	try {
-		const instructions = [prompts.render("team.lead-system", { budget: "80", taskId: "fixture" }), prompts.render("subagents.child", {})];
+		const instructions = [prompts.render("team.lead-system", { confirmationFeedback: "", budget: "80", taskId: "fixture" }), prompts.render("subagents.child", {})];
 		const resources = await loadChildResources({ cwd, agentDir, instructions });
 		({ session } = await createAgentSession({ cwd, agentDir, ...resources,
 			sessionManager: SessionManager.inMemory(cwd), tools: [] }));

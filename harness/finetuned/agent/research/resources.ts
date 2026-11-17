@@ -32,7 +32,11 @@ export function readCourseResources(unit: string, root = join(REPO_ROOT, "resour
 			|| typeof entry.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(entry.sha256)
 			|| entry.media_type !== (entry.file.endsWith(".pdf") ? "application/pdf" : "text/plain")) throw new Error("Invalid course resource entry");
 		seen.add(entry.file);
-		const source = join(directory, entry.file);
+		// Catalogue references are hash-addressed; manifests cannot choose arbitrary paths.
+		if (entry.asset !== undefined && entry.asset !== `${entry.sha256}.${entry.file.split(".").at(-1)}`) throw new Error("Invalid course resource asset");
+		const assets = join(root, "_assets");
+		if (entry.asset !== undefined && !lstatSync(assets).isDirectory()) throw new Error("Invalid course resource asset directory");
+		const source = entry.asset === undefined ? join(directory, entry.file) : join(assets, entry.asset as string);
 		const stat = lstatSync(source);
 		if (!stat.isFile() || stat.size === 0 || stat.size > 32 * 1024 * 1024) throw new Error(`Invalid course resource: ${entry.file}`);
 		const sha256 = createHash("sha256").update(readFileSync(source)).digest("hex");

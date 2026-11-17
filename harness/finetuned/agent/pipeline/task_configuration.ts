@@ -155,8 +155,8 @@ function consistencyErrors(c: TaskConfiguration): string[] {
 		expect(c.metric === (labelled ? "adjusted_rand_index" : "none"), labelled
 			? "clustering with family targets is scored with adjusted_rand_index"
 			: "clustering without targets has no trusted development metric (metric none)");
-		expect(c.holdout === (labelled ? "group" : "none"), labelled
-			? "clustering with families seals whole families (holdout group), so sealed families stay unseen"
+		expect(labelled ? ["group", "stratified"].includes(c.holdout) : c.holdout === "none", labelled
+			? "clustering with families requires holdout group or stratified"
 			: "a holdout needs targets to score; use holdout none");
 		expect(c.submission.predictions === "cluster_id", "clustering submits cluster_id predictions");
 		expect(c.anomaly === undefined, "anomaly scoring applies only to anomaly_detection");

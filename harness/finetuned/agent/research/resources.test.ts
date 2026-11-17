@@ -65,6 +65,36 @@ test("manifest paths cannot expose unrelated files or escape the selected unit",
 	expect(() => readCourseResources("01-spam", f.root)).toThrow();
 });
 
+test("catalogue assets are shared by identity and snapshots use the declared filename", () => {
+	const f = fixture();
+	const assets = join(f.root, "_assets"); mkdirSync(assets);
+	const asset = `${f.entry.sha256}.txt`;
+	writeFileSync(join(assets, asset), readFileSync(join(f.directory, "slides.txt")));
+	rmSync(join(f.directory, "slides.txt"));
+	f.save([{ ...f.entry, asset }]);
+	const other = join(f.root, "02-documents"); mkdirSync(other);
+	writeFileSync(join(other, "manifest.json"), readFileSync(join(f.directory, "manifest.json")));
+	const first = readCourseResources("01-spam", f.root);
+	expect(first[0]!.source).toBe(readCourseResources("02-documents", f.root)[0]!.source);
+	stageCourseResources(join(f.root, "workspace"), first);
+	expect(readFileSync(join(f.root, "workspace/resources/slides.txt"), "utf8")).toContain("Course evaluation");
+	rmSync(join(assets, asset));
+	expect(() => readCourseResources("01-spam", f.root)).toThrow();
+});
+
+test("catalogue references cannot escape, forge identity or follow asset symlinks", () => {
+	const f = fixture(); const assets = join(f.root, "_assets"); mkdirSync(assets);
+	for (const asset of ["../slides.txt", `${"0".repeat(64)}.txt`, `${f.entry.sha256}.pdf`]) {
+		f.save([{ ...f.entry, asset }]);
+		expect(() => readCourseResources("01-spam", f.root)).toThrow("Invalid course resource asset");
+	}
+	const asset = `${f.entry.sha256}.txt`; f.save([{ ...f.entry, asset }]);
+	symlinkSync(join(f.directory, "slides.txt"), join(assets, asset));
+	expect(() => readCourseResources("01-spam", f.root)).toThrow("Invalid course resource");
+	rmSync(join(assets, asset)); writeFileSync(join(assets, asset), "tampered");
+	expect(() => readCourseResources("01-spam", f.root)).toThrow("checksum mismatch");
+});
+
 test("missing or invalid declared course material blocks a stage that declares it before it starts", async () => {
 	const f = fixture();
 	const check = courseResourcesSetupCheck(() => "01-spam", f.root);
@@ -80,9 +110,13 @@ test("missing or invalid declared course material blocks a stage that declares i
 		STAGE_REGISTRY.lead = { ...original, setupRequirements: ["course-resources"], checkInput() {}, async run() { ran = true; return { artifacts: [] }; } };
 		const config = resolvePipelineSettings({ pipeline: { entryStage: "lead", stages: { lead: { enabled: true } } },
 			agent: { cwd: ".", agentDir: ".", initialPrompt: "" }, providers: {}, defaultModel: "fixture/model" } as any);
-		for (const fault of ["changed", "missing"]) {
+		for (const fault of ["changed", "missing", "missing-asset"]) {
 			if (fault === "changed") writeFileSync(join(f.directory, "slides.txt"), "changed");
-			else rmSync(join(f.directory, "slides.txt"));
+			else if (fault === "missing") rmSync(join(f.directory, "slides.txt"));
+			else {
+				mkdirSync(join(f.root, "_assets"));
+				f.save([{ ...f.entry, asset: `${f.entry.sha256}.txt` }]);
+			}
 			const trace = await createPipelineTrace({ telemetry: testTelemetry(), taskId: "fixture", pipelineRunId: crypto.randomUUID(), runsDir: f.root });
 			try {
 				const result = await invokeStage({ stage: "lead", input: { taskId: "fixture", taskConfiguration: spamConfiguration(), upstream: [] }, config, trace, setupSession: new ResourceSetup() });

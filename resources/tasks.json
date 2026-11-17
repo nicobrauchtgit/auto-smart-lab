@@ -1,0 +1,119 @@
+{
+  "version": 1,
+  "tasks": {
+    "spam1": {
+      "unit": "01-spam",
+      "resource_ids": [
+        "1bb5d97845204420f40fe0fc582558734b5cbb6bbc822825979bf81508f4c974",
+        "23675e6a26e74df5375ead1c3a6095be11a2bd4aeced56d602ea9af9f160837f",
+        "285c19d2e9dc4ed7d3e4a119fcf77c39e07ae6d531ed24f648e7808b53b3699e",
+        "379ee9ee928f09e5eea0803180749dd97e0021d3edc5f2addf683e347068b8ad",
+        "4dd79a42c967a682a056d051b74fc3c385e52852e445f6624e665183e65e3c97",
+        "54472e63c4bd7e0ce3f628102fa376c4d3f1f82c0f2aae075f19800d057b44ff",
+        "945f8f899005b6fb50afe03120c764ee73b182749eb5179671b243030228b299",
+        "98094edc5c630f28f68e2422f0ddabaf97686d4782c50f7d59b230181f84b296",
+        "ec413b83802c98d80ee1054e0e3502f8b4bfa77a4ee07d21137743f9e1ad8468",
+        "fd001b6784e8f962b67d7f557b08d5e55ce7b6781bda398c7bbbb7ccad0f942c"
+      ]
+    },
+    "spam2": {
+      "unit": "01-spam",
+      "resource_ids": [
+        "1bb5d97845204420f40fe0fc582558734b5cbb6bbc822825979bf81508f4c974",
+        "23675e6a26e74df5375ead1c3a6095be11a2bd4aeced56d602ea9af9f160837f",
+        "285c19d2e9dc4ed7d3e4a119fcf77c39e07ae6d531ed24f648e7808b53b3699e",
+        "379ee9ee928f09e5eea0803180749dd97e0021d3edc5f2addf683e347068b8ad",
+        "4dd79a42c967a682a056d051b74fc3c385e52852e445f6624e665183e65e3c97",
+        "54472e63c4bd7e0ce3f628102fa376c4d3f1f82c0f2aae075f19800d057b44ff",
+        "945f8f899005b6fb50afe03120c764ee73b182749eb5179671b243030228b299",
+        "98094edc5c630f28f68e2422f0ddabaf97686d4782c50f7d59b230181f84b296",
+        "ec413b83802c98d80ee1054e0e3502f8b4bfa77a4ee07d21137743f9e1ad8468",
+        "fd001b6784e8f962b67d7f557b08d5e55ce7b6781bda398c7bbbb7ccad0f942c"
+      ]
+    },
+    "spam3": {
+      "unit": "01-spam",
+      "resource_ids": [
+        "1bb5d97845204420f40fe0fc582558734b5cbb6bbc822825979bf81508f4c974",
+        "23675e6a26e74df5375ead1c3a6095be11a2bd4aeced56d602ea9af9f160837f",
+        "285c19d2e9dc4ed7d3e4a119fcf77c39e07ae6d531ed24f648e7808b53b3699e",
+        "379ee9ee928f09e5eea0803180749dd97e0021d3edc5f2addf683e347068b8ad",
+        "4dd79a42c967a682a056d051b74fc3c385e52852e445f6624e665183e65e3c97",
+        "54472e63c4bd7e0ce3f628102fa376c4d3f1f82c0f2aae075f19800d057b44ff",
+        "945f8f899005b6fb50afe03120c764ee73b182749eb5179671b243030228b299",
+        "98094edc5c630f28f68e2422f0ddabaf97686d4782c50f7d59b230181f84b296",
+        "ec413b83802c98d80ee1054e0e3502f8b4bfa77a4ee07d21137743f9e1ad8468",
+        "fd001b6784e8f962b67d7f557b08d5e55ce7b6781bda398c7bbbb7ccad0f942c"
+      ]
+    },
+    "documents1": {
+      "unit": "02-maldoc",
+      "resource_ids": [
+        "1be13be22406c428765915c07b1d305d8a4ca3c07ff213c8297e5bc43d7914f5",
+        "64b9a824d6411aca47bea3abd390aebb64751124dc659b3c6dab83752a9ba143",
+        "92613618bc672b55cda00f4f4631996d3acca0d104566f021a4dae26153333b2"
+      ]
+    },
+    "documents2": {
+      "unit": "02-maldoc",
+      "resource_ids": [
+        "1be13be22406c428765915c07b1d305d8a4ca3c07ff213c8297e5bc43d7914f5",
+        "64b9a824d6411aca47bea3abd390aebb64751124dc659b3c6dab83752a9ba143",
+        "92613618bc672b55cda00f4f4631996d3acca0d104566f021a4dae26153333b2"
+      ]
+    },
+    "documents3": {
+      "unit": "02-maldoc",
+      "resource_ids": [
+        "1be13be22406c428765915c07b1d305d8a4ca3c07ff213c8297e5bc43d7914f5",
+        "64b9a824d6411aca47bea3abd390aebb64751124dc659b3c6dab83752a9ba143",
+        "92613618bc672b55cda00f4f4631996d3acca0d104566f021a4dae26153333b2"
+      ]
+    },
+    "documents4": {
+      "unit": "02-maldoc",
+      "resource_ids": [
+        "1be13be22406c428765915c07b1d305d8a4ca3c07ff213c8297e5bc43d7914f5",
+        "64b9a824d6411aca47bea3abd390aebb64751124dc659b3c6dab83752a9ba143",
+        "92613618bc672b55cda00f4f4631996d3acca0d104566f021a4dae26153333b2"
+      ]
+    },
+    "code1": {
+      "unit": "clustering-of-malicious-code",
+      "resource_ids": [
+        "3fa4a793dc8239e115ba83aef36a790bf5a02dcd66f798b3489e3aae18f80dee",
+        "ab4efa87d640b9488d1e9ff6e804fc6a5a27529c3756d3fd5b2bb465898767a7",
+        "b44171304e63927059f8d794d670b67e6683b9a8b8e21d07544c49980c23a333",
+        "c985f97c59d698be71281b01d5592d6af0589c229ea57e632332c40ea70f4d49"
+      ]
+    },
+    "code2": {
+      "unit": "clustering-of-malicious-code",
+      "resource_ids": [
+        "3fa4a793dc8239e115ba83aef36a790bf5a02dcd66f798b3489e3aae18f80dee",
+        "ab4efa87d640b9488d1e9ff6e804fc6a5a27529c3756d3fd5b2bb465898767a7",
+        "b44171304e63927059f8d794d670b67e6683b9a8b8e21d07544c49980c23a333",
+        "c985f97c59d698be71281b01d5592d6af0589c229ea57e632332c40ea70f4d49"
+      ]
+    },
+    "code3": {
+      "unit": "clustering-of-malicious-code",
+      "resource_ids": [
+        "3fa4a793dc8239e115ba83aef36a790bf5a02dcd66f798b3489e3aae18f80dee",
+        "ab4efa87d640b9488d1e9ff6e804fc6a5a27529c3756d3fd5b2bb465898767a7",
+        "b44171304e63927059f8d794d670b67e6683b9a8b8e21d07544c49980c23a333",
+        "c985f97c59d698be71281b01d5592d6af0589c229ea57e632332c40ea70f4d49"
+      ]
+    },
+    "attacks1": {
+      "unit": "detection-of-unknown-attacks",
+      "resource_ids": [
+        "0fe79d6d906f1ae4a40f33d08b17c48d0b689e10244202afa7513bbb9f5d6cb8",
+        "4dd79a42c967a682a056d051b74fc3c385e52852e445f6624e665183e65e3c97",
+        "50d3ff2d8ca1c378a7dfb13a4eab8b1e30ed88a2616b2acab90ae4ebe0b4438f",
+        "a7f2a4b7876050be1dc1ee88d493d7d7381f6737488e1a24c9478c6bea985163",
+        "fd001b6784e8f962b67d7f557b08d5e55ce7b6781bda398c7bbbb7ccad0f942c"
+      ]
+    }
+  }
+}

@@ -235,6 +235,13 @@ test("data and ideas scouts get B's task.md with the unit introduction, the prof
  expect(sandbox.cwd).toBe(inputs.root);
  expect(sandbox.mounts).toContainEqual({source: join(inputs.root, "research"), writable: true});
  expect(expertSandbox(f.data, "ideas", readPythonEnvironment(false)).cwd).toBe(inputs.root);
+ for (const role of ["lead", "data", "ideas"] as const) {
+  const policy = expertSandbox(f.data, role, readPythonEnvironment(false));
+  expect(policy.mounts).toContainEqual({source: join(inputs.root, "resources")});
+  const result = spawnSync(policy.executable, policy.args(["bash", "-c", 'test -r "$1" && ! printf changed > "$1"', "--", join(inputs.root, "resources/slides.txt")]), {encoding: "utf8", timeout: 10_000});
+  expect({role, status: result.status, error: result.error?.message}).toEqual({role, status: 0, error: undefined});
+ }
+ expect(readFileSync(join(inputs.root, "resources/slides.txt"), "utf8")).toBe("course slides\n");
  for (const id of ["team.data", "team.ideas"] as const) {
   const text = (id === "team.data" ? prompts.render(id, {taskId: "fixture", budget: "10", dataPaths: inputs.dataPaths, resources: inputs.resources})
    : prompts.render(id, {taskId: "fixture", budget: "10", webSearches: "3", resources: inputs.resources})).text;
