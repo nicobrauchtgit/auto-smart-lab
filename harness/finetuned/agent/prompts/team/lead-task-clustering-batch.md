@@ -1,0 +1,1 @@
+In batch execution every scored batch contains its validation inputs followed by all test inputs. ARI uses only its labelled rows. The sealed check and delivery use the same batch shape: sealed inputs followed by all test inputs, without family targets in the fit.

@@ -42,7 +42,9 @@ def batch_fit_predict(estimator, labelled_frame, anchor_frame):
 
 def test_agreement(folds):
     vectors = [fold["anchorPredictions"] for fold in folds if "anchorPredictions" in fold]
-    pairs = list(itertools.islice(itertools.combinations(vectors, 2), MAX_AGREEMENT_PAIRS))
+    total = len(vectors) * (len(vectors) - 1) // 2
+    chosen = set(np.linspace(0, total - 1, min(total, MAX_AGREEMENT_PAIRS), dtype=int).tolist())
+    pairs = [pair for index, pair in enumerate(itertools.combinations(vectors, 2)) if index in chosen]
     if not pairs:
         return {"available": False, "reason": "At least two anchored fits are required", "comparisons": 0}
     scores = [float(adjusted_rand_score(a, b)) for a, b in pairs]

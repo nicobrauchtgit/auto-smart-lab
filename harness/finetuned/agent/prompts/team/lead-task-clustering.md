@@ -10,7 +10,7 @@ Execution for this task: `{{execution}}`.
 
 - `inductive`: the harness calls `fit` on the training rows of a fold and
   `predict` on its validation rows.
-- `batch`: the harness calls `fit_predict` on the validation rows followed by all test inputs (or `fit` and
+- `batch`: the harness calls `fit_predict` on the validation rows (or `fit` and
   then `predict` on the same rows), so an object with only `fit_predict` works.
   The fit may use that batch's inputs, never its families.
 
@@ -24,7 +24,3 @@ families, computed per validation batch and averaged. Test families may differ
 from the training families, so a pipeline has to discover groups rather than
 recognize known families. {{splitGuidance}} Validation batches with several
 families are needed for a meaningful ARI.
-
-In batch execution every scored batch also contains all test inputs. ARI uses
-only its labelled rows. The sealed check and delivery use the same batch shape:
-sealed inputs followed by all test inputs, without family targets in the fit.

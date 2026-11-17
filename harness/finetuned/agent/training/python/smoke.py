@@ -7,7 +7,7 @@ import contextlib
 import json
 import sys
 import traceback
-import signal
+import multiprocessing
 from smartlab_trial.batch import batch_fit_predict, load_anchor
 from smartlab_trial.diagnostics import clustering
 from pathlib import Path
@@ -105,10 +105,34 @@ def anchored_structure(document, root, frame):
     measurement = document['measurement']
     if measurement['kind'] != 'clustering' or measurement['execution'] != 'batch' or not measurement.get('anchorManifestPath'):
         return None
-    def expired(*_):
-        raise TimeoutError('Anchored smoke deadline exceeded')
-    previous = signal.signal(signal.SIGALRM, expired)
-    signal.setitimer(signal.ITIMER_REAL, document.get('anchorTimeoutSeconds', 10))
+    # A separate process enforces wall time even while native estimator code blocks.
+    context = multiprocessing.get_context('fork')
+    reader, writer = context.Pipe(duplex=False)
+    process = context.Process(target=_anchored_child, args=(writer, document, root, frame))
+    process.start()
+    writer.close()
+    try:
+        if reader.poll(min(10, document.get('anchorTimeoutSeconds', 10))):
+            return reader.recv()
+        return {'available': False, 'reason': 'Timeout'}
+    except EOFError:
+        return {'available': False, 'reason': 'Worker exited'}
+    finally:
+        if process.is_alive():
+            process.kill()
+        process.join(timeout=1)
+        reader.close()
+
+
+def _anchored_child(writer, document, root, frame):
+    try:
+        writer.send(_anchored_structure(document, root, frame))
+    finally:
+        writer.close()
+
+
+def _anchored_structure(document, root, frame):
+    measurement = document['measurement']
     try:
         anchor = load_anchor(measurement, frame)
         count = document.get('sealedRows')
@@ -127,12 +151,9 @@ def anchored_structure(document, root, frame):
         return {'available': True, **clustering(None, predictions)['structure']}
     except Exception as error:
         return {'available': False, 'reason': 'Timeout' if isinstance(error, TimeoutError) else type(error).__name__}
-    finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
-        signal.signal(signal.SIGALRM, previous)
 
 
-def outcome(document):
+def outcome(document, base_complete=None):
     """Structured result: passed, sizes, and for failures phase/error/traceback and sample sensitivity."""
     root = Path(document['sourceRoot']).resolve()
     expose_project(root)
@@ -140,6 +161,8 @@ def outcome(document):
     result = {'developmentRows': len(frame)}
     try:
         result.update(passed=True, sample=_run(document, root, frame, targets, SAMPLE_ROWS[0]))
+        if base_complete is not None:
+            base_complete(result)
         test_part = anchored_structure(document, root, frame)
         if test_part is not None:
             result['testPart'] = test_part
@@ -159,6 +182,8 @@ def outcome(document):
         else:
             # Only the small sample failed: the cause is its size, not the pipeline.
             result.update(passed=True, sampleSensitive=True, largerSample={'passed': True, **larger})
+            if base_complete is not None:
+                base_complete(result)
             test_part = anchored_structure(document, root, frame)
             if test_part is not None:
                 result['testPart'] = test_part
@@ -169,7 +194,7 @@ if __name__ == '__main__':
     document = json.load(sys.stdin)
     try:
         with contextlib.redirect_stdout(sys.stderr):
-            value = outcome(document)
+            value = outcome(document, lambda result: print(json.dumps({'smokeBase': result}), file=sys.__stdout__, flush=True))
     except BaseException as error:
         value = {'passed': False, 'phase': 'load', 'error': {'type': type(error).__name__, 'message': str(error)[:2000]},
                  'traceback': traceback.format_exc()[-8000:]}

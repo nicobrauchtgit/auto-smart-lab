@@ -104,6 +104,8 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
  executables?: { python?: string; git?: string; bwrap?: string };
  /** Test seam for the process-supervision check; production reads /proc. */
  supervisionProcRoot?: string;
+ /** Task source override for isolated preflight regression fixtures. */
+ taskSource?: { taskDir: string; testZip: string };
  candidateProducedUpstream?: boolean; refitTrainingRoot?: string;
  submissionPolicy?: import("./types.js").StageInput["submissionPolicy"];
  /**
@@ -187,13 +189,13 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
  if (needs.has("submission")) checks.push(...submissionSetupChecks({ taskId: options.taskId, taskConfiguration: options.taskConfiguration, policy: options.submissionPolicy, candidateProducedUpstream: options.candidateProducedUpstream }));
  if (needs.has("submission-recovery")) checks.push(...submissionRecoverySetupChecks({ taskId: options.taskId, policy: options.submissionPolicy }));
  if (needs.has("task")) add(`task:${options.taskId}`, "local", "Fetch the selected unit again; its metadata and prompt must be readable. The task configuration must name readable train/test archives with unique, disjoint sample IDs and a targets file covering exactly the training samples; add it as pipeline.tasks.<task> in pipeline.config.json.", () => {
-  const task = resolveTask({ taskId: options.taskId });
+  const task = options.taskSource ?? resolveTask({ taskId: options.taskId });
   readable(join(task.taskDir, "meta.json"));
   readable(join(task.taskDir, "prompt.md"));
   const configuration = options.taskConfiguration;
   if (!configuration) throw new Error("No task configuration");
   if (configuration.kind === "clustering" && configuration.execution === "batch") {
-   checkAnchoredTestArchive(taskDataPaths(options.taskId, configuration).testZip);
+   checkAnchoredTestArchive(options.taskSource?.testZip ?? taskDataPaths(options.taskId, configuration).testZip);
    readable(join(ARM_ROOT, "agent/training/python/smartlab_trial/batch.py"));
   }
   inspectTaskData(options.taskId, configuration, options.executables?.python ?? projectPython());

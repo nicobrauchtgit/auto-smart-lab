@@ -11,8 +11,9 @@ export function taskContract(prompts: PromptSnapshot, taskId: string, configurat
    : prompts.render("team.lead-task-anomaly_detection", { taskId, execution: configuration.execution,
     scoreMethod: configuration.anomaly!.scoreMethod, scoreDirection: configuration.anomaly!.scoreDirection.replaceAll("_", " "),
     anomalyLabel: String(configuration.anomaly!.anomalyLabel) });
- if (configuration.selection) return [contract, prompts.render("team.lead-evidence-selection", { evidencePath, metric: configuration.selection.metric })];
- return configuration.metric === "none" ? [contract, prompts.render("team.lead-label-free", {})] : [contract];
+ const contracts = [contract, ...(configuration.kind === "clustering" && configuration.execution === "batch" ? [prompts.render("team.lead-task-clustering-batch", {})] : [])];
+ if (configuration.selection) return [...contracts, prompts.render("team.lead-evidence-selection", { evidencePath, metric: configuration.selection.metric })];
+ return configuration.metric === "none" ? [...contracts, prompts.render("team.lead-label-free", {})] : contracts;
 }
 
 

@@ -32,6 +32,7 @@ export const PROMPTS = {
  "team.lead-system": { file: "team/lead-system.md", variables: ["taskId", "budget", "confirmationFeedback"] },
  "team.lead-start": { file: "team/lead-start.md", variables: ["task", "taskContract", "datasetPaths", "targets", "rowCount", "targetSummary", "foldRecommendation", "workspace", "resources"], optionalVariables: ["followUp", "resume", "guidance"] },
  "team.lead-task-binary_classification": { file: "team/lead-task-binary_classification.md", variables: ["taskId"] },
+ "team.lead-task-clustering-batch": { file: "team/lead-task-clustering-batch.md", variables: [] },
  "team.lead-task-clustering": { file: "team/lead-task-clustering.md", variables: ["taskId", "execution", "splitGuidance"] },
  "team.lead-task-anomaly_detection": { file: "team/lead-task-anomaly_detection.md", variables: ["taskId", "execution", "scoreMethod", "scoreDirection", "anomalyLabel"] },
  "team.lead-evidence-selection": { file: "team/lead-evidence-selection.md", variables: ["evidencePath", "metric"] },

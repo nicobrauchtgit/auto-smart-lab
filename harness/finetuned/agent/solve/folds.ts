@@ -34,7 +34,7 @@ export function recommendFolds(rows: number, options: { scheme?: FoldRecommendat
 	const groupFolds = scheme === "group_kfold" && options.groups !== undefined ? Math.max(2, Math.min(folds, options.groups)) : folds;
 	return {
 		scheme,
-		folds: options.sealedRows !== undefined ? (options.sealedRows > 0 ? Math.max(2, Math.round(rows / options.sealedRows)) : 2) : groupFolds,
+		folds: options.sealedRows !== undefined ? (options.sealedRows > 0 ? Math.min(Math.max(...HARNESS_CONFIG.foldRecommendations.map(row => row.folds)), Math.max(2, Math.round(rows / options.sealedRows))) : 2) : groupFolds,
 		repeats,
 		rationale: scheme === "group_kfold" ? `${rows} training rows in ${options.groups} groups after sealing` : `${rows} training rows after sealing`,
 	};

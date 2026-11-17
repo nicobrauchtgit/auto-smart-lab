@@ -47,6 +47,7 @@ export interface RefitFreeze {
  schemaVersion: 1; identity: string; taskId: string; terminalPath: string; directory: string;
  source: { commit: string; tree: string }; sourceRoot: string; pipeline: PipelineRequest;
  chosenExperimentId: string; environment: { fingerprint: string; runtimeDependencyHash: string; frameworkHash: string };
+ confirmation?: { resultPath: string; manifestPath: string };
  seed: number; seedLineage: unknown; evidence: { path: string; sha256: string }[];
  inputs: Record<string, unknown>; data: { trainIds: string[]; testIds: string[]; trainRows: number; developmentRows: number; sealedRows: number; testRows: number; hashes: Record<string, string> };
  origin: { pipelineRunId?: string | null; stageInvocationId?: string | null };
@@ -54,6 +55,7 @@ export interface RefitFreeze {
 export interface TerminalRefitResult {
  schemaVersion: 1; status: "completed"; identity: string; freezeSha256: string;
  trainRows: number; testRows: number; fitCalls: 1; trainIdsSha256: string;
+ confirmationPartition?: { matches: boolean; adjustedRandIndex: number };
  source: RefitFreeze["source"]; pipeline: PipelineRequest; environment: RefitFreeze["environment"];
  seed: number; seedLineage: unknown; evidence: RefitFreeze["evidence"]; data: Record<string, string>;
  artifacts: { "predictions.csv": string; "model.pkl"?: string }; modelSerialization: { status: "available" | "unavailable"; errorType?: string }; seededParameters: string[];
@@ -203,6 +205,12 @@ export async function prepareRefit(options: RefitOptions): Promise<RefitFreeze> 
    const directory = dirname(confirmation.path);
    python(options, [join(FRAMEWORK_ROOT, "training/python/confirm.py"), "--directory", directory, "--validate"]);
    const freeze = json(join(directory, "freeze.json"));
+   if (options.taskConfiguration.kind === "clustering" && options.taskConfiguration.execution === "batch") {
+    prepared.confirmation = { resultPath: confirmation.path, manifestPath: freeze.validationManifest };
+    for (const path of [freeze.validationManifest, ...JSON.parse(readFileSync(freeze.validationManifest, "utf8")).samples.map((sample: any) => sample.input.archive) as string[]]) {
+     if (!prepared.evidence.some(entry => entry.path === path)) prepared.evidence.push({ path, sha256: hashFile(path) });
+    }
+   }
    for (const path of [join(directory, "freeze.json"), join(directory, "predictions.csv"), ...Object.keys(freeze.hashes)]) {
     if (!prepared.evidence.some(entry => entry.path === path)) prepared.evidence.push({ path, sha256: hashFile(path) });
    }

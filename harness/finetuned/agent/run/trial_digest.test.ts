@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
-import { trialDigest } from "./trial_digest.js";
+import { trialDigest, checkpointDigest } from "./trial_digest.js";
+import { renderProgress } from "./lead_progress.js";
 import { compactDiagnostics } from "../training/service.js";
 import { loadPromptSnapshot } from "../prompts/loader.js";
 
@@ -27,9 +28,9 @@ test("clustering compact summary retains stability and all completed folds for f
 test("optional Patch B fields present, partially available, and absent", () => {
  const input: any = described({...cluster(2), testPart:{clusterCount:10,singletonFraction:.1,largestClusterShare:.3}}, {...cluster(4),testPart:{clusterCount:20,singletonFraction:.2,largestClusterShare:.5}});
  input.diagnostics.testAgreement={available:true,meanAdjustedRandIndex:.9,minAdjustedRandIndex:.8};
- expect(trialDigest("clustering",input).split("\n")[2]).toBe("test part: clusters 10-20, singleton fraction 0.150, largest share 0.400; agreement across fits 0.900 (0.800)");
+ expect(trialDigest("clustering",{diagnostics:compactDiagnostics(input, true)}).split("\n")[2]).toBe("test part: clusters 10-20, singleton fraction 0.150, largest share 0.400; agreement across fits mean 0.900, min 0.800");
  input.diagnostics.testAgreement={available:false,meanAdjustedRandIndex:.9};
- expect(trialDigest("clustering",input)).toContain("agreement across fits unavailable (unavailable)");
+ expect(trialDigest("clustering",input)).toContain("agreement across fits mean unavailable, min unavailable");
  expect(trialDigest("clustering",described(cluster(2)))).not.toContain("test part:");
  expect(trialDigest("clustering",{diagnostics:{testAgreement:{available:false}}})).toContain("test part: clusters unavailable");
 });
@@ -38,7 +39,7 @@ test("binary ranking, 1% FPR, advisory sweep and champion counts", () => {
  const fold = (x:number) => ({ranking:{available:true,rocAuc:x,averagePrecision:x-.1},lowFpr:{available:true,points:[{maxFpr:.001,recall:0},{maxFpr:.01,recall:x-.2}]},thresholdSweep:{available:true,defaultBalancedAccuracy:x-.1,bestBalancedAccuracy:x}});
  const input: any = described(fold(.8),fold(1));
  input.diagnostics.championComparison={status:"completed",correctedErrors:7,introducedErrors:2};
- expect(trialDigest("binary_classification",input)).toBe("mean ROC AUC 0.900, average precision 0.800; mean recall at 1% FPR 0.700\nthreshold sweep (advisory): mean default balanced accuracy 0.800 vs best 0.900\nchampion errors: corrected 7, introduced 2");
+ expect(trialDigest("binary_classification",input)).toBe("mean ROC AUC 0.900, average precision 0.800; mean recall at 1% FPR 0.700\nthreshold sweep (threshold picked on validation rows): mean default balanced accuracy 0.800 vs best 0.900\nchampion errors: corrected 7, introduced 2");
 });
 
 test("anomaly score health and flagged share are measured proxies", () => {
@@ -61,4 +62,14 @@ test("lead trial prompt requires and renders the digest as factual input", () =>
  expect(()=>prompts.render("team.lead-trial", values as any)).toThrow(/digest/);
  const digest=trialDigest("anomaly_detection",{});
  expect(prompts.render("team.lead-trial",{...values,digest}).text).toContain(`Diagnostics: ${digest}\n`);
+});
+
+test("checkpoint omits absent and incomplete diagnostics", () => {
+ for (const input of [undefined, {}, {diagnostics:{folds:[]}}, {diagnostics:{folds:[{status:"failed"}]}}]) {
+  const digest=checkpointDigest("clustering",input);
+  expect(digest).toBeUndefined();
+  const progress:any={champion:{experimentId:"fixture"},trials:[],holdout:[],budget:{used:0,limit:10},scoutCalls:0};
+  expect(renderProgress(loadPromptSnapshot(),progress,digest).text).not.toContain("Diagnostics:");
+ }
+ expect(checkpointDigest("clustering",described(cluster(2)))).toContain("clusters per batch 2-2");
 });

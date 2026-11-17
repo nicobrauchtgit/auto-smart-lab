@@ -61,13 +61,29 @@ export const runPipelineValidation: PipelineValidator = (input) => new Promise((
 	});
 	child.on("close", (code) => {
 		clearTimeout(timer);
+		// Smoke commits its passed base check before optional anchored diagnostics.
+  // Preserve that result if the outer deadline expires during the optional work.
+  const lines = stdout.trim().split("\n");
+  if (timedOut && input.interpret) {
+   for (const line of lines) {
+    try {
+     const base = JSON.parse(line).smokeBase;
+     if (base?.passed === true) {
+      const issues = input.interpret({...base, testPart: {available:false, reason:"Timeout"}});
+      if (issues) { settle(issues); return; }
+     }
+    } catch { /* No completed base record on this line. */ }
+   }
+  }
 		if (timedOut) {
 			settle(failure(`validation did not finish within ${Math.round(input.timeoutMs / 1000)} s`,
 				"Keep module import and factory construction cheap: do not fit, download, or read the dataset at import or build time."));
 			return;
 		}
 		try {
-			const parsed = JSON.parse(stdout) as { issues?: unknown };
+			let parsed: { issues?: unknown };
+   try { parsed = JSON.parse(stdout); }
+   catch { parsed = JSON.parse(lines.at(-1) ?? ""); }
 			const interpreted = code === 0 && input.interpret ? input.interpret(parsed) : undefined;
 			if (interpreted) {
 				settle(interpreted);

@@ -8,7 +8,13 @@ const mean = (values: unknown[]) => { const ns = numbers(values); return ns.leng
 const range = (values: unknown[]) => { const ns = numbers(values); return ns.length ? `${Math.min(...ns)}-${Math.max(...ns)}` : "unavailable"; };
 const available = (value: unknown) => object(value).available === false ? {} : object(value);
 
+/** Digest labels are factual measurement labels. */
 /** Accepts compact describe results, including optional anchored-batch diagnostics. */
+export function checkpointDigest(kind: string, described: unknown): string | undefined {
+ const folds = object(object(described).diagnostics).folds;
+ return Array.isArray(folds) && folds.some(fold => fold && (fold.status === undefined || fold.status === "completed")) ? trialDigest(kind, described) : undefined;
+}
+
 export function trialDigest(kind: string, described: unknown): string {
  const result = object(described), diagnostics = available(result.diagnostics);
  const folds: Detail[] = (Array.isArray(diagnostics.folds) ? diagnostics.folds : [])
@@ -25,11 +31,11 @@ export function trialDigest(kind: string, described: unknown): string {
   ];
   if (folds.some(fold => fold.testPart !== undefined) || diagnostics.testAgreement !== undefined) {
    const agreement = available(diagnostics.testAgreement);
-   lines.push(`test part: clusters ${range(folds.map(fold => available(fold.testPart).clusterCount))}, singleton fraction ${avg("testPart", "singletonFraction")}, largest share ${avg("testPart", "largestClusterShare")}; agreement across fits ${format(agreement.meanAdjustedRandIndex)} (${format(agreement.minAdjustedRandIndex)})`);
+   lines.push(`test part: clusters ${range(folds.map(fold => available(fold.testPart).clusterCount))}, singleton fraction ${avg("testPart", "singletonFraction")}, largest share ${avg("testPart", "largestClusterShare")}; agreement across fits mean ${format(agreement.meanAdjustedRandIndex)}, min ${format(agreement.minAdjustedRandIndex)}`);
   }
   return lines.join("\n");
  }
- if (kind === "binary_classification" || kind === "classification") {
+ if (kind === "binary_classification") {
   const recall = mean(folds.map(fold => {
    const points = available(fold.lowFpr).points;
    return Array.isArray(points) ? points.find((point: any) => point?.maxFpr === 0.01)?.recall : undefined;
@@ -37,7 +43,7 @@ export function trialDigest(kind: string, described: unknown): string {
   const comparison = available(diagnostics.championComparison ?? result.championComparison);
   return [
    `mean ROC AUC ${avg("ranking", "rocAuc")}, average precision ${avg("ranking", "averagePrecision")}; mean recall at 1% FPR ${format(recall)}`,
-   `threshold sweep (advisory): mean default balanced accuracy ${avg("thresholdSweep", "defaultBalancedAccuracy")} vs best ${avg("thresholdSweep", "bestBalancedAccuracy")}`,
+   `threshold sweep (threshold picked on validation rows): mean default balanced accuracy ${avg("thresholdSweep", "defaultBalancedAccuracy")} vs best ${avg("thresholdSweep", "bestBalancedAccuracy")}`,
    `champion errors: corrected ${finite(comparison.correctedErrors) ? comparison.correctedErrors : "unavailable"}, introduced ${finite(comparison.introducedErrors) ? comparison.introducedErrors : "unavailable"}`,
   ].join("\n");
  }

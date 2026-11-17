@@ -94,6 +94,10 @@ class AnchoredBatch(unittest.TestCase):
         for key in ('metrics', 'diagnostics', 'seededParameters', 'anchorPredictions', 'fitRows'):
             self.assertEqual(result[key], replay[key])
         self.assertEqual(oof, outcome['best'].oof)
+        for name in ('search-checkpoint.json', 'configs.jsonl'):
+            path = search.output_dir / name
+            if path.exists(): self.assertNotIn('anchorPredictions', path.read_text())
+        self.assertNotIn('anchorPredictions', json.dumps(outcome['best'].record(None)))
         from smartlab_trial.artifacts import _write_oof
         import csv
         path = self.root / 'oof_predictions.csv'
@@ -112,6 +116,10 @@ class AnchoredBatch(unittest.TestCase):
         result = test_agreement(folds)
         self.assertEqual(result['comparisons'], MAX_AGREEMENT_PAIRS)
         self.assertEqual(result, test_agreement(folds))
+        # The last fit must contribute, even though the first 256 pairs omit it.
+        distinct = [{'anchorPredictions': [0, 0, 1, 1]} for _ in range(100)]
+        distinct[-1] = {'anchorPredictions': [0, 1, 0, 1]}
+        self.assertLess(test_agreement(distinct)['minAdjustedRandIndex'], 1)
         self.assertLessEqual(result['minAdjustedRandIndex'], result['meanAdjustedRandIndex'])
 
     def test_smoke_structure_only_and_timeout(self):
@@ -125,10 +133,16 @@ class AnchoredBatch(unittest.TestCase):
         self.assertEqual(result['testPart']['clusterCount'], 1)
         for forbidden in ('adjustedRandIndex', 'family', 'target', 'external'):
             self.assertNotIn(forbidden, json.dumps(result))
-        def slow(*_): time.sleep(.1)
+        def slow(*_):
+            import ctypes
+            ctypes.CDLL(None).sleep(30)
         document['anchorTimeoutSeconds'] = .01
         with patch('smoke.batch_fit_predict', side_effect=slow):
-            value = smoke.anchored_structure(document, self.root, load_samples(document['measurement'])[0])
+            started = time.monotonic()
+            result = smoke.outcome(document)
+            value = result['testPart']
+            self.assertTrue(result['passed'])
+            self.assertLess(time.monotonic() - started, 2)
         self.assertEqual(value, {'available': False, 'reason': 'Timeout'})
 
     def test_confirmation_and_delivery_identical_order_and_predictions(self):
@@ -145,7 +159,7 @@ class AnchoredBatch(unittest.TestCase):
             path.write_text(json.dumps({'schemaVersion':1, 'samples':[{'id':i,'input':{},'target':i[-1]} for i in ids]}))
             return str(path)
         dev = manifest('dev.json',['dev-b','dev-a']); sealed = manifest('sealed.json',['sealed-b','sealed-a'])
-        (self.root/'model.py').write_text("class Model:\n def fit_predict(self, frame):\n  assert frame['id'].tolist() == ['sealed-a','sealed-b'] + [f'test-{i}' for i in range(7)]\n  assert set(frame.columns) == {'id','input'}\n  return [i % 2 for i in range(len(frame))]\ndef build_pipeline(context):\n assert context['seed'] == 13\n return Model()\n")
+        (self.root/'model.py').write_text("class Model:\n def fit_predict(self, frame):\n  assert frame['id'].tolist() == ['sealed-a','sealed-b'] + [f'test-{i}' for i in range(7)]\n  assert set(frame.columns) == {'id','input'}\n  assert frame.iloc[0]['input'] == {}\n  return [i % 2 for i in range(len(frame))]\ndef build_pipeline(context):\n assert context['seed'] == 13\n return Model()\n")
         freeze = dict(taskId='fixture',experimentId='trial',source={},pipeline={'module':'model.py','factory':'build_pipeline'},
             holdout={'perClass':{'a':1,'b':1},'rows':2},readCount=1,identity='frozen',population='tiny',origin={},cvMean=.5,
             seed=13,bootstrapSeed=42,kind='clustering',execution='batch',sourceRoot=str(self.root),developmentManifest=dev,
@@ -153,11 +167,14 @@ class AnchoredBatch(unittest.TestCase):
         (self.root/'freeze.json').write_text(json.dumps(freeze))
         with contextlib.redirect_stdout(io.StringIO()): confirm.run(self.root)
         receipt = confirm.validate(self.root)
+        # Delivery must use the confirmation archive descriptors, not trainZip.
+        frozen_confirmation = {'resultPath': str(self.root/'holdout-confirmation.json'), 'manifestPath': sealed}
         from smartlab_trial.agent_code import _load_module
         estimator = _load_module(self.root,'model.py').build_pipeline({'seed':13})
         frozen = {'inputs':{'task':{'kind':'clustering','execution':'batch'},'trainZip':str(train_zip),'testZip':str(test_zip),
-            'sealedIds':['sealed-a','sealed-b']},'data':{'trainIds':['dev-a','dev-b','sealed-a','sealed-b'],'testIds':[f'test-{i}' for i in range(7)]}}
+            'sealedIds':['sealed-a','sealed-b']},'confirmation':frozen_confirmation,'data':{'trainIds':['dev-a','dev-b','sealed-a','sealed-b'],'testIds':[f'test-{i}' for i in range(7)]}}
         with contextlib.redirect_stdout(io.StringIO()): predicted, fit_rows, test_rows = refit.fit_samples(estimator,frozen,EventWriter(self.root,'test'))
+        self.assertTrue(refit.partition_check(frozen, predicted)['matches'])
         self.assertEqual(predicted, receipt['testPredictions']); self.assertEqual((fit_rows,test_rows),(9,7))
         # Exercise the terminal exact-ID validator, including a checksum-valid duplicate.
         frozen.update(identity='terminal', source={}, pipeline={}, environment={}, seed=13, seedLineage={}, evidence=[])
@@ -173,13 +190,40 @@ class AnchoredBatch(unittest.TestCase):
             trainRows=4, fitCalls=1, testRows=7,
             trainIdsSha256=hashlib.sha256(json.dumps(frozen['data']['trainIds'], separators=(',', ':')).encode()).hexdigest(),
             modelSerialization={'status':'unavailable','errorType':'Fixture'}, artifacts={'predictions.csv':refit.sha(predictions)},
-            source={},pipeline={},environment={},seed=13,seedLineage={},evidence=[],data={})
+            source={},pipeline={},environment={},seed=13,seedLineage={},evidence=[],data={},
+            confirmationPartition=refit.partition_check(frozen,predicted))
         (self.root/'result.json').write_text(json.dumps(result))
         refit.validate(self.root, frozen)
         write(['test-0']*7)
         result['artifacts']['predictions.csv'] = refit.sha(predictions)
         (self.root/'result.json').write_text(json.dumps(result))
         with self.assertRaisesRegex(AssertionError, 'coverage'): refit.validate(self.root, frozen)
+
+
+    def test_nondeterministic_delivery_partition_fails_closed(self):
+        spec = importlib.util.spec_from_file_location('refit_check', Path(__file__).resolve().parents[2] / 'refit/worker.py')
+        refit = importlib.util.module_from_spec(spec); spec.loader.exec_module(refit)
+        receipt = self.root / 'receipt.json'
+        receipt.write_text(json.dumps({'testPredictions': [0, 0, 1, 1]}))
+        frozen = {'confirmation': {'resultPath': str(receipt)}, 'terminalPath': str(self.root/'freeze.json'),
+                  'inputs': {}, 'data': {}, 'sourceRoot': str(self.root), 'pipeline': {'module':'x','factory':'x'},
+                  'seed': 0, 'identity':'fixture'}
+        (self.root/'freeze.json').write_text(json.dumps(frozen))
+        class Nondeterministic:
+            def fit_predict(self, frame):
+                import secrets
+                # Entropy-driven partitions always differ from the confirmed grouping.
+                return [0, 1, 0, 1] if secrets.randbits(1) else [0, 1, 1, 0]
+        model = Nondeterministic()
+        def fit_samples(*_): return model.fit_predict(None), 4, 4
+        with patch.object(refit, 'data', return_value={}), patch.object(refit, '_load_module'), \
+             patch.object(refit, '_factory'), patch.object(refit, '_call_pipeline_factory', return_value=model), \
+             patch.object(refit, 'fit_samples', side_effect=fit_samples):
+            with self.assertRaisesRegex(ValueError, 'differs from confirmed partition'):
+                refit.fit(self.root, frozen)
+        self.assertFalse((self.root/'result.json').exists())
+        self.assertFalse(json.loads((self.root/'partition-check.json').read_text())['matches'])
+        self.assertTrue(refit.partition_check(frozen, [7,7,3,3])['matches'])
 
 
 if __name__ == '__main__': unittest.main()

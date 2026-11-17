@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, copyFileSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -136,6 +136,9 @@ test("family stratification is declared, materialized and rejects a policy reset
   expect(first.split.confirmation?.perClass).toEqual({ alpha: 60, beta: 60 });
   expect(first.targetSummary).toContain("does not test unseen families");
   expect(first.recommendation.scheme).toBe("stratified_kfold");
+  const anchor = (first.measurement as any).anchorManifestPath;
+  expect(JSON.parse(readFileSync(anchor,"utf8")).samples).toHaveLength(1);
+  expect(readdirSync(join(anchor,"..")).some(name=>name.endsWith(".tmp"))).toBe(false);
   expect(prepareSolveWorkspace("spam1", options).split).toEqual(first.split);
   expect(() => prepareSolveWorkspace("spam1", { ...options, configuration: { ...configuration, holdout: "group" } })).toThrow("declaration changed");
  } finally { rmSync(root, { recursive: true, force: true }); }

@@ -90,6 +90,9 @@ def validate(directory, freeze):
     domain = freeze['inputs'].get('task', {}).get('predictions', 'binary')
     valid = (lambda value: value in ('0', '1')) if domain == 'binary' else (lambda value: re.fullmatch(r'-?\d+', value) is not None)
     assert all(valid(row['prediction']) for row in rows), 'Invalid prediction domain'
+    check = partition_check(freeze, [int(row['prediction']) for row in rows])
+    if check is not None:
+        assert check['matches'] and result.get('confirmationPartition') == check, 'Confirmed partition mismatch'
     return result
 
 
@@ -118,6 +121,13 @@ def fit_samples(estimator, freeze, events):
         ids = freeze['inputs']['sealedIds']
         assert ids == sorted(set(ids)) and set(ids) <= set(train['id']), 'Invalid sealed IDs'
         labelled = train.set_index('id', drop=False).loc[ids].reset_index(drop=True)
+        if freeze.get('confirmation'):
+            from smartlab_trial.measurement import load_samples
+            confirmed, _, _ = load_samples({'kind': 'clustering', 'execution': 'batch',
+                'sampleManifestPath': freeze['confirmation']['manifestPath']})
+            confirmed = confirmed.sort_values('id').reset_index(drop=True)
+            assert confirmed['id'].tolist() == ids, 'Confirmation sealed order differs'
+            labelled = confirmed
         with events.stage('terminal_fit', fitRows=len(labelled) + len(test), execution='batch'):
             _, predicted = batch_fit_predict(estimator, labelled, test)
         return predicted, len(labelled) + len(test), len(test)
@@ -144,6 +154,17 @@ def fit_samples(estimator, freeze, events):
     return values, fit_rows, len(test)
 
 
+def partition_check(freeze, predicted):
+    if not freeze.get('confirmation'):
+        return None
+    from sklearn.metrics import adjusted_rand_score
+    receipt = json.loads(Path(freeze['confirmation']['resultPath']).read_text())
+    expected = receipt['testPredictions']
+    assert len(expected) == len(predicted), 'Confirmed test prediction coverage differs'
+    score = float(adjusted_rand_score(expected, predicted))
+    return {'matches': score == 1.0, 'adjustedRandIndex': score}
+
+
 def fit(directory, freeze):
     # The atomic terminal marker and immutable freeze are already durable here.
     assert sha(freeze['terminalPath']) == sha(directory / 'freeze.json'), 'Terminal marker differs'
@@ -161,6 +182,10 @@ def fit(directory, freeze):
     seeded = _inject_random_states(estimator, freeze['seed'])
     events = EventWriter(directory, freeze['identity'])
     predicted, fit_rows, test_rows = fit_samples(estimator, freeze, events)
+    consistency = partition_check(freeze, predicted)
+    if consistency is not None and not consistency['matches']:
+        _atomic_json(directory / 'partition-check.json', consistency)
+        raise ValueError('Terminal refit test partition differs from confirmed partition')
     # Completion is committed last. Interrupted fits never count as complete.
     with tempfile.NamedTemporaryFile(dir=directory, delete=False, mode='w', newline='') as stream:
         writer = csv.writer(stream)
@@ -193,6 +218,7 @@ def fit(directory, freeze):
         'environment': freeze['environment'], 'seed': freeze['seed'], 'seedLineage': freeze['seedLineage'],
         'evidence': freeze['evidence'], 'data': freeze['data']['hashes'],
         'modelSerialization': model_serialization,
+        **({'confirmationPartition': consistency} if consistency is not None else {}),
         'artifacts': {name: sha(directory / name) for name in ('predictions.csv', 'model.pkl') if name == 'predictions.csv' or model_serialization['status'] == 'available'},
     })
     validate(directory, freeze)

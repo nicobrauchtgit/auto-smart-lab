@@ -58,7 +58,7 @@ import { readPythonEnvironment, type PythonEnvironment } from "./python_environm
 import { expertSandbox } from "./sandbox.js";
 import { isolatedSolveTools, solvePythonEnvironmentTool, trainingSandboxCommand, type SolveSandbox } from "./solve_sandbox.js";
 import { runSession } from "./session_runner.js";
-import { trialDigest } from "./trial_digest.js";
+import { trialDigest, checkpointDigest } from "./trial_digest.js";
 import { oneLine, readProgress, renderProgress, writeProgress, type LeadHandOver, type LeadProgress } from "./lead_progress.js";
 import { messageText, OperatorQuestions } from "./operator_questions.js";
 
@@ -657,7 +657,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
   }
   return { failures };
  };
- const currentProgress = () => renderProgress(prompts, progress, progress.champion ? trialDigest(configuration.kind, training?.service.describe(progress.champion.experimentId, true)) : undefined);
+ const currentProgress = () => renderProgress(prompts, progress, progress.champion ? checkpointDigest(configuration.kind, training?.service.describe(progress.champion.experimentId, true)) : undefined);
  const handOverTool = defineTool({ executionMode: "sequential", name: "hand_over", label: "Hand over", description: prompts.render("team.lead-handover-tool", {}).text,
   parameters: Type.Object({ reason: Type.String({ minLength: 1, maxLength: 1000 }), finalize: Type.Optional(Type.Boolean()) }, { additionalProperties: false }),
   async execute(toolCallId, args, signal) {

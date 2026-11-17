@@ -204,6 +204,8 @@ def summary(kind: str, folds: Sequence[dict[str, Any]], rows: Sequence[dict[str,
     if kind == "clustering" and any("anchorPredictions" in fold for fold in folds):
         from .batch import test_agreement
         result["testAgreement"] = test_agreement(folds)
+    elif kind == "clustering" and folds and 'testAgreementSummary' in folds[0]:
+        result['testAgreement'] = folds[0]['testAgreementSummary']
     if kind != "classification":
         result["stability"] = stability(rows, kind, direction)
         result["proxyEvidence"] = result["primaryMetric"] is None

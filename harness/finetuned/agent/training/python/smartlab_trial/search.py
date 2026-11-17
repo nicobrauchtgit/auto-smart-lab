@@ -119,7 +119,7 @@ class ConfigResult:
             "foldScores": [{"repeat": fold["repeat"], "fold": fold["fold"], **fold["metrics"],
                             **({"searchScore": fold["searchScore"], "objective": fold["searchObjective"]} if "searchScore" in fold else {}),
                             "fitSeconds": fold.get("fitSeconds", fold["durationSeconds"])} for fold in self.folds],
-            "foldResults": self.folds,
+            "foldResults": [{key: value for key, value in fold.items() if key != "anchorPredictions"} for fold in self.folds],
             "meanScore": self.mean,
             "stdScore": self.std,
             "fitSeconds": self.fit_seconds,
@@ -527,6 +527,10 @@ def run_search(invocation: Invocation, events: EventWriter, output_dir: Path, pi
             study.tell(trial, state=optuna.trial.TrialState.PRUNED)
         else:
             study.tell(trial, state=optuna.trial.TrialState.FAIL)
+        if any('anchorPredictions' in fold for fold in result.folds):
+            # Preserve aggregate diagnostics across resume without checkpointing row vectors.
+            from .batch import test_agreement
+            result.folds[0]['testAgreementSummary'] = test_agreement(result.folds)
         results.append(result)
         with configs_path.open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(_jsonable(result.record(invocation.source)), sort_keys=True, allow_nan=False) + "\n")
@@ -539,12 +543,16 @@ def run_search(invocation: Invocation, events: EventWriter, output_dir: Path, pi
             for other in results:
                 if other is not best and other is not runner_up:
                     other.oof = []
+                    for fold in other.folds:
+                        fold.pop("anchorPredictions", None)
         else:
             result.oof = []
+            for fold in result.folds:
+                fold.pop("anchorPredictions", None)
         progress.append({"configs": index + 1, "bestMean": None if best is None else best.mean,
                          "bestConfigId": None if best is None else best.config_id})
         save_checkpoint(checkpoint, {"trialSeed": invocation.trial_seed, "searchIdentity": identity,
-                                 "results": [dataclass_record(row) for row in results], "progress": progress,
+                                 "results": [{**dataclass_record(row), "folds": [{k: v for k, v in fold.items() if k != "anchorPredictions"} for fold in row.folds]} for row in results], "progress": progress,
                                  "elapsedSeconds": guard.elapsed()})
         events.emit(f"config_{result.status}", configId=result.config_id, params=result.params, status=result.status,
                     reason=result.reason, meanScore=result.mean, stdScore=result.std, folds=len(result.folds),

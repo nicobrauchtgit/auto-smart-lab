@@ -245,7 +245,11 @@ export function prepareSolveWorkspace(taskId: string, options: PrepareOptions = 
         const test = archiveRows(python, paths.testZip, undefined, "none", configuration.samples.source);
         const bytes = JSON.stringify({ schemaVersion: 1, samples: test.samples }) + "\n";
         if (existsSync(anchorManifestPath) && readFileSync(anchorManifestPath, "utf8") !== bytes) throw new Error("Test manifest changed");
-        if (!existsSync(anchorManifestPath)) writeFileSync(anchorManifestPath, bytes);
+        if (!existsSync(anchorManifestPath)) {
+            const temporary = `${anchorManifestPath}.${process.pid}.tmp`;
+            writeFileSync(temporary, bytes);
+            renameSync(temporary, anchorManifestPath);
+        }
     }
 	const measurement: MeasurementConfig = configuration.kind === "binary_classification"
 		? { kind: "classification", execution: "inductive", sampleManifestPath }
@@ -269,7 +273,7 @@ export function prepareSolveWorkspace(taskId: string, options: PrepareOptions = 
 		// otherwise recoverable from it as `members - manifest`.
 		datasetPaths: [devZip, ...(existsSync(paths.testZip) ? [paths.testZip] : [])].map(path => relative(projectRoot, path)),
 		split: { sealedIds: split.sealedIds, fraction: split.fraction, seed: split.seed, sha256: split.sha256, scheme: split.scheme, ...("confirmation" in split ? { confirmation: split.confirmation } : {}), ...(split.sealedGroups !== undefined ? { sealedGroups: split.sealedGroups } : {}) },
-		recommendation: anchored ? recommendFolds(split.devIds.length, { sealedRows: split.sealedIds.length }) : configuration.holdout === "stratified" ? recommendFolds(split.devIds.length)
+		recommendation: anchored && configuration.holdout === "stratified" ? recommendFolds(split.devIds.length, { sealedRows: split.sealedIds.length }) : configuration.holdout === "stratified" ? recommendFolds(split.devIds.length)
 			: groups ? recommendFolds(split.devIds.length, { scheme: "group_kfold", groups })
 				: recommendFolds(split.devIds.length, { scheme: "kfold" }),
 		rowCount: split.devIds.length,

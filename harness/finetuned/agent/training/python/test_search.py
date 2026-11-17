@@ -35,6 +35,29 @@ class Search(unittest.TestCase):
         with patch('smartlab_trial.search.time.monotonic', side_effect=lambda: self.clock), contextlib.redirect_stdout(io.StringIO()):
             return run_search(inv, EventWriter(self.root, 'fixture'), self.root, None, self.folds, None, [], [], stop or (lambda: False), fit)
 
+    def test_anchor_predictions_retained_only_for_top_two_and_never_projections(self):
+        inv = dataclasses.replace(self.inv, search=dataclasses.replace(self.inv.search, pruning=False))
+        def fit(_inv, _factory, fold, *_args, **kwargs):
+            quality = kwargs['estimator_index']
+            return ({'repeat': fold.repeat, 'fold': fold.fold, 'durationSeconds': .01,
+                     'metrics': {'balancedAccuracy': quality}, 'anchorPredictions': [0] * 1000},
+                    [{'id': 'dev', 'prediction': quality}])
+        with contextlib.redirect_stdout(io.StringIO()):
+            outcome = run_search(inv, EventWriter(self.root, 'fixture'), self.root, None,
+                self.folds, None, [], [], lambda: False, fit)
+        retained = [row for row in outcome['results'] if any('anchorPredictions' in fold for fold in row.folds)]
+        self.assertEqual({row.config_id for row in retained}, {outcome['best'].config_id, outcome['runnerUp'].config_id})
+        for row in outcome['results']:
+            if row not in retained: self.assertEqual(row.oof, [])
+        for name in ('search-checkpoint.json', 'configs.jsonl'):
+            self.assertNotIn('anchorPredictions', (self.root / name).read_text())
+        from smartlab_trial.search import ConfigResult
+        from smartlab_trial.diagnostics import summary
+        saved = json.loads((self.root / 'search-checkpoint.json').read_text())
+        restored = ConfigResult(**next(row for row in saved['results'] if row['config_id'] == outcome['best'].config_id))
+        self.assertEqual(summary('clustering', restored.folds, [])['testAgreement'],
+                         outcome['best'].folds[0]['testAgreementSummary'])
+
     def test_pruned_configs_keep_fold_measurements_and_journal(self):
         outcome = self.search()
         pruned = [row for row in outcome['results'] if row.status == 'pruned']
