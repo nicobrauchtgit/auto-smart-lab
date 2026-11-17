@@ -155,3 +155,40 @@ Both changes alter the lead's instructions and feedback, so their prompt hashes
 change and are recorded per run. The completed Google and Qwen code1–3
 finetuned runs stay as recorded. Rerunning code1–3 finetuned under the patches,
 in which checkout and in what order, is a user decision after the probe.
+
+## Status: implemented and applied, 2026-11-17
+
+- **Branch:** `t3/fix-clustering-review-findings`, HEAD `9b05d3a`, on base snapshot `2a9bab2` (the main checkout's uncommitted working state at `4cf25da`).
+- **Applied:** to the main checkout's working tree as an uncommitted patch, like the code/attacks port. Patch sha256 `98340412cf8f6c57d0f678f51819ae557c335885e0a2feb6338c25f942128a44`, 45 files. Checked file by file against the branch.
+- **Implementation and review:** implemented by gpt-6.1-sol, with Patch A and Patch B written in parallel and then merged. Opus reviewed four times; the findings were fixed in two rounds plus final fixes.
+- **Deviations from the plan:**
+  - Delivery writes the sealed confirmation's test partition. The receipt is bound to the frozen champion's experiment, source, pipeline and seed. The refit replay is recorded but does not block delivery.
+  - The anchored smoke step runs in a spawned child with its own deadline (`search.anchoredSmokeSeconds`, 300 s). The outer smoke timeout grows by that amount only for anchored batch clustering.
+- **Tests on the branch:**
+
+  | Check | Result |
+  |---|---|
+  | typecheck | pass |
+  | `test:py` | 18 + 139 + 5 OK |
+  | full `bun test` | 774 pass, 3 skip, 2 fail |
+  | `test:fast` in the main checkout | 642 pass, 0 fail |
+
+  Both full-suite failures predate this patch:
+  - `evidence_selection.test.ts` `primaryMetric` also fails on the unchanged base.
+  - `scouts.test.ts:427` is a known ordering race; it passed 3 of 3 reruns.
+
+### Probes with the frozen Google champions (no agent)
+
+| Task | Folds | Trial ARI (old) | Test clusters per fit | Agreement | Sealed ARI [95% CI] | Delivered | Wall time |
+|---|---|---|---|---|---|---|---|
+| code2 | 4×3, 132 + 355 rows | 0.867 (0.901) | 5–6 | mean 0.64, min 0.22 | 0.840 [0.713, 0.940] | 5 clusters, replay identical | 5.5 min |
+| code1 | 4×3, 200 + 1,000 rows | **0.585 (0.697)** | **82–87** | mean 0.97 | 0.574 [0.509, 0.687], gap 0.011 | 85 clusters, replay identical | 6.1 min |
+
+- On code1 the smoke check reported "87 clusters, singleton fraction 0.019" after 38 s, before any trial.
+- The code1 digest showed pair recall 0.455, which means false splits.
+- The first code2 probe showed that a 10 s anchored smoke deadline is too short for real data: one fit takes about 18 s. That is why the setting exists.
+- The trial worker peaked at 1.7 GB on code1.
+
+### Known setup gap
+
+`./dev setup` does not provision `zip`, which workspace preparation needs. Fresh checkouts need `.tools/zip` copied in.
