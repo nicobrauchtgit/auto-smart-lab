@@ -60,7 +60,7 @@ export async function runConfirmation(options: ConfirmationOptions): Promise<Con
   const prepared = await inspectRefitCandidate({ taskId, projectRoot, solutionsRoot: workspace.solutionsRoot,
    pythonExecutable: options.pythonExecutable, environmentFingerprint: options.environmentFingerprint, env: options.env,
    taskConfiguration: workspace.configuration, trainZip: workspace.trainZip, testZip: workspace.testZip,
-   labelsPath: workspace.originalTargetsPath, signal: options.signal });
+   labelsPath: workspace.originalTargetsPath, sealedIds: workspace.split.sealedIds, signal: options.signal });
   assertNoWorkers(join(workspace.root, "training"));
   const chosen = JSON.parse(tagMessage(workspace.solutionsRoot, `champion/${taskId}`)!.message);
   assertNoWorkers(chosen.trainingRoot);

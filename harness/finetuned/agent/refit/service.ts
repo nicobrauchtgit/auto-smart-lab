@@ -31,6 +31,8 @@ export interface RefitOptions {
  taskConfiguration: TaskConfiguration;
  /** The original targets file (binary labels or families); absent for label-free tasks. */
  labelsPath?: string; trainZip: string; testZip: string;
+ /** Sealed row IDs from the solve workspace; read from the stored split when absent. */
+ sealedIds?: readonly string[];
  trainingRoot?: string; environmentFingerprint: string; env: Record<string, string>;
  /** Recorded in the hand-over manifest. */
  model?: string;
@@ -172,9 +174,9 @@ export async function inspectRefitCandidate(options: RefitOptions): Promise<Refi
   measurement: Object.fromEntries(Object.entries(measurement!).filter(([key]) => !["sampleManifestPath", "sampleManifestSha256", "anchorManifestPath", "anchorManifestSha256", "evidence", "evidenceManifestSha256"].includes(key))) },
   devZip, devManifest: manifest };
  if (options.taskConfiguration.kind === "clustering" && options.taskConfiguration.execution === "batch") {
-  const taskData = readTaskData(options.taskId, options.projectRoot);
-  if (!taskData) throw new Error("Anchored refit requires workspace split");
-  inputs.sealedIds = [...taskData.split.sealedIds].sort();
+  const sealed = options.sealedIds ?? readTaskData(options.taskId, options.projectRoot)?.split.sealedIds;
+  if (!sealed) throw new Error("Anchored refit requires workspace split");
+  inputs.sealedIds = [...sealed].sort();
  }
  const data = JSON.parse(python(options, [WORKER, "--inspect-json", JSON.stringify(inputs)]));
  python(options, [WORKER, "--evidence", trial.directory]);

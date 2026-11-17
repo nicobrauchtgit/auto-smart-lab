@@ -70,7 +70,8 @@ def build_pipeline(context):
  const started = await training.service.start(request);
  expect(await until(() => training.supervisor.status(started.id).status !== "running")).toBe(true);
  await training.service.finalize(started.id); await training.close();
- const refit = { taskId: "fixture", projectRoot: p.root, solutionsRoot: p.solutionsRoot, pythonExecutable: PYTHON,
+ // The fixture writes no stored split, so refit receives the workspace sealed IDs directly.
+ const refit = { taskId: "fixture", projectRoot: p.root, solutionsRoot: p.solutionsRoot, pythonExecutable: PYTHON, sealedIds: ids,
   taskConfiguration: workspace.configuration, trainZip: full.zipPath, testZip, labelsPath: full.labelsPath, environmentFingerprint: python.fingerprint, env: trainingEnvironment() };
  const options = { workspace, pythonExecutable: PYTHON, environmentFingerprint: python.fingerprint, env: trainingEnvironment(),
   sandboxCommand: (command: string[], input: { directory: string; sourceRoots: readonly string[] }) => trainingSandboxCommand(policy, command, input) };

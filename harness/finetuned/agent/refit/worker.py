@@ -98,7 +98,8 @@ def validate(directory, freeze):
         check = result['confirmationPartition']
         assert isinstance(check['matches'], bool) and isinstance(check['adjustedRandIndex'], (int, float))
     else:
-        assert result['deliveredPredictionSource'] == 'refit'
+        # Results written before confirmation-backed delivery carry no source field; they are refit deliveries.
+        assert result.get('deliveredPredictionSource', 'refit') == 'refit'
     return result
 
 
