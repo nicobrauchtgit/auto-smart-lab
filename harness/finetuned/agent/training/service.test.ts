@@ -24,7 +24,7 @@ test("search status and history omit repeated full fold records while retaining 
   meanScore: .99, foldResults, foldScores: Array(15).fill(.99) })), nextStep: "Confirm the selected configuration" };
  const reportPath = join(directory, "search-report.json"); writeFileSync(reportPath, JSON.stringify(report));
  const reportBytes = readFileSync(reportPath, "utf8");
- writeFileSync(join(directory, "trial-result.json"), JSON.stringify({ status: "completed", metrics: { balancedAccuracy: .99 },
+ writeFileSync(join(directory, "trial-result.json"), JSON.stringify({ status: "completed", promotionIneligibleReason: "domain violation", metrics: { balancedAccuracy: .99 },
   diagnostics: { kind: "classification", folds: foldResults, foldSpread: { mean: .99, std: .001 }, fitSeconds: 100 } }));
  const service = Object.create(TrainingService.prototype) as TrainingService;
  (service as any).trials = new Map([["trial", { id: "trial", directory, request: { hypothesis: "test", search: {}, scope: { kind: "promotion" } } }]]);
@@ -38,6 +38,7 @@ test("search status and history omit repeated full fold records while retaining 
  const history = service.leaderboard() as any[];
  expect(Buffer.byteLength(JSON.stringify(history))).toBeLessThan(2048);
  expect(history[0].diagnostics.foldSpread.mean).toBe(.99);
+ expect(history[0].promotionIneligibleReason).toBe("domain violation");
  expect(history[0].diagnostics.folds).toBeUndefined();
  expect(readFileSync(reportPath, "utf8")).toBe(reportBytes);
 });

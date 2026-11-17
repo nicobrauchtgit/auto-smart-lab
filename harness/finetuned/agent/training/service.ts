@@ -1185,6 +1185,7 @@ export class TrainingService {
                 selection: selectionSummary(result),
 				diagnostics: result?.diagnostics ? compactDiagnostics({ ...result, diagnostics: { ...result.diagnostics, folds: undefined } }) : undefined,
 				promotionEligible: result?.promotionEligible ?? false,
+                ...(result?.promotionIneligibleReason ? { promotionIneligibleReason: result.promotionIneligibleReason } : {}),
 				...(trial.source ? {
 					commit: trial.source.commit.slice(0, 12), subject: trial.source.subject,
 					...(trial.source.branch ? { branch: trial.source.branch } : {}),

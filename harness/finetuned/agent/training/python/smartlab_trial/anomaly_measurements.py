@@ -30,6 +30,10 @@ def vector_summary(values: Any, rows: int) -> dict[str, Any]:
 
 def labelled(truth: list[int], raw_scores: Any, predictions: list[int] | None,
              direction: str, anomaly_label: int) -> dict[str, Any]:
+    from .anomaly_domain import decision_domain_reason
+    reason = decision_domain_reason(predictions, anomaly_label)
+    if reason:
+        predictions = None
     values = finite_vector(raw_scores, len(truth), "Evidence scores")
     oriented = values if direction == "higher_is_anomalous" else -values
     result = {"rows": len(truth), "positiveRows": sum(truth), "positivePrevalence": float(np.mean(truth)),
@@ -49,6 +53,8 @@ def labelled(truth: list[int], raw_scores: Any, predictions: list[int] | None,
                                     "thresholdAboveMaximum": bool(not np.isfinite(thresholds[best]))}
         if predictions is not None:
             result["predictionMetrics"] = {"available": True, **_measure(truth, [int(label == anomaly_label) for label in predictions])}
+    if reason:
+        result["predictionMetrics"] = unavailable(reason)
     return result
 
 

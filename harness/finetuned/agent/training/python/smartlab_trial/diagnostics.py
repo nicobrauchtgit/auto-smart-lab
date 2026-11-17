@@ -117,6 +117,10 @@ def clustering(truth: Sequence[Any] | None, predicted: Sequence[int]) -> dict[st
 
 def anomaly(scores: Sequence[float], predicted: Sequence[int] | None, *,
             direction: str, anomaly_label: int) -> dict[str, Any]:
+    from .anomaly_domain import decision_domain_reason
+    reason = decision_domain_reason(predicted, anomaly_label)
+    if reason:
+        predicted = None
     values = finite_vector(scores, len(scores), "Anomaly scores")
     oriented = values if direction == "higher_is_anomalous" else -values
     sensitivity = []
@@ -130,7 +134,7 @@ def anomaly(scores: Sequence[float], predicted: Sequence[int] | None, *,
                             "aboveWindowRows": int(np.sum(oriented >= threshold + window)),
                             "nearThresholdRows": int(np.sum(np.abs(oriented - threshold) <= window)),
                             "window": window})
-    return {"proxyEvidence": True, "scoreDirection": direction,
+    return {**({"predictionContractViolation": reason} if reason else {}), "proxyEvidence": True, "scoreDirection": direction,
             "scoreQuantiles": {str(q): float(np.quantile(values, q)) for q in (0, .01, .25, .5, .75, .99, 1)},
             "tieFraction": 1 - len(np.unique(values)) / len(values), "constantScores": bool(np.ptp(values) == 0),
             "predictedAnomalyFraction": float(np.mean(np.asarray(predicted) == anomaly_label)) if predicted is not None else None,

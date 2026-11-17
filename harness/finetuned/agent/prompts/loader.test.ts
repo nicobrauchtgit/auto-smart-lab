@@ -78,7 +78,8 @@ test("the solve opening selects the task contract of the configured kind", () =>
 		anomaly: { scoreMethod: "score_samples", scoreDirection: "lower_is_anomalous", anomalyLabel: -1 } };
     const configured = JSON.parse(readFileSync(new URL("../../pipeline.config.json", import.meta.url), "utf8")).pipeline.tasks.attacks1;
     const attacks = prepareLeadPrompts(snapshot, { ...base, configuration: parseTaskConfiguration(configured) });
-    assert.match(attacks.prompt, /returning `1` for anomalies/);
+    assert.match(attacks.prompt, /predict returns 1 for anomalies and 0 for normal rows/);
+    assert.match(attacks.prompt, /never returns[\s\S]*every validation row/);
 	const detected = prepareLeadPrompts(snapshot, { ...base, configuration: anomaly });
 	assert.match(detected.prompt, /returning `-1` for anomalies/);
 	assert.match(detected.prompt, /lower is anomalous/);

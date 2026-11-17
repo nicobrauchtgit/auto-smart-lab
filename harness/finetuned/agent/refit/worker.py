@@ -156,6 +156,10 @@ def fit_samples(estimator, freeze, events):
     assert len(values) == len(test) and all(value == int(value) for value in values), 'Predictions must be integer labels'
     values = [int(value) for value in values]
     if task['kind'] == 'anomaly_detection':
+        from smartlab_trial.anomaly_domain import decision_domain_reason
+        reason = decision_domain_reason(values, task['anomaly']['anomalyLabel'])
+        if reason:
+            raise ValueError(reason)
         # The submitted domain is 1 for anomalies, whatever label the pipeline uses.
         values = [1 if value == task['anomaly']['anomalyLabel'] else 0 for value in values]
     return values, fit_rows, len(test)

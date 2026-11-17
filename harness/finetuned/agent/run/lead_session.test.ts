@@ -9,6 +9,8 @@ import { readProgress, writeProgress, renderProgress, type LeadProgress } from '
 import { loadPromptSnapshot } from '../prompts/loader.js';
 import { ScoutBudget } from '../team/budget.js';
 import { spamConfiguration } from '../pipeline/task_configuration.testing.js';
+import { PYTHON, WORKER } from '../training/testing.js';
+import { dirname } from 'node:path';
 import { trialSupervisionDirectory } from '../training/results.js';
 const prompts = loadPromptSnapshot();
 function fixture(canonical = false) {
@@ -435,6 +437,15 @@ for (const mode of ['repair', 'unrelated', 'not-rerun', 'defect', 'edited-after-
 });
 
 test('ineligible decision reason appears in lead trial feedback', async()=>{
+ const summary = JSON.parse(execFileSync(PYTHON, ['-c', `
+import json, time
+from types import SimpleNamespace
+from worker import _summarise
+invocation = SimpleNamespace(scope=SimpleNamespace(kind='promotion'), measurement={'kind':'anomaly_detection','anomalyLabel':1}, source=None, experiment_id='measured')
+rows = [{'id':str(i),'prediction':v,'repeat':0,'fold':0,'score':i} for i,v in enumerate([-1,1])]
+print(json.dumps(_summarise(invocation, [], [], rows, ['0','1'], None, {'sha256':'fixture'}, time.monotonic(), False)))
+`], {cwd:dirname(WORKER), encoding:'utf8'}));
+ expect(summary.promotionIneligibleReason).toBe('predict returned values outside the delivered domain {0, 1}');
  const f=fixture();const path=join(f.root,'lead/PROGRESS.json');let feedback=0,confirmations=0;let feedbackText='';let finished:any;let active=new AbortController();
  const progress:LeadProgress={schemaVersion:1,taskId:'spam1',datasetSha256:undefined,runId:'original',trainingRoot:join(f.root,'training'),status:'running',startedAt:new Date().toISOString(),sessions:[],champion:{experimentId:'obsolete'},trials:[{experimentId:'measured',hypothesis:'recovered trial',status:'running',startedAt:new Date().toISOString()}],holdout:[],budget:{limit:80,used:7},scoutCalls:0};
  writeProgress(path,progress);
@@ -442,7 +453,7 @@ test('ineligible decision reason appears in lead trial feedback', async()=>{
  const view:any={id:'measured',status:'exited',elapsedSeconds:1};
  const dependencies:any={verifiedCandidate:async()=>({experimentId:"measured",commit:f.commit,tree:"tree",sourceRoot:f.root}),
  prepareData:()=>f.data,readPython:()=>({prefix:f.root,executable:'/bin/false',fingerprint:'f'}),sandbox:()=>({executable:'/bin/false',cwd:f.root,mounts:[],env:{},agentRoot:join(f.root,'agent')}),prepareRepository:()=>({initialized:false,head:f.commit,branch:'master'}),environmentTool:()=>({name:'python_environment'}),
- createTraining:(opts:any)=>{finished=opts.onTrialFinished;return {ready:async()=>{await finished('measured',view);await finished('measured',view);},close:async()=>{},tools:[],toolPrompts:[],service:{describe:()=>({status:'completed',promotionIneligibleReason:'predict never returned the declared anomaly label 1 on validation rows',balancedAccuracy:1,noiseVerdict:'clear improvement',championComparison:{status:'completed'},foldScores:[{metrics:{balancedAccuracy:1}}]})},supervisor:{list:()=>[view]},bindSession:()=>{}};},
+ createTraining:(opts:any)=>{finished=opts.onTrialFinished;return {ready:async()=>{await finished('measured',view);await finished('measured',view);},close:async()=>{},tools:[],toolPrompts:[],service:{describe:()=>({status:'completed',promotionIneligibleReason:summary.promotionIneligibleReason,balancedAccuracy:1,noiseVerdict:'clear improvement',championComparison:{status:'completed'},foldScores:[{metrics:{balancedAccuracy:1}}]})},supervisor:{list:()=>[view]},bindSession:()=>{}};},
  confirm:async()=>{confirmations++;return {artifact:{kind:'holdout_confirmation',path:join(f.root,'confirmation.json'),sha256:'a'.repeat(64)},summary:{status:'completed',verdict:'no significant improvement',queryCount:1},privateScore:0.123456,scoutTranscript:'PRIVATE SCOUT'};},
  scouts:()=>({tool:{name:'scout'},report:async()=>{throw Error('cancelled lead must not validate');}}),refit:async()=>{throw Error('cancelled lead must not refit');},collectResults:async()=>({valid:false,trials:[],artifacts:[],errors:[]}),
  runAgentSession:async(opts:any)=>{active.abort();return {output:'cancelled',agentRunId:'fixture'};}};
@@ -451,6 +462,6 @@ test('ineligible decision reason appears in lead trial feedback', async()=>{
   await runLeadSession('spam1',{taskConfiguration:spamConfiguration(),progressPath:path,signal:active.signal,dependencies,
    report:{event:(type:string,data:any)=>{if(type==='lead_trial_feedback'){feedback++;feedbackText=data.text;}},input(){},agentIdentity(){return {};},observation(){return {};} } as any});
   expect(feedback).toBe(1);
-  expect(feedbackText).toContain('not eligible for promotion: predict never returned the declared anomaly label 1 on validation rows');
+  expect(feedbackText).toContain('not eligible for promotion: predict returned values outside the delivered domain {0, 1}');
  } finally { f.close(); }
 });

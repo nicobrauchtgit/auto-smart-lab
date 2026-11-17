@@ -109,5 +109,16 @@ def build_pipeline(): return Model()
    expect(result.notice).toContain(`predict ${frequency} returned the declared anomaly label 1`);
    expect(training.supervisor.list()).toHaveLength(0);
   }
+  writeFileSync(join(project.solutionsRoot, "tasks/fixture.py"), `class Model:
+ def fit(self, X): return self
+ def score_samples(self, X): return list(range(len(X)))
+ def predict(self, X): return [-1 if i % 2 else 1 for i in range(len(X))]
+def build_pipeline(): return Model()
+`);
+  commitAll(project.solutionsRoot, "Invalid detector domain");
+  const invalid = await training.service.smoke({ schemaVersion: 2, hypothesis: "domain contract", pipeline: { module: "tasks/fixture.py", factory: "build_pipeline" },
+   cv: { kind: "builtin", scheme: "kfold", folds: 3, repeats: 1 }, scope: { kind: "promotion" } });
+  expect(invalid.passed).toBe(false);
+  expect(JSON.stringify(invalid)).toContain("predict returned values outside the delivered domain {0, 1}");
  } finally { await training.close(); }
 }, 60000);

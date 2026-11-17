@@ -109,9 +109,10 @@ def _run_fold(invocation: Invocation, pipeline_factory: Any, fold: ConcreteFold,
         predictions = estimator.predict(validation_frame) if callable(getattr(estimator, "predict", None)) else None
     if predictions is not None:
         values = diagnostics.finite_vector(predictions, len(validation_frame), "Predictions")
-        if np.any(values != np.floor(values)):
+        delivered_binary = task_kind == "anomaly_detection" and invocation.measurement["anomalyLabel"] == 1
+        if np.any(values != np.floor(values)) and not delivered_binary:
             raise InvocationError("Predictions must be integer labels")
-        predictions = values.astype(int).tolist()
+        predictions = values.tolist() if delivered_binary and np.any(values != np.floor(values)) else values.astype(int).tolist()
     fixed_selection_promotion = ((invocation.measurement or {}).get("selection") and invocation.scope.kind == "promotion" and invocation.search is None)
     if (task_kind != "anomaly_detection" or fixed_selection_promotion) and predictions is None:
         raise InvocationError("Pipeline must supply predictions for this measurement kind")
@@ -248,10 +249,12 @@ def _summarise(invocation: Invocation, folds: Sequence[ConcreteFold], completed:
     if task_kind == "anomaly_detection" and oof_rows:
         label = invocation.measurement["anomalyLabel"]
         decisions = [row["prediction"] for row in oof_rows]
-        reason = None
-        if all(value != label for value in decisions):
+        from smartlab_trial.anomaly_domain import decision_domain_reason
+        reason = decision_domain_reason([value for value in decisions if value != ""], label)
+        complete_decisions = all(value != "" for value in decisions)
+        if not reason and complete_decisions and all(value != label for value in decisions):
             reason = f"predict never returned the declared anomaly label {label} on validation rows"
-        elif all(value == label for value in decisions):
+        elif not reason and complete_decisions and all(value == label for value in decisions):
             reason = f"predict returned the declared anomaly label {label} for every validation row"
         if reason:
             summary["promotionEligible"] = False

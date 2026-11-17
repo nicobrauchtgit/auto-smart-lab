@@ -49,6 +49,33 @@ class SmokeTests(unittest.TestCase):
             self.assertTrue(result['passed'])
             self.assertEqual(result['sample']['anomalyDecision'], {'label': 1, 'frequency': frequency})
 
+    def test_anomaly_domain_fails_in_output_phase(self):
+        document = self.document(20, kind='anomaly_detection')
+        document['measurement'].update(scoreMethod='score_samples', scoreDirection='lower_is_anomalous', anomalyLabel=1)
+        code = MODEL.format(fit='pass', label=-1).replace(' def predict', ' def score_samples(self, X): return list(range(len(X)))\n def predict')
+        (self.root / 'pipeline.py').write_text(code)
+        result = outcome(document)
+        self.assertFalse(result['passed'])
+        self.assertEqual(result['phase'], 'output')
+        self.assertIn('outside the delivered domain {0, 1}', result['error']['message'])
+        document['measurement']['anomalyLabel'] = -1
+        self.assertTrue(outcome(document)['passed'])
+
+    def test_batch_anomaly_checks_fit_predict_without_calling_predict(self):
+        document = self.document(20, kind='anomaly_detection', execution='batch')
+        document['measurement'].update(scoreMethod='score_samples', scoreDirection='lower_is_anomalous', anomalyLabel=1)
+        for value in (0, -1):
+            (self.root / 'pipeline.py').write_text(
+                'class Model:\n def fit_predict(self, X): return [' + str(value) + '] * len(X)\n'
+                ' def predict(self, X): raise AssertionError("predict after fit_predict")\n'
+                'def build_pipeline(): return Model()\n')
+            result = outcome(document)
+            self.assertEqual(result['passed'], value == 0)
+            if value == 0:
+                self.assertEqual(result['sample']['anomalyDecision']['frequency'], 'never')
+            else:
+                self.assertEqual(result['phase'], 'output')
+
     def test_sample_supports_ordinary_pipelines(self):
         # A KMeans with dozens of clusters or a min_df of 50 needs more than a handful of rows.
         document = self.document(3000)

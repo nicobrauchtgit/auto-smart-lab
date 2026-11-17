@@ -10,7 +10,7 @@ export function taskContract(prompts: PromptSnapshot, taskId: string, configurat
    ? prompts.render("team.lead-task-clustering", { taskId, execution: configuration.execution, splitGuidance: configuration.holdout === "none" ? "" : prompts.render(configuration.holdout === "group" ? "team.lead-split-group" : "team.lead-split-stratified", {}).text })
    : prompts.render("team.lead-task-anomaly_detection", { taskId, execution: configuration.execution,
     scoreMethod: configuration.anomaly!.scoreMethod, scoreDirection: configuration.anomaly!.scoreDirection.replaceAll("_", " "),
-    anomalyLabel: String(configuration.anomaly!.anomalyLabel) });
+    decisionContract: configuration.anomaly!.anomalyLabel === 1 ? prompts.render("team.lead-anomaly-binary", {}).text : prompts.render("team.lead-anomaly-label", { anomalyLabel: String(configuration.anomaly!.anomalyLabel) }).text });
  const contracts = [contract, ...(configuration.kind === "clustering" && configuration.execution === "batch" ? [prompts.render("team.lead-task-clustering-batch", {})] : [])];
  if (configuration.selection) return [...contracts, prompts.render("team.lead-evidence-selection", { evidencePath, metric: configuration.selection.metric })];
  return configuration.metric === "none" ? [...contracts, prompts.render("team.lead-label-free", {})] : contracts;

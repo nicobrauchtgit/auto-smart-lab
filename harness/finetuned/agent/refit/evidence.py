@@ -35,6 +35,8 @@ def validate_samples(directory, document, invocation):
     assert len(completed) == len(folds) and all(type(row['prediction']) is int for row in rows)
     result = json.loads((directory / 'trial-result.json').read_text())
     if kind == 'anomaly_detection':
+        from smartlab_trial.anomaly_domain import decision_domain_reason
+        assert not decision_domain_reason([row['prediction'] for row in rows], invocation.measurement['anomalyLabel']), 'predict returned values outside the delivered domain {0, 1}'
         from smartlab_trial.anomaly_measurements import evidence
         import numpy as np
         metadata = frame.attrs['diagnosticEvidence']

@@ -58,6 +58,31 @@ class EvidenceSelection(unittest.TestCase):
             doc['request']['search'] = {'space': {'mode': {'type': 'categorical', 'choices': ['anomaly']}}, 'sampler': 'grid'}
         return self.execute(doc)
 
+    def test_reverse_detector_domain_blocks_fixed_and_search_promotion(self):
+        for search in (False, True):
+            with self.subTest(search=search):
+                result = self.decision_trial('-1 if x[0] > 1 else 1', search=search)
+                self.assertEqual(result['status'], 'completed')
+                self.assertEqual(result['metrics']['selectionScore'], 1)
+                self.assertFalse(result['promotionEligible'])
+                self.assertEqual(result['promotionIneligibleReason'],
+                    'predict returned values outside the delivered domain {0, 1}')
+                # Each invocation uses its own durable output location.
+                shutil.rmtree(self.fixture.root / 'generic')
+
+    def test_missing_predictions_preserve_evidence_reason(self):
+        for selection in (False, True):
+            doc = self.document()
+            if not selection:
+                del doc['measurement']['selection']
+            module = self.fixture.root / 'solutions/generic.py'
+            module.write_text(module.read_text().replace('    def predict(', '    def hidden_predict('))
+            doc['request']['scope'] = {'kind': 'pilot'}
+            result = self.execute(doc)
+            self.assertEqual(result['promotionIneligibleReason'],
+                'incomplete_selection_evidence' if selection else 'unlabelled_proxy_evidence')
+            shutil.rmtree(self.fixture.root / 'generic')
+
     def test_missing_declared_decisions_block_promotion_despite_perfect_ap(self):
         result = self.decision_trial('0')
         self.assertEqual(result['status'], 'completed')

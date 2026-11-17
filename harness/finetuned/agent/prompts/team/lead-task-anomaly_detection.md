@@ -22,7 +22,6 @@ Execution for this task: `{{execution}}`.
 
 The harness reads anomaly scores through `{{scoreMethod}}`, where
 `{{scoreDirection}}`. The terminal refit submits your `predict` output, so the
-final pipeline needs `predict`, returning `{{anomalyLabel}}` for anomalies; any
-other value counts as normal.
+final pipeline needs `predict`. {{decisionContract}}
 
-A trial whose predict never returns the declared anomaly label on validation rows cannot become champion.
+A trial whose predict never returns the declared anomaly label on validation rows, or returns it for every validation row, cannot become champion.

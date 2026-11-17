@@ -11,6 +11,7 @@ import multiprocessing
 import os
 from smartlab_trial.batch import batch_fit_predict, load_anchor
 from smartlab_trial.diagnostics import clustering
+from smartlab_trial.anomaly_domain import decision_domain_reason
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -64,6 +65,7 @@ def _run(document, root, frame, targets, rows):
         _inject_random_states(estimator, 0)
     except BaseException as error:
         raise SmokeFailure('build', error) from error
+    batch_decisions = measurement['execution'] == 'batch' and callable(getattr(estimator, 'fit_predict', None))
     phase = 'fit'
     try:
         if measurement['kind'] == 'classification':
@@ -91,16 +93,22 @@ def _run(document, root, frame, targets, rows):
             raise ValueError('Smoke input IDs were changed or duplicated')
     except ValueError as error:
         raise SmokeFailure('output', error) from error
-    if measurement['kind'] == 'anomaly_detection' and callable(getattr(estimator, 'predict', None)):
+    if measurement['kind'] == 'anomaly_detection' and (batch_decisions or callable(getattr(estimator, 'predict', None))):
         try:
-            decisions = np.asarray(estimator.predict(test))
+            decisions = values if batch_decisions else np.asarray(estimator.predict(test))
+        except BaseException as error:
+            raise SmokeFailure('predict', error) from error
+        try:
             if decisions.shape != (len(test),) or not np.isfinite(decisions.astype(float)).all():
                 raise ValueError('Smoke decisions must be finite and row aligned')
             label = measurement['anomalyLabel']
+            reason = decision_domain_reason(decisions, label)
+            if reason:
+                raise ValueError(reason)
             if len(decisions) and (np.all(decisions != label) or np.all(decisions == label)):
                 sizes['anomalyDecision'] = {'label': label, 'frequency': 'never' if np.all(decisions != label) else 'always'}
         except BaseException as error:
-            raise SmokeFailure('predict', error) from error
+            raise SmokeFailure('output', error) from error
     return sizes
 
 

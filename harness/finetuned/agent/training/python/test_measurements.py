@@ -48,6 +48,18 @@ def build_pipeline(context):
 
 
 class Signals(unittest.TestCase):
+    def test_invalid_anomaly_domain_has_no_delivered_prediction_metrics(self):
+        from smartlab_trial.anomaly_measurements import labelled
+        from smartlab_trial.diagnostics import anomaly
+        reason = 'predict returned values outside the delivered domain {0, 1}'
+        signals = anomaly([0., 1.], [-1, 1], direction='higher_is_anomalous', anomaly_label=1)
+        self.assertIsNone(signals['predictedAnomalyFraction'])
+        self.assertEqual(signals['predictionContractViolation'], reason)
+        measured = labelled([0, 1], [0., 1.], [-1, 1], 'higher_is_anomalous', 1)
+        self.assertEqual(measured['ranking']['averagePrecision'], 1)
+        self.assertFalse(measured['predictionMetrics']['available'])
+        self.assertEqual(measured['predictionMetrics']['reason'], reason)
+
     def test_split_merge_diagnostics_and_noise_coverage(self):
         truth = ["a", "a", "b", "b"]
         merged = diagnostics.clustering(truth, [0, 0, 0, 0])
