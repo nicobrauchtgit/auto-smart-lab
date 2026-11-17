@@ -8,13 +8,13 @@ const mean = (values: unknown[]) => { const ns = numbers(values); return ns.leng
 const range = (values: unknown[]) => { const ns = numbers(values); return ns.length ? `${Math.min(...ns)}-${Math.max(...ns)}` : "unavailable"; };
 const available = (value: unknown) => object(value).available === false ? {} : object(value);
 
-/** Digest labels are factual measurement labels. */
 /** Accepts compact describe results, including optional anchored-batch diagnostics. */
 export function checkpointDigest(kind: string, described: unknown): string | undefined {
  const folds = object(object(described).diagnostics).folds;
  return Array.isArray(folds) && folds.some(fold => fold && (fold.status === undefined || fold.status === "completed")) ? trialDigest(kind, described) : undefined;
 }
 
+/** Digest labels are factual measurement labels. */
 export function trialDigest(kind: string, described: unknown): string {
  const result = object(described), diagnostics = available(result.diagnostics);
  const folds: Detail[] = (Array.isArray(diagnostics.folds) ? diagnostics.folds : [])

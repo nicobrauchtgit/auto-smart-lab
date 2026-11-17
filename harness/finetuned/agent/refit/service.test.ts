@@ -66,7 +66,7 @@ test("refit freezes exact champion with fixed confirmation params, fits all rows
  const output = await runRefit(f.options);
  expect(output.validation.valid).toBe(true);
  const result = JSON.parse(readFileSync(join(prepared.directory, "result.json"), "utf8"));
- expect(result).toMatchObject({ trainRows: 140, testRows: 7, fitCalls: 1, source: { commit: f.head }, pipeline: { estimatorParams: { model__C: 0.75 } } });
+ expect(result).toMatchObject({ trainRows: 140, testRows: 7, fitCalls: 1, deliveredPredictionSource: "refit", source: { commit: f.head }, pipeline: { estimatorParams: { model__C: 0.75 } } });
  expect(result.metrics).toBeUndefined(); expect(result.promotionEligible).toBeUndefined();
  expect(readFileSync(join(prepared.directory, "predictions.csv"), "utf8").trim().split("\n")).toHaveLength(8);
  const hash = hashFile(join(prepared.directory, "result.json"));
@@ -111,21 +111,29 @@ test("refit rejects missing, uneligible, mismatched and drifted chosen evidence/
 }, 90_000);
 
 test("opaque terminal fit cancellation retains freeze, retries same identity, and refuses later development fits", async () => {
- const f = await fixture(2);
+ const f = await fixture(0, false, true);
  const controller = new AbortController();
- const promise = runRefit({ ...f.options, signal: controller.signal });
  const prepared = await prepareRefit(f.options);
+ const promise = runRefit({ ...f.options, signal: controller.signal });
+ try {
  expect(await until(() => existsSync(join(prepared.directory, "events.jsonl")) && readFileSync(join(prepared.directory, "events.jsonl"), "utf8").includes('terminal_fit'))).toBe(true);
  controller.abort(new Error("fixture cancellation"));
  await expect(promise).rejects.toThrow("fixture cancellation");
  expect(existsSync(prepared.terminalPath)).toBe(true);
  expect(existsSync(join(prepared.directory, "result.json"))).toBe(false);
+ writeFileSync(join(f.options.projectRoot, "refit-release"), "released");
  await runRefit(f.options);
  expect(JSON.parse(readFileSync(join(prepared.directory, "attempt.json"), "utf8")).attempt).toBe(2);
  const training = createHarnessTraining({ root: join(f.root, "new"), env: trainingEnvironment(), pythonExecutable: PYTHON, projectRoot: f.options.projectRoot,
   solutionsRoot: f.solutionsRoot, taskId: "fixture", datasetSha256: f.datasetSha256, rootSeed: 13, zipPath: f.zipPath, measurement: f.measurement, prompts: loadPromptSnapshot(), workerPath: WORKER });
  try { await expect(training.service.start(f.request)).rejects.toThrow("terminal"); } finally { await training.close(); }
  expect(f.events.some(e => e.type === "experiment_stop_requested")).toBe(true);
+ } finally {
+  controller.abort(new Error("fixture cleanup"));
+  writeFileSync(join(f.options.projectRoot, "refit-release"), "released");
+  await promise.catch(() => undefined);
+ }
+
 }, 90_000);
 
 
@@ -166,6 +174,7 @@ test("dead opaque worker restarts from the same freeze and concurrent invocation
  const inputPath = join(f.options.projectRoot, "refit-options.json");
  const { report, ...options } = f.options; writeFileSync(inputPath, JSON.stringify(options));
  const child = spawn(process.execPath, [join(import.meta.dir, "fixtures-live.ts"), inputPath], { env: trainingEnvironment(), stdio: "ignore" });
+ try {
  expect(await until(() => existsSync(join(prepared.directory, "events.jsonl")) && readFileSync(join(prepared.directory, "events.jsonl"), "utf8").includes('terminal_fit'))).toBe(true);
  const exited = new Promise(resolve => child.once("exit", resolve)); child.kill("SIGKILL"); await exited;
  const { ownedProcessAlive, liveGroup } = await import("../experiments/ownership.js");
@@ -182,6 +191,14 @@ test("dead opaque worker restarts from the same freeze and concurrent invocation
  expect(hashFile(prepared.terminalPath)).toBe(frozenHash);
  expect(JSON.parse(readFileSync(join(prepared.directory, "attempt.json"), "utf8")).attempt).toBe(2);
  expect(JSON.parse(readFileSync(join(prepared.directory, "result.json"), "utf8")).fitCalls).toBe(1);
+ } finally {
+  writeFileSync(join(f.options.projectRoot, "refit-release"), "released");
+  if (child.exitCode === null && child.signalCode === null) {
+   const exited = new Promise(resolve => child.once("exit", resolve));
+   child.kill("SIGKILL"); await exited;
+  }
+ }
+
 }, 90_000);
 
 test("authoritative chosen tag wins when a different eligible trial has a higher score", async () => {

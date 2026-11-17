@@ -6,6 +6,7 @@ export const PROMPTS = {
  "team.board-context": { file: "team/board-context.md", variables: ["recall"] },
  "team.skill-data": { file: "team/skills/scout-data.md", variables: [] },
  "team.skill-ideas": { file: "team/skills/scout-ideas.md", variables: [] },
+ "team.skill-validation-batch": { file: "team/skill-validation-batch.md", variables: [] },
  "team.skill-validation": { file: "team/skills/scout-validation.md", variables: [] },
  "team.probe-question": { file: "team/probe-question.md", variables: [] },
  "team.probe-validation": { file: "team/probe-validation.md", variables: [] },

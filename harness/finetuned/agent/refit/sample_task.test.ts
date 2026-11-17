@@ -116,8 +116,9 @@ test.skipIf(!hasZip)("a declared clustering task runs from sealed families throu
 	} finally { await training.close(); }
 
  await runConfirmation({workspace:{...workspace,solutionsRoot:project.solutionsRoot}, pythonExecutable:PYTHON,environmentFingerprint:"fixture-environment",env:trainingEnvironment()});
+ const events: {name:string; data:any}[] = [];
 	const refit = await runRefit({ taskId: "fixture", projectRoot: project.root, solutionsRoot: project.solutionsRoot, pythonExecutable: PYTHON,
-		taskConfiguration: CLUSTERING, labelsPath: join(taskDir, "data", "apk-train.labels"),
+		report: {event(name:string,data:any){events.push({name,data});},input(){},agentIdentity(){return {};}} as any, taskConfiguration: CLUSTERING, labelsPath: join(taskDir, "data", "apk-train.labels"),
 		trainZip: join(taskDir, "data", "apk-train.zip"), testZip: join(taskDir, "data", "apk-test.zip"),
 		environmentFingerprint: "fixture-environment", env: trainingEnvironment() });
 	expect(refit.validation.valid).toBe(true);
@@ -132,8 +133,9 @@ test.skipIf(!hasZip)("a declared clustering task runs from sealed families throu
 	expect(new Set(clusters.values()).size).toBe(3);
 	const terminal = JSON.parse(readFileSync(refit.artifacts.find(a => a.kind === "terminal_refit_result")!.path, "utf8"));
 	// All original training rows, sealed family included, are bound by the freeze; the batch fit used sealed and test inputs.
-	expect(terminal).toMatchObject({ trainRows: 60, testRows: 12, fitRows: 18, fitCalls: 1, confirmationPartition: {matches:true,adjustedRandIndex:1} });
+	expect(terminal).toMatchObject({ trainRows: 60, testRows: 12, fitRows: 18, fitCalls: 1, deliveredPredictionSource:"confirmation", confirmationPartition: {matches:true,adjustedRandIndex:1} });
 
+ expect(events.find(e=>e.name === "refit_replay_check")?.data).toMatchObject({delivered_prediction_source:"confirmation",replay:{matches:true,adjustedRandIndex:1}});
 	// A refit under a different configuration than the champion was measured with is refused.
 	await expect(runRefit({ taskId: "fixture", projectRoot: project.root, solutionsRoot: project.solutionsRoot, pythonExecutable: PYTHON,
 		taskConfiguration: { ...CLUSTERING, execution: "inductive", refit: "fit_training_predict_test" }, labelsPath: join(taskDir, "data", "apk-train.labels"),

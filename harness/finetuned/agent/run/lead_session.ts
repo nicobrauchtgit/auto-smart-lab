@@ -341,7 +341,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
  const foldPolicy = options.foldPolicy ?? HARNESS_CONFIG.solve.foldPolicy;
  const shape = foldPolicy !== "auto" ? foldPolicy : { folds: data.recommendation.folds, repeats: data.recommendation.repeats };
  const python = deps.readPython();
- const scoutSkills = stageScoutSkills(prompts, data.root);
+ const scoutSkills = stageScoutSkills(prompts, data.root, options.taskConfiguration);
  const sandbox = deps.sandbox(data, python);
  const agentRoot = join(data.root, "agent");
  mkdirSync(agentRoot, { recursive: true });

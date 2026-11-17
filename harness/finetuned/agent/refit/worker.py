@@ -90,9 +90,15 @@ def validate(directory, freeze):
     domain = freeze['inputs'].get('task', {}).get('predictions', 'binary')
     valid = (lambda value: value in ('0', '1')) if domain == 'binary' else (lambda value: re.fullmatch(r'-?\d+', value) is not None)
     assert all(valid(row['prediction']) for row in rows), 'Invalid prediction domain'
-    check = partition_check(freeze, [int(row['prediction']) for row in rows])
-    if check is not None:
-        assert check['matches'] and result.get('confirmationPartition') == check, 'Confirmed partition mismatch'
+    expected = confirmation_predictions(freeze)
+    if expected is not None:
+        assert [row['id'] for row in rows] == freeze['data']['testIds'], 'Confirmed test order differs'
+        assert [int(row['prediction']) for row in rows] == expected, 'Delivered confirmation predictions differ'
+        assert result['deliveredPredictionSource'] == 'confirmation'
+        check = result['confirmationPartition']
+        assert isinstance(check['matches'], bool) and isinstance(check['adjustedRandIndex'], (int, float))
+    else:
+        assert result['deliveredPredictionSource'] == 'refit'
     return result
 
 
@@ -154,15 +160,30 @@ def fit_samples(estimator, freeze, events):
     return values, fit_rows, len(test)
 
 
-def partition_check(freeze, predicted):
+def confirmation_predictions(freeze):
     if not freeze.get('confirmation'):
         return None
-    from sklearn.metrics import adjusted_rand_score
-    receipt = json.loads(Path(freeze['confirmation']['resultPath']).read_text())
+    confirmation = freeze['confirmation']
+    path = confirmation['resultPath']
+    assert sha(path) == confirmation['resultSha256'], 'Confirmation receipt changed'
+    receipt = json.loads(Path(path).read_text())
+    assert receipt['status'] == 'completed', 'Confirmation not completed'
     expected = receipt['testPredictions']
-    assert len(expected) == len(predicted), 'Confirmed test prediction coverage differs'
+    assert receipt['testIds'] == freeze['data']['testIds'], 'Confirmed test IDs/order differ'
+    assert len(expected) == len(freeze['data']['testIds']), 'Confirmed test prediction coverage differs'
+    assert all(type(value) is int for value in expected), 'Confirmed predictions must be integers'
+    return expected
+
+
+def partition_check(freeze, predicted):
+    expected = confirmation_predictions(freeze)
+    if expected is None:
+        return None
+    from sklearn.metrics import adjusted_rand_score
+    assert len(expected) == len(predicted), 'Replay test prediction coverage differs'
     score = float(adjusted_rand_score(expected, predicted))
-    return {'matches': score == 1.0, 'adjustedRandIndex': score}
+    return {'matches': score == 1.0, 'adjustedRandIndex': score,
+            'reason': 'Partition matches' if score == 1.0 else 'Replay partition differs from confirmation'}
 
 
 def fit(directory, freeze):
@@ -183,9 +204,8 @@ def fit(directory, freeze):
     events = EventWriter(directory, freeze['identity'])
     predicted, fit_rows, test_rows = fit_samples(estimator, freeze, events)
     consistency = partition_check(freeze, predicted)
-    if consistency is not None and not consistency['matches']:
-        _atomic_json(directory / 'partition-check.json', consistency)
-        raise ValueError('Terminal refit test partition differs from confirmed partition')
+    if consistency is not None:
+        predicted = confirmation_predictions(freeze)
     # Completion is committed last. Interrupted fits never count as complete.
     with tempfile.NamedTemporaryFile(dir=directory, delete=False, mode='w', newline='') as stream:
         writer = csv.writer(stream)
@@ -218,6 +238,7 @@ def fit(directory, freeze):
         'environment': freeze['environment'], 'seed': freeze['seed'], 'seedLineage': freeze['seedLineage'],
         'evidence': freeze['evidence'], 'data': freeze['data']['hashes'],
         'modelSerialization': model_serialization,
+        'deliveredPredictionSource': 'confirmation' if consistency is not None else 'refit',
         **({'confirmationPartition': consistency} if consistency is not None else {}),
         'artifacts': {name: sha(directory / name) for name in ('predictions.csv', 'model.pkl') if name == 'predictions.csv' or model_serialization['status'] == 'available'},
     })

@@ -94,6 +94,7 @@ def validate(directory):
     truth, predicted = observations(directory, freeze)
     if freeze.get('anchorManifestPath'):
         anchor = load_anchor(freeze)
+        assert result['testIds'] == anchor['id'].tolist(), 'Confirmation test order changed'
         values = finite_vector(result['testPredictions'], len(anchor), 'Test predictions')
         assert (values == np.floor(values)).all()
         assert result['testPart'] == clustering(None, values.astype(int).tolist())['structure']
@@ -169,7 +170,7 @@ def run(directory):
         'schemaVersion': 1, 'status': 'completed', 'advisoryOnly': True, 'fitCalls': 1,
         'developmentRows': len(dev), 'validationRows': len(validation), 'metrics': metrics, 'interval': interval,
         'gap': freeze['cvMean'] - score, 'likelySelectionOverfit': freeze['cvMean'] > interval['upper'],
-        **({'testPart': clustering(None, test_predictions)['structure'], 'testPredictions': test_predictions} if test_predictions is not None else {}),
+        **({'testPart': clustering(None, test_predictions)['structure'], 'testPredictions': test_predictions, 'testIds': anchor['id'].tolist()} if test_predictions is not None else {}),
         'seededParameters': seeded,
         'freezeSha256': sha(directory / 'freeze.json'), 'predictionsSha256': sha(directory / 'predictions.csv')})
     validate(directory)

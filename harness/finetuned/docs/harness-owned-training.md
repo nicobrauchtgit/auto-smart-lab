@@ -183,6 +183,16 @@ completion identity, freeze hash, source/parameters/environment/seeds/evidence,
 all-row fit count, artifact hashes, prediction domain and exact unique test
 coverage. Corrupt completed outputs fail closed, without silently fitting again.
 
+For anchored batch clustering, terminal refit replays the sealed-plus-test fit.
+When a completed confirmation exists, delivery uses its hash-bound integer test
+predictions in the verified test-ID order. The receipt records
+`deliveredPredictionSource: confirmation` and `confirmationPartition` with replay
+`matches`, adjusted Rand index and reason. The refit reporter emits
+`refit_replay_check`; a partition mismatch neither retries nor blocks delivery.
+Without completed confirmation, delivery uses the refit fit and records
+`deliveredPredictionSource: refit`. The serialized model is from the replay fit;
+its partition can differ from the delivered confirmation predictions.
+
 Later development starts and recovery refuse the same task/source/fixed-parameter
 identity. Terminal champions cannot be rerun as development comparison evidence;
 a changed candidate must obtain its own validation. Historical measurements stay

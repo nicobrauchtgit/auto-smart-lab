@@ -8,6 +8,7 @@ import json
 import sys
 import traceback
 import multiprocessing
+import os
 from smartlab_trial.batch import batch_fit_predict, load_anchor
 from smartlab_trial.diagnostics import clustering
 from pathlib import Path
@@ -106,7 +107,8 @@ def anchored_structure(document, root, frame):
     if measurement['kind'] != 'clustering' or measurement['execution'] != 'batch' or not measurement.get('anchorManifestPath'):
         return None
     # A separate process enforces wall time even while native estimator code blocks.
-    context = multiprocessing.get_context('fork')
+    # Spawn starts a fresh OpenMP runtime; fork can deadlock after the base fit.
+    context = multiprocessing.get_context('spawn')
     reader, writer = context.Pipe(duplex=False)
     process = context.Process(target=_anchored_child, args=(writer, document, root, frame))
     process.start()
@@ -126,6 +128,7 @@ def anchored_structure(document, root, frame):
 
 def _anchored_child(writer, document, root, frame):
     try:
+        expose_project(root)
         writer.send(_anchored_structure(document, root, frame))
     finally:
         writer.close()
@@ -192,9 +195,15 @@ def outcome(document, base_complete=None):
 
 if __name__ == '__main__':
     document = json.load(sys.stdin)
+    def base_complete(result):
+        if document['measurement'].get('anchorManifestPath') and document.get('smokeBasePath'):
+            path = Path(document['smokeBasePath'])
+            temporary = path.with_suffix('.tmp')
+            temporary.write_text(json.dumps({'smokeBase': result}))
+            os.replace(temporary, path)
     try:
         with contextlib.redirect_stdout(sys.stderr):
-            value = outcome(document, lambda result: print(json.dumps({'smokeBase': result}), file=sys.__stdout__, flush=True))
+            value = outcome(document, base_complete)
     except BaseException as error:
         value = {'passed': False, 'phase': 'load', 'error': {'type': type(error).__name__, 'message': str(error)[:2000]},
                  'traceback': traceback.format_exc()[-8000:]}

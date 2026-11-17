@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { checkAnchoredTestArchive, setupChecks, SetupSession } from "../pipeline/setup.js";
@@ -7,6 +7,7 @@ import { loadPromptSnapshot } from "../prompts/loader.js";
 import { compactDiagnostics } from "./service.js";
 import { taskContract } from "../prompts/lead.js";
 import { HARNESS_CONFIG } from "../harness/config.js";
+import { stageScoutSkills } from "../prompts/scout_skills.js";
 import { recommendFolds } from "../solve/folds.js";
 
 test("anchored preflight refuses a missing test archive", () => {
@@ -57,4 +58,22 @@ test("fold recommendation is bounded and batch fragment is execution specific", 
  expect(inductive).toEqual([shared]);
  expect(inductive[0]!.text).not.toContain("sealed inputs followed");
  expect(taskContract(prompts,"fixture",configuration,"evidence").map(p=>p.text).join("\n")).toContain("sealed inputs followed");
+});
+
+test("binary and anomaly validation skill text and template hash equal base 2a9bab2", () => {
+ const root=mkdtempSync(join(tmpdir(),"scout-base-"));
+ try {
+  const prompts=loadPromptSnapshot();
+  for (const kind of ["binary_classification", "anomaly_detection", "clustering"]) {
+   const execution = "inductive";
+   const staged=stageScoutSkills(prompts,root,{kind,execution});
+   const skill=staged.skills.find(s=>s.name === "scout-validation")!;
+   expect(readFileSync(skill.filePath,"utf8")).toBe(prompts.render("team.skill-validation",{}).text);
+   expect(prompts.render("team.skill-validation",{}).reference.template_sha256).toBe("880a12f7495e1da6c68ef3f288b3bae940fc06a37dc75134a4e13433c16c14f6");
+   expect(staged.references.some(r=>r.id === "team.skill-validation-batch")).toBe(false);
+  }
+  const staged=stageScoutSkills(prompts,root,{kind:"clustering",execution:"batch"});
+  expect(readFileSync(staged.skills.find(s=>s.name === "scout-validation")!.filePath,"utf8")).toContain("Test inputs inside a batch-clustering fit");
+  expect(staged.references.some(r=>r.id === "team.skill-validation-batch")).toBe(true);
+ } finally {rmSync(root,{recursive:true,force:true});}
 });

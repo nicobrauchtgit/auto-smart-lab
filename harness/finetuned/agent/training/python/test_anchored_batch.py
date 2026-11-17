@@ -117,7 +117,7 @@ class AnchoredBatch(unittest.TestCase):
         self.assertEqual(result['comparisons'], MAX_AGREEMENT_PAIRS)
         self.assertEqual(result, test_agreement(folds))
         # The last fit must contribute, even though the first 256 pairs omit it.
-        distinct = [{'anchorPredictions': [0, 0, 1, 1]} for _ in range(100)]
+        distinct = [{'anchorPredictions': [0, 0, 1, 1]} for _ in range(258)]
         distinct[-1] = {'anchorPredictions': [0, 1, 0, 1]}
         self.assertLess(test_agreement(distinct)['minAdjustedRandIndex'], 1)
         self.assertLessEqual(result['minAdjustedRandIndex'], result['meanAdjustedRandIndex'])
@@ -168,7 +168,7 @@ class AnchoredBatch(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()): confirm.run(self.root)
         receipt = confirm.validate(self.root)
         # Delivery must use the confirmation archive descriptors, not trainZip.
-        frozen_confirmation = {'resultPath': str(self.root/'holdout-confirmation.json'), 'manifestPath': sealed}
+        frozen_confirmation = {'resultPath': str(self.root/'holdout-confirmation.json'), 'resultSha256': refit.sha(self.root/'holdout-confirmation.json'), 'manifestPath': sealed}
         from smartlab_trial.agent_code import _load_module
         estimator = _load_module(self.root,'model.py').build_pipeline({'seed':13})
         frozen = {'inputs':{'task':{'kind':'clustering','execution':'batch'},'trainZip':str(train_zip),'testZip':str(test_zip),
@@ -191,7 +191,7 @@ class AnchoredBatch(unittest.TestCase):
             trainIdsSha256=hashlib.sha256(json.dumps(frozen['data']['trainIds'], separators=(',', ':')).encode()).hexdigest(),
             modelSerialization={'status':'unavailable','errorType':'Fixture'}, artifacts={'predictions.csv':refit.sha(predictions)},
             source={},pipeline={},environment={},seed=13,seedLineage={},evidence=[],data={},
-            confirmationPartition=refit.partition_check(frozen,predicted))
+            deliveredPredictionSource='confirmation', confirmationPartition=refit.partition_check(frozen,predicted))
         (self.root/'result.json').write_text(json.dumps(result))
         refit.validate(self.root, frozen)
         write(['test-0']*7)
@@ -200,30 +200,64 @@ class AnchoredBatch(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, 'coverage'): refit.validate(self.root, frozen)
 
 
-    def test_nondeterministic_delivery_partition_fails_closed(self):
+    def test_delivery_uses_confirmation_and_records_replay(self):
         spec = importlib.util.spec_from_file_location('refit_check', Path(__file__).resolve().parents[2] / 'refit/worker.py')
         refit = importlib.util.module_from_spec(spec); spec.loader.exec_module(refit)
+        ids = ['a', 'b', 'c', 'd']
         receipt = self.root / 'receipt.json'
-        receipt.write_text(json.dumps({'testPredictions': [0, 0, 1, 1]}))
-        frozen = {'confirmation': {'resultPath': str(receipt)}, 'terminalPath': str(self.root/'freeze.json'),
-                  'inputs': {}, 'data': {}, 'sourceRoot': str(self.root), 'pipeline': {'module':'x','factory':'x'},
-                  'seed': 0, 'identity':'fixture'}
-        (self.root/'freeze.json').write_text(json.dumps(frozen))
+        receipt.write_text(json.dumps({'status': 'completed', 'testIds': ids, 'testPredictions': [0, 0, 1, 1]}))
+        frozen = {'confirmation': {'resultPath': str(receipt), 'resultSha256': refit.sha(receipt)},
+                  'terminalPath': str(self.root/'freeze.json'), 'inputs': {},
+                  'data': {'trainIds': [], 'testIds': ids, 'trainRows': 0, 'testRows': 4, 'hashes': {}},
+                  'sourceRoot': str(self.root), 'pipeline': {'module':'x','factory':'x'},
+                  'seed': 0, 'identity':'fixture', 'source': {}, 'environment': {}, 'seedLineage': {}, 'evidence': []}
         class Nondeterministic:
             def fit_predict(self, frame):
                 import secrets
-                # Entropy-driven partitions always differ from the confirmed grouping.
                 return [0, 1, 0, 1] if secrets.randbits(1) else [0, 1, 1, 0]
         model = Nondeterministic()
-        def fit_samples(*_): return model.fit_predict(None), 4, 4
-        with patch.object(refit, 'data', return_value={}), patch.object(refit, '_load_module'), \
-             patch.object(refit, '_factory'), patch.object(refit, '_call_pipeline_factory', return_value=model), \
-             patch.object(refit, 'fit_samples', side_effect=fit_samples):
-            with self.assertRaisesRegex(ValueError, 'differs from confirmed partition'):
-                refit.fit(self.root, frozen)
-        self.assertFalse((self.root/'result.json').exists())
-        self.assertFalse(json.loads((self.root/'partition-check.json').read_text())['matches'])
-        self.assertTrue(refit.partition_check(frozen, [7,7,3,3])['matches'])
+        for mode in ('mismatch', 'match', 'no-confirmation'):
+            with self.subTest(mode=mode):
+                if mode == 'no-confirmation': frozen.pop('confirmation')
+                (self.root/'freeze.json').write_text(json.dumps(frozen))
+                replay = [7,7,3,3] if mode == 'match' else model.fit_predict(None)
+                with patch.object(refit, 'data', return_value=frozen['data']), patch.object(refit, '_load_module'), \
+                     patch.object(refit, '_factory'), patch.object(refit, '_call_pipeline_factory', return_value=model), \
+                     patch.object(refit, 'fit_samples', return_value=(replay, 4, 4)):
+                    refit.fit(self.root, frozen)
+                result = json.loads((self.root/'result.json').read_text())
+                import csv
+                with (self.root/'predictions.csv').open() as stream:
+                    delivered = [int(row['prediction']) for row in csv.DictReader(stream)]
+                self.assertEqual(delivered, replay if mode == 'no-confirmation' else [0,0,1,1])
+                self.assertEqual(result['deliveredPredictionSource'], 'refit' if mode == 'no-confirmation' else 'confirmation')
+                if mode != 'no-confirmation':
+                    self.assertEqual(result['confirmationPartition']['matches'], mode == 'match')
+                    self.assertIn('reason', result['confirmationPartition'])
+
+    def test_confirmation_predictions_reject_tampering_order_coverage_and_domain(self):
+        spec = importlib.util.spec_from_file_location('refit_check', Path(__file__).resolve().parents[2] / 'refit/worker.py')
+        refit = importlib.util.module_from_spec(spec); spec.loader.exec_module(refit)
+        receipt = self.root/'receipt.json'
+        frozen = {'confirmation': {'resultPath': str(receipt)}, 'data': {'testIds': ['a','b']}}
+        for ids, values in [(['b','a'], [0,1]), (['a','b'], [0]), (['a','b'], [0,1.5]), (['a','a'], [0,1])]:
+            receipt.write_text(json.dumps({'status':'completed', 'testIds':ids, 'testPredictions':values}))
+            frozen['confirmation']['resultSha256'] = refit.sha(receipt)
+            with self.assertRaises(AssertionError): refit.confirmation_predictions(frozen)
+        receipt.write_text('{}')
+        with self.assertRaisesRegex(AssertionError, 'receipt changed'): refit.confirmation_predictions(frozen)
+
+    def test_smoke_kmeans_after_parent_openmp_fit(self):
+        dev = self.root/'dev.json'
+        dev.write_text(json.dumps({'schemaVersion':1, 'samples':[
+            {'id':f'dev-{i}', 'input':{}, 'target':'family'} for i in range(20)]}))
+        (self.root/'kmeans.py').write_text("from sklearn.cluster import KMeans\nimport numpy as np\nclass Model:\n def fit_predict(self, frame):\n  assert set(frame.columns) == {'id','input'}\n  return KMeans(n_clusters=2, n_init=1, random_state=0).fit_predict(np.arange(len(frame)*2).reshape(-1,2))\ndef build_pipeline(): return Model()\n")
+        document = dict(sourceRoot=str(self.root), measurement={**self.config, 'sampleManifestPath':str(dev)},
+            request={'pipeline':{'module':'kmeans.py','factory':'build_pipeline'}}, sealedRows=5)
+        # outcome first runs KMeans in this parent, then again in the child.
+        result = smoke.outcome(document)
+        self.assertTrue(result['passed'])
+        self.assertTrue(result['testPart']['available'], result)
 
 
 if __name__ == '__main__': unittest.main()

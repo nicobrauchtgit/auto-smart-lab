@@ -47,7 +47,7 @@ export interface RefitFreeze {
  schemaVersion: 1; identity: string; taskId: string; terminalPath: string; directory: string;
  source: { commit: string; tree: string }; sourceRoot: string; pipeline: PipelineRequest;
  chosenExperimentId: string; environment: { fingerprint: string; runtimeDependencyHash: string; frameworkHash: string };
- confirmation?: { resultPath: string; manifestPath: string };
+ confirmation?: { resultPath: string; resultSha256: string; manifestPath: string };
  seed: number; seedLineage: unknown; evidence: { path: string; sha256: string }[];
  inputs: Record<string, unknown>; data: { trainIds: string[]; testIds: string[]; trainRows: number; developmentRows: number; sealedRows: number; testRows: number; hashes: Record<string, string> };
  origin: { pipelineRunId?: string | null; stageInvocationId?: string | null };
@@ -55,7 +55,8 @@ export interface RefitFreeze {
 export interface TerminalRefitResult {
  schemaVersion: 1; status: "completed"; identity: string; freezeSha256: string;
  trainRows: number; testRows: number; fitCalls: 1; trainIdsSha256: string;
- confirmationPartition?: { matches: boolean; adjustedRandIndex: number };
+ confirmationPartition?: { matches: boolean; adjustedRandIndex: number; reason: string };
+ deliveredPredictionSource: "confirmation" | "refit";
  source: RefitFreeze["source"]; pipeline: PipelineRequest; environment: RefitFreeze["environment"];
  seed: number; seedLineage: unknown; evidence: RefitFreeze["evidence"]; data: Record<string, string>;
  artifacts: { "predictions.csv": string; "model.pkl"?: string }; modelSerialization: { status: "available" | "unavailable"; errorType?: string }; seededParameters: string[];
@@ -206,7 +207,7 @@ export async function prepareRefit(options: RefitOptions): Promise<RefitFreeze> 
    python(options, [join(FRAMEWORK_ROOT, "training/python/confirm.py"), "--directory", directory, "--validate"]);
    const freeze = json(join(directory, "freeze.json"));
    if (options.taskConfiguration.kind === "clustering" && options.taskConfiguration.execution === "batch") {
-    prepared.confirmation = { resultPath: confirmation.path, manifestPath: freeze.validationManifest };
+    prepared.confirmation = { resultPath: confirmation.path, resultSha256: confirmation.sha256, manifestPath: freeze.validationManifest };
     for (const path of [freeze.validationManifest, ...JSON.parse(readFileSync(freeze.validationManifest, "utf8")).samples.map((sample: any) => sample.input.archive) as string[]]) {
      if (!prepared.evidence.some(entry => entry.path === path)) prepared.evidence.push({ path, sha256: hashFile(path) });
     }
@@ -317,6 +318,7 @@ export async function runRefit(options: RefitOptions): Promise<{ artifacts: Stag
   validateFrozen(options, freeze);
   const result: TerminalRefitResult = json(join(freeze.directory, "result.json"));
   const artifacts = [["terminal_refit_freeze", "freeze.json"], ["terminal_refit_result", "result.json"], ["final_test_predictions", "predictions.csv"], ...(result.modelSerialization.status === "available" ? [["terminal_fitted_model", "model.pkl"]] : [])].map(([kind, name]) => ({ kind, path: join(freeze.directory, name), sha256: hashFile(join(freeze.directory, name)) }));
+  options.report?.event("refit_replay_check", { candidate_identity: freeze.identity, delivered_prediction_source: result.deliveredPredictionSource, replay: result.confirmationPartition ?? null });
   const delivery = deliverRefit(options, freeze);
   artifacts.push(delivery);
   options.report?.event("refit_artifacts_validated", { candidate_identity: freeze.identity, train_rows: freeze.data.trainRows, sealed_rows: freeze.data.sealedRows, test_rows: freeze.data.testRows });
