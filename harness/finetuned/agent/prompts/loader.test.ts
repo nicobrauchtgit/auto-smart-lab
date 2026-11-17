@@ -81,7 +81,7 @@ test("the solve opening selects the task contract of the configured kind", () =>
     assert.match(attacks.prompt, /predict returns 1 for anomalies and 0 for normal rows/);
     assert.match(attacks.prompt, /never returns[\s\S]*every validation row/);
 	const detected = prepareLeadPrompts(snapshot, { ...base, configuration: anomaly });
-	assert.match(detected.prompt, /returning `-1` for anomalies/);
+	assert.match(detected.prompt, /It returns `-1` for anomalies; any other value counts as normal/);
 	assert.match(detected.prompt, /lower is anomalous/);
 	assert.ok(detected.promptReferences.some(reference => reference.id === "team.lead-label-free"));
     const selected = prepareLeadPrompts(snapshot, { ...base, configuration: { ...anomaly,
