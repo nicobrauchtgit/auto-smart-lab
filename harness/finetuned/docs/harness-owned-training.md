@@ -102,14 +102,14 @@ If a replacement has fix findings, the persisted repair chain keeps earlier
 blocked comparison bases available, so older qualifying repairs can be tried.
 Transient failures without fix findings retain the replacement as champion and
 permit baseline fallback. Each repair step may lose up to two standard errors
-against its comparison base; validation and holdout confirmation gate every
-selected replacement. Validation receives the earlier blocking findings and
+against its comparison base; validation gates every selected replacement,
+and each also gets its own advisory holdout read. Validation receives the earlier blocking findings and
 must show that each is resolved.
 Repairs are tried immediately after the blocked entry, before the validated
 baseline. Ordinary promotion still requires improvement beyond noise.
 The controller records both identities, blocking attempt/receipt and prompt
 hashes. Replacement errors are recorded and leave baseline fallback available.
-Each replacement still needs its own holdout confirmation and full validation;
+Each replacement still needs full validation and gets its own advisory holdout read;
 sealed-read rules and terminal refit integrity checks remain unchanged.
 
 ## Final refit

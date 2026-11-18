@@ -10,7 +10,6 @@
  * hand-over, PROGRESS.json for resumption and compaction, and the
  * deterministic terminal refit.
  */
-import { admittedValidationCheck } from "../team/runner.js";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, join, resolve } from "node:path";
@@ -42,7 +41,7 @@ import { createBoard, boardPath, postTrialResult } from "../team/board.js";
 import { createBoardTools } from "../team/board_tools.js";
 import { loadPipelineConfig } from "../pipeline_config.js";
 import { createScouts, finalBullets, validationKind, type ScoutReport, type ScoutRequest } from "../team/scouts.js";
-import { createScoutRunner } from "../team/runner.js";
+import { admittedValidationCheck, createScoutRunner } from "../team/runner.js";
 import { createTrialResolver, taskTrialRoots } from "../team/trials.js";
 import { stageScoutInputs } from "../team/workspace.js";
 import { collectTrainingResults, createGitHistoryGuard, createHarnessTraining, ensureSolutionsRepository, type TrainingCollection } from "../training/index.js";
@@ -324,7 +323,8 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
   let pruned = false;
   for (const [experimentId, attempt] of Object.entries(prior.validationAttempts ?? {})) {
    const checks = attempt.validation.checkResults ?? [];
-   const refused = checks.filter(check => !check.sha256 && !admittedValidationCheck(data.solutionsRoot, taskId, check.path));
+   // Stored paths are relative to the solutions root; only checks/<task>/ entries can be admitted.
+   const refused = checks.filter(check => !check.sha256 && !(check.path.startsWith(`checks/${taskId}/`) && admittedValidationCheck(data.solutionsRoot, taskId, check.path)));
    if (!refused.length) continue;
    attempt.validation.checkResults = checks.filter(check => !refused.includes(check));
    pruned = true;
@@ -642,7 +642,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
   const previous = attempt?.commit === snapshot.commit && attempt.tree === snapshot.tree ? attempt.validation : undefined;
   const cached = progress.validationReceipts![key];
   if (cached && !previous?.checkResults?.some(check => check.exitCode !== 0)) { if (!validationPassed(cached.validation)) await replaceBlockedChampion(); record("lead_validation_reused", { experiment_id: experimentId, commit: snapshot.commit, receipt_key: key, validation_status: validationLabel(cached.validation) }); return cached.validation; }
-  const blocking = progress.repairChain?.candidateId === experimentId ? progress.repairChain.bases.map(base => {
+  const blocking = progress.repairChain?.candidateId === experimentId ? progress.repairChain.bases.filter(base => base.experimentId !== experimentId).map(base => {
    const attempt = progress.validationAttempts?.[base.experimentId];
    const receipt = Object.values(progress.validationReceipts ?? {}).filter(row => row.experimentId === base.experimentId && row.commit === base.commit)
     .sort((a, b) => b.at.localeCompare(a.at))[0];
@@ -651,7 +651,9 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
   }).filter(base => base.fix.length) : [];
   let result: ScoutReport | undefined;
   try {
-   result = await getScouts().report({ role: "validation", question: prompts.render("team.lead-handover-question", { experiment: experimentId, reason, previous: previous ? JSON.stringify(previous, null, 2) : "none", blocking: blocking.length ? JSON.stringify(blocking, null, 2) : "none" }).text,
+   result = await getScouts().report({ role: "validation", question: prompts.render("team.lead-handover-question", { experiment: experimentId, reason, previous: previous ? JSON.stringify(previous, null, 2) : "none" }).text
+    // Rendered only while a blocked champion is being repaired, so ordinary validation prompts stay unchanged.
+    + (blocking.length ? `\n\n${prompts.render("team.lead-handover-blocking", { blocking: JSON.stringify(blocking, null, 2) }).text}` : ""),
     refs: [{ experiment: experimentId }] }, signal, toolCallId);
   } catch (error) {
    signal?.throwIfAborted();
@@ -665,7 +667,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
   // Older attempts may still hold never-executed refused paths.
   // Executed evidence survives later source removal or drift; never-executed
   // entries must pass the same admission rule as run_checks.
-  const own = (check: { path: string; sha256?: string }) => !!check.sha256 || !!admittedValidationCheck(data.solutionsRoot, taskId, check.path);
+  const own = (check: { path: string; sha256?: string }) => !!check.sha256 || (check.path.startsWith(`checks/${taskId}/`) && !!admittedValidationCheck(data.solutionsRoot, taskId, check.path));
   const checks = new Map(previous?.checkResults?.filter(own).map(check => [check.path, check]));
   for (const check of (summary.checkResults ?? []).filter(own)) checks.set(check.path, check);
   summary.checkResults = [...checks.values()].map(check => {
