@@ -36,7 +36,7 @@ import {
 	uncommittedFiles,
 	type SourceIdentity,
 } from "./git.js";
-import { pairedPromotion } from "./promotion.js";
+import { pairedPromotion, pairedRepair } from "./promotion.js";
 import { runPipelineValidation, type PipelineValidator } from "./pipeline_validation.js";
 import { collectTrainingResults, trialSupervisionDirectory } from "./results.js";
 import { readRecord } from "../experiments/safe_files.js";
@@ -1040,17 +1040,7 @@ export class TrainingService {
 					return;
 				}
 			}
-			tagCommit(root, championTag(this.options.taskId), selectedTrial.source.commit, JSON.stringify({
-				experimentId: selected.experimentId,
-				balancedAccuracy: selected.result?.metrics?.balancedAccuracy,
-				adjustedRandIndex: selected.result?.metrics?.adjustedRandIndex,
-				measurement: selectedTrial.measurement ?? null,
-				selection: selected.result?.selection ?? null,
-				pipeline: selected.request!.pipeline,
-				cv: selectedTrial.request.cv,
-				subject: selectedTrial.source.subject,
-				trainingRoot: this.options.trainingRoot,
-			}), true);
+			this.tagChampion(selected.experimentId, selected.result, selected.request!.pipeline);
 			this.options.record?.("training_champion_tagged", {
 				experiment_id: selected.experimentId, commit: selectedTrial.source.commit, previous_experiment_id: current?.experimentId,
 			});
@@ -1061,6 +1051,48 @@ export class TrainingService {
 		this.finalizing.set(id, work);
 		return work;
 	}
+
+ /** Controller-only repair selection; callers establish the blocking validation receipt.
+  * IDs are supplied newest first from the lead's durable trial history.
+  */
+ async replaceBlockedChampion(blocked: { experimentId: string; commit: string }, ids: readonly string[]) {
+  const root = this.options.solutionsRoot;
+  if (!root) return undefined;
+  const release = await selectionClaimAsync(root);
+  try {
+   const current = this.champion();
+   if (current?.experimentId !== blocked.experimentId || current.commit !== blocked.commit) return undefined;
+   const collection = await collectTrainingResults(this.options.trainingRoot);
+   for (const id of ids) {
+    const selected = collection.trials.find(entry => entry.experimentId === id);
+    const trial = this.trials.get(id);
+    const comparison = selected?.result?.championComparison as Record<string, unknown> | undefined;
+    if (id === blocked.experimentId || !selected?.eligible || selected.result?.status !== "completed"
+     || !trial?.source || comparison?.championExperimentId !== blocked.experimentId
+     || !pairedRepair(comparison, blocked.commit)
+     || isTerminalCandidate(root, this.options.taskId, trial.source.commit, trial.request.pipeline)) continue;
+    assertDevelopmentCandidate(root, this.options.taskId, trial.source.commit, trial.request.pipeline);
+    this.tagChampion(id, selected.result, selected.request!.pipeline);
+    return { experimentId: id, comparison, verdict: noiseVerdict(comparison) };
+   }
+   return undefined;
+  } finally { release(); }
+ }
+
+ private tagChampion(id: string, result: import("./results.js").TrialResult | undefined, pipeline: ExperimentRequest["pipeline"]): void {
+  const trial = this.trials.get(id)!;
+  tagCommit(this.options.solutionsRoot!, championTag(this.options.taskId), trial.source!.commit, JSON.stringify({
+   experimentId: id,
+   balancedAccuracy: result?.metrics?.balancedAccuracy,
+   adjustedRandIndex: result?.metrics?.adjustedRandIndex,
+   measurement: trial.measurement ?? null,
+   selection: result?.selection ?? null,
+   pipeline,
+   cv: trial.request.cv,
+   subject: trial.source!.subject,
+   trainingRoot: this.options.trainingRoot,
+  }), true);
+ }
 
 	/** Finish pending finalization and remove any worktree a lost process left behind. */
 	async close(): Promise<void> {

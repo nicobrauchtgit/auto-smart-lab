@@ -1,9 +1,16 @@
 import { expect, test } from "bun:test";
 
-import { pairedPromotion } from "./promotion.js";
+import { pairedPromotion, pairedRepair } from "./promotion.js";
 
 const champion = "a".repeat(40);
 const comparison = { status: "completed", championCommit: champion, meanDifference: 0.01, standardError: 0.002, leadExceedsNoise: true };
+
+test("repair requires a known paired verdict and rejects significant losses", () => {
+ for (const [delta, se, expected] of [[0, 0, true], [0.0097, 0.0052, true], [-0.01, 0.01, true], [-0.03, 0.01, false], [-0.001, 0, false]] as const)
+  expect(pairedRepair({...comparison, meanDifference:delta, standardError:se}, champion)).toBe(expected);
+ for (const invalid of [{status:'partial'}, {championCommit:'stale'}, {standardError:null}, {standardError:NaN}, {standardError:-1}, {meanDifference:Infinity}, {leadExceedsNoise:undefined}])
+  expect(pairedRepair({...comparison,...invalid}, champion)).toBe(false);
+});
 
 test("a paired lead beyond fold noise promotes the challenger", () => {
  expect(pairedPromotion(comparison, champion)).toEqual({ promote: true });

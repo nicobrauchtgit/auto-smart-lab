@@ -114,3 +114,34 @@ test("completed promotions are tagged and the champion tag follows the best elig
 		await training.close();
 	}
 }, 90_000);
+
+test("controller repair moves the champion tag for an equal measured trial", async () => {
+ const project = temporaryProject("blocked-champion-");
+ const training = harness(project);
+ const request = {schemaVersion:2, hypothesis:"measure identical predictions",
+  pipeline:{module:"solutions/tasks/fixture.py",factory:"build_pipeline"},
+  cv:{kind:"builtin",scheme:"stratified_kfold",folds:2,repeats:1},scope:{kind:"promotion"}};
+ try {
+  const a=await training.service.start(request);
+  expect(await until(()=>training.supervisor.status(a.id).status!=="running",60_000)).toBe(true);
+  await training.service.finalize(a.id);
+  const b=await training.service.start(request);
+  expect(await until(()=>training.supervisor.status(b.id).status!=="running",60_000)).toBe(true);
+  await training.service.finalize(b.id);
+  const selected=()=>JSON.parse(git(project.solutionsRoot,["tag","-l","--format=%(contents)","champion/fixture"]).stdout);
+  expect(selected().experimentId).toBe(a.id);
+  // A stale identity cannot authorize repair.
+  expect(await training.service.replaceBlockedChampion({experimentId:"stale",commit:project.head},[b.id])).toBeUndefined();
+  const resultPath=join(b.directory,"trial-result.json");
+  const measured=readFileSync(resultPath,"utf8");
+  const worse=JSON.parse(measured);
+  worse.championComparison={...worse.championComparison,meanDifference:-0.1,standardError:0.01,leadExceedsNoise:true};
+  writeFileSync(resultPath,JSON.stringify(worse));
+  expect(await training.service.replaceBlockedChampion({experimentId:a.id,commit:project.head},[b.id])).toBeUndefined();
+  expect(selected().experimentId).toBe(a.id);
+  writeFileSync(resultPath,measured);
+  const repaired=await training.service.replaceBlockedChampion({experimentId:a.id,commit:project.head},[b.id]);
+  expect(repaired?.experimentId).toBe(b.id);
+  expect(selected()).toMatchObject({experimentId:b.id,trainingRoot:join(project.root,"runs","training"),pipeline:request.pipeline});
+ }finally{await training.close();}
+},90_000);

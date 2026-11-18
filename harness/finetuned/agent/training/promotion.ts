@@ -17,3 +17,13 @@ export function pairedPromotion(comparison: Record<string, unknown> | undefined,
   return { promote: false, reason: "paired lead over the current champion does not exceed fold noise" };
  return { promote: true };
 }
+
+/** A completed paired measurement can repair a blocked champion without a score gain. */
+export function pairedRepair(comparison: Record<string, unknown> | undefined, championCommit: string): boolean {
+ if (comparison?.status !== "completed" || comparison.championCommit !== championCommit) return false;
+ const delta = comparison.meanDifference, se = comparison.standardError;
+ return typeof delta === "number" && Number.isFinite(delta)
+  && typeof se === "number" && Number.isFinite(se) && se >= 0
+  && typeof comparison.leadExceedsNoise === "boolean"
+  && delta >= -2 * se;
+}

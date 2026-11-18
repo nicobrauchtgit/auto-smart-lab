@@ -433,6 +433,25 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
   return `${scores.map(value => value.toFixed(4)).join(", ")}; mean ${mean.toFixed(4)}, sd ${sd.toFixed(4)} (${configuration.selection?.metric ?? configuration.metric})`;
  };
  let feedbackChain: Promise<unknown> = Promise.resolve();
+ const replaceBlockedChampion = async (candidate?: string, completedId?: string) => {
+  const champion = championOf(data.solutionsRoot, taskId);
+  if (!champion || (progress.baseline && candidate !== champion.experimentId)) return;
+  const blocking = Object.entries(progress.validationReceipts ?? {}).reverse().find(([, receipt]) =>
+   receipt.experimentId === champion.experimentId && receipt.commit === champion.commit);
+  if (!blocking || blocking[1].validation.status !== "completed" || !blocking[1].validation.fix.length) return;
+  const ids = [...new Set([completedId, ...[...progress.trials].reverse().map(row => row.experimentId)]
+   .filter((id): id is string => !!id))];
+  const replacement = await training?.service.replaceBlockedChampion?.(champion, ids);
+  if (!replacement) return;
+  progress.champion = championOf(data.solutionsRoot, taskId);
+  save();
+  record("lead_blocked_champion_replaced", { previous_experiment_id: champion.experimentId,
+   experiment_id: replacement.experimentId, paired_verdict: replacement.verdict,
+   comparison: replacement.comparison, blocking_receipt_key: blocking[0] });
+  await inbox.steer(prompts.render("team.lead-blocked-champion-replaced", {
+   previous: champion.experimentId, experiment: replacement.experimentId, verdict: replacement.verdict,
+  }).text);
+ };
  const trialFinished = (id: string, view: ExperimentView) => {
   composing++;
   const work = feedbackChain.then(async () => {
@@ -452,8 +471,9 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
    const prior = progress.trials.find(row => row.experimentId === id);
    // Completion feedback is durable. Replay only the interruption gap; the
    // authoritative champion is reconciled separately even for known results.
-   if (prior?.feedbackRecorded && prior.status === String(described.status ?? view.status)) return;
    const before = progress.champion?.experimentId;
+   await replaceBlockedChampion(undefined, id);
+   if (prior?.feedbackRecorded && prior.status === String(described.status ?? view.status)) return;
    const champion = championOf(data.solutionsRoot, taskId);
    const key = metricKey(configuration);
    let trial = progress.trials.find(row => row.experimentId === id);
@@ -575,7 +595,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
   const attempt = progress.validationAttempts?.[experimentId];
   const previous = attempt?.commit === snapshot.commit && attempt.tree === snapshot.tree ? attempt.validation : undefined;
   const cached = progress.validationReceipts![key];
-  if (cached && !previous?.checkResults?.some(check => check.exitCode !== 0)) { record("lead_validation_reused", { experiment_id: experimentId, commit: snapshot.commit, receipt_key: key, validation_status: validationLabel(cached.validation) }); return cached.validation; }
+  if (cached && !previous?.checkResults?.some(check => check.exitCode !== 0)) { await replaceBlockedChampion(experimentId); record("lead_validation_reused", { experiment_id: experimentId, commit: snapshot.commit, receipt_key: key, validation_status: validationLabel(cached.validation) }); return cached.validation; }
   let result: ScoutReport | undefined;
   try {
    result = await getScouts().report({ role: "validation", question: prompts.render("team.lead-handover-question", { experiment: experimentId, reason, previous: previous ? JSON.stringify(previous, null, 2) : "none" }).text,
@@ -616,6 +636,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
    }
    save();
   }
+  await replaceBlockedChampion(experimentId);
   record("lead_validation", { experiment_id: experimentId, validation_status: validationLabel(summary), ...summary });
   return summary;
  };
@@ -643,16 +664,18 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
   for (const experimentId of choices) {
    signal?.throwIfAborted();
    // Only the current champion may incur a new query. A baseline reuses its receipt.
-   if (experimentId === champion?.experimentId && !holdoutDone(experimentId)) await runHoldout(experimentId);
+   if (experimentId === championOf(data.solutionsRoot, taskId)?.experimentId && !holdoutDone(experimentId)) await runHoldout(experimentId);
    const validation = await validate(experimentId, reason, signal, toolCallId);
    if (validationPassed(validation)) {
-    const fallback = experimentId !== champion?.experimentId;
+    const fallback = experimentId !== championOf(data.solutionsRoot, taskId)?.experimentId;
     accept(by, fallback ? `${reason}; fallback after ${failures.join("; ")}` : reason, experimentId, validation);
     if (fallback) record("lead_delivery_fallback", { experiment_id: experimentId, rejected: failures });
     budget.end();
     await scouts?.cancel?.();
     return { experimentId, validation, failures };
    }
+   const replacement = championOf(data.solutionsRoot, taskId);
+   if (replacement && !choices.includes(replacement.experimentId)) choices.push(replacement.experimentId);
    failures.push(`${experimentId}: ${validation.fix.join("; ") || `validation ${validation.status}; no approved evidence`}`);
   }
   return { failures };

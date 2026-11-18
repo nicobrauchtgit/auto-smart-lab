@@ -465,3 +465,56 @@ print(json.dumps(_summarise(invocation, [], [], rows, ['0','1'], None, {'sha256'
   expect(feedbackText).toContain('not eligible for promotion: predict returned values outside the delivered domain {0, 1}');
  } finally { f.close(); }
 });
+
+for (const mode of ['equal', 'already-completed', 'budget-end', 'worse', 'unblocked'] as const) test(`blocked champion repair handover: ${mode}`, async () => {
+ const f=fixture(); const validated:string[]=[], refitted:string[]=[]; const events:any[]=[];
+ let finished:any; let completed=false;
+ const path=join(f.root,'lead/PROGRESS.json');
+ const replacement=mode==='worse' ? {meanDifference:-0.1,standardError:0.01} : {meanDifference:0,standardError:0};
+ try {
+ const result=await runLeadSession('spam1',{taskConfiguration:spamConfiguration(),maxToolCalls:1,progressPath:path,
+ report:{event:(type:string,data:any)=>events.push({type,...data}),input(){},agentIdentity(){return {};},observation(){return {};}} as any,
+ dependencies:{
+ prepareData:()=>f.data,readPython:()=>({prefix:f.root,executable:'/bin/false',fingerprint:'f'} as any),
+ sandbox:()=>({executable:'/bin/false',cwd:f.root,mounts:[],env:{},agentRoot:join(f.root,'agent')} as any),
+ prepareRepository:()=>({initialized:false,head:f.commit,branch:'master'}),environmentTool:()=>({name:'python_environment'} as any),
+ verifiedCandidate:async (_r,_t,_d,selection)=>({experimentId:selection!.experimentId,commit:selection!.commit,tree:'tree',sourceRoot:f.root}),
+ createTraining:(opts:any)=>{finished=opts.onTrialFinished;return {ready:async()=>{},close:async()=>{},tools:[],toolPrompts:[],
+ service:{describe:()=>({status:'completed',balancedAccuracy:1,noiseVerdict:'within fold noise'}),
+ replaceBlockedChampion:async (blocked:any,ids:string[])=>{
+  expect(blocked.experimentId).toBe('measured');
+  expect(Object.values(readProgress(path)!.validationReceipts!).some(r=>r.validation.fix.length)).toBe(true);
+  if (!completed || !ids.includes('fixed') || mode==='worse') return;
+  execFileSync('git',['-C',f.solutionsRoot,'tag','-f','-a','champion/spam1','-m',JSON.stringify({experimentId:'fixed',trainingRoot:join(f.root,'training')})]);
+  return {experimentId:'fixed',comparison:replacement,verdict:'within fold noise'};
+ }},supervisor:{list:()=>[]},bindSession:()=>{}} as any;},
+ scouts:()=>({tool:{name:'scout'} as any,report:async request=>{
+  const id=(request.refs![0] as {experiment:string}).experiment;validated.push(id);
+  return {text:id==='measured' && mode!=='unblocked'?'- fix: fallback feature length':'- ok: frozen source verified',roles:[{role:'validation',status:'completed',bullets:1}]};
+ }}),
+ runAgentSession:async options=>{
+  const handover=options.customTools!.find(t=>t.name==='hand_over')!;
+  const complete=async()=>{completed=true;await finished('fixed',{status:'exited',exitCode:0,elapsedSeconds:1});};
+  if(mode==='already-completed'||mode==='budget-end')await complete();
+  if(mode!=='budget-end')await handover.execute('first',{reason:'ready'},undefined,undefined,undefined as never);
+  if(mode!=='already-completed'&&mode!=='budget-end')await complete();
+  if(mode!=='budget-end')await handover.execute('final',{reason:'ready',finalize:true},undefined,undefined,undefined as never);
+  const handlers:any={}; for(const extension of options.extensionFactories??[]) {
+   const factory=typeof extension==='function'?extension:(extension as any).factory;
+   if(factory)factory({on:(name:string,fn:any)=>{(handlers[name]??=[]).push(fn);}});
+  }
+  for(const fn of handlers.message_end??[])await fn({message:{role:'assistant',content:[{type:'toolCall',id:'unknown'}]}});
+  return {output:'finished',agentRunId:'fixture'} as any;
+ },
+ refit:async input=>{refitted.push(input.experimentId);return {artifacts:[],validation:{valid:true,errors:[]}};},
+ collectResults:async()=>({valid:false,trials:[],artifacts:[],errors:[]}) as any,
+ }});
+ const repaired=mode==='equal'||mode==='already-completed'||mode==='budget-end';
+ expect(refitted).toEqual(mode==='worse'?[]:[repaired?'fixed':'measured']);
+ expect(validated).toEqual(repaired?['measured','fixed']:['measured']);
+ expect(result.valid).toBe(mode!=='worse');
+ const repairs=events.filter(e=>e.type==='lead_blocked_champion_replaced');
+ expect(repairs).toHaveLength(repaired?1:0);
+ if(repaired)expect(repairs[0].blocking_receipt_key).toMatch(/^[a-f0-9]{64}$/);
+ }finally{f.close();}
+});

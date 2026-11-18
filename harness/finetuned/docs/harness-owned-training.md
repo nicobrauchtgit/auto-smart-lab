@@ -92,6 +92,16 @@ challenger with an existing champion, the harness reruns the frozen champion on
 the challenger's exact persisted manifest. It never reconstructs supposedly
 equivalent folds from a seed and a different splitter implementation.
 
+A completed validation receipt with `fix` findings can block the champion.
+The lead may then move the champion tag to the most recent eligible completed
+trial with a completed paired comparison against that exact champion that is
+within two standard errors or better (including identical predictions). This
+repair path records both identities and the blocking receipt; ordinary promotion
+still requires improvement beyond noise. A validated baseline remains available
+for delivery; with one present, repair selection runs when validating the blocked
+champion itself. The replacement still needs its own holdout confirmation and
+validation, and terminal refit integrity checks remain unchanged.
+
 ## Final refit
 
 Once selection is final, the harness freezes the champion's source, parameters,
