@@ -15,3 +15,10 @@ check paths, repair the checker and rerun each unsuccessful check at the same
 path with run_checks. Unrelated passing checks do not resolve an outstanding
 failure. A checker failure is incomplete verification, not a demonstrated
 pipeline defect. Report any demonstrated pipeline defect as fix.
+
+Blocking findings from earlier measured candidates being repaired:
+{{blocking}}
+
+For each blocking finding, show with evidence whether this replacement resolves
+it. Re-flag any defect that remains as fix; a different source tree alone does
+not resolve a finding.

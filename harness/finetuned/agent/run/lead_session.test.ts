@@ -513,6 +513,7 @@ for (const mode of ['equal', 'already-completed', 'budget-end', 'worse', 'unbloc
  expect(refitted).toEqual(mode==='worse'?[]:[repaired?'fixed':'measured']);
  expect(validated).toEqual(repaired?['measured','fixed']:['measured']);
  expect(result.valid).toBe(mode!=='worse');
+ expect(events.filter(e=>e.type==='lead_blocked_champion_replacement_failed')).toEqual([]);
  const repairs=events.filter(e=>e.type==='lead_blocked_champion_replaced');
  expect(repairs).toHaveLength(repaired?1:0);
  if(repaired)expect(repairs[0].blocking_receipt_key).toMatch(/^[a-f0-9]{64}$/);

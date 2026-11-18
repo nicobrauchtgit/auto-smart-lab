@@ -98,8 +98,13 @@ incomplete verification), blocks the champion. The controller may move its tag
 to the most recent eligible completed trial with a completed paired comparison
 against that blocked identity that is within two standard errors or better.
 "Most recent" means trial start order. Identical source trees are excluded.
-If a replacement fails validation, the persisted repair chain keeps earlier
+If a replacement has fix findings, the persisted repair chain keeps earlier
 blocked comparison bases available, so older qualifying repairs can be tried.
+Transient failures without fix findings retain the replacement as champion and
+permit baseline fallback. Each repair step may lose up to two standard errors
+against its comparison base; validation and holdout confirmation gate every
+selected replacement. Validation receives the earlier blocking findings and
+must show that each is resolved.
 Repairs are tried immediately after the blocked entry, before the validated
 baseline. Ordinary promotion still requires improvement beyond noise.
 The controller records both identities, blocking attempt/receipt and prompt

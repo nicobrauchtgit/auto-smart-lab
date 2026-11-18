@@ -95,7 +95,7 @@ folds; no extra confirmation trial is required. The harness freezes its winning
 factory and estimator parameters. The champion is rerun from its frozen commit on those folds.
 A challenger replaces the champion only when its paired lead on those folds
 exceeds fold noise (more than 2 standard errors of the per-fold differences).
-A validation-blocked champion can instead be replaced by a measured trial with a different source tree whose paired result against a blocked identity in its repair chain is within noise or better; the replacement still requires full validation.
+A validation-blocked champion can instead be replaced by a measured trial with a different source tree whose paired result against a previously blocked champion is within noise or better; the replacement still requires full validation.
 
 Read experiment_status after fixed trials to inspect the recorded quality
 diagnostics before designing the next experiment. Per-fold spread is not a

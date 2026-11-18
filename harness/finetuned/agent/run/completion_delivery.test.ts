@@ -122,7 +122,7 @@ for (const failure of ['review', 'cached-evidence-tamper'] as const) test(`new c
 // coexist with verification_incomplete and an unavailable check (exitCode null).
 // All training, comparison, tag selection, candidate verification and refit below
 // use the real controller/service paths; only agent/reviewer decisions are scripted.
-for (const mode of ['incomplete', 'baseline-order', 'repair-chain', 'same-tree', 'tag-error'] as const)
+for (const mode of ['incomplete', 'baseline-order', 'repair-chain', 'transient', 'same-tree', 'tag-error'] as const)
  test(`blocked champion real delivery: ${mode}`, async () => {
  const initial = temporaryProject('blocked-delivery-');
  const f = {...initial, solutionsRoot:statePath(initial.root,'solutions')};
@@ -149,7 +149,10 @@ for (const mode of ['incomplete', 'baseline-order', 'repair-chain', 'same-tree',
   scouts:()=>({tool:{name:'scout'} as any,report:async request=>{
    const ref=request.refs![0],id='experiment' in ref?ref.experiment!:'';
    reviewed.push(id);
-   const defect=id===blocked || id===newest;
+   const inherited = request.question!.includes(blocked) && request.question!.includes('fallback feature length differs');
+   if(id===newest && mode==='repair-chain')expect(inherited).toBe(true);
+   if(id===newest && mode==='transient')return {text:'',roles:[{role:'validation',status:'failed',bullets:0}]};
+   const defect=id===blocked || (id===newest && inherited);
    return {text:defect?'- fix: fallback feature length differs':'- ok: measured source verified',
     roles:[{role:'validation',status:'completed',bullets:1}],
     checkResults:mode==='incomplete' && id===blocked?[{path:'checks/other/probe.py',exitCode:null,output:'Check execution did not complete'}]:[]};
@@ -186,12 +189,18 @@ for (const mode of ['incomplete', 'baseline-order', 'repair-chain', 'same-tree',
     expect(champion()).toBe(fixed);
     expect(saved().trials.find((r:any)=>r.experimentId===fixed).becameChampion).toBe(true);
    }else expect(champion()).toBe(blocked);
-   if(mode==='repair-chain'){
-    writeFileSync(join(f.solutionsRoot,'tasks/fixture.py'),module(false)+'\n# additional feature revision\n');
+   if(mode==='repair-chain'||mode==='transient'){
+    writeFileSync(join(f.solutionsRoot,'tasks/fixture.py'),module(mode==='transient')+'\n# additional feature revision\n');
     commitAll(f.solutionsRoot,'Later candidate still defective');newest=await measure();
     expect(champion()).toBe(blocked);
    }
-   // Spend the synthetic session's sole tool call: exercise budget-end finalize.
+   if(mode==='transient'){
+    await handover.execute('block',{reason:'check original'},undefined,undefined,undefined as never);
+    expect(champion()).toBe(newest);
+    await handover.execute('retry',{reason:'retry replacement'},undefined,undefined,undefined as never);
+    expect(champion()).toBe(newest); // A transient review must not advance to the older fix.
+   }
+   // Exhaust the scripted session's tool budget to exercise budget-end finalize.
    for(const extension of options.extensionFactories??[]){
     const factory=typeof extension==='function'?extension:extension.factory;
     const handlers:Record<string,any[]>={};
@@ -207,23 +216,26 @@ for (const mode of ['incomplete', 'baseline-order', 'repair-chain', 'same-tree',
  const result=await runLeadSession('fixture',{taskConfiguration:configuration,maxToolCalls:4,progressPath,dependencies,
   report:{event:(type:string,data:any)=>events.push({type,...data}),input(){},agentIdentity(){return {};},observation(){return {};}} as any});
  expect(events.filter(e=>e.type==='agent_attempt_error')).toEqual([]);
- const fallback=mode==='same-tree'||mode==='tag-error', expected=fallback?baseline:fixed;
+ const fallback=mode==='same-tree'||mode==='tag-error'||mode==='transient', expected=fallback?baseline:fixed;
  expect(result.errors).toEqual([]);expect(result.valid).toBe(true);
  expect(result.progress.handOver?.experimentId).toBe(expected);
  expect(result.collection.selected?.experimentId).toBe(expected);
  const manifest=JSON.parse(readFileSync(join(dirname(result.refitArtifacts.find(a=>a.kind==='final_delivery')!.path),'manifest.json'),'utf8'));
  expect(manifest.experiment).toBe(expected);
- expect(reviewed).toEqual(mode==='repair-chain'?[baseline,blocked,newest,fixed]:fallback?[baseline,blocked]:[baseline,blocked,fixed]);
+ expect(reviewed).toEqual(mode==='transient'?[baseline,blocked,newest,newest]:mode==='repair-chain'?[baseline,blocked,newest,fixed]:fallback?[baseline,blocked]:[baseline,blocked,fixed]);
  const repairs=events.filter(e=>e.type==='lead_blocked_champion_replaced');
- expect(repairs.map(e=>e.experiment_id)).toEqual(fallback?[]:mode==='repair-chain'?[newest,fixed]:[fixed]);
+ expect(repairs.map(e=>e.experiment_id)).toEqual(mode==='transient'?[newest]:fallback?[]:mode==='repair-chain'?[newest,fixed]:[fixed]);
  for(const event of repairs){
   expect(event.rendered_sha256).toMatch(/^[a-f0-9]{64}$/);
   expect(event.template_sha256).toMatch(/^[a-f0-9]{64}$/);
+  expect(event.previous_commit).toMatch(/^[a-f0-9]{40}$/);
+  expect(event.replacement_commit).toMatch(/^[a-f0-9]{40}$/);
  }
  if(mode==='repair-chain'){
   expect(result.progress.repairChain!.bases.map(row=>row.experimentId)).toEqual([blocked,newest]);
   expect(result.progress.repairChain!.tried).toEqual([blocked,newest,fixed]);
  }
+ if(mode==='transient')expect(champion()).toBe(newest);
  if(mode==='tag-error'){
   expect(events.some(e=>e.type==='lead_blocked_champion_replacement_failed' && e.message.includes('lock'))).toBe(true);
   expect(result.progress.trials.find(row=>row.experimentId===fixed)?.feedbackRecorded).toBe(true);
