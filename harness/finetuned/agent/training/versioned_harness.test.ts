@@ -125,6 +125,13 @@ test("controller repair moves the champion tag for an equal measured trial", asy
   const a=await training.service.start(request);
   expect(await until(()=>training.supervisor.status(a.id).status!=="running",60_000)).toBe(true);
   await training.service.finalize(a.id);
+  expect(git(project.solutionsRoot,["-c","commit.gpgsign=false","commit","--allow-empty","-m","Same tree, distinct commit"]).status).toBe(0);
+  const identical=await training.service.start(request);
+  expect(await until(()=>training.supervisor.status(identical.id).status!=="running",60_000)).toBe(true);
+  await training.service.finalize(identical.id);
+  expect(await training.service.replaceBlockedChampion({experimentId:a.id,commit:project.head},[identical.id])).toBeUndefined();
+  writeFileSync(join(project.solutionsRoot,"repair.txt"),"changed source tree");
+  commitAll(project.solutionsRoot,"Correct the source");
   const b=await training.service.start(request);
   expect(await until(()=>training.supervisor.status(b.id).status!=="running",60_000)).toBe(true);
   await training.service.finalize(b.id);

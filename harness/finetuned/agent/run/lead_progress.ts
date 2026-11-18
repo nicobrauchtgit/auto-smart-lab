@@ -70,6 +70,13 @@ export interface LeadProgress {
  scoutCalls: number;
  phase?: "baseline" | "improvement";
  baseline?: { experimentId: string; commit: string; trainingRoot?: string; confirmationReceipt?: { path: string; sha256: string }; receiptKey: string; at: string };
+ /** Controller-owned repair lineage; only blocked identities authorize comparisons. */
+ repairChain?: {
+  candidateId: string;
+  bases: { experimentId: string; commit: string; tree: string }[];
+  tried: string[];
+  blocking: { kind: "attempt" | "receipt"; key: string };
+ };
  validationAttempts?: Record<string, { commit: string; tree: string; validation: LeadHandOver["validation"] }>;
  validationReceipts?: Record<string, { experimentId: string; commit: string; validation: LeadHandOver["validation"]; at: string }>;
  handOver?: LeadHandOver;

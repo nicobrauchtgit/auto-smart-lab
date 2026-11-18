@@ -65,6 +65,8 @@ it: answers arrive while you set up the workspace.
 - cost (time, peak memory), how many trials in a row brought no real
   improvement, and your tool calls used.
 
+A validation-blocked champion can instead be replaced by a measured trial with a different source tree whose paired result against a blocked identity in its repair chain is within noise or better; the replacement still requires full validation.
+
 ## Budget and completion
 
 You have {{budget}} tool calls for this entire run. The counter after every

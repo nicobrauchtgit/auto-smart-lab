@@ -1052,24 +1052,25 @@ export class TrainingService {
 		return work;
 	}
 
- /** Controller-only repair selection; callers establish the blocking validation receipt.
-  * IDs are supplied newest first from the lead's durable trial history.
+ /** Controller-only repair selection; callers establish the blocking validation evidence.
+  * IDs are supplied newest first by start order from the lead's durable trial history.
   */
- async replaceBlockedChampion(blocked: { experimentId: string; commit: string }, ids: readonly string[]) {
+ async replaceBlockedChampion(blocked: { experimentId: string; commit: string }, ids: readonly string[], bases: readonly { experimentId: string; commit: string }[] = [blocked]) {
   const root = this.options.solutionsRoot;
   if (!root) return undefined;
   const release = await selectionClaimAsync(root);
   try {
    const current = this.champion();
    if (current?.experimentId !== blocked.experimentId || current.commit !== blocked.commit) return undefined;
+   const blockedTrees = new Set([blocked, ...bases].map(base => resolveCommit(root, base.commit)?.tree));
    const collection = await collectTrainingResults(this.options.trainingRoot);
    for (const id of ids) {
     const selected = collection.trials.find(entry => entry.experimentId === id);
     const trial = this.trials.get(id);
     const comparison = selected?.result?.championComparison as Record<string, unknown> | undefined;
     if (id === blocked.experimentId || !selected?.eligible || selected.result?.status !== "completed"
-     || !trial?.source || comparison?.championExperimentId !== blocked.experimentId
-     || !pairedRepair(comparison, blocked.commit)
+     || !trial?.source || blockedTrees.has(trial.source.tree)
+     || !bases.some(base => comparison?.championExperimentId === base.experimentId && pairedRepair(comparison, base.commit))
      || isTerminalCandidate(root, this.options.taskId, trial.source.commit, trial.request.pipeline)) continue;
     assertDevelopmentCandidate(root, this.options.taskId, trial.source.commit, trial.request.pipeline);
     this.tagChampion(id, selected.result, selected.request!.pipeline);

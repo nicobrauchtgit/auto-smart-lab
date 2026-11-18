@@ -53,7 +53,7 @@ import { readRecord } from "../experiments/safe_files.js";
 import { selectionSummary } from "../training/selection_summary.js";
 import { finishFollowUp, recoverFollowUp, startFollowUp } from "../training/branches.js";
 import { GIT_BLOCK_PROMPT_IDS } from "../training/git_guard.js";
-import { tagMessage } from "../training/git.js";
+import { tagMessage, resolveCommit } from "../training/git.js";
 import { readPythonEnvironment, type PythonEnvironment } from "./python_environment.js";
 import { expertSandbox } from "./sandbox.js";
 import { isolatedSolveTools, solvePythonEnvironmentTool, trainingSandboxCommand, type SolveSandbox } from "./solve_sandbox.js";
@@ -434,23 +434,55 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
  };
  let feedbackChain: Promise<unknown> = Promise.resolve();
  const replaceBlockedChampion = async (candidate?: string, completedId?: string) => {
-  const champion = championOf(data.solutionsRoot, taskId);
-  if (!champion || (progress.baseline && candidate !== champion.experimentId)) return;
-  const blocking = Object.entries(progress.validationReceipts ?? {}).reverse().find(([, receipt]) =>
-   receipt.experimentId === champion.experimentId && receipt.commit === champion.commit);
-  if (!blocking || blocking[1].validation.status !== "completed" || !blocking[1].validation.fix.length) return;
-  const ids = [...new Set([completedId, ...[...progress.trials].reverse().map(row => row.experimentId)]
-   .filter((id): id is string => !!id))];
-  const replacement = await training?.service.replaceBlockedChampion?.(champion, ids);
-  if (!replacement) return;
-  progress.champion = championOf(data.solutionsRoot, taskId);
-  save();
-  record("lead_blocked_champion_replaced", { previous_experiment_id: champion.experimentId,
-   experiment_id: replacement.experimentId, paired_verdict: replacement.verdict,
-   comparison: replacement.comparison, blocking_receipt_key: blocking[0] });
-  await inbox.steer(prompts.render("team.lead-blocked-champion-replaced", {
-   previous: champion.experimentId, experiment: replacement.experimentId, verdict: replacement.verdict,
-  }).text);
+  try {
+   const champion = championOf(data.solutionsRoot, taskId);
+   if (!champion) return;
+   const source = resolveCommit(data.solutionsRoot, champion.commit);
+   if (!source) return;
+   const attempt = progress.validationAttempts?.[champion.experimentId];
+   const matchingAttempt = attempt?.commit === champion.commit && attempt.tree === source.tree ? attempt : undefined;
+   const receipt = Object.entries(progress.validationReceipts ?? {})
+    .filter(([, row]) => row.experimentId === champion.experimentId && row.commit === champion.commit)
+    .sort((a, b) => b[1].at.localeCompare(a[1].at))[0];
+   const blocking = matchingAttempt?.validation.fix.length
+    ? { kind: "attempt" as const, key: sha256(JSON.stringify({ experimentId: champion.experimentId, ...matchingAttempt })) }
+    : (!matchingAttempt || !validationPassed(matchingAttempt.validation)) && receipt?.[1].validation.status === "completed" && receipt[1].validation.fix.length
+     ? { kind: "receipt" as const, key: receipt[0] } : undefined;
+   let chain = progress.repairChain?.candidateId === champion.experimentId ? progress.repairChain : undefined;
+   // An unsuccessful replacement may use the original blocked comparison base.
+   // A successful validation ends repair selection even if older receipts found defects.
+   if (matchingAttempt && validationPassed(matchingAttempt.validation)) return;
+   if (!blocking && !(chain && candidate === champion.experimentId)) return;
+   if (!chain) chain = { candidateId: champion.experimentId, bases: [], tried: [champion.experimentId], blocking: blocking! };
+   if (blocking && !chain.bases.some(base => base.experimentId === champion.experimentId)) {
+    chain.bases.push({ ...champion, tree: source.tree });
+    chain.blocking = blocking;
+   }
+   const ids = [...new Set([...progress.trials.map(row => row.experimentId), completedId]
+    .filter((id): id is string => !!id))].reverse().filter(id => !chain.tried.includes(id));
+   const replacement = await training?.service.replaceBlockedChampion?.(champion, ids, chain.bases);
+   if (!replacement) return;
+   chain.candidateId = replacement.experimentId;
+   chain.tried.push(replacement.experimentId);
+   progress.repairChain = chain;
+   progress.champion = championOf(data.solutionsRoot, taskId);
+   const trial = progress.trials.find(row => row.experimentId === replacement.experimentId);
+   if (trial) trial.becameChampion = true;
+   streak = 0;
+   save();
+   const feedback = prompts.render("team.lead-blocked-champion-replaced", {
+    previous: champion.experimentId, experiment: replacement.experimentId, verdict: replacement.verdict,
+   });
+   record("lead_blocked_champion_replaced", { previous_experiment_id: champion.experimentId,
+    experiment_id: replacement.experimentId, paired_verdict: replacement.verdict,
+    comparison: replacement.comparison, blocking_receipt_key: chain.blocking.kind === "receipt" ? chain.blocking.key : undefined,
+    blocking_attempt_key: chain.blocking.kind === "attempt" ? chain.blocking.key : undefined,
+    ...feedback.reference });
+   await inbox.steer(feedback.text);
+   return replacement.experimentId;
+  } catch (error) {
+   record("lead_blocked_champion_replacement_failed", { message: error instanceof Error ? error.message : String(error) });
+  }
  };
  const trialFinished = (id: string, view: ExperimentView) => {
   composing++;
@@ -472,7 +504,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
    // Completion feedback is durable. Replay only the interruption gap; the
    // authoritative champion is reconciled separately even for known results.
    const before = progress.champion?.experimentId;
-   await replaceBlockedChampion(undefined, id);
+   const repaired = await replaceBlockedChampion(undefined, id);
    if (prior?.feedbackRecorded && prior.status === String(described.status ?? view.status)) return;
    const champion = championOf(data.solutionsRoot, taskId);
    const key = metricKey(configuration);
@@ -487,7 +519,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
    const isNew = champion?.experimentId === id && before !== id;
    trial.becameChampion = trial.becameChampion || isNew;
    if (champion) progress.champion = { experimentId: champion.experimentId, commit: champion.commit, ...(champion.score !== undefined ? { score: champion.score } : {}) };
-   streak = isNew ? 0 : trial.status === "completed" ? streak + 1 : streak;
+   streak = isNew || repaired ? 0 : trial.status === "completed" ? streak + 1 : streak;
    let holdout = prompts.render("team.lead-holdout-none", {}).text;
    if (champion && !holdoutDone(champion.experimentId)) {
     if (runningTrials().length) holdout = isNew ? prompts.render("team.lead-holdout-deferred", {}).text : holdout;
@@ -674,8 +706,10 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
     await scouts?.cancel?.();
     return { experimentId, validation, failures };
    }
+   await replaceBlockedChampion(experimentId);
    const replacement = championOf(data.solutionsRoot, taskId);
-   if (replacement && !choices.includes(replacement.experimentId)) choices.push(replacement.experimentId);
+   if (replacement && !choices.includes(replacement.experimentId))
+    choices.splice(choices.indexOf(experimentId) + 1, 0, replacement.experimentId);
    failures.push(`${experimentId}: ${validation.fix.join("; ") || `validation ${validation.status}; no approved evidence`}`);
   }
   return { failures };
