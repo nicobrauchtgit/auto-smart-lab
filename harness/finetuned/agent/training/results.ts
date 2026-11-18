@@ -114,6 +114,8 @@ function isObject(value: unknown): value is JsonObject {
 	return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+const METRIC_BOUND_TOLERANCE = 1e-9;
+
 function finiteNumber(value: unknown): value is number {
 	return typeof value === "number" && Number.isFinite(value);
 }
@@ -426,7 +428,8 @@ async function collectTrial(directory: string, experimentId: string): Promise<Tr
 	const unlabelled = (measurement?.kind === "anomaly_detection" && !evidenceSelection) || (clustering && measurement.hasTargets !== true);
 	const balancedAccuracy = evidenceSelection ? result?.metrics?.selectionScore : clustering ? result?.metrics?.adjustedRandIndex : result?.metrics?.balancedAccuracy;
 	if (result?.metrics !== null && result?.metrics !== undefined
-		&& (!finiteNumber(balancedAccuracy) || balancedAccuracy < (clustering ? -1 : 0) || balancedAccuracy > 1)) {
+		// Means of bounded metrics can overshoot their bound by floating-point rounding (e.g. AP 1.0000000000000002).
+		&& (!finiteNumber(balancedAccuracy) || balancedAccuracy < (clustering ? -1 : 0) - METRIC_BOUND_TOLERANCE || balancedAccuracy > 1 + METRIC_BOUND_TOLERANCE)) {
 		error(errors, experimentId, "invalid_result", `trial-result.json primary metric must be between ${clustering ? -1 : 0} and 1`, "trial-result.json");
 	}
 	if (measurement && result?.status !== "failed") {

@@ -121,6 +121,19 @@ async function writeTrial(root: string, id: string, options: TrialFixtureOptions
 }
 
 describe("collectTrainingResults", () => {
+	test("accepts a primary metric that overshoots 1 by rounding and rejects a real overshoot", async () => {
+		const root = await mkdtemp(join(tmpdir(), "metric-bound-"));
+		try {
+			await writeTrial(root, "rounded", { score: 1.0000000000000002 });
+			await writeTrial(root, "invalid", { score: 1.01 });
+			const collection = await collectTrainingResults(root);
+			const codes = (id: string) => collection.trials.find((trial) => trial.experimentId === id)?.errors.map((entry) => entry.code);
+			expect(codes("rounded")).not.toContain("invalid_result");
+			expect(codes("invalid")).toContain("invalid_result");
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
 	test("refuses worker-planted artifact symlinks without returning host contents or hashes", async () => {
 		const root = await mkdtemp(join(tmpdir(), "artifact-symlink-"));
 		try {
