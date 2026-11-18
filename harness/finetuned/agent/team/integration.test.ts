@@ -274,6 +274,18 @@ test('a transient unresolved reference is retried by the same resolver', async()
  expect((await f.resolver.status(ref)).status).toBe('resolved');
 });
 
+test("a refused check path (another task's checker) is not recorded as a failed check", async () => {
+ const f=stateFixture();
+ const trial=await f.resolver.snapshot('exp-1');
+ const checks=validationCheckTool({trial,solutionsRoot:f.live,taskId:'fixture',prompts,
+  sandbox:scoutToolset('validation',{sandbox:expertSandbox(f.data,'validation',readPythonEnvironment(false),trial),solutionsRoot:f.live,taskId:'fixture',trial}).checkSandbox!});
+ mkdirSync(join(f.live,'checks/other'),{recursive:true});
+ writeFileSync(join(f.live,'checks/other/foreign.py'),'raise SystemExit(0)\n');
+ const reply=await checks.tool.execute('check',{paths:['checks/other/foreign.py']},undefined,undefined,undefined as never);
+ expect(JSON.stringify(reply.content)).toContain('not a .py file in');
+ expect([...checks.results.keys()]).toEqual([]);
+});
+
 test("checker crash and repair propagate through scout report to readiness", async () => {
  const {validationSummary, validationPassed}=await import('../run/lead_session.js');
  const f=stateFixture();

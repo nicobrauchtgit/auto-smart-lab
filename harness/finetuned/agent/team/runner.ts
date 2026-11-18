@@ -108,13 +108,15 @@ export function validationCheckTool(options: {
   async execute(_id, args, signal) {
    const reply = (data: unknown) => ({content: [{type: "text" as const, text: JSON.stringify(data, null, 1)}], details: {}});
    const paths: string[] = [];
-   const attempted = args.paths.map(path => relative(live, resolve(path.startsWith("checks/") ? live : folder, path)).split(sep).join("/"));
-   for (const path of attempted) results.set(path, {path, exitCode: null, output: "Check execution did not complete"});
+   // Reject before recording: a refused path (another task's check, a typo) is not a check of this trial and must
+   // not become a failed result that later hand-overs inherit and can never clear.
    for (const path of args.paths) {
     const absolute = resolve(path.startsWith("checks/") ? live : folder, path);
     if (!existsSync(absolute) || !inside(realpathSync(absolute), folder) || !absolute.endsWith(".py")) return reply({error: `${path}: not a .py file in ${folder}`});
     paths.push(realpathSync(absolute));
    }
+   const attempted = paths.map(path => relative(live, path).split(sep).join("/"));
+   for (const path of attempted) results.set(path, {path, exitCode: null, output: "Check execution did not complete"});
    try {
     // The hash is of the bytes runTrialChecks read once and executed, not of the live file afterwards.
     const result = await runTrialChecks(options.trial, paths, options.sandbox, signal, {onCheck(check) {
