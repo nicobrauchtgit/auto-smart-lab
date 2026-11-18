@@ -589,8 +589,10 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
    summary.fix = previous.fix; summary.ok = previous.ok; summary.advice = previous.advice;
   }
   // Only a rerun at the same path resolves that check's previous failure.
-  const checks = new Map(previous?.checkResults?.map(check => [check.path, check]));
-  for (const check of summary.checkResults ?? []) checks.set(check.path, check);
+  // Only this task's checks count; older receipts may still hold refused foreign paths.
+  const own = (check: { path: string }) => check.path.startsWith(`checks/${taskId}/`);
+  const checks = new Map(previous?.checkResults?.filter(own).map(check => [check.path, check]));
+  for (const check of (summary.checkResults ?? []).filter(own)) checks.set(check.path, check);
   summary.checkResults = [...checks.values()].map(check => {
    if (check.exitCode !== 0) return check;
    const path = resolve(data.solutionsRoot, check.path);
