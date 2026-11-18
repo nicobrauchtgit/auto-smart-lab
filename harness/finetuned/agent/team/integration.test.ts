@@ -345,7 +345,8 @@ test('check admission uses canonical containment and suffix, with no host path i
  const trial=await f.resolver.snapshot('exp-1');
  const checks=validationCheckTool({trial,solutionsRoot:f.live,taskId:'fixture',prompts,
   sandbox:scoutToolset('validation',{sandbox:expertSandbox(f.data,'validation',readPythonEnvironment(false),trial),solutionsRoot:f.live,taskId:'fixture',trial}).checkSandbox!});
- for(const path of ['checks/other/foreign.py','missing.py','note.txt','looks.py','escape.py',join(f.live,'checks/other/foreign.py')]){
+ // The last path is the misspelled checkout path from Qwen attacks1 (2026-11-18).
+ for(const path of ['checks/other/foreign.py','missing.py','note.txt','looks.py','escape.py',join(f.live,'checks/other/foreign.py'),'../../../../auto-smert-lab/runs/finetuned/solutions/checks/fixture/valid.py']){
   expect(admittedValidationCheck(f.live,'fixture',path)).toBeUndefined();
   const reply=JSON.stringify(await checks.tool.execute('refused',{paths:[path]},undefined,undefined,undefined as never));
   expect(reply).toContain('it was not run and is not recorded');

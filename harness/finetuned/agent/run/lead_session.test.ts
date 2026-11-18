@@ -555,7 +555,7 @@ test('resume prunes refused never-executed checks before cache lookup and scout 
   await runLeadSession('spam1',{taskConfiguration:spamConfiguration(),progressPath,dependencies,signal:stop.signal,report});
   const progress=readProgress(progressPath)!;
   expect(progress.baseline?.experimentId).toBe('measured');
-  const paths=['checks/other/foreign.py','checks/spam1/typo.py','checks/spam1/note.txt'];
+  const paths=['checks/other/foreign.py','checks/spam1/typo.py','checks/spam1/note.txt','../../../../auto-smert-lab/runs/finetuned/solutions/checks/spam1/evidence.py'];
   progress.validationAttempts!.measured.validation={status:'verification_incomplete',fix:[],ok:['measured source'],advice:[],
    checkResults:paths.map(path=>({path,exitCode:null,output:'Check execution did not complete'}))};
   writeProgress(progressPath,progress);
