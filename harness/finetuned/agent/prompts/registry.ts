@@ -14,6 +14,7 @@ export const PROMPTS = {
  "team.ideas": { file: "team/ideas.md", variables: ["taskId", "budget", "webSearches", "resources"] },
  "team.validation": { file: "team/validation.md", variables: ["taskId", "budget", "experiment", "commit", "checks"] },
  "team.validation-review": { file: "team/validation-review.md", variables: ["review"] },
+ "team.check-path-refused": { file: "team/check-path-refused.md", variables: ["path", "taskId"] },
  "team.check-tool": { file: "team/check-tool.md", variables: [] },
  "team.scout-started": { file: "team/scout-started.md", variables: ["id", "roles"] },
  "team.lead-scout-news": { file: "team/lead-scout-news.md", variables: ["id", "roles", "statuses", "bullets"] },

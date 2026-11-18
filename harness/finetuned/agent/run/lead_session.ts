@@ -10,6 +10,7 @@
  * hand-over, PROGRESS.json for resumption and compaction, and the
  * deterministic terminal refit.
  */
+import { admittedValidationCheck } from "../team/runner.js";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, join, resolve } from "node:path";
@@ -319,6 +320,18 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
  const prior = readProgress(progressPath);
  if (prior && prior.taskId !== taskId) throw new Error("Lead progress belongs to another task");
  if (prior?.datasetSha256 && prior.datasetSha256 !== data.datasetSha256) throw new Error("Lead progress dataset changed; restore its task state before resuming");
+ if (prior) {
+  let pruned = false;
+  for (const [experimentId, attempt] of Object.entries(prior.validationAttempts ?? {})) {
+   const checks = attempt.validation.checkResults ?? [];
+   const refused = checks.filter(check => !check.sha256 && !admittedValidationCheck(data.solutionsRoot, taskId, check.path));
+   if (!refused.length) continue;
+   attempt.validation.checkResults = checks.filter(check => !refused.includes(check));
+   pruned = true;
+   record("lead_validation_checks_pruned", { experiment_id: experimentId, paths: refused.map(check => check.path) });
+  }
+  if (pruned) writeProgress(progressPath, prior);
+ }
  const resumed = prior && (prior.status === "running" || prior.status === "handing_over" || (prior.status === "failed" && !!prior.handOver)) ? prior : undefined;
  const invocationId = identity?.stageInvocationId ?? options.runId ?? randomUUID();
  const runId = resumed?.runId ?? options.runId ?? invocationId;
@@ -649,8 +662,10 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
    summary.fix = previous.fix; summary.ok = previous.ok; summary.advice = previous.advice;
   }
   // Only a rerun at the same path resolves that check's previous failure.
-  // Only this task's checks count; older receipts may still hold refused foreign paths.
-  const own = (check: { path: string }) => check.path.startsWith(`checks/${taskId}/`);
+  // Older attempts may still hold never-executed refused paths.
+  // Executed evidence survives later source removal or drift; never-executed
+  // entries must pass the same admission rule as run_checks.
+  const own = (check: { path: string; sha256?: string }) => !!check.sha256 || !!admittedValidationCheck(data.solutionsRoot, taskId, check.path);
   const checks = new Map(previous?.checkResults?.filter(own).map(check => [check.path, check]));
   for (const check of (summary.checkResults ?? []).filter(own)) checks.set(check.path, check);
   summary.checkResults = [...checks.values()].map(check => {

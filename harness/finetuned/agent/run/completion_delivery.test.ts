@@ -127,6 +127,8 @@ for (const mode of ['incomplete', 'baseline-order', 'repair-chain', 'transient',
  const initial = temporaryProject('blocked-delivery-');
  const f = {...initial, solutionsRoot:statePath(initial.root,'solutions')};
  mkdirSync(dirname(f.solutionsRoot),{recursive:true}); renameSync(initial.solutionsRoot,f.solutionsRoot);
+ mkdirSync(join(f.solutionsRoot,'checks/fixture'),{recursive:true});
+ writeFileSync(join(f.solutionsRoot,'checks/fixture/unfinished.py'),'# admitted but unfinished checker\n');
  const configuration=spamConfiguration(), taskPath=join(f.root,'task.md');
  writeFileSync(taskPath,'Synthetic blocked champion regression');
  const fullRoot=join(f.root,'full');mkdirSync(fullRoot);
@@ -155,7 +157,7 @@ for (const mode of ['incomplete', 'baseline-order', 'repair-chain', 'transient',
    const defect=id===blocked || (id===newest && inherited);
    return {text:defect?'- fix: fallback feature length differs':'- ok: measured source verified',
     roles:[{role:'validation',status:'completed',bullets:1}],
-    checkResults:mode==='incomplete' && id===blocked?[{path:'checks/other/probe.py',exitCode:null,output:'Check execution did not complete'}]:[]};
+    checkResults:mode==='incomplete' && id===blocked?[{path:'checks/fixture/unfinished.py',exitCode:null,output:'Check execution did not complete'}]:[]};
   }}),
   runAgentSession:async options=>{
    const handover=options.customTools!.find(tool=>tool.name==='hand_over')!;
@@ -177,7 +179,7 @@ for (const mode of ['incomplete', 'baseline-order', 'repair-chain', 'transient',
    const before=mode==='incomplete'||mode==='tag-error';
    if(before)await handover.execute('block',{reason:'check source'},undefined,undefined,undefined as never);
    if(mode==='incomplete'){
-    expect(saved().validationAttempts[blocked].validation).toMatchObject({status:'verification_incomplete',fix:[expect.any(String)],checkResults:[{path:'checks/other/probe.py',exitCode:null,output:'Check execution did not complete'}]});
+    expect(saved().validationAttempts[blocked].validation).toMatchObject({status:'verification_incomplete',fix:[expect.any(String)],checkResults:[{path:'checks/fixture/unfinished.py',exitCode:null,output:'Check execution did not complete'}]});
     expect(Object.values(saved().validationReceipts).some((r:any)=>r.experimentId===blocked)).toBe(false);
    }
    if(mode!=='same-tree'){
