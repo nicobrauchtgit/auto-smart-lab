@@ -42,7 +42,7 @@ contains no advice on how to solve tasks.
 - **Submission:** you have no submission tool. Your `SOLVER_DONE` line is the decision to submit:
   the orchestrator takes what it names right away. Before that, a mechanical check (no judgement
   of quality) refuses output it cannot accept: a missing or empty file, lines that are not
-  `<id>;<integer label>`, or duplicate ids. Refused output is not taken; the defects come back to
+  `<id>;<label>` with a single-token label, or duplicate ids. Refused output is not taken; the defects come back to
   you as a new session. Consecutive sessions without a submittable result are capped; the feedback
   states the count. Your first message states where the result goes in this run, what it costs
   and what comes back to you.

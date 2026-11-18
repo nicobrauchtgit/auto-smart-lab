@@ -32,12 +32,12 @@ export function checkCsv(csvPath: string): OutputCheck {
 	const seen = new Set<string>();
 	const dupes: string[] = [];
 	for (const [i, line] of lines.entries()) {
-		const m = line.match(/^([^;]+);(-?\d+)$/);
+		const m = line.match(/^([^;]+);([^;\s]+)$/);
 		if (!m) { malformed.push(`line ${i + 1}: ${JSON.stringify(line.slice(0, 80))}`); continue; }
 		if (seen.has(m[1])) dupes.push(m[1]);
 		seen.add(m[1]);
 	}
-	if (malformed.length) problems.push(`${malformed.length} line(s) are not \`<id>;<integer label>\` (${malformed.slice(0, MAX_EXAMPLES).join("; ")})`);
+	if (malformed.length) problems.push(`${malformed.length} line(s) are not \`<id>;<label>\` with a single-token label (${malformed.slice(0, MAX_EXAMPLES).join("; ")})`);
 	if (dupes.length) problems.push(`${dupes.length} duplicate id(s) (e.g. ${dupes.slice(0, MAX_EXAMPLES).join(", ")})`);
 
 	const summary = `${lines.length} lines`;
