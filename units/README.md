@@ -1,7 +1,7 @@
 # Task data
 
-Downloaded unit contents stay local and are ignored by Git. Both experiment arms
-read this one directory; the minimal arm gets read-only links to the unit
+Downloaded unit contents stay local and are ignored by Git. Both harnesses
+read this one directory; the minimal harness gets read-only links to the unit
 folders, without `_vm-archive/` or this README.
 
 ```

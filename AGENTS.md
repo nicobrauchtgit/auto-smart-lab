@@ -1,16 +1,18 @@
 # The experiment
 
-This repository compares two arms under `harness/`: a minimal agent
-(`harness/minimal/`) and the task-adapted harness (`harness/finetuned/`). Each arm
+This repository compares two harnesses under `harness/`: the minimal harness
+(`harness/minimal/`) and the guided harness (`harness/finetuned/`, called
+`finetuned` in paths, configuration and the `--arm` flag). A harness is the
+code around the model; the model running inside it is the agent. Each harness
 keeps its code, its configuration (`pipeline.config.json` at the top of its folder)
 and its docs in its own folder; `experiment/` holds the switch, the run locations
 and the boundary tests; run state goes to `runs/minimal/` and `runs/finetuned/`.
 [docs/experiment.md](docs/experiment.md) has how to run each, what differs and what
-must stay the same. Agents must not leave their run location, and neither arm may
-read the other: keep the boundary tests passing. The sections below describe the
-finetuned harness; paths in them are relative to `harness/finetuned/` unless they
-start with `runs/`. `harness/minimal/CLAUDE.md` has the minimal arm's rules. Do not
-add coaching to the minimal arm.
+must stay the same. Agents must not leave their run location, and neither harness
+may read the other: keep the boundary tests passing. The sections below describe the
+guided harness; paths in them are relative to `harness/finetuned/` unless they
+start with `runs/`. `harness/minimal/CLAUDE.md` has the minimal harness's rules. Do
+not add coaching to the minimal harness.
 
 # Current state and next tasks
 
@@ -80,7 +82,7 @@ to discover missing setup. `--check-setup` runs the checks without starting agen
 
 ## Pipeline Python dependencies
 
-Use the finetuned harness's Python environment, exposed as `VENV_DIR` and stored in
+Use the guided harness's Python environment, exposed as `VENV_DIR` and stored in
 `harness/finetuned/.venv`. Run commands through `./dev`, which keeps the pinned toolchain from
 `mise.toml` (bun, uv, ripgrep, fd), uv's managed Python and all caches under
 `.tools/`; never install tools into the user's home, shell configuration or Nix

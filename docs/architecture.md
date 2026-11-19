@@ -15,7 +15,7 @@ give a common local route, not a mandatory fixed workflow.
 
 | Boundary | Owns | Key source / contract |
 | --- | --- | --- |
-| Experiment host | Arm dispatch, shared configuration, run preparation | [cli.ts](../experiment/cli.ts), [config.ts](../experiment/config.ts), [minimal.ts](../experiment/minimal.ts) |
+| Experiment host | Harness dispatch, shared configuration, run preparation | [cli.ts](../experiment/cli.ts), [config.ts](../experiment/config.ts), [minimal.ts](../experiment/minimal.ts) |
 | Pipeline executor | Stage lifecycle, typed artifacts, validation, preflight | [executor.ts](../harness/finetuned/agent/pipeline/executor.ts), [types.ts](../harness/finetuned/agent/pipeline/types.ts), [setup.ts](../harness/finetuned/agent/pipeline/setup.ts) |
 | Research inputs | Deterministic dataset profile, task context, course resources (for v2's scouts) | [profile.ts](../harness/finetuned/agent/research/profile.ts), [research README](../harness/finetuned/agent/research/README.md) |
 | Solve / training | Agent trial requests versus harness execution and promotion | [lead session](../harness/finetuned/agent/run/lead_session.ts), [training README](../harness/finetuned/agent/training/README.md) |
@@ -32,13 +32,13 @@ flowchart TD
     CFG --> ARM{arm}
     ARM -->|minimal| MIN[experiment/minimal.ts: prepareMinimalRun and runMinimal]
     ARM -->|finetuned| FIN[pipeline_cli.ts then executor.runPipeline]
-    MIN --> MJ[Whole arm process in bubblewrap]
+    MIN --> MJ[Whole harness process in bubblewrap]
     MJ --> MR[runs/minimal/stamp: copied agent and own venv]
     FIN --> FJ[Solve file tools in bubblewrap]
     FJ --> FR[runs/finetuned: per-task state and solutions]
     U[Allowed task material from units, excluding private underscore dirs] -. read only .-> MJ
     U -. selected mounts .-> FJ
-    X[Other arm code/state and repository secrets] -. excluded mounts .-> MJ
+    X[Other harness code/state and repository secrets] -. excluded mounts .-> MJ
     X -. excluded mounts .-> FJ
 ```
 

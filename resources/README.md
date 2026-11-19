@@ -35,7 +35,7 @@ available. Import/check provenance is in `docs/course-materials-mapping-2026-11-
 
 Per-unit manifests reference hash-addressed assets. The shared resource reader
 validates the selected manifest and every checksum during preflight, then provides
-the same declared files to both arms. A missing, changed, linked or invalid asset
+the same declared files to both harnesses. A missing, changed, linked or invalid asset
 blocks execution. Runtime paths use readable filenames. Minimal snapshots remain
 self-contained and read-only; shared content is hard-linked within a run, while
 the first snapshot copy remains independent of later source changes. Finetuned

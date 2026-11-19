@@ -1,12 +1,16 @@
 # Auto SmartLab
 
-An experiment comparing a minimal autonomous agent with a task-adapted ML harness on SmartLab tasks. Both arms share task data, model/provider configuration and offline/online mode; their instructions, execution and evidence policies intentionally differ.
+An experiment comparing two harnesses for an autonomous LLM agent on SmartLab tasks: a **minimal harness** that gives the model only facts about its environment, and a **guided harness** that coaches the model and keeps control of training and validation.
+
+Terminology, shared with the [report](report/main.pdf): a *harness* is everything around the model (prompts, tools, limits, checking and delivery code); the model running inside one is the *agent*. In folder names, configuration and the `--arm` flag the two harnesses are called `minimal` and `finetuned`, so "the finetuned arm" in older documents and run records means the guided harness.
+
+Both harnesses share task data, model/provider configuration and offline/online mode; their instructions, execution and evidence policies intentionally differ.
 
 Start here:
 
-- [The experiment](docs/experiment.md): question, shared conditions, arm differences, reset and isolation.
+- [The experiment](docs/experiment.md): question, shared conditions, harness differences, reset and isolation.
 - [Work queue](docs/cleanup-plan.md): current state, packages and follow-ups.
-- [Expert team v2](harness/finetuned/docs/expert-team-v2.md): the accepted design of the finetuned arm, now implemented: one lead agent, asynchronous scouts (data, ideas, validation), harness-run trials and a validated terminal refit.
+- [Expert team v2](harness/finetuned/docs/expert-team-v2.md): the accepted design of the guided harness, now implemented: one lead agent, asynchronous scouts (data, ideas, validation), harness-run trials and a validated terminal refit.
 - [Experiment reports](docs/experiments/): one record per observed run, and the [written report](report/main.pdf).
 
 Then [architecture](docs/architecture.md) (current diagrams), [architecture decisions](docs/adr/README.md), [task readiness](docs/tasks.md) and the [source inventory](docs/code-inventory.md).
@@ -32,12 +36,12 @@ Shared [experiment.config.json](experiment.config.json) sets `online: false`: no
 
 | Location | Purpose |
 | --- | --- |
-| `harness/minimal/` | Minimal arm code, configuration and historical docs |
-| `harness/finetuned/` | Task-adapted harness, contracts and prompts |
+| `harness/minimal/` | Minimal harness: code, configuration and historical docs |
+| `harness/finetuned/` | Guided harness: code, contracts and prompts |
 | `experiment/`, `experiment.config.json` | Dispatch, confinement and shared conditions |
-| `runs/` | Ignored arm-specific execution state and deliveries |
+| `runs/` | Ignored harness-specific execution state and deliveries |
 | `units/` | Ignored task material; private underscore directories excluded from agent inputs |
-| `resources/` | Course slides supplied read-only to both arms |
+| `resources/` | Course slides supplied read-only to both harnesses |
 | `docs/` | Experiment, work queue, decisions, reports and archive |
 
-Credentials stay in ignored local configuration. Runtime prompts are explicitly selected from each arm; this README is development documentation.
+Credentials stay in ignored local configuration. Runtime prompts are explicitly selected from each harness; this README is development documentation.

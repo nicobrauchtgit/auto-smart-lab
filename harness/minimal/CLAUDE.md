@@ -1,6 +1,6 @@
-# Working on the minimal arm
+# Working on the minimal harness
 
-This arm runs through `./dev bun run experiment -- --arm minimal` from the repository
+This harness runs through `./dev bun run experiment -- --arm minimal` from the repository
 root, which copies it to a fresh `runs/minimal/<stamp>/` and confines it there. See
 `docs/experiment.md` at the root. Commands below that use `npm`, `scripts/vm` or the lab VM
 are from before the merge; the lab VM no longer exists.

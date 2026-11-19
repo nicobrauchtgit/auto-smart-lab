@@ -1,11 +1,13 @@
-# The experiment: minimal agent vs. task-adapted harness
+# The experiment: minimal harness vs. guided harness
 
-> The finetuned arm's design is superseded by [expert-team-v2.md](../harness/finetuned/docs/expert-team-v2.md) when P7 lands (one lead agent with scouts). Its orchestrator, research and evaluate stages and knowledge store were removed on 2026-11-11; the arm currently runs solve, then refit. This page describes the current code.
+> Terminology, shared with the [report](../report/main.pdf): a *harness* is everything around the model; the model running inside one is the *agent*. The two harnesses are the **minimal harness** (`minimal` in paths and flags) and the **guided harness** (`finetuned` in paths and flags). An *arm* is one of the two, as in the `--arm` flag.
+>
+> The guided harness follows [expert-team-v2.md](../harness/finetuned/docs/expert-team-v2.md): one lead agent with asynchronous scouts, harness-run trials and a validated terminal refit. Its earlier orchestrator, research and evaluate stages and knowledge store were removed on 2026-11-11. This page describes the current code.
 
-**Question:** on the SmartLab tasks, which performs better: a single minimal agent
-that is simply run, or a more complex harness adapted to the task?
+**Question:** on the SmartLab tasks, which performs better: a minimal harness in
+which a single agent is simply run, or a guided harness adapted to the task?
 
-Both arms live on this branch. Choose one with a flag; no branch switch.
+Both harnesses live on this branch. Choose one with a flag; no branch switch.
 
 ```bash
 ./dev bun run experiment -- --arm minimal --check-setup
@@ -21,13 +23,13 @@ Both arms live on this branch. Choose one with a flag; no branch switch.
 `runs/finetuned/<task>/logs/<stamp>.log`, prints the log path and how to follow,
 and stop it (`kill -INT <pid>`), and returns.
 
-Arguments after the flag go to the arm's own entry point:
-`harness/finetuned/agent/pipeline_cli.ts` for the finetuned arm,
-`harness/minimal/agent/run/solve_units.ts` for the minimal arm.
+Arguments after the flag go to the harness's own entry point:
+`harness/finetuned/agent/pipeline_cli.ts` for the guided harness,
+`harness/minimal/agent/run/solve_units.ts` for the minimal harness.
 
 ```text
-harness/minimal/     the minimal agent: agent/, pipeline.config.json, requirements.*, docs/
-harness/finetuned/   the task-adapted harness: agent/, pipeline.config.json,
+harness/minimal/     the minimal harness: agent/, pipeline.config.json, requirements.*, docs/
+harness/finetuned/   the guided harness: agent/, pipeline.config.json,
                      harness.config.json, pyproject.toml, uv.lock, .venv, docs/
 experiment/          the switch (cli.ts), run locations and jails, boundary tests
 runs/minimal/        one folder per minimal run
@@ -36,26 +38,26 @@ units/               task data, shared and read-only for both
 experiment.config.json  shared: online or offline, the chosen provider and model, all providers
 ```
 
-| Arm | Code | Described in |
+| Harness | Code | Described in |
 | --- | --- | --- |
 | finetuned | `harness/finetuned/` | `harness/finetuned/README.md`, `harness/finetuned/docs/pipeline-integration.md` |
 | minimal | `harness/minimal/` (imported from Leo's main, history kept) | `harness/minimal/docs/AGENT.md`, `harness/minimal/docs/EXPERIMENT_LOG.md` |
 
-## The arms must not interfere
+## The harnesses must not interfere
 
 Controller code may sit anywhere. **Agents do not leave their run location.**
 
 | Session | Run location | Boundary |
 | --- | --- | --- |
-| Minimal solver | `runs/minimal/<stamp>/`: a copy of the arm's `agent/` and `.pi/`, the units, its own venv | The whole arm process runs in bubblewrap (`experiment/minimal.ts`) |
-| Finetuned solve | `runs/finetuned/<task>/solve/agent/`, `runs/finetuned/solutions/` | Bubblewrap tools (`prepareSolveSandbox`) |
+| Minimal solver | `runs/minimal/<stamp>/`: a copy of the harness's `agent/` and `.pi/`, the units, its own venv | The whole harness process runs in bubblewrap (`experiment/minimal.ts`) |
+| Guided lead and scouts | `runs/finetuned/<task>/solve/agent/`, `runs/finetuned/solutions/` | Bubblewrap tools (`prepareSolveSandbox`) |
 
-Neither arm can read the other's code, prompts or state, or `.env`. `experiment/minimal.test.ts`
+Neither harness can read the other's code, prompts or state, or `.env`. `experiment/minimal.test.ts`
 and `harness/finetuned/agent/run/arm_boundary.test.ts` prove this; keep them passing.
 
-Known limit: the minimal arm's model key has to be in the arm's process, and its
+Known limit: the minimal harness's model key has to be in its process, and its
 shell tool drops credentials from the environment, but a command could still read
-the parent's `/proc/<pid>/environ`. That exposes the model key, not the other arm.
+the parent's `/proc/<pid>/environ`. That exposes the model key, not the other harness.
 
 ## Starting clean and continuing runs
 
@@ -63,34 +65,34 @@ Fresh minimal invocations create a new confined run. Use `--continue runs/minima
 
 [experiment/source.ts](../experiment/source.ts) refuses continuation if the recorded minimal harness commit or solver prompt hash differs. Only real direct runs/minimal children are accepted. --check-setup validates without creating a run or starting agents. Before continuation, a sibling snapshot preserves everything except node_modules and .venv; venv-packages.txt records installed packages. chain.jsonl records invocation arguments and identity. chain-budget.json fixes the total cost cap; earlier solve-units summary spentUsd is deducted from it. --source-from is removed.
 
-Finetuned retains its own solutions; reset it explicitly for an independent repeat. Neither arm reads the other. Continuation is not an independent repeat.
+Finetuned retains its own solutions; reset it explicitly for an independent repeat. Neither harness reads the other. Continuation is not an independent repeat.
 
 ## What is compared
 
 Results are instructor scores on the hand-over files, which have the same shape in
-both arms: `output.csv` (no header, `id;prediction`), `source.zip`, `manifest.json`.
+both harnesses: `output.csv` (no header, `id;prediction`), `source.zip`, `manifest.json`.
 
 - Minimal: `runs/minimal/<stamp>/logs/deliveries/<stamp>/<task>/`
 - Finetuned: `runs/finetuned/deliveries/<task>/<identity>/`
 
-Offline mode gives no score feedback in either arm, so only offline results compare
+Offline mode gives no score feedback in either harness, so only offline results compare
 directly. Online mode stays available for both in case the lab returns.
 
 Tasks: only those on the shared drive. The lab VM no longer exists, so token tasks
 (defense1, offense1-2) cannot run.
 
-## Differences between the arms
+## Differences between the harnesses
 
 These are part of what is compared. Do not equalize them; report them with results.
 
-| | Minimal | Finetuned |
+| | Minimal harness | Guided harness (`finetuned`) |
 | --- | --- | --- |
 | Instructions | Environment and protocol facts only, no coaching | Authored prompts per stage, with coaching |
-| Course slides | Same PDFs/text copies in a read-only snapshot; `read_challenge` lists paths and hashes | None for now: research, which received the slides, was removed on 2026-11-11; v2's scouts will receive them (P7a) |
+| Course slides | Same PDFs/text copies in a read-only snapshot; `read_challenge` lists paths and hashes | The data and ideas scouts receive the same slides in their `resources/` |
 | Stages | One solver session, then a deterministic check | One lead session with harness trials and asynchronous scouts, then validated terminal refit |
-| Who trains | The agent runs its own code | The harness runs the agent's pipeline and owns folds, seeds and promotion |
+| Who trains | The agent runs its own code | The guided harness runs the agent's pipeline and owns folds, seeds and promotion |
 | Labels | All labels visible to the agent | A sealed split stays hidden until the terminal refit |
-| Budgets | 30-minute sessions, 3 failed sessions per task | 6 trials per solve session, stall detection |
+| Budgets | 30-minute sessions, 3 failed sessions per task | Tool-call budgets: 100 lead calls by default (150 in the later campaigns), 10 to 15 per scout; stall detection |
 | Installing packages | Plain `pip` in its own venv | `python_environment` tool, recorded in `changes.jsonl` |
 | Extra packages | None beyond the shared base | `optuna`, `dpkt`, `joblib`, `matplotlib`, `beautifulsoup4`, `cloudpickle`, `smartlab-eval` |
 | Model limits | Leo's entry: 262,144 context, 32,768 output, reasoning on, `compat` set | 262,144 context, 32,768 output, reasoning on, same `compat` |
@@ -98,18 +100,18 @@ These are part of what is compared. Do not equalize them; report them with resul
 
 ## Kept the same
 
-`experiment.config.json` at the repository root holds what both arms must share, so it is set once:
+`experiment.config.json` at the repository root holds what both harnesses must share, so it is set once:
 `online` (off: shared-drive tasks and hand-over files; on: lab tasks, submissions and score
 feedback), `model` (`provider` and `id` as separate fields) and `providers` (every provider's
-endpoint, models, limits, `compat` and the name of its key variable in `.env`). Neither arm's own
-files repeat these; the finetuned arm rejects a `pipeline.config.json` that tries, and the minimal
-arm gets `--offline` and `--model` from it (passing `--offline` yourself is rejected).
-The remaining values below are per arm and match only because both say so.
+endpoint, models, limits, `compat` and the name of its key variable in `.env`). Neither harness's own
+files repeat these; the guided harness rejects a `pipeline.config.json` that tries, and the minimal
+harness gets `--offline` and `--model` from it (passing `--offline` yourself is rejected).
+The remaining values below are per harness and match only because both say so.
 
 | | `harness/minimal/` | `harness/finetuned/` |
 | --- | --- | --- |
 | Model, provider, online | `experiment.config.json` (shared) | `experiment.config.json` (shared) |
-| Run settings | Flags to `solve_units.ts` and constants in the arm's code | `harness.config.json`, `pipeline.config.json` |
+| Run settings | Flags to `solve_units.ts` and constants in the harness's code | `harness.config.json`, `pipeline.config.json` |
 | Python packages | `requirements.in`, `requirements.txt` | `pyproject.toml`, `uv.lock` |
 
 - **Model and provider:** selected in the shared file (see Selecting the model below).
@@ -117,7 +119,7 @@ The remaining values below are per arm and match only because both say so.
   262,144 context, 32,768 output, reasoning on, `compat` and `reasoning_effort: xhigh`.
   A 194,879-token prompt got a correct answer on 2026-11-09.
 - **Base packages, same versions:** numpy, scipy, scikit-learn, pandas, torch (CPU build).
-  `harness/minimal/requirements.txt` was pinned to match the harness's `uv.lock`; nothing keeps them in step.
+  `harness/minimal/requirements.txt` was pinned to match the guided harness's `uv.lock`; nothing keeps them in step.
 - **Python, pi SDK and task data:** the interpreter from `.python-version`, pi 0.84.1, one `units/`.
 - **Tools at run time:** `./dev`, bun, uv.
 
@@ -128,11 +130,11 @@ Earlier results in `harness/minimal/docs/EXPERIMENT_LOG.md` are not directly com
 - **Packages:** the lab VM's `~/env` had 198 packages including TensorFlow, a count recorded
   in one log entry (2026-10-03). Its full list was not kept. TensorFlow is left out because it needs AVX and this VM's CPU
   (`QEMU Virtual CPU version 2.5+`) lacks it. Changing the VM's CPU type to one with AVX
-  would allow re-adding it to both arms.
-- **Model limits:** the arm keeps Leo's documented entry, now in `experiment.config.json`.
+  would allow re-adding it to both harnesses.
+- **Model limits:** the minimal harness keeps Leo's documented entry, now in `experiment.config.json`.
   Whether his VM's `~/.pi/agent/models.json` matched it is not recorded.
 - **Runtime:** bun and pi 0.84.1 instead of tsx/node and the latest pi.
-- **Visibility:** the agent no longer sees the arm's docs and logs of earlier runs, the
+- **Visibility:** the agent no longer sees the harness's docs and logs of earlier runs, the
   other tasks' leftovers from other runs, or credentials in its shell environment.
 - **Removed:** `scripts/vm/`, since the VM is gone.
 
@@ -151,7 +153,7 @@ exactly 100 zeros (405).
 
 | Request | Q | Correct | Thinking tokens (mean) | Seconds |
 | --- | --- | --- | --- | --- |
-| `system` role, no parameter (`compat`, both arms) | A | 3/3 | 364 | 6 |
+| `system` role, no parameter (`compat`, both harnesses) | A | 3/3 | 364 | 6 |
 | `developer` role, no parameter | A | 3/3 | 679 | 10 |
 | `developer` role, top-level `reasoning_effort: medium` (pi without `compat`) | A | 3/3 | 739 | 12 |
 | No parameter | B | 3/3 | 442 | 11 |
@@ -166,14 +168,14 @@ The server accepts the effort levels without error, but with three requests no l
 changed the thinking length in the documented order, and `none` still thought. Either the
 deployed chat template ignores `reasoning_effort` or the effect is too small to see here.
 Only `enable_thinking: false` reliably turns thinking off. The `developer` role roughly
-doubled the thinking, so both arms use `compat` (`system` role, no effort parameter) and
+doubled the thinking, so both harnesses use `compat` (`system` role, no effort parameter) and
 send `chat_template_kwargs: {"reasoning_effort": "xhigh"}`, the documented default and
 highest level, whatever the deployment makes of it. Checked on the captured requests.
 
 ## Selecting the model
 
 The model is chosen only in the shared `experiment.config.json` read by both
-arms; code has no fallback model. The tracked file selects Qwen on MythLLM and
+harnesses; code has no fallback model. The tracked file selects Qwen on MythLLM and
 lists both providers and their models. To switch models, change its top-level
 selection to one of the following. A file with no `model` loads successfully,
 but model preflight, `--check-setup`, runs and standalone agent commands stop
@@ -188,7 +190,7 @@ Qwen on MythLLM requires `MYTHLLM_API_KEY` in `.env`:
 Gemini on Vertex requires Google credentials and access to the configured
 Google Cloud project and location: set `GOOGLE_APPLICATION_CREDENTIALS` in
 `.env` to a readable Application Default Credentials (ADC) file, or set
-`GOOGLE_CLOUD_API_KEY`. The minimal arm's preflight insists on one of the two,
+`GOOGLE_CLOUD_API_KEY`. The minimal harness's preflight insists on one of the two,
 because its sandbox mounts only that file and cannot see gcloud's default ADC
 path:
 
@@ -197,12 +199,12 @@ path:
 ```
 
 The Qwen and Gemini experiments of 2026-11-15..18 used exactly these selections.
-Only the selected provider needs credentials. Both arms read this shared
-selection. `thinkingLevel` reaches both arms, finetuned scouts, the setup probe
+Only the selected provider needs credentials. Both harnesses read this shared
+selection. `thinkingLevel` reaches both harnesses, finetuned scouts, the setup probe
 and traces; omitting it preserves SDK defaults. It is separate from the
 model's `reasoning` capability flag. pi remains 0.84.1.
 
-The builtin Vertex model extension supplies both arms with 1,048,576 context
+The builtin Vertex model extension supplies both harnesses with 1,048,576 context
 tokens, 65,536 output tokens and text/image input. Catalog costs per million
 tokens are $0.75 input, $3.75 output and $0.075 cache reads, with no separate
 cache-write charge. Catalog provenance: [model metadata](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-8-flash),

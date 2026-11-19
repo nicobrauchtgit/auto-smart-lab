@@ -1,6 +1,6 @@
 # Auto SmartLab
 
-> **The finetuned arm of the experiment** (see [the experiment](../../docs/experiment.md)).
+> **The guided harness of the experiment**, called `finetuned` in paths and flags (see [the experiment](../../docs/experiment.md)).
 > Paths in this README and in `docs/` are relative to `harness/finetuned/`. Run state
 > lives in `runs/finetuned/` at the repository root: task runs (`runs/finetuned/<task>/`),
 > `solutions/` and `deliveries/`.
@@ -22,7 +22,7 @@ Uploads still require explicit policy.
 
 ## The experiment
 
-This repository holds two experiment arms: this harness and a minimal agent in `harness/minimal/`. Pick one with `./dev bun run experiment -- --arm finetuned|minimal`. See [the experiment](../../docs/experiment.md). The rest of this README describes the harness.
+This repository holds two harnesses: this guided harness and the minimal harness in `harness/minimal/`. Pick one with `./dev bun run experiment -- --arm finetuned|minimal`. See [the experiment](../../docs/experiment.md). The rest of this README describes the harness.
 
 ## What the project is trying to do
 
@@ -401,7 +401,7 @@ uv.lock                 Locked Python environment
 
 ## Entry points and submission policy
 
-Use the root `experiment` command to select an arm, or the registered root
+Use the root `experiment` command to select a harness, or the registered root
 pipeline/stage commands. There is no root `solve` package script. Legacy
 interactive tools and optional subagents are not the experiment entry point.
 The default experiment is offline and hands over files for manual submission.

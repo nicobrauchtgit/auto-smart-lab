@@ -62,7 +62,7 @@ label (`.x`) and once with its true label as the file extension (0 normal,
 1 to 3 attack kinds; 127 of 2,990 are attacks). The staged `adv-train.zip`
 contains only the unlabelled copies, as the task intends. The labels are kept in
 `units/_truth/attacks1-train.labels` for scoring our own runs. Folders whose
-name starts with `_` are not task material: neither arm may mount or copy them
+name starts with `_` are not task material: neither harness may mount or copy them
 into an agent's workspace.
 
 ## Use in the redesign
