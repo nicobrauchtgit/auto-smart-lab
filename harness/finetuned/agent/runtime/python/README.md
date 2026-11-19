@@ -100,7 +100,7 @@ An interrupted operation can have a start record without an outcome. uv may fail
 after updating files or packages; the manager records the observed state rather
 than assuming rollback. Do not truncate the audit history during active runs.
 
-Run `npm test` and `npm run test:py` for the TypeScript and Python tests. Environment
+Run `./dev bun test` and `./dev bun run test:py` for the TypeScript and Python tests. Environment
 tests use temporary fixtures and leave the project's installed packages alone.
 
 `AGENTS.md` remains development guidance and is not loaded into pipeline agents.

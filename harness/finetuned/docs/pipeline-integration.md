@@ -9,9 +9,9 @@ trace stack; JSONL is an emergency fallback. See [telemetry.md](telemetry.md).
 ## Running the pipeline
 
 ```bash
-npm run pipeline -- unit 1 task 1     # or --unit 1 --task 1, or `1 1`, or `spam1`
-npm run pipeline -- unit 1 task 1 --dry-run
-npm run pipeline -- --list
+./dev bun run pipeline -- unit 1 task 1     # or --unit 1 --task 1, or `1 1`, or `spam1`
+./dev bun run pipeline -- unit 1 task 1 --dry-run
+./dev bun run pipeline -- --list
 ```
 
 The run resolves the task from unit metadata, starts at the configured entry

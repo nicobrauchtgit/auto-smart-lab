@@ -56,7 +56,7 @@ export const leadStage: StageDefinition<LeadOptions> = {
 
  checkInput(input) {
   const task = resolveTask({ taskId: input.taskId });
-  if (!task.hasData) throw new Error(`Task ${task.taskId} has no local dataset; run \`npm run fetch-unit -- ${task.unitSlug}\``);
+  if (!task.hasData) throw new Error(`Task ${task.taskId} has no local dataset; run \`./dev bun run fetch-unit -- ${task.unitSlug}\``);
   const paths = taskDataPaths(task.taskId, stageConfiguration(input));
   for (const path of [paths.trainZip, paths.targetsPath].filter((p): p is string => !!p)) {
    if (!existsSync(path)) throw new Error(`Task ${task.taskId} lacks the declared file ${relative(paths.dataDir, path)}`);

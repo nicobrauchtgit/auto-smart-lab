@@ -116,7 +116,7 @@ export class TaskNotFoundError extends Error {
 }
 
 function describe(tasks: TaskRef[]): string {
-	if (tasks.length === 0) return "no local units; run `npm run fetch-unit -- <unit>` first";
+	if (tasks.length === 0) return "no local units; run `./dev bun run fetch-unit -- <unit>` first";
 	return tasks
 		.map((task) => `unit ${task.unitNumber ?? "?"} task ${task.taskNumber ?? "?"} → ${task.taskId} (${task.taskTitle})`)
 		.join("\n  ");

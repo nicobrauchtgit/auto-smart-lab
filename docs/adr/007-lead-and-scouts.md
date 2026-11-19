@@ -4,9 +4,11 @@
 
 ## Status
 
-Accepted by the user on 2026-11-11. Not implemented yet. The orchestrator, the
-research and evaluate stages and the knowledge store were removed on
-2026-11-11; the remaining code runs solve, then refit, until P7 lands. Supersedes [ADR 006](006-shared-expert-workspace.md) and the scheduling
+Accepted by the user on 2026-11-11. Implemented in P6, P7a and P7b (see the
+[work queue](../cleanup-plan.md)); the scouts were made asynchronous by user
+decision on 2026-11-12, and the solve stage is retired. The multi-task
+integration gate is not passed. The orchestrator, the research and evaluate
+stages and the knowledge store were removed on 2026-11-11. Supersedes [ADR 006](006-shared-expert-workspace.md) and the scheduling
 part of [ADR 003](003-finite-ram-observation.md); amends
 [ADR 004](004-durable-controller.md) and [ADR 005](005-isolation-confirmation-provenance.md).
 

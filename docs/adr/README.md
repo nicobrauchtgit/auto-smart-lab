@@ -5,9 +5,12 @@
 These records explain choices taken with the user and distinguish decisions
 from delivered code. "Accepted" does not mean implementation or live
 validation is complete. On 2026-11-11 the user accepted v2 (ADR 007): one lead
-agent with blocking scouts replaces the four-expert design and the LLM
-orchestrator. It is not implemented yet; the old orchestrator, research and
-evaluate stages and knowledge store were removed on 2026-11-11.
+agent with scouts replaces the four-expert design and the LLM
+orchestrator. The old orchestrator, research and evaluate stages and knowledge
+store were removed on 2026-11-11; the lead, scouts and harness services (P6,
+P7a, P7b) are implemented and merged. Scouts became asynchronous by user
+decision on 2026-11-12. The multi-task integration gate is not passed (see the
+work queue).
 
 | ADR | Decision | Current status |
 | --- | --- | --- |
@@ -17,7 +20,7 @@ evaluate stages and knowledge store were removed on 2026-11-11.
 | [004](004-durable-controller.md) | Durable controller, event-driven waits and budget-end hand-over | Accepted; P3 integrated. LLM controller retired in v2 P7b; durable state and budget-end hand-over stay |
 | [005](005-isolation-confirmation-provenance.md) | Isolation, sealed confirmation and prompt provenance | Accepted; holdout feedback amended to the Ladder (planned) |
 | [006](006-shared-expert-workspace.md) | One expert workspace and restrained concurrency | Superseded by ADR 007; shared tree, snapshots and journal kept |
-| [007](007-lead-and-scouts.md) | One lead agent with blocking scouts | Accepted 2026-11-11; implementation planned in P6/P7 |
+| [007](007-lead-and-scouts.md) | One lead agent with blocking scouts | Accepted 2026-11-11; implemented (P6, P7a, P7b), scouts asynchronous since 2026-11-12; integration gate not passed |
 
 The design philosophy is to provide trustworthy execution primitives and observations while preserving the agent's choices of features, model and experiments. Resource limits describe the machine, not a preferred estimator. Evidence authority comes from harness records, not agent confidence. Recovery, prompt provenance and isolation make behavior reviewable; advisory review remains separate from authorization to submit.
 

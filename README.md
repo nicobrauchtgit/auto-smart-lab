@@ -5,8 +5,9 @@ An experiment comparing a minimal autonomous agent with a task-adapted ML harnes
 Start here:
 
 - [The experiment](docs/experiment.md): question, shared conditions, arm differences, reset and isolation.
-- [Work queue](docs/cleanup-plan.md): current state, the running spam batch, packages and follow-ups.
-- [Expert team v2](harness/finetuned/docs/expert-team-v2.md): the accepted plan for the finetuned arm (one lead agent, blocking scouts, harness-run trials). The current finetuned code still runs the old research → solve → evaluate chain until P6/P7 land.
+- [Work queue](docs/cleanup-plan.md): current state, packages and follow-ups.
+- [Expert team v2](harness/finetuned/docs/expert-team-v2.md): the accepted design of the finetuned arm, now implemented: one lead agent, asynchronous scouts (data, ideas, validation), harness-run trials and a validated terminal refit.
+- [Experiment reports](docs/experiments/): one record per observed run, and the [written report](report/main.pdf).
 
 Then [architecture](docs/architecture.md) (current diagrams), [architecture decisions](docs/adr/README.md), [task readiness](docs/tasks.md) and the [source inventory](docs/code-inventory.md).
 

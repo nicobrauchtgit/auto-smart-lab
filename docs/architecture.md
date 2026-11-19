@@ -18,7 +18,7 @@ give a common local route, not a mandatory fixed workflow.
 | Experiment host | Arm dispatch, shared configuration, run preparation | [cli.ts](../experiment/cli.ts), [config.ts](../experiment/config.ts), [minimal.ts](../experiment/minimal.ts) |
 | Pipeline executor | Stage lifecycle, typed artifacts, validation, preflight | [executor.ts](../harness/finetuned/agent/pipeline/executor.ts), [types.ts](../harness/finetuned/agent/pipeline/types.ts), [setup.ts](../harness/finetuned/agent/pipeline/setup.ts) |
 | Research inputs | Deterministic dataset profile, task context, course resources (for v2's scouts) | [profile.ts](../harness/finetuned/agent/research/profile.ts), [research README](../harness/finetuned/agent/research/README.md) |
-| Solve / training | Agent trial requests versus harness execution and promotion | [solve session](../harness/finetuned/agent/run/harness_solve_session.ts), [training README](../harness/finetuned/agent/training/README.md) |
+| Solve / training | Agent trial requests versus harness execution and promotion | [lead session](../harness/finetuned/agent/run/lead_session.ts), [training README](../harness/finetuned/agent/training/README.md) |
 | Confirmation | Hidden independent check on the sealed rows | [confirmation service](../harness/finetuned/agent/confirmation/service.ts) |
 | Refit / submit | Terminal full-data predictions versus separately authorized upload | [refit service](../harness/finetuned/agent/refit/service.ts), [submit stage](../harness/finetuned/agent/pipeline/stages/submit.ts) |
 | Session / context | Physical sessions, explicit prompts, logical hand-offs | [session runner](../harness/finetuned/agent/run/session_runner.ts), [context README](../harness/finetuned/agent/context/README.md) |

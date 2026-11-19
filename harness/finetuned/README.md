@@ -41,11 +41,11 @@ Start with [the work queue](../../docs/cleanup-plan.md) and [expert-team-v2.md](
 | Area | Status |
 | --- | --- |
 | Task resolution and unit fetching | Implemented |
-| Lead stage | Registered; harness trials, blocking scouts, durable progress and validated hand-over |
+| Lead stage | Registered; harness trials, asynchronous scouts, durable progress and validated hand-over |
 | Submission stage | Registered; explicit controller upload policy required |
 | Langfuse Cloud observability | Shared pipeline and standalone instrumentation |
 | Emergency JSONL trace | Failure-only; healthy runs create no mirror |
-| Blocking scouts | Data, ideas and validation, with independent sessions and call budgets |
+| Scouts | Asynchronous: data, ideas and validation, with independent sessions and call budgets |
 | Live experiment supervision | Linux sampler, process ownership, recovery and wake on news |
 | Terminal refit | Registered and deterministic |
 | Blocking controller waits and budget-end hand-over | Implemented; recovery retains refit ownership and actual trial accounting |

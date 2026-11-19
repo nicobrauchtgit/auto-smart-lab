@@ -5,9 +5,9 @@ import { readFileSync } from "node:fs";
  * Pipeline entry point.
  *
  * Usage:
- *   npm run pipeline -- unit 1 task 1
+ *   ./dev bun run pipeline -- unit 1 task 1
  *   ./dev bun run pipeline -- --unit 1 --task 1
- *   npm run pipeline -- spam1
+ *   ./dev bun run pipeline -- spam1
  *
  * Runs the configured chain (solve, then refit) for one task with observability
  * attached. The v2 lead agent replaces this chain (expert-team-v2.md).
@@ -20,7 +20,7 @@ import { listTasks, resolveTask, TaskNotFoundError, type TaskRef } from "./pipel
 import type { StageName } from "./pipeline/types.js";
 
 function usage(): never {
-	console.error(`Usage: npm run pipeline -- [unit <unit>] [task <task>] | <task_id> [options]
+	console.error(`Usage: ./dev bun run pipeline -- [unit <unit>] [task <task>] | <task_id> [options]
 
 Selecting a task:
   unit 1 task 1              unit and task numbers from the fetched unit metadata
@@ -62,7 +62,7 @@ function takeOption(flag: string): string | undefined {
 
 function printTasks(tasks: TaskRef[]): void {
 	if (tasks.length === 0) {
-		console.log("No local units. Run: npm run fetch-unit -- <unit>");
+		console.log("No local units. Run: ./dev bun run fetch-unit -- <unit>");
 		return;
 	}
 	for (const task of tasks) {
