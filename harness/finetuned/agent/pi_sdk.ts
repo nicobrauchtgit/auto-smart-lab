@@ -1,3 +1,4 @@
+import { MissingModelError } from "../../../experiment/config.js";
 import { createAgentSession, createBashToolDefinition, defineTool, SessionManager } from "@earendil-works/pi-coding-agent";
 
 import { SmartContextSession } from "./context/session.js";
@@ -11,18 +12,19 @@ import { agentEnvironment } from "./telemetry/metadata.js";
 import { STATE_ROOT } from "./paths.js";
 
 const { config, cwd, agentDir, initialPrompt } = await loadPipelineConfig();
+if (!config.defaultModel) throw new MissingModelError();
 const telemetry = new Telemetry({ pipelineRunId: crypto.randomUUID(), stage: "pi-experiment" }, STATE_ROOT);
 try { telemetry.checkLocal(); await telemetry.checkAccess(new AbortController().signal); }
 catch { await telemetry.close(); throw new Error("Langfuse setup failed before agent construction"); }
 try {
-const { modelId, modelRuntime, model } = await initializeModel({ config });
+const { modelId, modelRuntime, model, thinkingLevel } = await initializeModel({ config });
 const prompts = loadPromptSnapshot();
 const logical = new SmartContextSession({
 	prompts,
 	create: async () => {
 		const resourceLoader = createPipelineResourceLoader({ cwd, agentDir });
 		await resourceLoader.reload();
-		const { session } = await createAgentSession({ cwd, agentDir, modelRuntime, model,
+		const { session } = await createAgentSession({ cwd, agentDir, modelRuntime, model, thinkingLevel,
    customTools: [defineTool(createBashToolDefinition(cwd, { spawnHook: context => ({ ...context, env: agentEnvironment(context.env) }) }))],
 			resourceLoader, sessionManager: SessionManager.inMemory(cwd) });
 		try {

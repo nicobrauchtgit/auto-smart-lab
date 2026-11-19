@@ -1,3 +1,4 @@
+import { MissingModelError } from "../../../experiment/config.js";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 
@@ -12,7 +13,9 @@ export interface InitializeModelOptions {
 
 export async function initializeModel(options: InitializeModelOptions = {}) {
 	const config = options.config ?? (await loadPipelineConfig(options.configPath, options.experimentConfigPath)).config;
-	const modelRef = options.model ?? config.defaultModel;
+	if (!config.defaultModel) throw new MissingModelError();
+	if (options.model && options.model !== config.defaultModel) throw new Error("Select the model in experiment.config.json instead of overriding it");
+	const modelRef = config.defaultModel;
 	const separator = modelRef.indexOf("/");
 	if (separator < 1) throw new Error(`Invalid model reference: ${modelRef}`);
 
@@ -26,6 +29,9 @@ export async function initializeModel(options: InitializeModelOptions = {}) {
 		modelsPath: null,
 		refreshOnCreate: false,
 	});
+	if ("builtin" in provider && provider.models) {
+		modelRuntime.registerProvider(providerId, { models: provider.models.map(m => ({ ...m, name: m.name ?? m.id, reasoning: m.reasoning ?? false, input: m.input ?? ["text"], cost: m.cost ?? {input:0,output:0,cacheRead:0,cacheWrite:0} })) });
+	}
 	if (!("builtin" in provider)) {
 		const apiKey = process.env[provider.apiKeyEnv];
 		if (!apiKey) throw new Error(`${provider.apiKeyEnv} must be set`);
@@ -38,7 +44,7 @@ export async function initializeModel(options: InitializeModelOptions = {}) {
 				name: model.name ?? model.id,
 				reasoning: model.reasoning ?? false,
 				input: model.input ?? ["text"],
-				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				cost: model.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 			})),
 		});
 		await modelRuntime.setRuntimeApiKey(providerId, apiKey);
@@ -47,5 +53,5 @@ export async function initializeModel(options: InitializeModelOptions = {}) {
 	const model = modelRuntime.getModel(providerId, modelId);
 	if (!model) throw new Error(`Unknown pipeline model: ${modelRef}`);
 
-	return { modelId: modelRef, modelRuntime, model };
+	return { modelId: modelRef, modelRuntime, model, ...(config.thinkingLevel !== undefined ? { thinkingLevel: config.thinkingLevel } : {}) };
 }

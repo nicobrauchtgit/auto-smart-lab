@@ -220,6 +220,9 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 	}
 
 	try {
+		// The confined arm cannot import the controller config; the wrapper passes its selection as PI_MODEL.
+		const piModel = process.env.PI_MODEL;
+		if (!piModel) throw new Error("No model selected in experiment.config.json. Add \"model\": {\"provider\": \"mythllm\", \"id\": \"qwen3.8-flash-next-a5b\"} or \"model\": {\"provider\": \"google-vertex\", \"id\": \"gemini-3.8-flash\", \"thinkingLevel\": \"high\"} using a listed provider.");
 		const systemPrompt = readFileSync(instructionsPath, "utf8");
 		const agentDir = getAgentDir();
 		console.log(`${tag} loading extensions...`);
@@ -241,7 +244,6 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 
 		// Resolve model from PI_MODEL env var (format: "provider/model-id" or bare "model-id")
 		let selectedModel: unknown = undefined;
-		const piModel = process.env.PI_MODEL;
 		if (piModel) {
 			const slash = piModel.indexOf("/");
 			const cliProvider = slash > 0 ? piModel.slice(0, slash) : undefined;
@@ -254,7 +256,7 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 				selectedModel = resolved.model;
 				console.log(`${tag} model resolved: ${(resolved.model as { provider: string; id: string }).provider}/${(resolved.model as { provider: string; id: string }).id}`);
 			} else {
-				console.warn(`${tag} WARNING: model "${piModel}" not found in runtime, using default`);
+				throw new Error(`Could not resolve model "${piModel}"; check experiment.config.json`);
 			}
 		}
 
@@ -268,7 +270,7 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 				spawnHook: (context) => ({ ...context, env: shellEnvironment(context.env) }),
 			}))],
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			...(selectedModel ? { model: selectedModel as any } : {}),
+			model: selectedModel as any,
 		});
 		console.log(`${tag} session created, sending prompt (${elapsed(sessionStart)})`);
 

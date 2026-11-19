@@ -46,7 +46,23 @@
       ]
     },
     "google-vertex": {
-      "builtin": true
+      "builtin": true,
+      "models": [
+        {
+          "id": "gemini-3.8-flash",
+          "name": "Gemini 3.8 Flash",
+          "reasoning": true,
+          "input": ["text", "image"],
+          "contextWindow": 1048576,
+          "maxTokens": 65536,
+          "cost": {
+            "input": 0.75,
+            "output": 3.75,
+            "cacheRead": 0.075,
+            "cacheWrite": 0
+          }
+        }
+      ]
     }
   }
 }

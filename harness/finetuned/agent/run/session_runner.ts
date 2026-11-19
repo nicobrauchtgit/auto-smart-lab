@@ -176,7 +176,7 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 
 		await resourceLoader.reload();
 
-		const { modelId, modelRuntime, model } = options.resolveModel ? await options.resolveModel() : await initializeModel({
+		const { modelId, modelRuntime, model, thinkingLevel } = options.resolveModel ? await options.resolveModel() : await initializeModel({
 			config: pipeline.config,
 			model: requestedModel,
 		});
@@ -193,7 +193,7 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 			create: async (opening) => {
 				options.observe?.executionGuard?.beforeSession();
 				const { session } = await createAgentSession({
-					cwd: sessionCwd, agentDir, modelRuntime, model,
+					cwd: sessionCwd, agentDir, modelRuntime, model, thinkingLevel,
 					...(options.tools ? { tools: sessionToolAllowlist(options.tools, customTools) } : {}),
 					...(customTools.length ? { customTools } : {}),
 					resourceLoader, sessionManager: SessionManager.inMemory(sessionCwd),

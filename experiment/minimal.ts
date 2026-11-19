@@ -12,7 +12,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, linkSync, lstatSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadExperimentConfig, modelReference, type ExperimentConfig } from "./config.js";
+import { loadExperimentConfig, modelReference, MISSING_MODEL_MESSAGE, type ExperimentConfig } from "./config.js";
 import { chainVersion, continuedRun } from "./source.js";
 import { readCourseResources } from "../harness/finetuned/agent/research/resources.js";
 import { checkSolveSandbox, executable, sandboxPolicy, type SandboxMount, type SolveSandbox } from "../harness/finetuned/agent/run/solve_sandbox.js";
@@ -38,7 +38,10 @@ function loadShared(projectRoot: string): ExperimentConfig {
 export function armModelsJson(config: Pick<ExperimentConfig, "providers">): string {
 	const providers: Record<string, unknown> = {};
 	for (const [id, provider] of Object.entries(config.providers)) {
-		if ("builtin" in provider) continue;
+		if ("builtin" in provider) {
+			if (provider.models) providers[id] = { models: provider.models };
+			continue;
+		}
 		providers[id] = { name: provider.name, baseUrl: provider.baseUrl, api: provider.api, apiKey: `$${provider.apiKeyEnv}`, models: provider.models };
 	}
 	return `${JSON.stringify({ providers }, null, 2)}\n`;
@@ -67,7 +70,15 @@ function linkTaskMaterial(projectRoot: string, root: string): MinimalRun {
 	const home = join(root, ".home");
 	const agentDir = join(home, ".pi", "agent");
 	mkdirSync(agentDir, { recursive: true });
-	writeFileSync(join(agentDir, "models.json"), armModelsJson(loadShared(projectRoot)));
+	const shared = loadShared(projectRoot);
+	modelReference(shared); // no selection: stop before touching the run's agent files
+	writeFileSync(join(agentDir, "models.json"), armModelsJson(shared));
+	const selected = shared.model;
+	if (selected?.thinkingLevel !== undefined || existsSync(join(agentDir, "settings.json"))) {
+		const settingsPath = join(agentDir, "settings.json");
+		const settings = existsSync(settingsPath) ? JSON.parse(readFileSync(settingsPath, "utf8")) : {};
+		writeFileSync(settingsPath, JSON.stringify({ ...settings, defaultThinkingLevel: selected?.thinkingLevel }, null, 2) + "\n");
+	}
 
 	// Only real units. Archives and notes in units/ are not task material.
 	const units = join(root, "units");
@@ -192,9 +203,13 @@ export function checkMinimalSetup(options: { projectRoot?: string; env?: NodeJS.
 	}
 	let config: ExperimentConfig;
 	try { config = loadShared(projectRoot); } catch (error) { return [...problems, error instanceof Error ? error.message : String(error)]; }
-	const model = options.model ?? modelReference(config);
+	if (!config.model) return [...problems, MISSING_MODEL_MESSAGE];
+	const model = modelReference(config);
+	if (options.model && options.model !== model) return [...problems, "Select the model in experiment.config.json instead of overriding it"];
 	const provider = config.providers[String(model).split("/")[0] ?? ""];
 	if (!provider) problems.push(`${model}: its provider is not in ${EXPERIMENT_CONFIG}`);
+	// The jail mounts only $GOOGLE_APPLICATION_CREDENTIALS (HOME is the run's own), so the gcloud default ADC path is not visible there.
+	else if ("builtin" in provider && model.startsWith("google-vertex/") && !env.GOOGLE_CLOUD_API_KEY && !(env.GOOGLE_APPLICATION_CREDENTIALS && existsSync(env.GOOGLE_APPLICATION_CREDENTIALS))) problems.push("Google credentials are missing: set GOOGLE_APPLICATION_CREDENTIALS in .env to a readable ADC file (e.g. after gcloud auth application-default login), or set GOOGLE_CLOUD_API_KEY (needed by google-vertex)");
 	else if (provider.apiKeyEnv && !env[provider.apiKeyEnv]) problems.push(`${provider.apiKeyEnv} is not set: add it to .env (needed by ${model})`);
 	return problems;
 }
@@ -206,6 +221,7 @@ export function withModel(args: readonly string[], defaultModel: string): string
 
 /** The batch driver's arguments: the shared model unless one is named, and --offline unless the experiment is online. */
 export function minimalArgs(args: readonly string[], config: Pick<ExperimentConfig, "model" | "online">): string[] {
+	if (args.includes("--model")) throw new Error("Select the model in experiment.config.json instead of passing --model");
 	if (args.includes("--offline")) throw new Error("Set \"online\" in experiment.config.json instead of passing --offline");
 	return [...withModel(args, modelReference(config)), ...(config.online ? [] : ["--offline"])];
 }

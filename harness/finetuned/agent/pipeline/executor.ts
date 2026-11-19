@@ -1,3 +1,4 @@
+import { MissingModelError } from "../../../../experiment/config.js";
 import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -264,7 +265,8 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
 	const requestedGuidance = structuredClone(options.guidance === undefined ? {} : options.guidance);
  const seededArtifacts = structuredClone(options.seedArtifacts ?? []);
  const evidenceCatalog = structuredClone(options.evidenceCatalog ?? []);
-	const { resolved } = await loadResolvedPipelineConfig(options.configPath);
+	const { resolved, config: sharedConfig } = await loadResolvedPipelineConfig(options.configPath);
+	if (!sharedConfig.defaultModel && (getStage(options.entryStage ?? resolved.settings.entryStage).setupRequirements ?? []).includes("model")) throw new MissingModelError();
 	for (const warning of resolved.warnings) console.warn(`[pipeline] ${warning}`);
 
 	const pipelineRunId = crypto.randomUUID();

@@ -2,11 +2,11 @@ import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
 import type { Api } from "@earendil-works/pi-ai";
-import { EXPERIMENT_CONFIG_PATH, loadExperimentConfig, modelReference, type ModelCompat } from "../../../experiment/config.js";
+import { EXPERIMENT_CONFIG_PATH, loadExperimentConfig, modelReference, type ModelCompat, type ExperimentThinkingLevel } from "../../../experiment/config.js";
 import { ARM_ROOT } from "./paths.js";
 
 export type PipelineProviderConfig =
-	| { builtin: true; apiKeyEnv?: string }
+	| { builtin: true; apiKeyEnv?: string; models?: import("../../../experiment/config.ts").ProviderModel[] }
 	| {
 		name?: string;
 		baseUrl: string;
@@ -17,6 +17,7 @@ export type PipelineProviderConfig =
 			name?: string;
 			reasoning?: boolean;
 			input?: ("text" | "image")[];
+			cost?: { input: number; output: number; cacheRead: number; cacheWrite: number };
 			contextWindow: number;
 			maxTokens: number;
 			/** pi's request settings for OpenAI-compatible servers, e.g. no developer role. */
@@ -41,7 +42,9 @@ export interface PipelineConfig {
 		initialPrompt: string;
 	};
 	/** From experiment.config.json: `provider/model`. */
-	defaultModel: string;
+	defaultModel?: string;
+	/** Shared explicit reasoning effort; absent preserves the SDK default. */
+	thinkingLevel?: ExperimentThinkingLevel;
 	/** From experiment.config.json. */
 	providers: Record<string, PipelineProviderConfig>;
 	/** From experiment.config.json. */
@@ -49,7 +52,7 @@ export interface PipelineConfig {
 }
 
 /** Settings that belong to experiment.config.json; the arm's file must not repeat them. */
-const SHARED_KEYS = ["defaultModel", "providers", "model", "online"];
+const SHARED_KEYS = ["defaultModel", "providers", "model", "online", "thinkingLevel"];
 
 export async function loadPipelineConfig(configPath = join(ARM_ROOT, "pipeline.config.json"), experimentConfigPath = EXPERIMENT_CONFIG_PATH) {
 	const path = resolve(configPath);
@@ -57,7 +60,7 @@ export async function loadPipelineConfig(configPath = join(ARM_ROOT, "pipeline.c
 	const repeated = SHARED_KEYS.filter(key => key in arm);
 	if (repeated.length) throw new Error(`${path} sets ${repeated.join(", ")}; these belong in ${experimentConfigPath} only`);
 	const shared = loadExperimentConfig(experimentConfigPath);
-	const config = { ...arm, defaultModel: modelReference(shared), providers: shared.providers, online: shared.online } as PipelineConfig;
+	const config = { ...arm, defaultModel: shared.model ? modelReference(shared) : undefined, thinkingLevel: shared.model?.thinkingLevel, providers: shared.providers, online: shared.online } as PipelineConfig;
 	const configDir = dirname(path);
 
 	return {
