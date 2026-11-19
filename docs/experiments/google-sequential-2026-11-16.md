@@ -3001,3 +3001,29 @@ No copy of the URL remains in `docs/` or `runs/`, and the URL is not recorded he
 - `run_backup.py` read it only to redact it from backups.
 
 Rerunning those scripts unchanged would now fail at that line.
+
+### Credential exposure in the minimal tor1 trace (found by the Qwen observer, 2026-11-19)
+
+**What happened.** The minimal tor1 agent ran `ps aux` (TOOL observation `18d2f27610ffdf7e`, 2026-11-18 00:31:20Z, trace `e0379804167e0a0539e6ed2520174c40`).
+- Inside the sandbox, PID 1 is bwrap. Its command line carries the arm's environment as `--setenv NAME VALUE` pairs.
+- `experiment/minimal.ts` passes every `PASSED_ENV` variable that way: the provider keys, `LAB_*` and `LANGFUSE_*`. The same is true on main.
+- The trace therefore held the plaintext values of MYTHLLM_API_KEY, SAIA_API_KEY, TAVILY_API_KEY, LAB_USER and LAB_PASS. Only the Langfuse keys were masked.
+- LAB_PASS held a real-looking 32-character value, identical to both `.env` files. It was unused, because runs were offline.
+
+**Who saw what.**
+- The model received only the first 4,000 characters of the tool output, which stop before the keys.
+- No other Google trace export, log or doc contains the values.
+- The Drive backups carry a copy of the file with the keys and LAB_PASS redacted. LAB_USER is still in that copy.
+- The minimal design exposes the keys to any minimal agent through ps and /proc, because pi and the agent's shell share one sandbox and one uid. The finetuned sandbox gets no credentials.
+
+**Langfuse action (user request: redact, else delete).**
+- **Redaction.** The legacy ingestion endpoint answers HTTP 410. An OpenTelemetry upsert of observation `18d2f27610ffdf7e` (same trace and span id, output and input with the values replaced by `[REDACTED]`) was accepted with HTTP 200 and took effect after about ten minutes (updatedAt 2026-11-19 12:10:01Z).
+- **Deletion.** Before the redaction had shown up, the trace was also deleted (`DELETE /api/public/traces/e0379804…`: "Trace deleted successfully"). Deletion is asynchronous and was not yet visible about 25 minutes later.
+- **Verified state.** The API returns 174 observations for the trace: the original 172, the redacted second copy of `18d2f27610ffdf7e`, and a root span. None contains MYTHLLM_API_KEY, SAIA_API_KEY, TAVILY_API_KEY, LAB_USER or LAB_PASS.
+- **Rotation.** The user rotated the exposed credentials on 2026-11-19.
+- **Local copy.** The export `runs/diagnostics/tor-20261118/tor1-minimal-langfuse-observations.jsonl` (sha 64328841…) still holds the old, now rotated values. The Drive backups hold the redacted copy.
+
+**Open for the user:**
+- blank the unused LAB_* in `.env`;
+- redact the local export;
+- fix the minimal sandbox's credential exposure.
