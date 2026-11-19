@@ -18,6 +18,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, rmSync, writeSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadExperimentConfig, modelReference } from "./config.js";
 import { snapshotRun, invocationArgs } from "./source.js";
 import { checkMinimalSetup, createMinimalVenv, prepareMinimalRun, runMinimal } from "./minimal.js";
 
@@ -27,6 +28,7 @@ export type Arm = (typeof ARMS)[number];
 
 export function parseExperimentArgs(argv: readonly string[]): { arm: Arm; reset: boolean; yes: boolean; checkSetup: boolean; detach: boolean; model?: string; continueFrom?: string; rest: string[] } {
 	const rest = [...argv];
+	if (rest.includes("--model")) throw new Error("Select the model in experiment.config.json instead of passing --model");
 	if (rest.includes("--source-from")) throw new Error("--source-from was removed; use --continue");
 	const take = (flag: string) => { const index = rest.indexOf(flag); if (index < 0) return false; rest.splice(index, 1); return true; };
 	const armIndex = rest.indexOf("--arm");
@@ -130,6 +132,7 @@ async function main(): Promise<number> {
 		console.log(`Deleted ${paths.length} harness state paths.`);
 		return 0;
 	}
+	modelReference(loadExperimentConfig());
 	if (options.detach && (options.arm !== "finetuned" || options.checkSetup)) throw new Error("--detach starts a finetuned run; it does not apply to the minimal arm or --check-setup");
 	if (options.arm === "finetuned" && options.detach) return await detachFinetuned(options.rest);
 	if (options.arm === "finetuned") {

@@ -62,10 +62,10 @@ function canonical(value: unknown): unknown {
 
 /** The configured entry of the selected model; credentials are only named, never included. */
 function selectedModelEntry(config: PipelineConfig): unknown {
-	const [providerId, ...rest] = config.defaultModel.split("/");
+	const [providerId, ...rest] = (config.defaultModel ?? "").split("/");
 	const provider = config.providers[providerId!];
 	if (!provider) return null;
-	if ("builtin" in provider) return { provider: providerId, builtin: true };
+	if ("builtin" in provider) return { provider: providerId, builtin: true, model: provider.models?.find(model => model.id === rest.join("/")) ?? null };
 	const id = rest.join("/");
 	return { provider: providerId, baseUrl: provider.baseUrl, api: provider.api, apiKeyEnv: provider.apiKeyEnv,
 		...(provider.models.find(model => model.id === id) ?? { id, unlisted: true }) };
@@ -141,6 +141,7 @@ export function resolvePipelineSettings(config: PipelineConfig): ResolvedPipelin
 		effectiveOptions,
 		tasks: taskConfigurations,
 		defaultModel: config.defaultModel,
+		thinkingLevel: config.thinkingLevel,
 		// The model's limits and request settings, so a changed compat or context shows in the fingerprint.
 		model: selectedModelEntry(config),
 		online: config.online ?? false,

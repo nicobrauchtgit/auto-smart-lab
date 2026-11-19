@@ -32,6 +32,8 @@ export function invocationArgs(root: string, original: readonly string[]): strin
  const cap = previous?.cap ?? requested;
  let spent = 0;
  const logs = join(root, "logs/solve-units");
+ // Spend is relevant only to an explicitly configured chain cap. Uncapped
+ // continuation must not reject old summaries that omit cost aggregates.
  if (cap !== undefined && existsSync(logs)) for (const name of readdirSync(logs)) {
   const summary = join(logs, name, "summary.json");
   if (existsSync(summary)) { const value = JSON.parse(readFileSync(summary, "utf8")).spentUsd; if (typeof value !== "number" || !Number.isFinite(value) || value < 0) throw new Error("Invalid recorded spend"); spent += value; }
@@ -42,6 +44,6 @@ export function invocationArgs(root: string, original: readonly string[]): strin
   if (index >= 0) args.splice(index, 2);
   args.push("--max-cost", String(cap - spent));
  }
- appendFileSync(join(root, "chain.jsonl"), JSON.stringify({ time: new Date().toISOString(), args, version: JSON.parse(readFileSync(join(root, "chain-version.json"), "utf8")), spent, cap }) + "\n");
+ appendFileSync(join(root, "chain.jsonl"), JSON.stringify({ time: new Date().toISOString(), args, version: JSON.parse(readFileSync(join(root, "chain-version.json"), "utf8")), spent: cap === undefined ? null : spent, cap }) + "\n");
  return args;
 }

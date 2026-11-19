@@ -5,6 +5,10 @@
 > settings are in `experiment.config.json` at the root. Sections about the lab VM, `scripts/vm`, `npm`, devbox and `~/.pi/agent/models.json`
 > describe the setup before the merge; see `docs/experiment.md` at the root.
 
+The confined session runner requires the shared model selection passed by the
+experiment wrapper as `PI_MODEL`. Missing or unresolved selections stop before
+agent session creation; the SDK never chooses a fallback model.
+
 This document is the durable context for the agent: the research question behind it, the
 design rules that follow from that question, how the pieces fit together, and the operational
 knowledge needed to run it. It is written for someone who has never seen the repo, human or

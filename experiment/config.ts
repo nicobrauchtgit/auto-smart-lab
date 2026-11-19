@@ -19,6 +19,7 @@ export interface ModelCompat {
 
 export interface ProviderModel {
 	id: string;
+	cost?: { input: number; output: number; cacheRead: number; cacheWrite: number };
 	name?: string;
 	reasoning?: boolean;
 	input?: ("text" | "image")[];
@@ -29,19 +30,28 @@ export interface ProviderModel {
 }
 
 export type ProviderConfig =
-	| { builtin: true; apiKeyEnv?: string }
+	| { builtin: true; apiKeyEnv?: string; models?: ProviderModel[] }
 	| { name?: string; baseUrl: string; api: string; apiKeyEnv: string; models: ProviderModel[] };
 
 export interface ExperimentConfig {
 	/** Fetch and submit tasks on the lab, with score feedback. Off: shared-drive tasks, hand-over files only. */
 	online: boolean;
 	/** The provider and model both arms use. */
-	model: { provider: string; id: string };
+	model?: { provider: string; id: string; thinkingLevel?: ExperimentThinkingLevel };
 	providers: Record<string, ProviderConfig>;
+}
+
+export const EXPERIMENT_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+export type ExperimentThinkingLevel = typeof EXPERIMENT_THINKING_LEVELS[number];
+
+export const MISSING_MODEL_MESSAGE = 'No model selected in experiment.config.json. Add "model": {"provider": "mythllm", "id": "qwen3.8-flash-next-a5b"} or "model": {"provider": "google-vertex", "id": "gemini-3.8-flash", "thinkingLevel": "high"} using a listed provider.';
+export class MissingModelError extends Error {
+ constructor() { super(MISSING_MODEL_MESSAGE); }
 }
 
 /** `provider/model`, the form pi and both arms' code use. */
 export function modelReference(config: Pick<ExperimentConfig, "model">): string {
+	if (!config.model) throw new MissingModelError();
 	return `${config.model.provider}/${config.model.id}`;
 }
 
@@ -67,11 +77,15 @@ export function experimentConfigProblems(value: unknown): string[] {
 		if (!Array.isArray(provider.models) || !provider.models.length) problems.push(`provider "${id}": "models" must list at least one model`);
 	}
 	const model = config.model;
+	if (model === undefined) return problems;
 	if (!model || typeof model.provider !== "string" || typeof model.id !== "string") {
 		problems.push(`"model" must be { "provider": "<name in providers>", "id": "<model id>" }`);
 	} else {
-		const keys = Object.keys(model).filter(key => key !== "provider" && key !== "id");
-		if (keys.length) problems.push(`"model" takes only "provider" and "id", not ${keys.map(key => `"${key}"`).join(", ")}`);
+		const keys = Object.keys(model).filter(key => !["provider", "id", "thinkingLevel"].includes(key));
+		if (keys.length) problems.push(`"model" takes only "provider", "id" and "thinkingLevel", not ${keys.map(key => `"${key}"`).join(", ")}`);
+		if (model.thinkingLevel !== undefined && !(EXPERIMENT_THINKING_LEVELS as readonly unknown[]).includes(model.thinkingLevel)) {
+			problems.push(`"model.thinkingLevel" must be one of ${EXPERIMENT_THINKING_LEVELS.join(", ")}`);
+		}
 		const provider = providers?.[model.provider];
 		if (providers && !provider) problems.push(`"model.provider" is "${model.provider}", which is not in "providers"`);
 		else if (provider && !("builtin" in provider) && Array.isArray(provider.models) && !provider.models.some(entry => entry.id === model.id)) {

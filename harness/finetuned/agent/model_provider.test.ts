@@ -42,3 +42,16 @@ describe("initializeModel", () => {
 		}
 	});
 });
+
+test("registers builtin catalog models with costs and explicit thinking", async () => {
+ const cost = { input: 0.75, output: 3.75, cacheRead: 0.075, cacheWrite: 0 };
+ const result = await initializeModel({ config: { agent, defaultModel: "google-vertex/gemini-3.8-flash", thinkingLevel: "high",
+  providers: { "google-vertex": { builtin: true, models: [{ id: "gemini-3.8-flash", contextWindow: 1048576, maxTokens: 65536, cost }] },
+   unused: { baseUrl: "https://invalid", api: "openai-completions", apiKeyEnv: "UNSELECTED_KEY", models: [] } } } });
+ expect(result.model.cost).toEqual(cost);
+ expect(result.thinkingLevel).toBe("high");
+});
+
+test("model overrides cannot change the shared selection", async () => {
+ await expect(initializeModel({ config: { agent, defaultModel: "google-vertex/gemini-3.8-flash", providers: {} }, model: "other/model" })).rejects.toThrow("Select the model in experiment.config.json");
+});

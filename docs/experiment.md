@@ -112,7 +112,8 @@ The remaining values below are per arm and match only because both say so.
 | Run settings | Flags to `solve_units.ts` and constants in the arm's code | `harness.config.json`, `pipeline.config.json` |
 | Python packages | `requirements.in`, `requirements.txt` | `pyproject.toml`, `uv.lock` |
 
-- **Model and provider:** `mythllm` / `qwen3.8-flash-next-a5b` with Leo's entry:
+- **Model and provider:** selected in the shared file (see Selecting the model below).
+  The Qwen catalog retains Leo's entry:
   262,144 context, 32,768 output, reasoning on, `compat` and `reasoning_effort: xhigh`.
   A 194,879-token prompt got a correct answer on 2026-11-09.
 - **Base packages, same versions:** numpy, scipy, scikit-learn, pandas, torch (CPU build).
@@ -168,3 +169,43 @@ Only `enable_thinking: false` reliably turns thinking off. The `developer` role 
 doubled the thinking, so both arms use `compat` (`system` role, no effort parameter) and
 send `chat_template_kwargs: {"reasoning_effort": "xhigh"}`, the documented default and
 highest level, whatever the deployment makes of it. Checked on the captured requests.
+
+## Selecting the model
+
+The model is chosen only in the shared `experiment.config.json` read by both
+arms; code has no fallback model. The tracked file selects Qwen on MythLLM and
+lists both providers and their models. To switch models, change its top-level
+selection to one of the following. A file with no `model` loads successfully,
+but model preflight, `--check-setup`, runs and standalone agent commands stop
+before starting a session and explain how to select a model.
+
+Qwen on MythLLM requires `MYTHLLM_API_KEY` in `.env`:
+
+```json
+"model": {"provider": "mythllm", "id": "qwen3.8-flash-next-a5b"}
+```
+
+Gemini on Vertex requires Google Application Default Credentials (ADC), for
+example an ADC file selected by `GOOGLE_APPLICATION_CREDENTIALS`, and access to
+the configured Google Cloud project and location:
+
+```json
+"model": {"provider": "google-vertex", "id": "gemini-3.8-flash", "thinkingLevel": "high"}
+```
+
+The Qwen and Gemini experiments of 2026-11-15..18 used exactly these selections.
+Only the selected provider needs credentials. Both arms read this shared
+selection. `thinkingLevel` reaches both arms, finetuned scouts, the setup probe
+and traces; omitting it preserves SDK defaults. It is separate from the
+model's `reasoning` capability flag. pi remains 0.84.1.
+
+The builtin Vertex model extension supplies both arms with 1,048,576 context
+tokens, 65,536 output tokens and text/image input. Catalog costs per million
+tokens are $0.75 input, $3.75 output and $0.075 cache reads, with no separate
+cache-write charge. Catalog provenance: [model metadata](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-8-flash),
+[pricing through 2026-12-31](https://cloud.google.com/model-garden/pricing),
+and pi 1.5.2's Vertex catalog for cache-read pricing.
+Costs are accounting metadata; chain spend is recorded only
+when a chain cost cap is set. Minimal mounts the ADC file into its confined model
+process; agent shells strip credentials. Finetuned model initialization inherits
+the controller environment.

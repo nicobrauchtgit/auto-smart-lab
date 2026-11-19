@@ -1,3 +1,4 @@
+import { MissingModelError } from "../../../../experiment/config.js";
 /** Fail-fast prerequisites shared by pipeline and standalone stage execution. */
 import { checkSupervision } from "../experiments/setup.js";
 import { checkReaper } from "../experiments/launcher.js";
@@ -55,9 +56,9 @@ export class SetupSession {
       await check.run(signal);
       this.passed.add(check.id);
       result = { id: check.id, status: "passed" };
-     } catch {
+     } catch (error) {
       signal.throwIfAborted();
-      result = { id: check.id, status: "failed", remedy: check.remedy };
+      result = { id: check.id, status: "failed", remedy: error instanceof MissingModelError ? error.message : check.remedy };
      }
     }
     results.push(result);
@@ -302,6 +303,7 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
  if (needs.has("model")) {
   add("model-configuration", "local", "Check model.provider, model.id and that provider's apiKeyEnv in experiment.config.json, and set that variable in .env (or the builtin provider's credentials).", async () => {
    const { config } = await loadPipelineConfig(options.configPath, options.experimentConfigPath);
+   if (!config.defaultModel) throw new MissingModelError();
    const reference = options.model ?? config.defaultModel;
    const provider = config.providers[reference.split("/")[0]];
    if (!provider) throw new Error("Unknown provider");
@@ -309,9 +311,11 @@ export function setupChecks(requirements: readonly SetupRequirement[], options: 
    await initializeModel({ config, model: options.model });
   });
   add("model-access", "remote", "The selected model failed a minimal request. Check its credentials, model access, quota and provider connectivity.", async signal => {
-   const { modelRuntime, model } = await initializeModel({ configPath: options.configPath, experimentConfigPath: options.experimentConfigPath, model: options.model });
+   const { modelRuntime, model, thinkingLevel } = await initializeModel({ configPath: options.configPath, experimentConfigPath: options.experimentConfigPath, model: options.model });
    const result = await modelRuntime.completeSimple(model, { messages: [{ role: "user", content: options.prompts.render("setup.model-check", {}).text, timestamp: Date.now() }] }, {
     maxTokens: HARNESS_CONFIG.setup.modelMaxTokens,
+    // The setup probe must use the same configured thinking as real sessions.
+    ...(thinkingLevel !== undefined && thinkingLevel !== "off" ? { reasoning: thinkingLevel } : {}),
     signal: AbortSignal.any([signal, AbortSignal.timeout(HARNESS_CONFIG.setup.timeoutMs)]),
    });
    if (result.stopReason === "error" || result.stopReason === "aborted" || !result.content.length) throw new Error("Model unavailable");

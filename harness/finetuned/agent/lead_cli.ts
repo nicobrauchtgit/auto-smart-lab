@@ -12,7 +12,7 @@ if (positionals.length !== 1) {
 const controller = new AbortController();
 process.on("SIGINT", () => controller.abort(new Error("Interrupted")));
 process.on("SIGTERM", () => controller.abort(new Error("Terminated")));
-const result = await runLeadStage({ taskId: positionals[0], checkSetupOnly: values["check-setup"], echoEvents: values.events, signal: controller.signal, telemetry: { allowFallback: values["allow-telemetry-fallback"] } });
+const result = await runLeadStage({ taskId: positionals[0], checkSetupOnly: values["check-setup"], echoEvents: values.events, signal: controller.signal, telemetry: { allowFallback: values["allow-telemetry-fallback"] } }).catch(error => { console.error(error instanceof Error ? error.message : String(error)); process.exit(1); });
 console.log(`[lead] ${result.outcome}: ${result.stoppedBecause}`);
 for (const invocation of result.invocations) {
  for (const artifact of invocation.artifacts) console.log(`${artifact.kind}: ${artifact.path}`);

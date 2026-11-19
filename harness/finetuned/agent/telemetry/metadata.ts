@@ -64,7 +64,8 @@ export function piUsage(usage: Record<string, any> | undefined) {
 }
 
 export function agentEnvironment(source: Readonly<NodeJS.ProcessEnv>): NodeJS.ProcessEnv {
- return Object.fromEntries(Object.entries(source).filter(([name]) => !name.startsWith("LANGFUSE_")));
+ return Object.fromEntries(Object.entries(source).filter(([name]) => !name.startsWith("LANGFUSE_")
+  && !/^SMARTLAB_(SHARE_PASSWORD|ARCHIVE_PASSPHRASE)(?:_FILE)?$/.test(name)));
 }
 
 /** Bound large Pi IO independently so truncation cannot erase lifecycle IDs or usage. */

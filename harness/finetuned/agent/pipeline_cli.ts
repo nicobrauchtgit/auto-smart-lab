@@ -1,11 +1,12 @@
 #!/usr/bin/env bun
+import { loadExperimentConfig, modelReference } from "../../../experiment/config.js";
 import { readFileSync } from "node:fs";
 /**
  * Pipeline entry point.
  *
  * Usage:
  *   npm run pipeline -- unit 1 task 1
- *   npm run pipeline -- --unit 1 --task 1 --model saia/mistral-medium-3.5-128b
+ *   ./dev bun run pipeline -- --unit 1 --task 1
  *   npm run pipeline -- spam1
  *
  * Runs the configured chain (solve, then refit) for one task with observability
@@ -29,7 +30,6 @@ Selecting a task:
 
 Options:
   --guidance <json-file>      typed { guidance, evidenceCatalog } run inputs
-  --model <provider/model>   override the configured model
   --stage <name>             start at this stage instead of the configured entry
   --stop-after <name>        stop after this stage
   --no-fetch                 do not download a missing unit
@@ -87,7 +87,9 @@ async function main(): Promise<void> {
 	const guidancePath = takeOption("--guidance");
  const guidanceInputs = guidancePath ? JSON.parse(readFileSync(guidancePath, "utf8")) : {};
  if (!guidanceInputs || typeof guidanceInputs !== "object" || Array.isArray(guidanceInputs) || Object.keys(guidanceInputs).some(k => !["guidance", "evidenceCatalog"].includes(k))) throw new Error("Unknown guidance file variables");
- const model = takeOption("--model");
+ if (args.includes("--model")) throw new Error("Select the model in experiment.config.json instead of passing --model");
+ modelReference(loadExperimentConfig());
+ const model = undefined;
 	const entryStage = takeOption("--stage") as StageName | undefined;
 	const stopAfter = takeOption("--stop-after") as StageName | undefined;
 

@@ -42,7 +42,7 @@ export async function observeAgentSession(options: ObservabilityOptions) {
   return request;
  };
  session.agent.onPayload = requestHook;
- record("agent_run_start", { agentRunId, piSessionId: session.sessionId, model, parentAgentRunId: options.parentAgentRunId, ...identity });
+ record("agent_run_start", { agentRunId, piSessionId: session.sessionId, model, thinkingLevel: session.thinkingLevel, parentAgentRunId: options.parentAgentRunId, ...identity });
  return { agentRunId, record,
   recordError(_error: unknown) { record("runner_error", { message: "Agent runner failed; inspect the controller error and bounded session results" }); },
   async close() {

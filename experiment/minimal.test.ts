@@ -91,6 +91,7 @@ describe("minimal arm run location", () => {
  const folder = join(run.root, "logs/solve-units/legacy"); mkdirSync(folder, { recursive: true });
  writeFileSync(join(folder, "summary.json"), JSON.stringify({ results: [{ id: "spam1" }] }));
  expect(invocationArgs(run.root, ["--only", "documents1"])).toEqual(["--only", "documents1"]);
+ expect(JSON.parse(readFileSync(join(run.root, "chain.jsonl"), "utf8").trim()).spent).toBeNull();
  expect(() => invocationArgs(run.root, ["--max-cost", "10"])).toThrow("Invalid recorded spend");
  });
 	test("holds the arm's agent code and real units, not its docs or archives", () => {
