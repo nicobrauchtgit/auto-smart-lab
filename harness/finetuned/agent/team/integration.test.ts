@@ -13,7 +13,7 @@ import { ensureSolutionsRepository, git, resolveCommit } from "../training/git.j
 import { ScoutBudget } from "./budget.js";
 import { createFindings } from "./findings.js";
 import { readFindings } from "./journal.js";
-import { createScoutRunner, scoutToolset, validationCheckTool, VALIDATION_SCOUT_TOOLS } from "./runner.js";
+import { createScoutRunner, scoutToolset, validationCheckTool, admittedValidationCheck, VALIDATION_SCOUT_TOOLS } from "./runner.js";
 import { createScouts, type ScoutSessionInput } from "./scouts.js";
 import { createTrialResolver, describeRefs } from "./trials.js";
 import { stageScoutInputs } from "./workspace.js";
@@ -141,7 +141,7 @@ test("run_checks runs B's check runner on the snapshot: a live fix cannot make t
  const fixedChecks = validationCheckTool({trial: fixed, solutionsRoot: f.live, taskId: "fixture", prompts,
   sandbox: scoutToolset("validation", {sandbox: expertSandbox(f.data, "validation", readPythonEnvironment(false), fixed), solutionsRoot: f.live, taskId: "fixture", trial: fixed}).checkSandbox!});
  expect(JSON.parse(((await fixedChecks.tool.execute("id", {paths: ["test_leak.py"]}, undefined, undefined, undefined as never)).content[0] as {text: string}).text).passed).toBe(true);
- expect((await run(["../../tasks/model.py"])).error).toContain("not a .py file in");
+ expect((await run(["../../tasks/model.py"])).error).toContain("it was not run and is not recorded");
 }, 60_000);
 
 test("each validation call resolves its own experiment; fix bullets journal as defects with the trial and snapshot lines", async () => {
@@ -274,6 +274,19 @@ test('a transient unresolved reference is retried by the same resolver', async()
  expect((await f.resolver.status(ref)).status).toBe('resolved');
 });
 
+test("a refused check path (another task's checker) is not recorded as a failed check", async () => {
+ const f=stateFixture();
+ const trial=await f.resolver.snapshot('exp-1');
+ const checks=validationCheckTool({trial,solutionsRoot:f.live,taskId:'fixture',prompts,
+  sandbox:scoutToolset('validation',{sandbox:expertSandbox(f.data,'validation',readPythonEnvironment(false),trial),solutionsRoot:f.live,taskId:'fixture',trial}).checkSandbox!});
+ mkdirSync(join(f.live,'checks/other'),{recursive:true});
+ writeFileSync(join(f.live,'checks/other/foreign.py'),'raise SystemExit(0)\n');
+ const reply=await checks.tool.execute('check',{paths:['checks/other/foreign.py']},undefined,undefined,undefined as never);
+ expect(JSON.stringify(reply.content)).toContain('it was not run and is not recorded');
+ expect(JSON.stringify(reply.content)).not.toContain(f.live);
+ expect([...checks.results.keys()]).toEqual([]);
+});
+
 test("checker crash and repair propagate through scout report to readiness", async () => {
  const {validationSummary, validationPassed}=await import('../run/lead_session.js');
  const f=stateFixture();
@@ -318,4 +331,29 @@ test("a failed scout session retains harness check outcomes", async () => {
  const report=await scope.report({role:'validation',question:'check',refs:[{experiment:'exp-1'}]});
  expect(report.roles[0].status).toBe('failed');
  expect(report.checkResults).toEqual(checkResults);
+});
+
+test('check admission uses canonical containment and suffix, with no host path in refusals',async()=>{
+ const f=stateFixture(), folder=join(f.live,'checks/fixture');
+ mkdirSync(folder,{recursive:true});mkdirSync(join(f.live,'checks/other'),{recursive:true});
+ writeFileSync(join(folder,'valid.py'),'print("verified")\n');
+ writeFileSync(join(folder,'note.txt'),'not python');
+ writeFileSync(join(f.live,'checks/other/foreign.py'),'print("foreign")\n');
+ symlinkSync(join(folder,'note.txt'),join(folder,'looks.py'));
+ symlinkSync(join(folder,'valid.py'),join(folder,'alias.txt'));
+ symlinkSync(join(f.live,'checks/other/foreign.py'),join(folder,'escape.py'));
+ const trial=await f.resolver.snapshot('exp-1');
+ const checks=validationCheckTool({trial,solutionsRoot:f.live,taskId:'fixture',prompts,
+  sandbox:scoutToolset('validation',{sandbox:expertSandbox(f.data,'validation',readPythonEnvironment(false),trial),solutionsRoot:f.live,taskId:'fixture',trial}).checkSandbox!});
+ // The last path is the misspelled checkout path from Qwen attacks1 (2026-11-18).
+ for(const path of ['checks/other/foreign.py','missing.py','note.txt','looks.py','escape.py',join(f.live,'checks/other/foreign.py'),'../../../../auto-smert-lab/runs/finetuned/solutions/checks/fixture/valid.py']){
+  expect(admittedValidationCheck(f.live,'fixture',path)).toBeUndefined();
+  const reply=JSON.stringify(await checks.tool.execute('refused',{paths:[path]},undefined,undefined,undefined as never));
+  expect(reply).toContain('it was not run and is not recorded');
+  expect(reply).not.toContain(f.live);
+  expect([...checks.results.keys()]).toEqual([]);
+ }
+ expect(admittedValidationCheck(f.live,'fixture','alias.txt')).toBe(join(folder,'valid.py'));
+ await checks.tool.execute('accepted',{paths:['alias.txt']},undefined,undefined,undefined as never);
+ expect([...checks.results.values()]).toMatchObject([{path:'checks/fixture/valid.py',exitCode:0,sha256:expect.any(String)}]);
 });

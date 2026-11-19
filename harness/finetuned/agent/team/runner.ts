@@ -1,5 +1,5 @@
 /** Independent observed child sessions; only final replies and harness check outcomes cross the boundary. */
-import { join, relative, resolve, sep } from "node:path";
+import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { Type } from "@earendil-works/pi-ai";
@@ -90,6 +90,17 @@ export function scoutToolset(role: ScoutRole, options: {
 /** Last part of a check's output, enough to show a traceback or assertion: from the pipes the harness read, never the log file. */
 const tail = (text: string, chars = 1_500) => text.length > chars ? `…${text.slice(-chars)}` : text;
 
+/** Canonical admitted check path, or undefined. Refused paths are never execution evidence. */
+export function admittedValidationCheck(solutionsRoot: string, taskId: string, path: string): string | undefined {
+ try {
+  const live = realpathSync(solutionsRoot), folder = join(live, "checks", taskId);
+  const absolute = resolve(path.startsWith("checks/") ? live : folder, path);
+  if (!existsSync(absolute)) return undefined;
+  const canonical = realpathSync(absolute);
+  return inside(canonical, folder) && canonical.endsWith(".py") ? canonical : undefined;
+ } catch { return undefined; }
+}
+
 /**
  * `run_checks` for the validation scout: stream B's runTrialChecks against the
  * call's snapshot. Checks must be .py files in the task's checks folder; each
@@ -102,19 +113,23 @@ export function validationCheckTool(options: {
 }) {
  const ran: { path: string; sha256: string }[] = [];
  const results = new Map<string, ValidationCheckResult>();
- const live = real(options.solutionsRoot), folder = join(live, "checks", options.taskId);
+ const live = real(options.solutionsRoot);
  const tool = defineTool({name: "run_checks", label: "Run checks", description: options.prompts.render("team.check-tool", {}).text,
   parameters: Type.Object({paths: Type.Array(Type.String({minLength: 1}), {minItems: 1, maxItems: 8})}, {additionalProperties: false}),
   async execute(_id, args, signal) {
    const reply = (data: unknown) => ({content: [{type: "text" as const, text: JSON.stringify(data, null, 1)}], details: {}});
    const paths: string[] = [];
-   const attempted = args.paths.map(path => relative(live, resolve(path.startsWith("checks/") ? live : folder, path)).split(sep).join("/"));
-   for (const path of attempted) results.set(path, {path, exitCode: null, output: "Check execution did not complete"});
+   // Reject before recording: a refused path (another task's check, a typo) is not a check of this trial and must
+   // not become a failed result that later hand-overs inherit and can never clear.
    for (const path of args.paths) {
-    const absolute = resolve(path.startsWith("checks/") ? live : folder, path);
-    if (!existsSync(absolute) || !inside(realpathSync(absolute), folder) || !absolute.endsWith(".py")) return reply({error: `${path}: not a .py file in ${folder}`});
-    paths.push(realpathSync(absolute));
+    const admitted = admittedValidationCheck(live, options.taskId, path);
+    if (!admitted) return reply({error: options.prompts.render("team.check-path-refused", {
+     path: isAbsolute(path) ? basename(path) : path, taskId: options.taskId,
+    }).text});
+    paths.push(admitted);
    }
+   const attempted = paths.map(path => relative(live, path).split(sep).join("/"));
+   for (const path of attempted) results.set(path, {path, exitCode: null, output: "Check execution did not complete"});
    try {
     // The hash is of the bytes runTrialChecks read once and executed, not of the live file afterwards.
     const result = await runTrialChecks(options.trial, paths, options.sandbox, signal, {onCheck(check) {

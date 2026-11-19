@@ -41,7 +41,7 @@ import { createBoard, boardPath, postTrialResult } from "../team/board.js";
 import { createBoardTools } from "../team/board_tools.js";
 import { loadPipelineConfig } from "../pipeline_config.js";
 import { createScouts, finalBullets, validationKind, type ScoutReport, type ScoutRequest } from "../team/scouts.js";
-import { createScoutRunner } from "../team/runner.js";
+import { admittedValidationCheck, createScoutRunner } from "../team/runner.js";
 import { createTrialResolver, taskTrialRoots } from "../team/trials.js";
 import { stageScoutInputs } from "../team/workspace.js";
 import { collectTrainingResults, createGitHistoryGuard, createHarnessTraining, ensureSolutionsRepository, type TrainingCollection } from "../training/index.js";
@@ -53,7 +53,7 @@ import { readRecord } from "../experiments/safe_files.js";
 import { selectionSummary } from "../training/selection_summary.js";
 import { finishFollowUp, recoverFollowUp, startFollowUp } from "../training/branches.js";
 import { GIT_BLOCK_PROMPT_IDS } from "../training/git_guard.js";
-import { tagMessage } from "../training/git.js";
+import { tagMessage, resolveCommit } from "../training/git.js";
 import { readPythonEnvironment, type PythonEnvironment } from "./python_environment.js";
 import { expertSandbox } from "./sandbox.js";
 import { isolatedSolveTools, solvePythonEnvironmentTool, trainingSandboxCommand, type SolveSandbox } from "./solve_sandbox.js";
@@ -319,6 +319,19 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
  const prior = readProgress(progressPath);
  if (prior && prior.taskId !== taskId) throw new Error("Lead progress belongs to another task");
  if (prior?.datasetSha256 && prior.datasetSha256 !== data.datasetSha256) throw new Error("Lead progress dataset changed; restore its task state before resuming");
+ if (prior) {
+  let pruned = false;
+  for (const [experimentId, attempt] of Object.entries(prior.validationAttempts ?? {})) {
+   const checks = attempt.validation.checkResults ?? [];
+   // Stored paths are relative to the solutions root; only checks/<task>/ entries can be admitted.
+   const refused = checks.filter(check => !check.sha256 && !(check.path.startsWith(`checks/${taskId}/`) && admittedValidationCheck(data.solutionsRoot, taskId, check.path)));
+   if (!refused.length) continue;
+   attempt.validation.checkResults = checks.filter(check => !refused.includes(check));
+   pruned = true;
+   record("lead_validation_checks_pruned", { experiment_id: experimentId, paths: refused.map(check => check.path) });
+  }
+  if (pruned) writeProgress(progressPath, prior);
+ }
  const resumed = prior && (prior.status === "running" || prior.status === "handing_over" || (prior.status === "failed" && !!prior.handOver)) ? prior : undefined;
  const invocationId = identity?.stageInvocationId ?? options.runId ?? randomUUID();
  const runId = resumed?.runId ?? options.runId ?? invocationId;
@@ -433,6 +446,58 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
   return `${scores.map(value => value.toFixed(4)).join(", ")}; mean ${mean.toFixed(4)}, sd ${sd.toFixed(4)} (${configuration.selection?.metric ?? configuration.metric})`;
  };
  let feedbackChain: Promise<unknown> = Promise.resolve();
+ const replaceBlockedChampion = async (completedId?: string) => {
+  try {
+   const champion = championOf(data.solutionsRoot, taskId);
+   if (!champion) return;
+   const source = resolveCommit(data.solutionsRoot, champion.commit);
+   if (!source) return;
+   const attempt = progress.validationAttempts?.[champion.experimentId];
+   const matchingAttempt = attempt?.commit === champion.commit && attempt.tree === source.tree ? attempt : undefined;
+   const receipt = Object.entries(progress.validationReceipts ?? {})
+    .filter(([, row]) => row.experimentId === champion.experimentId && row.commit === champion.commit)
+    .sort((a, b) => b[1].at.localeCompare(a[1].at))[0];
+   const blocking = matchingAttempt?.validation.fix.length
+    ? { kind: "attempt" as const, key: sha256(JSON.stringify({ experimentId: champion.experimentId, ...matchingAttempt })) }
+    : (!matchingAttempt || !validationPassed(matchingAttempt.validation)) && receipt?.[1].validation.status === "completed" && receipt[1].validation.fix.length
+     ? { kind: "receipt" as const, key: receipt[0] } : undefined;
+   let chain = progress.repairChain?.candidateId === champion.experimentId ? progress.repairChain : undefined;
+   // Only demonstrated defects advance a repair chain.
+   // A successful validation ends repair selection even if older receipts found defects.
+   if (matchingAttempt && validationPassed(matchingAttempt.validation)) return;
+   if (!blocking) return;
+   if (!chain) chain = { candidateId: champion.experimentId, bases: [], tried: [champion.experimentId], blocking: blocking! };
+   if (blocking && !chain.bases.some(base => base.experimentId === champion.experimentId)) {
+    chain.bases.push({ ...champion, tree: source.tree });
+    chain.blocking = blocking;
+   }
+   const ids = [...new Set([...progress.trials.map(row => row.experimentId), completedId]
+    .filter((id): id is string => !!id))].reverse().filter(id => !chain.tried.includes(id));
+   const replacement = await training?.service.replaceBlockedChampion?.(champion, ids, chain.bases);
+   if (!replacement) return;
+   chain.candidateId = replacement.experimentId;
+   chain.tried.push(replacement.experimentId);
+   progress.repairChain = chain;
+   progress.champion = championOf(data.solutionsRoot, taskId);
+   const trial = progress.trials.find(row => row.experimentId === replacement.experimentId);
+   if (trial) trial.becameChampion = true;
+   streak = 0;
+   save();
+   const feedback = prompts.render("team.lead-blocked-champion-replaced", {
+    previous: champion.experimentId, experiment: replacement.experimentId, verdict: replacement.verdict,
+   });
+   record("lead_blocked_champion_replaced", { previous_experiment_id: champion.experimentId,
+    previous_commit: champion.commit, replacement_commit: progress.champion?.commit,
+    experiment_id: replacement.experimentId, paired_verdict: replacement.verdict,
+    comparison: replacement.comparison, blocking_receipt_key: chain.blocking.kind === "receipt" ? chain.blocking.key : undefined,
+    blocking_attempt_key: chain.blocking.kind === "attempt" ? chain.blocking.key : undefined,
+    ...feedback.reference });
+   await inbox.steer(feedback.text);
+   return replacement.experimentId;
+  } catch (error) {
+   record("lead_blocked_champion_replacement_failed", { message: error instanceof Error ? error.message : String(error) });
+  }
+ };
  const trialFinished = (id: string, view: ExperimentView) => {
   composing++;
   const work = feedbackChain.then(async () => {
@@ -452,8 +517,9 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
    const prior = progress.trials.find(row => row.experimentId === id);
    // Completion feedback is durable. Replay only the interruption gap; the
    // authoritative champion is reconciled separately even for known results.
-   if (prior?.feedbackRecorded && prior.status === String(described.status ?? view.status)) return;
    const before = progress.champion?.experimentId;
+   const repaired = await replaceBlockedChampion(id);
+   if (prior?.feedbackRecorded && prior.status === String(described.status ?? view.status)) return;
    const champion = championOf(data.solutionsRoot, taskId);
    const key = metricKey(configuration);
    let trial = progress.trials.find(row => row.experimentId === id);
@@ -467,7 +533,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
    const isNew = champion?.experimentId === id && before !== id;
    trial.becameChampion = trial.becameChampion || isNew;
    if (champion) progress.champion = { experimentId: champion.experimentId, commit: champion.commit, ...(champion.score !== undefined ? { score: champion.score } : {}) };
-   streak = isNew ? 0 : trial.status === "completed" ? streak + 1 : streak;
+   streak = isNew || repaired ? 0 : trial.status === "completed" ? streak + 1 : streak;
    let holdout = prompts.render("team.lead-holdout-none", {}).text;
    if (champion && !holdoutDone(champion.experimentId)) {
     if (runningTrials().length) holdout = isNew ? prompts.render("team.lead-holdout-deferred", {}).text : holdout;
@@ -575,10 +641,19 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
   const attempt = progress.validationAttempts?.[experimentId];
   const previous = attempt?.commit === snapshot.commit && attempt.tree === snapshot.tree ? attempt.validation : undefined;
   const cached = progress.validationReceipts![key];
-  if (cached && !previous?.checkResults?.some(check => check.exitCode !== 0)) { record("lead_validation_reused", { experiment_id: experimentId, commit: snapshot.commit, receipt_key: key, validation_status: validationLabel(cached.validation) }); return cached.validation; }
+  if (cached && !previous?.checkResults?.some(check => check.exitCode !== 0)) { if (!validationPassed(cached.validation)) await replaceBlockedChampion(); record("lead_validation_reused", { experiment_id: experimentId, commit: snapshot.commit, receipt_key: key, validation_status: validationLabel(cached.validation) }); return cached.validation; }
+  const blocking = progress.repairChain?.candidateId === experimentId ? progress.repairChain.bases.filter(base => base.experimentId !== experimentId).map(base => {
+   const attempt = progress.validationAttempts?.[base.experimentId];
+   const receipt = Object.values(progress.validationReceipts ?? {}).filter(row => row.experimentId === base.experimentId && row.commit === base.commit)
+    .sort((a, b) => b.at.localeCompare(a.at))[0];
+   const fix = attempt?.commit === base.commit && attempt.tree === base.tree ? attempt.validation.fix : receipt?.validation.fix;
+   return { experimentId: base.experimentId, commit: base.commit, fix: fix ?? [] };
+  }).filter(base => base.fix.length) : [];
   let result: ScoutReport | undefined;
   try {
-   result = await getScouts().report({ role: "validation", question: prompts.render("team.lead-handover-question", { experiment: experimentId, reason, previous: previous ? JSON.stringify(previous, null, 2) : "none" }).text,
+   result = await getScouts().report({ role: "validation", question: prompts.render("team.lead-handover-question", { experiment: experimentId, reason, previous: previous ? JSON.stringify(previous, null, 2) : "none" }).text
+    // Rendered only while a blocked champion is being repaired, so ordinary validation prompts stay unchanged.
+    + (blocking.length ? `\n\n${prompts.render("team.lead-handover-blocking", { blocking: JSON.stringify(blocking, null, 2) }).text}` : ""),
     refs: [{ experiment: experimentId }] }, signal, toolCallId);
   } catch (error) {
    signal?.throwIfAborted();
@@ -589,8 +664,12 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
    summary.fix = previous.fix; summary.ok = previous.ok; summary.advice = previous.advice;
   }
   // Only a rerun at the same path resolves that check's previous failure.
-  const checks = new Map(previous?.checkResults?.map(check => [check.path, check]));
-  for (const check of summary.checkResults ?? []) checks.set(check.path, check);
+  // Older attempts may still hold never-executed refused paths.
+  // Executed evidence survives later source removal or drift; never-executed
+  // entries must pass the same admission rule as run_checks.
+  const own = (check: { path: string; sha256?: string }) => !!check.sha256 || (check.path.startsWith(`checks/${taskId}/`) && !!admittedValidationCheck(data.solutionsRoot, taskId, check.path));
+  const checks = new Map(previous?.checkResults?.filter(own).map(check => [check.path, check]));
+  for (const check of (summary.checkResults ?? []).filter(own)) checks.set(check.path, check);
   summary.checkResults = [...checks.values()].map(check => {
    if (check.exitCode !== 0) return check;
    const path = resolve(data.solutionsRoot, check.path);
@@ -616,6 +695,7 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
    }
    save();
   }
+  await replaceBlockedChampion();
   record("lead_validation", { experiment_id: experimentId, validation_status: validationLabel(summary), ...summary });
   return summary;
  };
@@ -643,16 +723,20 @@ export async function runLeadSession(taskId: string, options: RunLeadOptions): P
   for (const experimentId of choices) {
    signal?.throwIfAborted();
    // Only the current champion may incur a new query. A baseline reuses its receipt.
-   if (experimentId === champion?.experimentId && !holdoutDone(experimentId)) await runHoldout(experimentId);
+   if (experimentId === championOf(data.solutionsRoot, taskId)?.experimentId && !holdoutDone(experimentId)) await runHoldout(experimentId);
    const validation = await validate(experimentId, reason, signal, toolCallId);
    if (validationPassed(validation)) {
-    const fallback = experimentId !== champion?.experimentId;
+    const fallback = experimentId !== championOf(data.solutionsRoot, taskId)?.experimentId;
     accept(by, fallback ? `${reason}; fallback after ${failures.join("; ")}` : reason, experimentId, validation);
     if (fallback) record("lead_delivery_fallback", { experiment_id: experimentId, rejected: failures });
     budget.end();
     await scouts?.cancel?.();
     return { experimentId, validation, failures };
    }
+   await replaceBlockedChampion();
+   const replacement = championOf(data.solutionsRoot, taskId);
+   if (replacement && !choices.includes(replacement.experimentId))
+    choices.splice(choices.indexOf(experimentId) + 1, 0, replacement.experimentId);
    failures.push(`${experimentId}: ${validation.fix.join("; ") || `validation ${validation.status}; no approved evidence`}`);
   }
   return { failures };

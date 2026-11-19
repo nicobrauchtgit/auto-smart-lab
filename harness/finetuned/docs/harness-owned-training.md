@@ -92,6 +92,26 @@ challenger with an existing champion, the harness reruns the frozen champion on
 the challenger's exact persisted manifest. It never reconstructs supposedly
 equivalent folds from a seed and a different splitter implementation.
 
+A completed validation receipt with `fix` findings, or the latest validation
+attempt with `fix` findings matching the champion's commit and tree (including
+incomplete verification), blocks the champion. The controller may move its tag
+to the most recent eligible completed trial with a completed paired comparison
+against that blocked identity that is within two standard errors or better.
+"Most recent" means trial start order. Identical source trees are excluded.
+If a replacement has fix findings, the persisted repair chain keeps earlier
+blocked comparison bases available, so older qualifying repairs can be tried.
+Transient failures without fix findings retain the replacement as champion and
+permit baseline fallback. Each repair step may lose up to two standard errors
+against its comparison base; validation gates every selected replacement,
+and each also gets its own advisory holdout read. Validation receives the earlier blocking findings and
+must show that each is resolved.
+Repairs are tried immediately after the blocked entry, before the validated
+baseline. Ordinary promotion still requires improvement beyond noise.
+The controller records both identities, blocking attempt/receipt and prompt
+hashes. Replacement errors are recorded and leave baseline fallback available.
+Each replacement still needs full validation and gets its own advisory holdout read;
+sealed-read rules and terminal refit integrity checks remain unchanged.
+
 ## Final refit
 
 Once selection is final, the harness freezes the champion's source, parameters,

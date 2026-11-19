@@ -384,7 +384,7 @@ for (const mode of ['budget', 'explicit', 'current-valid', 'both-fail', 'same', 
  }finally{f.close();}
 });
 
-for (const mode of ['repair', 'unrelated', 'not-rerun', 'defect', 'edited-after-run'] as const) test(`unfinished verification handover: ${mode}`, async () => {
+for (const mode of ['repair', 'unrelated', 'not-rerun', 'defect', 'edited-after-run', 'foreign'] as const) test(`unfinished verification handover: ${mode}`, async () => {
  const f=fixture(); let reviews=0, refits=0;
  const path=join(f.solutionsRoot,'checks/spam1/contract.py');
  mkdirSync(join(f.solutionsRoot,'checks/spam1'),{recursive:true});
@@ -406,7 +406,7 @@ for (const mode of ['repair', 'unrelated', 'not-rerun', 'defect', 'edited-after-
    expect(request.question).toContain('checks/spam1/contract.py');
    expect(request.question).toContain(mode==='defect'?'predictions include 2':'source appears binary');
   }
-  const checks=reviews===1 ? [{path:'checks/spam1/contract.py',sha256:hash(),exitCode:1,output:'FileNotFoundError: document_123'}]
+  const checks=mode==='foreign'?[{path:'checks/other/foreign.py',exitCode:null,output:'Not run'}]:reviews===1 ? [{path:'checks/spam1/contract.py',sha256:hash(),exitCode:1,output:'FileNotFoundError: document_123'}]
    : mode==='not-rerun' ? [] : [{path:mode==='unrelated'?'checks/spam1/other.py':'checks/spam1/contract.py',sha256:hash(),exitCode:0,output:'binary verified'}];
   if(mode==='edited-after-run' && reviews>1)writeFileSync(path,'edited after execution '+reviews);
   return {text:mode==='defect'?'- fix: predictions include 2':'- ok: source appears binary',roles:[{role:'validation',status:'completed',bullets:1}],checkResults:checks};
@@ -416,23 +416,24 @@ for (const mode of ['repair', 'unrelated', 'not-rerun', 'defect', 'edited-after-
   writeFileSync(path,'broken checker');
   const tool=options.customTools!.find(t=>t.name==='hand_over')!;
   const first=await tool.execute('first',{reason:'ready'},undefined,undefined,undefined as never);
-  expect(JSON.stringify(first)).toContain('verification_incomplete');
+  expect(JSON.stringify(first)).toContain(mode==='foreign'?'Readiness checkpoint accepted':'verification_incomplete');
   const saved=readProgress(progressPath)!;
-  expect(saved.baseline).toBeUndefined();
+  if(mode==='foreign')expect(saved.baseline?.experimentId).toBe('measured');else expect(saved.baseline).toBeUndefined();
   expect(saved.validationAttempts!.measured.validation.fix).toHaveLength(mode==='defect'?1:0);
-  expect(saved.validationAttempts!.measured.validation.checkResults![0].sha256).toBe(hash());
+  if(mode==='foreign')expect(saved.validationAttempts!.measured.validation.checkResults).toEqual([]);
+  else expect(saved.validationAttempts!.measured.validation.checkResults![0].sha256).toBe(hash());
   if(mode==='repair'||mode==='not-rerun') writeFileSync(path,'repaired checker');
   if(mode==='unrelated')writeFileSync(join(f.solutionsRoot,'checks/spam1/other.py'),'broken checker');
   const second=await tool.execute('second',{reason:'continue verification',finalize:true},undefined,undefined,undefined as never);
-  expect(JSON.stringify(second)).toContain(mode==='repair'?'accepted':'not approved');
+  expect(JSON.stringify(second)).toContain(mode==='repair'||mode==='foreign'?'accepted':'not approved');
   return {output:'finished',agentRunId:'fixture'} as any;
  },
  refit:async()=>{refits++;return {artifacts:[],validation:{valid:true,errors:[]}};},
  collectResults:async()=>({valid:false,trials:[],artifacts:[],errors:[]}) as any,
  }});
- expect(refits).toBe(mode==='repair'?1:0);
- expect(result.valid).toBe(mode==='repair');
- expect(reviews).toBe(mode==='repair'||mode==='defect'?2:3); // completed defects are cached
+ expect(refits).toBe(mode==='repair'||mode==='foreign'?1:0);
+ expect(result.valid).toBe(mode==='repair'||mode==='foreign');
+ expect(reviews).toBe(mode==='foreign'?1:mode==='repair'||mode==='defect'?2:3); // completed defects are cached
  } finally {f.close();}
 });
 
@@ -464,4 +465,105 @@ print(json.dumps(_summarise(invocation, [], [], rows, ['0','1'], None, {'sha256'
   expect(feedback).toBe(1);
   expect(feedbackText).toContain('not eligible for promotion: predict returned values outside the delivered domain {0, 1}');
  } finally { f.close(); }
+});
+
+for (const mode of ['equal', 'already-completed', 'budget-end', 'worse', 'unblocked'] as const) test(`blocked champion repair handover: ${mode}`, async () => {
+ const f=fixture(); const validated:string[]=[], refitted:string[]=[]; const events:any[]=[];
+ let finished:any; let completed=false;
+ const path=join(f.root,'lead/PROGRESS.json');
+ const replacement=mode==='worse' ? {meanDifference:-0.1,standardError:0.01} : {meanDifference:0,standardError:0};
+ try {
+ const result=await runLeadSession('spam1',{taskConfiguration:spamConfiguration(),maxToolCalls:1,progressPath:path,
+ report:{event:(type:string,data:any)=>events.push({type,...data}),input(){},agentIdentity(){return {};},observation(){return {};}} as any,
+ dependencies:{
+ prepareData:()=>f.data,readPython:()=>({prefix:f.root,executable:'/bin/false',fingerprint:'f'} as any),
+ sandbox:()=>({executable:'/bin/false',cwd:f.root,mounts:[],env:{},agentRoot:join(f.root,'agent')} as any),
+ prepareRepository:()=>({initialized:false,head:f.commit,branch:'master'}),environmentTool:()=>({name:'python_environment'} as any),
+ verifiedCandidate:async (_r,_t,_d,selection)=>({experimentId:selection!.experimentId,commit:selection!.commit,tree:'tree',sourceRoot:f.root}),
+ createTraining:(opts:any)=>{finished=opts.onTrialFinished;return {ready:async()=>{},close:async()=>{},tools:[],toolPrompts:[],
+ service:{describe:()=>({status:'completed',balancedAccuracy:1,noiseVerdict:'within fold noise'}),
+ replaceBlockedChampion:async (blocked:any,ids:string[])=>{
+  expect(blocked.experimentId).toBe('measured');
+  expect(Object.values(readProgress(path)!.validationReceipts!).some(r=>r.validation.fix.length)).toBe(true);
+  if (!completed || !ids.includes('fixed') || mode==='worse') return;
+  execFileSync('git',['-C',f.solutionsRoot,'tag','-f','-a','champion/spam1','-m',JSON.stringify({experimentId:'fixed',trainingRoot:join(f.root,'training')})]);
+  return {experimentId:'fixed',comparison:replacement,verdict:'within fold noise'};
+ }},supervisor:{list:()=>[]},bindSession:()=>{}} as any;},
+ scouts:()=>({tool:{name:'scout'} as any,report:async request=>{
+  const id=(request.refs![0] as {experiment:string}).experiment;validated.push(id);
+  return {text:id==='measured' && mode!=='unblocked'?'- fix: fallback feature length':'- ok: frozen source verified',roles:[{role:'validation',status:'completed',bullets:1}]};
+ }}),
+ runAgentSession:async options=>{
+  const handover=options.customTools!.find(t=>t.name==='hand_over')!;
+  const complete=async()=>{completed=true;await finished('fixed',{status:'exited',exitCode:0,elapsedSeconds:1});};
+  if(mode==='already-completed'||mode==='budget-end')await complete();
+  if(mode!=='budget-end')await handover.execute('first',{reason:'ready'},undefined,undefined,undefined as never);
+  if(mode!=='already-completed'&&mode!=='budget-end')await complete();
+  if(mode!=='budget-end')await handover.execute('final',{reason:'ready',finalize:true},undefined,undefined,undefined as never);
+  const handlers:any={}; for(const extension of options.extensionFactories??[]) {
+   const factory=typeof extension==='function'?extension:(extension as any).factory;
+   if(factory)factory({on:(name:string,fn:any)=>{(handlers[name]??=[]).push(fn);}});
+  }
+  for(const fn of handlers.message_end??[])await fn({message:{role:'assistant',content:[{type:'toolCall',id:'unknown'}]}});
+  return {output:'finished',agentRunId:'fixture'} as any;
+ },
+ refit:async input=>{refitted.push(input.experimentId);return {artifacts:[],validation:{valid:true,errors:[]}};},
+ collectResults:async()=>({valid:false,trials:[],artifacts:[],errors:[]}) as any,
+ }});
+ const repaired=mode==='equal'||mode==='already-completed'||mode==='budget-end';
+ expect(refitted).toEqual(mode==='worse'?[]:[repaired?'fixed':'measured']);
+ expect(validated).toEqual(repaired?['measured','fixed']:['measured']);
+ expect(result.valid).toBe(mode!=='worse');
+ expect(events.filter(e=>e.type==='lead_blocked_champion_replacement_failed')).toEqual([]);
+ const repairs=events.filter(e=>e.type==='lead_blocked_champion_replaced');
+ expect(repairs).toHaveLength(repaired?1:0);
+ if(repaired)expect(repairs[0].blocking_receipt_key).toMatch(/^[a-f0-9]{64}$/);
+ }finally{f.close();}
+});
+
+test('resume prunes refused never-executed checks before cache lookup and scout input',async()=>{
+ const f=fixture(), progressPath=join(f.root,'lead/PROGRESS.json'), events:any[]=[];
+ let session=0, reviews=0, refits=0; const stop=new AbortController();
+ const checksRoot=join(f.solutionsRoot,'checks/spam1');mkdirSync(checksRoot,{recursive:true});
+ writeFileSync(join(checksRoot,'note.txt'),'not python');
+ const dependencies:any={
+  prepareData:()=>f.data,readPython:()=>({prefix:f.root,executable:'/bin/false',fingerprint:'f'}),
+  sandbox:()=>({executable:'/bin/false',cwd:f.root,mounts:[],env:{},agentRoot:join(f.root,'agent')}),
+  prepareRepository:()=>({initialized:false,head:f.commit,branch:'master'}),environmentTool:()=>({name:'python_environment'}),
+  createTraining:()=>({ready:async()=>{},close:async()=>{},tools:[],toolPrompts:[],service:{describe:()=>({})},supervisor:{list:()=>[]},bindSession:()=>{}}),
+  verifiedCandidate:async()=>({experimentId:'measured',commit:f.commit,tree:'tree',sourceRoot:f.root}),
+  scouts:()=>({tool:{name:'scout'},report:async(request:any)=>{
+   reviews++;expect(request.question).not.toContain('foreign.py');
+   return {text:'- ok: measured source',roles:[{role:'validation',status:'completed',bullets:1}]};
+  }}),
+  runAgentSession:async(options:any)=>{
+   const tool=options.customTools.find((t:any)=>t.name==='hand_over');
+   if(session++===0){
+    expect(JSON.stringify(await tool.execute('checkpoint',{reason:'baseline'}))).toContain('Readiness checkpoint accepted');
+    stop.abort();
+   }else{
+    expect(readProgress(progressPath)!.validationAttempts!.measured.validation.checkResults).toEqual([]);
+    expect(JSON.stringify(await tool.execute('final',{reason:'resume',finalize:true}))).toContain('accepted');
+   }
+   return {output:'scripted',agentRunId:'fixture'};
+  },
+  refit:async()=>{refits++;return {artifacts:[],validation:{valid:true,errors:[]}};},
+  collectResults:async()=>({valid:false,trials:[],artifacts:[],errors:[]}),
+ };
+ const report:any={event:(type:string,data:any)=>events.push({type,...data}),input(){},agentIdentity(){return {};},observation(){return {};}};
+ try{
+  await runLeadSession('spam1',{taskConfiguration:spamConfiguration(),progressPath,dependencies,signal:stop.signal,report});
+  const progress=readProgress(progressPath)!;
+  expect(progress.baseline?.experimentId).toBe('measured');
+  const paths=['checks/other/foreign.py','checks/spam1/typo.py','checks/spam1/note.txt','../../../../auto-smert-lab/runs/finetuned/solutions/checks/spam1/evidence.py'];
+  progress.validationAttempts!.measured.validation={status:'verification_incomplete',fix:[],ok:['measured source'],advice:[],
+   checkResults:paths.map(path=>({path,exitCode:null,output:'Check execution did not complete'}))};
+  writeProgress(progressPath,progress);
+  const result=await runLeadSession('spam1',{taskConfiguration:spamConfiguration(),progressPath,dependencies,report});
+  expect(result.resumed).toBe(true);expect(result.valid).toBe(true);
+  expect(reviews).toBe(1);expect(refits).toBe(1); // The existing successful receipt was reused.
+  expect(events.filter(e=>e.type==='agent_attempt_error')).toEqual([]);
+  expect(events.filter(e=>e.type==='lead_validation_checks_pruned')).toMatchObject([{experiment_id:'measured',paths}]);
+  expect(events.filter(e=>e.type==='lead_blocked_champion_replaced')).toEqual([]);
+ }finally{f.close();}
 });

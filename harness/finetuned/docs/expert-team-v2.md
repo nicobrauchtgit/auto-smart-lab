@@ -289,6 +289,8 @@ which v2 removes.
 - cost (time, peak memory) and budget left;
 - a generalization check on the withheld rows (below).
 
+A validation-blocked champion can instead be replaced by a measured trial with a different source tree whose paired result against a blocked identity in its repair chain is within noise or better; the replacement still requires full validation.
+
 **Generalization check on withheld rows.** The lead knows the withheld rows
 exist and that they tell it whether a pipeline generalizes beyond the folds it
 was tuned on. Their labels are never shown. Showing their raw score after every

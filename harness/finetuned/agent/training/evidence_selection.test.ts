@@ -106,7 +106,7 @@ test("growing evidence is snapshotted; search, paired champion, recovery, valida
   expect(training.service.describe(challenger.id)?.selection).toMatchObject({ basis: "evidence", metric: "evidence_average_precision", value: 1, source: "agent_provided",
    coverage: { unit: "validation_observations", validationRows: 120, labelledRows: 120, positiveRows: 60, negativeRows: 60, labelCoverage: 1 } });
   expect(training.service.leaderboard().find(row => row.experimentId === challenger.id)?.selection).toMatchObject({ metric: "evidence_average_precision", value: 1, evidenceSha256: (trial.invocation!.measurement as any).evidenceManifestSha256 });
-  expect(primaryMetric({ configuration: CONFIG }, { selectionScore: 1 })).toEqual({ name: "none" });
+  expect(primaryMetric({ configuration: CONFIG }, { selectionScore: 1 })).toEqual({ name: "evidence_average_precision", value: 1 });
   // Validation must reject missing/NaN values, false coverage and snapshot changes.
   const foldsPath = join(challenger.directory, "fold-results.jsonl");
   const original = readFileSync(foldsPath, "utf8");
