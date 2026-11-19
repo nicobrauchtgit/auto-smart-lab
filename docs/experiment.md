@@ -185,9 +185,12 @@ Qwen on MythLLM requires `MYTHLLM_API_KEY` in `.env`:
 "model": {"provider": "mythllm", "id": "qwen3.8-flash-next-a5b"}
 ```
 
-Gemini on Vertex requires Google Application Default Credentials (ADC), for
-example an ADC file selected by `GOOGLE_APPLICATION_CREDENTIALS`, and access to
-the configured Google Cloud project and location:
+Gemini on Vertex requires Google credentials and access to the configured
+Google Cloud project and location: set `GOOGLE_APPLICATION_CREDENTIALS` in
+`.env` to a readable Application Default Credentials (ADC) file, or set
+`GOOGLE_CLOUD_API_KEY`. The minimal arm's preflight insists on one of the two,
+because its sandbox mounts only that file and cannot see gcloud's default ADC
+path:
 
 ```json
 "model": {"provider": "google-vertex", "id": "gemini-3.8-flash", "thinkingLevel": "high"}
@@ -207,5 +210,8 @@ cache-write charge. Catalog provenance: [model metadata](https://docs.cloud.goog
 and pi 1.5.2's Vertex catalog for cache-read pricing.
 Costs are accounting metadata; chain spend is recorded only
 when a chain cost cap is set. Minimal mounts the ADC file into its confined model
-process; agent shells strip credentials. Finetuned model initialization inherits
+process. Its agent shells drop credential variables from their own environment,
+but they share the sandbox with the model process, so an agent can still read
+the keys through `ps` or `/proc` (seen in the Google Tor run of 2026-11-18;
+open item). Finetuned model initialization inherits
 the controller environment.

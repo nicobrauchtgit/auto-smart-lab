@@ -132,7 +132,8 @@ async function main(): Promise<number> {
 		console.log(`Deleted ${paths.length} harness state paths.`);
 		return 0;
 	}
-	modelReference(loadExperimentConfig());
+	// The minimal preflight reports a missing selection together with its other problems.
+	if (options.arm !== "minimal") modelReference(loadExperimentConfig());
 	if (options.detach && (options.arm !== "finetuned" || options.checkSetup)) throw new Error("--detach starts a finetuned run; it does not apply to the minimal arm or --check-setup");
 	if (options.arm === "finetuned" && options.detach) return await detachFinetuned(options.rest);
 	if (options.arm === "finetuned") {

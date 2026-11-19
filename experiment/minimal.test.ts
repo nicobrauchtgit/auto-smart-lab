@@ -257,3 +257,62 @@ describe("experiment switch", () => {
 		expect(problems.join("\n")).not.toContain("secret");
 	});
 });
+
+describe("shared model selection in the minimal arm", () => {
+	const select = (root: string, model: Record<string, unknown>, extra: Record<string, unknown> = {}) => {
+		const path = join(root, "experiment.config.json"), config = JSON.parse(readFileSync(path, "utf8"));
+		writeFileSync(path, JSON.stringify({ ...config, model, providers: { ...config.providers, ...extra } }));
+	};
+	const vertex = { "google-vertex": { builtin: true, models: [{ id: "gemini-3.8-flash", contextWindow: 1, maxTokens: 1 }] } };
+
+	test("thinkingLevel is written to the run's pi settings, keeping existing keys; absent, no settings file appears", () => {
+		const root = fixture();
+		const plain = prepareMinimalRun({ projectRoot: root, stamp: "plain" });
+		expect(existsSync(join(plain.home, ".pi/agent/settings.json"))).toBe(false);
+		select(root, { provider: "mythllm", id: "m", thinkingLevel: "high" });
+		const first = prepareMinimalRun({ projectRoot: root, stamp: "thinking" });
+		const settingsPath = join(first.home, ".pi/agent/settings.json");
+		expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toEqual({ defaultThinkingLevel: "high" });
+		writeFileSync(settingsPath, JSON.stringify({ keep: 1, defaultThinkingLevel: "high" }));
+		select(root, { provider: "mythllm", id: "m", thinkingLevel: "low" });
+		prepareMinimalRun({ projectRoot: root, stamp: "unused", continueFrom: "runs/minimal/thinking" });
+		expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toEqual({ keep: 1, defaultThinkingLevel: "low" });
+	});
+
+	test("a continued run without a selection stops before its agent files are rewritten", () => {
+		const root = fixture();
+		const first = prepareMinimalRun({ projectRoot: root, stamp: "keep" });
+		const models = join(first.home, ".pi/agent/models.json"), before = readFileSync(models, "utf8");
+		const path = join(root, "experiment.config.json"), config = JSON.parse(readFileSync(path, "utf8"));
+		delete config.model; config.providers.mythllm.models.push({ id: "other", contextWindow: 1, maxTokens: 1 });
+		writeFileSync(path, JSON.stringify(config));
+		expect(() => prepareMinimalRun({ projectRoot: root, stamp: "unused", continueFrom: "runs/minimal/keep" })).toThrow("No model selected");
+		expect(readFileSync(models, "utf8")).toBe(before);
+	});
+
+	test("google-vertex needs credentials the jail can see", () => {
+		const root = fixture();
+		select(root, { provider: "google-vertex", id: "gemini-3.8-flash" }, vertex);
+		const problems = (env: NodeJS.ProcessEnv) => checkMinimalSetup({ projectRoot: root, bwrap: "/nonexistent", env }).join("\n");
+		expect(problems({ HOME: root })).toContain("Google credentials are missing");
+		expect(problems({ GOOGLE_APPLICATION_CREDENTIALS: join(root, "missing.json") })).toContain("Google credentials are missing");
+		writeFileSync(join(root, "adc.json"), "{}");
+		expect(problems({ GOOGLE_APPLICATION_CREDENTIALS: join(root, "adc.json") })).not.toContain("Google credentials");
+		expect(problems({ GOOGLE_CLOUD_API_KEY: "k" })).not.toContain("Google credentials");
+	});
+
+	test("a builtin provider that lists models accepts only those ids", () => {
+		const base = { online: false, providers: vertex };
+		expect(experimentConfigProblems({ ...base, model: { provider: "google-vertex", id: "gemini-3.8-flash" } })).toEqual([]);
+		expect(experimentConfigProblems({ ...base, model: { provider: "google-vertex", id: "gemini-2.5-flash" } }).join()).toContain("does not list");
+		expect(experimentConfigProblems({ online: false, providers: { "google-vertex": { builtin: true } }, model: { provider: "google-vertex", id: "gemini-2.5-flash" } })).toEqual([]);
+	});
+
+	test("the tracked configuration selects Qwen and keeps every provider", () => {
+		const tracked = JSON.parse(readFileSync(join(import.meta.dir, "..", "experiment.config.json"), "utf8"));
+		expect(experimentConfigProblems(tracked)).toEqual([]);
+		expect(tracked.model).toEqual({ provider: "mythllm", id: "qwen3.8-flash-next-a5b" });
+		expect(Object.keys(tracked.providers).sort()).toEqual(["google-vertex", "mythllm", "saia"]);
+		expect(tracked.providers.saia.models.map((m: { id: string }) => m.id)).toEqual(["mistral-medium-3.5-128b"]);
+	});
+});

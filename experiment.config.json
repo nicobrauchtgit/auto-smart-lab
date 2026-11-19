@@ -1,6 +1,9 @@
 {
   "online": false,
-  "model": {"provider": "mythllm", "id": "qwen3.8-flash-next-a5b"},
+  "model": {
+    "provider": "mythllm",
+    "id": "qwen3.8-flash-next-a5b"
+  },
   "providers": {
     "mythllm": {
       "name": "TU Berlin MythLLM",
@@ -23,7 +26,15 @@
               "reasoning_effort": "xhigh"
             }
           }
-        },
+        }
+      ]
+    },
+    "saia": {
+      "name": "SAIA / GWDG Chat AI",
+      "baseUrl": "https://chat-ai.academiccloud.de/v1",
+      "api": "openai-completions",
+      "apiKeyEnv": "SAIA_API_KEY",
+      "models": [
         {
           "id": "mistral-medium-3.5-128b",
           "name": "Mistral Medium 3.5 128B",

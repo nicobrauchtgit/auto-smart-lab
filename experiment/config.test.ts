@@ -57,3 +57,15 @@ test("minimal direct session rejects an absent selection before loading resource
   await expect(runSession({ instructionsPath: "/nonexistent-instructions", prompt: "unused", label: "missing-model-test" })).rejects.toThrow(MISSING_MODEL_MESSAGE);
  } finally { if (before === undefined) delete process.env.PI_MODEL; else process.env.PI_MODEL = before; }
 });
+
+test("the finetuned pipeline config carries the shared thinkingLevel, and none when it is absent", async () => {
+ const root = mkdtempSync(join(tmpdir(), "thinking-mapping-"));
+ try {
+  const path = join(root, "experiment.config.json"), arm = join(root, "pipeline.config.json");
+  writeFileSync(arm, JSON.stringify({ agent: { cwd: ".", agentDir: ".", initialPrompt: "" } }));
+  writeFileSync(path, JSON.stringify({ online: false, providers, model: { provider: "google-vertex", id: "gemini-3.8-flash", thinkingLevel: "high" } }));
+  expect((await loadPipelineConfig(arm, path)).config.thinkingLevel).toBe("high");
+  writeFileSync(path, JSON.stringify({ online: false, providers, model: { provider: "google-vertex", id: "gemini-3.8-flash" } }));
+  expect((await loadPipelineConfig(arm, path)).config.thinkingLevel).toBeUndefined();
+ } finally { rmSync(root, { recursive: true, force: true }); }
+});

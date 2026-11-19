@@ -88,7 +88,8 @@ export function experimentConfigProblems(value: unknown): string[] {
 		}
 		const provider = providers?.[model.provider];
 		if (providers && !provider) problems.push(`"model.provider" is "${model.provider}", which is not in "providers"`);
-		else if (provider && !("builtin" in provider) && Array.isArray(provider.models) && !provider.models.some(entry => entry.id === model.id)) {
+		// A builtin provider that lists models replaces the SDK catalog in the finetuned arm, so its list is binding too.
+		else if (provider && Array.isArray(provider.models) && !provider.models.some(entry => entry.id === model.id)) {
 			problems.push(`"model.id" is "${model.id}", which provider "${model.provider}" does not list`);
 		}
 	}

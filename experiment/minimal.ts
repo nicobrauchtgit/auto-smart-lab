@@ -8,7 +8,6 @@
  * Credentials the model client needs are passed by name; the arm removes them
  * from its shell tool's environment.
  */
-import { homedir } from "node:os";
 import { spawn, spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, linkSync, lstatSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
@@ -72,9 +71,9 @@ function linkTaskMaterial(projectRoot: string, root: string): MinimalRun {
 	const agentDir = join(home, ".pi", "agent");
 	mkdirSync(agentDir, { recursive: true });
 	const shared = loadShared(projectRoot);
+	modelReference(shared); // no selection: stop before touching the run's agent files
 	writeFileSync(join(agentDir, "models.json"), armModelsJson(shared));
 	const selected = shared.model;
-	modelReference(shared);
 	if (selected?.thinkingLevel !== undefined || existsSync(join(agentDir, "settings.json"))) {
 		const settingsPath = join(agentDir, "settings.json");
 		const settings = existsSync(settingsPath) ? JSON.parse(readFileSync(settingsPath, "utf8")) : {};
@@ -209,7 +208,8 @@ export function checkMinimalSetup(options: { projectRoot?: string; env?: NodeJS.
 	if (options.model && options.model !== model) return [...problems, "Select the model in experiment.config.json instead of overriding it"];
 	const provider = config.providers[String(model).split("/")[0] ?? ""];
 	if (!provider) problems.push(`${model}: its provider is not in ${EXPERIMENT_CONFIG}`);
-	else if ("builtin" in provider && model.startsWith("google-vertex/") && !existsSync(env.GOOGLE_APPLICATION_CREDENTIALS ?? join(env.HOME ?? homedir(), ".config/gcloud/application_default_credentials.json"))) problems.push("Google ADC is missing: set GOOGLE_APPLICATION_CREDENTIALS to a readable ADC file or run gcloud auth application-default login (needed by google-vertex)");
+	// The jail mounts only $GOOGLE_APPLICATION_CREDENTIALS (HOME is the run's own), so the gcloud default ADC path is not visible there.
+	else if ("builtin" in provider && model.startsWith("google-vertex/") && !env.GOOGLE_CLOUD_API_KEY && !(env.GOOGLE_APPLICATION_CREDENTIALS && existsSync(env.GOOGLE_APPLICATION_CREDENTIALS))) problems.push("Google credentials are missing: set GOOGLE_APPLICATION_CREDENTIALS in .env to a readable ADC file (e.g. after gcloud auth application-default login), or set GOOGLE_CLOUD_API_KEY (needed by google-vertex)");
 	else if (provider.apiKeyEnv && !env[provider.apiKeyEnv]) problems.push(`${provider.apiKeyEnv} is not set: add it to .env (needed by ${model})`);
 	return problems;
 }
