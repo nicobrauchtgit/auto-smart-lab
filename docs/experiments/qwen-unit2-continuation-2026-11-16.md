@@ -335,3 +335,38 @@ Order run: code2, attacks1, code3, code1; minimal then finetuned per task; every
 | code1 (Android, 10 families) | delivered, 24 min, 15 clusters, agent-reported 0.751 | delivered, 1 h 21 min, 46 clusters; CV ARI 0.730, sealed ARI 0.688 (0.623-0.782) |
 
 Harness patch observations: the row-level family-stratified seal and sealed ARI confirmation ran on all three clustering tasks; CV and sealed ARI agreed within the bootstrap intervals (gaps -0.024, -0.013, +0.042). The validation gate blocked an order-dependent code3 champion twice. Evidence selection on attacks1 depended entirely on agent-chosen labels, which were at the base rate. Drive flags archives containing malware samples as possibly abusive; backups need acknowledgeAbuse to download. Comparison caveat: the code1 local protocol differs in wording from the Google run's (see the comparison entry). Open user decisions: an attacks1 finetuned retry; committing the experiment code changes. Tor remains deferred. Observation routine disabled.
+
+## Base update: clustering anchored batches and trial feedback (2026-11-17)
+
+The Google observer applied, with user approval, the clustering and trial-feedback harness change to this working tree as an uncommitted patch. The patch has sha256 `98340412cf8f6c57d0f678f51819ae557c335885e0a2feb6338c25f942128a44` and touches 45 files. Its source is branch `t3/fix-clustering-review-findings` at `9b05d3a`; the plan is `docs/clustering-mode-plan-2026-11-17.md`.
+
+**Verification.** `git diff --binary 2a9bab2 9b05d3a` hashes to the patch sha. All 45 files, and every tracked file of `9b05d3a`, are byte-identical here, except the plan doc, which was updated with the status afterwards. `units/`, `resources/`, `experiment/` and `harness/minimal/` are untouched.
+
+**New base record.** `runs/launches/2026-11-16-qwen-unit2-continuation/base-2026-11-17-clustering.json`, also linked from `status.json`. The pinned hashes:
+
+| Item | Before | After |
+|---|---|---|
+| Refit framework hash | `b5114a0c…` (used by the completed code runs) | `b71783fc…` |
+| `harness.config.json` | `18c56d84…` | `2471f4e1…` (adds `search.anchoredSmokeSeconds`) |
+| `team/lead-trial.md` | `69fbe8b0…` | `ea5b3457…` (new Diagnostics line, all task kinds) |
+| `pipeline.config.json`, `experiment.config.json`, task prompts for code1-3 and attacks1 | — | unchanged |
+
+**Code identity.** HEAD alone no longer identifies the code, because the harness changes are uncommitted. `controller.ts` now also records `treeSHA`: the hash of the working-tree diff against HEAD plus the untracked files, excluding `runs/`. Its current value is `22bfeb77…`.
+
+**Consequences.**
+- The completed code1-3 and attacks1 results stand as recorded under the old base.
+- Finetuned code1-3 results under the new base are not comparable with them, because the folds and scoring differ.
+- Old trials and refits cannot be resumed under the new code.
+- No run is active or planned. Before any new run: stage the task, then run `--check-setup` for both arms. The batch clustering preflight now needs the test archive.
+- Rerunning is the user's decision. The user plans to restart from code2 at some point. The minimal arm's restore point is `runs/minimal/2026-11-11T08-29-56-snapshot-1794875415107`, taken at 2026-11-17 00:30:15 UTC, just before code2 minimal began.
+
+## Reset and rerun on the new base (2026-11-17)
+
+On the user's decision, both Qwen arms were reset to the state right after documents4:
+- finetuned solutions and findings restored from the documents4 finetuned backup;
+- the minimal run restored from `snapshot-1794875415107`;
+- every removed file hashed in `runs/launches/2026-11-17-qwen-code-rerun/reset-receipt.json.gz`.
+
+code2, attacks1, code3 and code1 are being rerun on the clustering/trial-feedback base. That run is reported in `docs/experiments/qwen-code-rerun-2026-11-17.md`.
+
+The code and attacks results in this report stay as the record of the old base. Their local run state was deleted. Per the user's instruction, each old Drive backup folder of a task and arm is moved to Drive trash once the rerun backup of that task and arm is verified; Drive trash keeps it for 30 days.

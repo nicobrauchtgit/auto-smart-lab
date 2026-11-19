@@ -24,3 +24,8 @@ retaining each arm's own state. Google experiments belong to the other runner.
 Adding course resources changes input context for subsequent runs; preserve the
 recorded resource hashes and do not retroactively attribute the new files to
 already completed DOCX/PDF runs.
+
+
+## Update 2026-11-18: Tor no longer deferred
+
+User decision (2026-11-17, ~23:00Z): the Tor unit (tor1 closed world, tor2 open world) runs on both sides, both arms, with data staged from the course share. Reports: `docs/experiments/qwen-tor-2026-11-18.md` and the Google observer's report.

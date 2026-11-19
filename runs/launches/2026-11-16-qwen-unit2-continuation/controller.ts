@@ -12,12 +12,14 @@ const sharedBytes=readFileSync(join(root,'experiment.config.json'));
 const shared=JSON.parse(sharedBytes.toString());
 const sha=(bytes:Buffer)=>createHash('sha256').update(bytes).digest('hex');
 const codeSHA=execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim();
+// Harness changes are uncommitted, so also pin the working tree: sha256 of the binary diff against HEAD plus untracked file hashes, excluding runs/.
+const treeSHA=execFileSync('bash',['-c',"(git diff --binary HEAD -- . ':!runs'; git ls-files --others --exclude-standard -z -- . ':!runs' | sort -z | xargs -0 sha256sum) | sha256sum | cut -c1-64"],{cwd:root,encoding:'utf8'}).trim();
 if(shared.online!==false || shared.model.provider!=='mythllm' || shared.model.id!=='qwen3.8-flash-next-a5b')throw new Error('Unexpected experiment configuration');
 // 'resume' (4th argument) continues an interrupted lead run in place: PROGRESS.json must say running.
 const resume=process.argv[4]==='resume';
 for(const name of tasks)if(arm==='finetuned' && existsSync(join(root,'runs/finetuned',name)) && !(resume && JSON.parse(readFileSync(join(root,'runs/finetuned',name,'lead/PROGRESS.json'),'utf8')).status==='running'))throw new Error('Prior task/solutions state present; refusing resume');
 const write=(name:string,value:unknown)=>{const dest=join(here,name);writeFileSync(dest+'.tmp',JSON.stringify(value,null,2)+'\n');renameSync(dest+'.tmp',dest);};
-const status:any={controllerPid:process.pid,startedAt:new Date().toISOString(),state:'running',codeSHA,online:false,model:shared.model,sharedConfigSHA256:sha(sharedBytes),tasks:[],arm,policy:'Continue original minimal spam state in place; configured budgets; no extra deadline; no uploads/submissions; 2 GiB disk reserve; supervised descendants only'};
+const status:any={controllerPid:process.pid,startedAt:new Date().toISOString(),state:'running',codeSHA,treeSHA,online:false,model:shared.model,sharedConfigSHA256:sha(sharedBytes),tasks:[],arm,policy:'Continue original minimal spam state in place; configured budgets; no extra deadline; no uploads/submissions; 2 GiB disk reserve; supervised descendants only'};
 mkdirSync(join(here,'tmp'),{recursive:true});
 const env=Object.fromEntries(Object.entries(process.env).filter((x):x is [string,string]=>x[1]!==undefined));env.TMPDIR=join(here,'tmp');
 const supervisor=new ExperimentSupervisor({root:join(here,'supervision'),env,deliver:()=>{},record:(event,payload)=>appendFileSync(join(here,'controller-events.jsonl'),JSON.stringify({at:new Date().toISOString(),event,payload})+'\n')});
