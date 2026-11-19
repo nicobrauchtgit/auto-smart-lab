@@ -47,7 +47,7 @@ test data. All four configurations solve the introductory spam tasks and one
 document task (scores of 0.97 and above), and all fall well short on the
 harder ones. The guided harness helps on the clustering tasks but not
 overall: it wins 7 of 13 tasks with one model and 6 of 13 with the other.
-The harness needs at least twice as many model calls, and its own
+The harness needs two to four times as many model calls, and its own
 score estimates are no closer to the test scores than the minimal agent's.
 \end{abstract}
 
@@ -225,21 +225,21 @@ Documents: RTF      & BACC & 0.964 & 0.954 & \textbf{0.969} & 0.876 \\
 Documents: mixed    & BACC & 0.800 & 0.858 & \textbf{0.886} & 0.867 \\
 \midrule
 Clustering: PHP     & ARS  & 0.694 & \textbf{0.830} & 0.442 & 0.710 \\
-Clustering: Android & ARS  & 0.361 & 0.554 & 0.545 & \textbf{0.630} \\
-Clustering: Windows & ARS  & \textbf{0.924} & 0.898 & 0.587 & 0.778 \\
+Clustering: Android & ARS  & 0.361 & 0.554 & 0.545 & \textbf{0.630}$^{*}$ \\
+Clustering: Windows & ARS  & \textbf{0.924} & 0.898 & 0.587 & 0.778$^{*}$ \\
 \midrule
-Tor: closed world   & ACC  & 0.850 & \textbf{0.860} & 0.820 & 0.573 \\
+Tor: closed world   & ACC  & 0.850 & \textbf{0.860}$^{*}$ & 0.820 & 0.573 \\
 Tor: open world     & ACC  & \textbf{0.882} & 0.870 & 0.865 & 0.683 \\
 \midrule
-Adversarial examples & BACC & 0.545 & 0.581 & \textbf{0.607} & 0.513 \\
+Adversarial examples & BACC & 0.545 & 0.581 & \textbf{0.607} & 0.513$^{*}$ \\
 \midrule
 Mean                &      & 0.823 & 0.852 & 0.801 & 0.794 \\
 \bottomrule
 \end{tabular}
 \caption{Scores on the hidden test data, as returned by our supervisors
 (offline, one result per task). Min.: minimal agent; Guided: guided
-harness. Bold: best per task. The mean mixes different metrics and is only a
-rough summary.}
+harness. Bold: best per task. $^{*}$Delivery completed by hand (see Limits).
+The mean mixes different metrics and is only a rough summary.}
 \label{tab:scores}
 \end{table}
 
@@ -259,7 +259,8 @@ harness is the reason for neither the best nor the worst results overall:
 the best score per task is spread over all four configurations.
 
 \paragraph{The harness helps on clustering.} The clearest gain is in the
-clustering unit, where the guided harness is ahead in 5 of 6 cases, by up to
+clustering unit, where the guided harness is ahead in 5 of 6 cases (two of
+them completed by hand, see Limits), by up to
 0.27 (PHP with Qwen: 0.44 to 0.71; Android with Gemini: 0.36 to 0.55).
 These are the tasks where the test families are unknown and an agent's own
 score on the training families is least reliable, so measurement by the
@@ -294,29 +295,30 @@ Table~\ref{tab:effort} summarises the effort per task.
 \cmidrule(lr){2-3}\cmidrule(l){4-5}
 Per task (median) & Min. & Guided & Min. & Guided \\
 \midrule
-Model calls       & 81   & 165  & 42   & 192 \\
-Wall time (min)   & 23   & 24   & 23   & 101 \\
-API cost (USD)    & 0.63 & 1.46 & ---  & --- \\
+Model calls       & 81   & 167  & 45   & 199 \\
+Wall time (min)   & 23   & 24   & 23   & 120 \\
+API cost (USD)    & 0.62 & 1.46 & ---  & --- \\
 \bottomrule
 \end{tabular}
-\caption{Effort per task, from the traces of the delivered runs. Qwen is
+\caption{Effort per task, from the traces of the 52 scored runs. Qwen is
 served by the chair at no cost to us.}
 \label{tab:effort}
 \end{table}
 
-\paragraph{The harness costs at least twice as much.} The guided harness
-needs two (Gemini) to four and a half (Qwen) times as many model calls per
-task as the minimal agent,
-and with Gemini about 2.3 times the money. With the slower open model it also
-takes four times as long. Measured against Table~\ref{tab:scores}, this
+\paragraph{The harness costs two to four times as much.} The guided harness
+needs two (Gemini) to four (Qwen) times as many model calls per
+task as the minimal agent. With Gemini the 13 tasks cost about 24 USD
+instead of 8. With the slower open model the harness also takes five times
+as long, and on 6 of 13 tasks the lead used at least 140 of its 150 calls. Measured against Table~\ref{tab:scores}, this
 extra effort buys a clear gain only on clustering.
 
 \paragraph{The harness's score is no more honest than the agent's own.}
 For each delivered result we compared the score the system itself reported
 with the score on the test data. The harness was built to make this number
 trustworthy, yet it overestimates about as often as the minimal agent's
-self-reported score: by more than 0.05 on 6 of 12 tasks (Gemini) and 5 of
-11 (Qwen), against 5 of 13 and 3 of 12 for the minimal agent. On the PDF
+self-reported score: by more than 0.05 on 6 of 12 tasks (Gemini) and 4 of
+10 (Qwen), against 5 of 13 and 3 of 12 for the minimal agent (tasks
+completed by hand or without a reported score are left out). On the PDF
 task the harness reported 0.98 with both models and the test score was
 0.70 and 0.73. On adversarial examples with Gemini it reported 0.99 against
 0.58 on the test data. The split that the harness seals comes from the
@@ -337,9 +339,18 @@ from earlier runs we know that the same model on the same task can vary
 considerably between runs, so small differences in Table~\ref{tab:scores}
 should not be read as significant. The guided harness was also still being
 developed during the campaign: on the clustering and adversarial-example
-tasks it was run again after fixes, while the minimal agent ran almost
-every task only once. Its results on these tasks therefore reflect more
-attempts on our side.
+tasks it was run again after fixes and the result of the rerun was handed
+in, while for the minimal agent the original runs were handed in. In 4
+of the 26 guided runs (marked in Table~\ref{tab:scores}) the lead agent
+ended without a valid delivery, and we completed the last steps by hand:
+its best model so far was refit by a script, without any further agent
+session. Two of the five clustering wins of the harness are such
+completions. The guided results therefore contain more intervention on our
+side than the minimal ones. Finally, two pairs of runs handed in identical
+prediction files (webspam: both Gemini arms; spam~2: both minimal agents).
+We verified that they converged independently on the same simple
+classifier, so each pair of equal scores in Table~\ref{tab:scores} counts as
+one result.
 
 \subsection{Earlier runs on the platform}
 
