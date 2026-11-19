@@ -3,7 +3,7 @@
  * harness changes: code version, prompt versions, model, host, Python runtime and every cap.
  *
  * Written to logs/status/task.json (`conditions`), the task log, the batch summary.json and Langfuse
- * metadata. `npm run report` groups results by these fields.
+ * metadata, so results can be grouped by these fields.
  */
 
 import { createHash } from "node:crypto";

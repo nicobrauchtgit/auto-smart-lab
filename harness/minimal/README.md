@@ -252,7 +252,7 @@ agent/
 ├── memory/              Persistent memory across sessions (gitignored)
 ├── run/                 Orchestrator and session runners (TypeScript)
 │   ├── solve_units.ts   Batch driver: fetch → reset → every open task (npm run solve-units)
-│   ├── status.ts / status_cli.ts  Live status files + `npm run status`
+│   ├── status.ts        Live status files (logs/status/)
 │   ├── orchestrate.ts   Per-task entry point (npm run solve <task>)
 │   ├── solver_session.ts
 │   ├── output_check.ts  Deterministic check of the declared output before submission

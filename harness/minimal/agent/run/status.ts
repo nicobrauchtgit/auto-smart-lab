@@ -7,7 +7,7 @@
  *
  * Two files because solve_units and the orchestrator are different processes; each file has a
  * single writer, so no locking is needed. Writes are atomic (tmp + rename) and best-effort: a
- * failing status write must never break a run. `npm run status` reads both (status_cli.ts).
+ * failing status write must never break a run.
  */
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";

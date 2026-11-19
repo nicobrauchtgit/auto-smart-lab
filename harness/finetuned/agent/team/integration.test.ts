@@ -75,7 +75,7 @@ test("shared contract types have one definition, in team/contracts.ts, and B's e
  }};
  walk(AGENT);
  expect(offenders).toEqual([]);
- for (const file of ["workspace/task_data.ts", "workspace/tree.ts", "workspace/check.ts", "workspace/trial_source.ts", "workspace/findings_reader.ts"])
+ for (const file of ["workspace/task_data.ts", "workspace/trial_source.ts", "workspace/findings_reader.ts"])
   expect(readFileSync(join(AGENT, file), "utf8")).toContain('from "../team/contracts.js"');
  const reader = await import("../workspace/findings_reader.js");
  expect(reader.createFindingsReader).toBe((await import("./findings.js")).createFindingsReader);

@@ -3,7 +3,7 @@
 Regenerate from the repository root: `./dev bun scripts/code-inventory.ts`.
 Check freshness: `./dev bun scripts/code-inventory.ts --check`. Category fixtures: `./dev bun scripts/code-inventory.ts --self-test`.
 
-Source snapshot SHA-256: `167663c51c9972eed7bcee64ba4d3a547e830b4fac8ff41543fb1b60a31501ae`.
+Source snapshot SHA-256: `3bf8eb18e7a716579b39c1353793654e9fc17d1d04d411cb47933f58174a390c`.
 Generator SHA-256: `f94d84237717b5c47d5ea88941d68c2247e25ec907cb4f92c5bf19998bb61be3`.
 Parser: TypeScript 7.0.2; Python 3.13.13.
 
@@ -23,15 +23,15 @@ The source digest hashes sorted path + NUL + byte length + NUL + bytes + NUL per
 | --- | --- | --- | ---: | ---: | ---: | ---: |
 | finetuned | Python | production/tooling | 51 | 7800 | 350 | 23 |
 | finetuned | Python | test/support | 18 | 3183 | 285 | 41 |
-| finetuned | TypeScript | production/tooling | 140 | 19772 | 2081 | 24 |
+| finetuned | TypeScript | production/tooling | 138 | 19766 | 2081 | 24 |
 | finetuned | TypeScript | test/support | 103 | 14113 | 2691 | 4 |
 | minimal | Python | production/tooling | 11 | 2036 | 96 | 8 |
-| minimal | TypeScript | production/tooling | 21 | 4571 | 327 | 3 |
+| minimal | TypeScript | production/tooling | 18 | 4237 | 294 | 3 |
 | shared/development | Python | production/tooling | 3 | 89 | 1 | 0 |
 | shared/development | TypeScript | production/tooling | 5 | 649 | 71 | 1 |
 | shared/development | TypeScript | test/support | 3 | 445 | 75 | 0 |
 
-**All included source:** 355 files; 52658 physical lines; 5977 callables; 104 classes.
+**All included source:** 350 files; 52318 physical lines; 5944 callables; 104 classes.
 
 ## Module and language totals (both roles)
 
@@ -65,10 +65,10 @@ The source digest hashes sorted path + NUL + byte length + NUL + bytes + NUL per
 | finetuned | agent/tools | TypeScript | 3 | 1147 | 75 | 1 |
 | finetuned | agent/training | Python | 48 | 7831 | 468 | 52 |
 | finetuned | agent/training | TypeScript | 47 | 7910 | 825 | 4 |
-| finetuned | agent/workspace | TypeScript | 5 | 15 | 0 | 0 |
+| finetuned | agent/workspace | TypeScript | 3 | 9 | 0 | 0 |
 | finetuned | docs | Python | 5 | 414 | 29 | 3 |
 | minimal | agent/entrypoints | Python | 1 | 94 | 3 | 0 |
-| minimal | agent/run | TypeScript | 17 | 3146 | 237 | 2 |
+| minimal | agent/run | TypeScript | 14 | 2812 | 204 | 2 |
 | minimal | agent/setup | Python | 7 | 1843 | 85 | 7 |
 | minimal | agent/smartlab | Python | 3 | 99 | 8 | 1 |
 | minimal | agent/tools | TypeScript | 4 | 1425 | 90 | 1 |
