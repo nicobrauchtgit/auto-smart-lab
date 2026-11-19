@@ -1,0 +1,590 @@
+{
+ "createdAt": "2026-11-19T13:42:14.786813+00:00",
+ "courseShare": {
+  "listedAt": "2026-11-16T10:20:51.854060+00:00",
+  "files": [
+   {
+    "file": "01-spam/spam1-train.zip",
+    "bytes": 27401128,
+    "etag20261116": "\"a910499bc38e7481fbd6f0464f9381ab\"",
+    "downloadedSha256": [
+     "7a382cb9419b98a44fa5b98d46e11c8137d9dbbc92e489d088f036754b7bd649"
+    ],
+    "etagsAtDownload": [
+     "\"a910499bc38e7481fbd6f0464f9381ab\""
+    ],
+    "sameEtagAtDownload": true
+   },
+   {
+    "file": "01-spam/webspam-train.zip",
+    "bytes": 77138285,
+    "etag20261116": "\"02487ddf7affe45c52064c9cb2a807ab\"",
+    "downloadedSha256": [
+     "150a9dd08b0c5d91b20d2f1907b1d779f08269d8532738c5782ae08f94fa49ff"
+    ],
+    "etagsAtDownload": [
+     "\"02487ddf7affe45c52064c9cb2a807ab\""
+    ],
+    "sameEtagAtDownload": true
+   },
+   {
+    "file": "01-spam/spam1-test.zip",
+    "bytes": 29384234,
+    "etag20261116": "\"75e6929df2b9d38d74730c74390e5fb8\"",
+    "downloadedSha256": [
+     "30828a4f5795ee57817224085b0dc51a076b8640862ec8a785563a931d114288"
+    ],
+    "etagsAtDownload": [
+     "\"75e6929df2b9d38d74730c74390e5fb8\""
+    ],
+    "sameEtagAtDownload": true
+   },
+   {
+    "file": "01-spam/webspam-test.zip",
+    "bytes": 59145298,
+    "etag20261116": "\"900fc1023a5997a0830ba3d67b14e0fa\"",
+    "downloadedSha256": [
+     "17e576c0e62f3639cfcb01745903314d6ea3cd562c77d799fbf98cec7c143b38"
+    ],
+    "etagsAtDownload": [
+     "\"900fc1023a5997a0830ba3d67b14e0fa\""
+    ],
+    "sameEtagAtDownload": true
+   },
+   {
+    "file": "01-spam/spam2-train.zip.gz.gpg",
+    "bytes": 69094838,
+    "etag20261116": "\"4386fe4019c6690ed7889f99175dd7f5\"",
+    "downloadedSha256": [
+     "25312b1f6468eee465115fca1e094d086370c930b3118f0c16216ba089a60cba"
+    ],
+    "etagsAtDownload": [
+     "\"4386fe4019c6690ed7889f99175dd7f5\""
+    ],
+    "sameEtagAtDownload": true
+   },
+   {
+    "file": "01-spam/spam2-test.zip.gz.gpg",
+    "bytes": 38201716,
+    "etag20261116": "\"053d8af32d98a956a74784ac7c1adcd7\"",
+    "downloadedSha256": [
+     "84dfc19a483a650c125d9f98ed48bb4489ea4d382576167b63a2f6069eeee8db"
+    ],
+    "etagsAtDownload": [
+     "\"053d8af32d98a956a74784ac7c1adcd7\""
+    ],
+    "sameEtagAtDownload": true
+   },
+   {
+    "file": "02-maldoc/mix-train.zip.gz.gpg",
+    "bytes": 346,
+    "etag20261116": "\"7ad845ccc4ac83fa11db6098403ebdc2\"",
+    "downloadedSha256": [],
+    "etagsAtDownload": [],
+    "sameEtagAtDownload": null
+   },
+   {
+    "file": "02-maldoc/mix-test.zip.gz.gpg",
+    "bytes": 287904201,
+    "etag20261116": "\"c434639ca23e7507204dceddb910b303\"",
+    "downloadedSha256": [],
+    "etagsAtDownload": [],
+    "sameEtagAtDownload": null
+   },
+   {
+    "file": "02-maldoc/pdf-test.zip.gz.gpg",
+    "bytes": 1237044305,
+    "etag20261116": "\"c5503d0e8b82e511c0588139e8ae18c4\"",
+    "downloadedSha256": [
+     "da8ff9afa752fd54222f9677aa72b0c246f891424a6a0e5fe57c0bde9deba37e"
+    ],
+    "etagsAtDownload": [
+     "\"c5503d0e8b82e511c0588139e8ae18c4\""
+    ],
+    "sameEtagAtDownload": true
+   },
+   {
+    "file": "02-maldoc/docx-train.zip.gz.gpg",
+    "bytes": 946954503,
+    "etag20261116": "\"0a6f751025773dadb61e0e586a519821\"",
+    "downloadedSha256": [
+     "b754d1f332bed5136ef4174edc6ffeb797b334a28b0a6c9cb63ee6ad9d17d844"
+    ],
+    "etagsAtDownload": [
+     "\"0a6f751025773dadb61e0e586a519821\""
+    ],
+    "sameEtagAtDownload": true
+   },
+   {
+    "file": "02-maldoc/rtf-test.zip.gz.gpg",
+    "bytes": 136287090,
+    "etag20261116": "\"8f939a07dc9db20ed5c184a06b4b12a9\"",
+    "downloadedSha256": [
+     "909f0e0ab786b91d447ed9efe08512e1dbdf5c7b601f022df54ba73bdb4a3582"
+    ],
+    "etagsAtDownload": [
+     "\"8f939a07dc9db20ed5c184a06b4b12a9\""
+    ],
+    "sameEtagAtDownload": true
+   },
+   {
+    "file": "02-maldoc/docx-test.zip.gz.gpg",
+    "bytes": 357042945,
+    "etag20261116": "\"2b20dede40f3ecab89a375c7e5c3ed0f\"",
+    "downloadedSha256": [
+     "2d14ebee60809b5c0702b256dd47374447477e3aadd51140e5a0947a3515d9dd"
+    ],
+    "etagsAtDownload": [
+     "\"2b20dede40f3ecab89a375c7e5c3ed0f\""
+    ],
+    "sameEtagAtDownload": true
+   },
+   {
+    "file": "02-maldoc/pdf-train.zip.gz.gpg",
+    "bytes": 734238351,
+    "etag20261116": "\"92e68f64e754eb883466c468f0f2bbbd\"",
+    "downloadedSha256": [
+     "fd30f759ad95250b91a50c27b188b20105ccdb87a7acf93a271aac3cddc0cc50"
+    ],
+    "etagsAtDownload": [
+     "\"92e68f64e754eb883466c468f0f2bbbd\""
+    ],
+    "sameEtagAtDownload": true
+   },
+   {
+    "file": "02-maldoc/rtf-train.zip.gz.gpg",
+    "bytes": 492684343,
+    "etag20261116": "\"cfce7ba0a7acbfa06d16d8dd312dc478\"",
+    "downloadedSha256": [
+     "b892b60760ffa87f45213d385dded2fd1921f0d1c0cd2501554710297ebae7d2"
+    ],
+    "etagsAtDownload": [
+     "\"cfce7ba0a7acbfa06d16d8dd312dc478\""
+    ],
+    "sameEtagAtDownload": true
+   },
+   {
+    "file": "03-clust/php-test.zip.gz.gpg",
+    "bytes": 9024459,
+    "etag20261116": "\"567828116cdd2eca99444cd3fbef5f34\"",
+    "downloadedSha256": [
+     "2cabbcc66d84ca7ca50c342808207036d19073a889a074db890b0578a15ab943"
+    ],
+    "etagsAtDownload": [
+     "\"567828116cdd2eca99444cd3fbef5f34\""
+    ],
+    "sameEtagAtDownload": true
+   },
+   {
+    "file": "03-clust/php-train.zip.gz.gpg",
+    "bytes": 9131421,
+    "etag20261116": "\"99fdd48f98013087d9b48641b0dfb904\"",
+    "downloadedSha256": [
+     "98244aa0094f6172949c5d7e2243fabbb925ebd1ecc7e100b09c487e3021f36e"
+    ],
+    "etagsAtDownload": [
+     "\"99fdd48f98013087d9b48641b0dfb904\""
+    ],
+    "sameEtagAtDownload": true
+   },
+   {
+    "file": "03-clust/android-test.zip.gz.gpg",
+    "bytes": 1659674571,
+    "etag20261116": "\"dbbcd3e0ba38e2f6f70a82b8e2ab75f1\"",
+    "downloadedSha256": [
+     "7c3a3b9aa6b040f8dd97feda3deba9f460689d8076bcc3d0e9eded8d9aaa251e"
+    ],
+    "etagsAtDownload": [
+     "\"dbbcd3e0ba38e2f6f70a82b8e2ab75f1\""
+    ],
+    "sameEtagAtDownload": true
+   },
+   {
+    "file": "03-clust/win-train.zip.gz.gpg",
+    "bytes": 376689271,
+    "etag20261116": "\"2647f71657aef875f5f4f19a3a693a81\"",
+    "downloadedSha256": [
+     "ef5d23ff2a7d16b6cbd1ea535a1f94e1c6cc2e3782044cfa41b16eb7168a3d08"
+    ],
+    "etagsAtDownload": [
+     "\"2647f71657aef875f5f4f19a3a693a81\""
+    ],
+    "sameEtagAtDownload": true
+   },
+   {
+    "file": "03-clust/win-test.zip.gz.gpg",
+    "bytes": 288200956,
+    "etag20261116": "\"862c894c7b7b36d38ac42d787659a432\"",
+    "downloadedSha256": [
+     "cc3f1e3172564371a6a6ad5e92b912d8cb2032187cfd0a0054ba30d30d8a1a73"
+    ],
+    "etagsAtDownload": [
+     "\"862c894c7b7b36d38ac42d787659a432\""
+    ],
+    "sameEtagAtDownload": true
+   },
+   {
+    "file": "03-clust/android-train.zip.gz.gpg",
+    "bytes": 3007589691,
+    "etag20261116": "\"6b36d720dfacff7fa6464c561c3e7fb5\"",
+    "downloadedSha256": [
+     "439978cc45e6253af5912d78ba090b2edb69159266086d7379dee7381fe8b207"
+    ],
+    "etagsAtDownload": [
+     "\"6b36d720dfacff7fa6464c561c3e7fb5\""
+    ],
+    "sameEtagAtDownload": true
+   },
+   {
+    "file": "05-anomaly/adv-test.zip",
+    "bytes": 7312940,
+    "etag20261116": "\"50e1a4fd3d4d2e113b211099071b6878\"",
+    "downloadedSha256": [
+     "ee0b1a3dd9a97d58a75a3dede976f360881e0fa563e2eeeaa794a362d3a48735"
+    ],
+    "etagsAtDownload": [
+     "\"50e1a4fd3d4d2e113b211099071b6878\""
+    ],
+    "sameEtagAtDownload": true
+   },
+   {
+    "file": "05-anomaly/adv-train.zip",
+    "bytes": 14629370,
+    "etag20261116": "\"6b6530828e791ee2b3cf3b3b5dd2fef9\"",
+    "downloadedSha256": [
+     "cb9c7fd7c98809e149ec3189ea8fb9e7af1fa568901d6ad81c36a1ff1c3ecd00"
+    ],
+    "etagsAtDownload": [
+     "\"6b6530828e791ee2b3cf3b3b5dd2fef9\""
+    ],
+    "sameEtagAtDownload": true
+   },
+   {
+    "file": "04-tor/1-closed-world/train.tar.gz",
+    "bytes": 803033853,
+    "etag20261116": "\"fa12d1498c33e1217fe571949f4a14a2\"",
+    "downloadedSha256": [
+     "3ca20c3624725049cbeb78fc3f2e9349b55d8120e7059b6b39c97a223d07f3ea"
+    ],
+    "etagsAtDownload": [
+     "\"fa12d1498c33e1217fe571949f4a14a2\""
+    ],
+    "sameEtagAtDownload": true
+   },
+   {
+    "file": "04-tor/1-closed-world/test.tar.gz",
+    "bytes": 403686061,
+    "etag20261116": "\"d713c5cdfb10cd0b39b999614388b997\"",
+    "downloadedSha256": [
+     "bd3bb901c1175c2e6edcbb122a01bd1c1c8f3e94f52a9745b93ae308d4a6657e"
+    ],
+    "etagsAtDownload": [
+     "\"d713c5cdfb10cd0b39b999614388b997\""
+    ],
+    "sameEtagAtDownload": true
+   },
+   {
+    "file": "04-tor/2-open-world/train_benign.tar.gz",
+    "bytes": 1504510103,
+    "etag20261116": "\"4ee6ac0c93496932168199c38e113b4e\"",
+    "downloadedSha256": [
+     "342a7bf577c8c23aed1dcbc75963ca28e3cfd9ffd2e2188dc31b503b5a699775"
+    ],
+    "etagsAtDownload": [
+     "\"4ee6ac0c93496932168199c38e113b4e\""
+    ],
+    "sameEtagAtDownload": true
+   },
+   {
+    "file": "04-tor/2-open-world/test.tar.gz",
+    "bytes": 1180954503,
+    "etag20261116": "\"5312275fc6d7574470b8a50d3444f280\"",
+    "downloadedSha256": [
+     "e7a65d4d04d8786e135a5a15d6018f26d17c0fa7e41c4ab5eb0e5cc75d662d7c"
+    ],
+    "etagsAtDownload": [
+     "\"5312275fc6d7574470b8a50d3444f280\""
+    ],
+    "sameEtagAtDownload": true
+   }
+  ],
+  "note": "downloadedSha256 = sha256 of the file as downloaded by the Google observer (from staging records); mix-train/test were never downloaded (no mix task). Re-list the share and compare etag/bytes, or re-download and compare sha256, to detect changes."
+ },
+ "stagedFiles": {
+  "runs/finetuned/attacks1/data/adv-train-dev.zip": [
+   "cb9c7fd7c98809e149ec3189ea8fb9e7af1fa568901d6ad81c36a1ff1c3ecd00"
+  ],
+  "runs/finetuned/attacks1/data/development-samples.json": [
+   "64053cb2a72f4b57ed4c3549935f0fe6483c323bea0bc9e6b2492c36c1a4a4cd"
+  ],
+  "runs/finetuned/attacks1/data/profile.json": [
+   "1f65e2e8d28a7b208dcbf7a5dfbeb0354165475cbaca229805794464d4472814"
+  ],
+  "runs/finetuned/attacks1/data/sealed/.service.lock": [
+   "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  ],
+  "runs/finetuned/attacks1/data/sealed/holdout.json": [
+   "82bc6119b91f97b0b0a2d21af0e97268b804a8c1299a9953716e824e7fbf4fba"
+  ],
+  "runs/finetuned/attacks1/data/sealed/sealed_ids.txt": [
+   "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  ],
+  "runs/finetuned/attacks1/data/sealed/split.json": [
+   "9580ba69dc206bf0a9f78defdcdff030752a874e43f7ebaa82e3a03f8473dffe"
+  ],
+  "runs/finetuned/attacks1/data/sealed/task-data.json": [
+   "a5f7bb5d0db44731ed143d291c4008701573b99249e98ce706df63e178498f48"
+  ],
+  "runs/finetuned/code1/data/android-train-dev.zip": [
+   "26819cfe2b742579fe234bd834161037fdc1a50272a7a6e4df69125a17b46815"
+  ],
+  "runs/finetuned/code1/data/development-samples.json": [
+   "cb84f9073998453e367e99ac4c1f2b589528975075cd5533cb9a6508272f94cd"
+  ],
+  "runs/finetuned/code1/data/profile.json": [
+   "14952152b71633f8ee7dec1786e6d2da14d9889e0b1f36e9f422bf44c62c3115"
+  ],
+  "runs/finetuned/code1/data/sealed/.service.lock": [
+   "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  ],
+  "runs/finetuned/code1/data/sealed/holdout.json": [
+   "665929edcd71d8d0cee0c41cfc6c7df4814c0a1e2dd798e158a04ad8d2f9c33e"
+  ],
+  "runs/finetuned/code1/data/sealed/sealed_ids.txt": [
+   "8ad60d1ff88208cb31e0005d1ff5c82b9ceac75818a1586c98488f811fac1cbf"
+  ],
+  "runs/finetuned/code1/data/sealed/split.json": [
+   "83bf9a24f1114d8eb91e74c1b0335709553d0fcb23b8f2aac60e3b6819f1d5bc"
+  ],
+  "runs/finetuned/code1/data/sealed/task-data.json": [
+   "7c54438bfa4baef784da18ab428860caad14fa8318216c921c8f16997f2c4971"
+  ],
+  "runs/finetuned/code2/data/development-samples.json": [
+   "02777b400b8f40a5a34bb25b7e9188ead440108f4184e291f50ab5232c316af4"
+  ],
+  "runs/finetuned/code2/data/php-train-dev.zip": [
+   "246dd3fe2b1d3bdb7e8c2f8010be5e460c6379aaa1eeae719ed02644992970d0"
+  ],
+  "runs/finetuned/code2/data/profile.json": [
+   "a8acb66575e74c37a88e622425706fe5b3565108ec0a2b0a0837eb4f7c943b45"
+  ],
+  "runs/finetuned/code2/data/sealed/.service.lock": [
+   "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  ],
+  "runs/finetuned/code2/data/sealed/holdout.json": [
+   "3a11677fde3ace389547028ce5d8b310106e3832fecda11a2be0ecd5b06d7db9"
+  ],
+  "runs/finetuned/code2/data/sealed/sealed_ids.txt": [
+   "b0bd619accaaf6c7e9f5364a57dc6eeb8d98651478819ea0b8106ee5a634286d"
+  ],
+  "runs/finetuned/code2/data/sealed/split.json": [
+   "c0ff1ebb095d218e6729a5ca66670477079765cbd6f144f57c59ac3149eb5127"
+  ],
+  "runs/finetuned/code2/data/sealed/task-data.json": [
+   "1552c99edc5b70da459b389afccc6df2424a8a96d9333538e5a5010024c8b8cc"
+  ],
+  "runs/finetuned/code3/data/development-samples.json": [
+   "3d12342a8c2298d3462fd89e8cb4647f2c0405ccba70389bd89acf7719aea270"
+  ],
+  "runs/finetuned/code3/data/profile.json": [
+   "a9e6a2d035e1389246e57af38320954f4a89d18a039beb787c3a14ba18816d21"
+  ],
+  "runs/finetuned/code3/data/sealed/.service.lock": [
+   "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  ],
+  "runs/finetuned/code3/data/sealed/holdout.json": [
+   "8387ef51dcbc942f4624b404548aa3df2a2c23c57b7fd394308cd0863b47deb5"
+  ],
+  "runs/finetuned/code3/data/sealed/sealed_ids.txt": [
+   "7a7b33825c270631caf3eb5f4c2eb6201c24f913e50f665e84542040f208e097"
+  ],
+  "runs/finetuned/code3/data/sealed/split.json": [
+   "9491922384139b3981de6dcca461f2f12464f990bf0f0981989e60180463f7fd"
+  ],
+  "runs/finetuned/code3/data/sealed/task-data.json": [
+   "1e4cccaf3623d86dc1606e778763ce2ac0a292bed3968bbc41b680772b82b8c0"
+  ],
+  "runs/finetuned/code3/data/win-train-dev.zip": [
+   "336bd5f9b4826efc25b54731751d4b65bb506517afd0f8fc45f40535da3fde6e"
+  ],
+  "runs/finetuned/documents1/data/docx-train-dev.zip": [
+   "18bf9b420bd4e87b93953ee20a61dc486ece2aee0c60310d2589f431dbf9c61d"
+  ],
+  "runs/finetuned/documents2/data/pdf-train-dev.zip": [
+   "52a71cb4685d858d9af43cbf032210c9733417dc69778c62b39630f730bac6b6"
+  ],
+  "runs/finetuned/documents3/data/rtf-train-dev.zip": [
+   "095cca4b7cafc73b1a4513e840afaaa2444ac4908556566988a089ba9ab255a4"
+  ],
+  "runs/finetuned/documents4/data/mix-train-dev.zip": [
+   "5c039a5a9e78b9754ee2eb09cc3348b8c21ae286be65b1d817d5e546dc2e8478"
+  ],
+  "runs/finetuned/spam1/data/spam1-train-dev.zip": [
+   "79bdfb29f0f698e69b1b24aa6491b2d1f1fdc75cfe02a16e8d623dc591931858"
+  ],
+  "runs/finetuned/spam2/data/spam2-train-dev.zip": [
+   "efbae85ba63a88e6a9c5a0ffa2423e3fd127178347abde25c12f9f3a1fa1ebeb"
+  ],
+  "runs/finetuned/spam3/data/webspam-train-dev.zip": [
+   "4ae1f940a0a08fe1c7f879a6a5831984d65132d2aee684e2459f557baee0112a"
+  ],
+  "runs/finetuned/tor1/data/tor1-train-dev.zip": [
+   "2b1f7ec12031f71a74f03a92f623442727208a3e7161499c5e4674744c4f0970"
+  ],
+  "runs/finetuned/tor2/data/tor2-train-dev.zip": [
+   "1e46a2215ef615b4729ab021512f5066b9a556f2e9014300e9b69aea26f34006"
+  ],
+  "units/01-spam/bonus-webspam-detection-30-points/data/webspam-test.zip": [
+   "17e576c0e62f3639cfcb01745903314d6ea3cd562c77d799fbf98cec7c143b38"
+  ],
+  "units/01-spam/bonus-webspam-detection-30-points/data/webspam-train.labels": [
+   "0a88a38570ac534f12f71f2563d53f7384c18afda0876b9a956fbee3bd9267dc"
+  ],
+  "units/01-spam/bonus-webspam-detection-30-points/data/webspam-train.zip": [
+   "150a9dd08b0c5d91b20d2f1907b1d779f08269d8532738c5782ae08f94fa49ff"
+  ],
+  "units/01-spam/spam-detection-in-practice-50-points/data/spam2-test.zip": [
+   "84dfc19a483a650c125d9f98ed48bb4489ea4d382576167b63a2f6069eeee8db"
+  ],
+  "units/01-spam/spam-detection-in-practice-50-points/data/spam2-train.labels": [
+   "43bbb9f09e560dfaeffb9fa57e38b298b2c8905cf9dcd2193da2b9aa1afec9f4"
+  ],
+  "units/01-spam/spam-detection-in-practice-50-points/data/spam2-train.zip": [
+   "25312b1f6468eee465115fca1e094d086370c930b3118f0c16216ba089a60cba"
+  ],
+  "units/01-spam/spam-detection-with-machine-learning-50-points/data/spam1-test.zip": [
+   "30828a4f5795ee57817224085b0dc51a076b8640862ec8a785563a931d114288"
+  ],
+  "units/01-spam/spam-detection-with-machine-learning-50-points/data/spam1-train.labels": [
+   "2f0a3396014773fef8c506e1c6d4e3a5811f91e272c173508871f4c66af422d7"
+  ],
+  "units/01-spam/spam-detection-with-machine-learning-50-points/data/spam1-train.zip": [
+   "7a382cb9419b98a44fa5b98d46e11c8137d9dbbc92e489d088f036754b7bd649"
+  ],
+  "units/02-maldoc/malicious-code-in-docx-documents/data/docx-test.zip": [
+   "2d14ebee60809b5c0702b256dd47374447477e3aadd51140e5a0947a3515d9dd"
+  ],
+  "units/02-maldoc/malicious-code-in-docx-documents/data/docx-train.labels": [
+   "e1ef0f29b2b76c718eb1850a5e8ce4d07f638eb9a428b39d8cab573f17f87cea"
+  ],
+  "units/02-maldoc/malicious-code-in-docx-documents/data/docx-train.zip": [
+   "b754d1f332bed5136ef4174edc6ffeb797b334a28b0a6c9cb63ee6ad9d17d844"
+  ],
+  "units/02-maldoc/malicious-code-in-pdf-files/data/pdf-test.zip": [
+   "da8ff9afa752fd54222f9677aa72b0c246f891424a6a0e5fe57c0bde9deba37e"
+  ],
+  "units/02-maldoc/malicious-code-in-pdf-files/data/pdf-train.labels": [
+   "5c2425745971ba4a333a570c1496aa0afea102b9424a4f42bab997a1bbc5e451"
+  ],
+  "units/02-maldoc/malicious-code-in-pdf-files/data/pdf-train.zip": [
+   "fd30f759ad95250b91a50c27b188b20105ccdb87a7acf93a271aac3cddc0cc50"
+  ],
+  "units/02-maldoc/malicious-code-in-rtf-files/data/rtf-test.zip": [
+   "909f0e0ab786b91d447ed9efe08512e1dbdf5c7b601f022df54ba73bdb4a3582"
+  ],
+  "units/02-maldoc/malicious-code-in-rtf-files/data/rtf-train.labels": [
+   "b678ce50950e73c0a1954677ad08e4bd4e6935180a395be62af414bf1769a184"
+  ],
+  "units/02-maldoc/malicious-code-in-rtf-files/data/rtf-train.zip": [
+   "b892b60760ffa87f45213d385dded2fd1921f0d1c0cd2501554710297ebae7d2"
+  ],
+  "units/02-maldoc/mixed-malicious-code/data/mix-test.zip": [
+   "2c8f8f55cacee4960669be21c66b5c3518fd1b836e3faf3d4dd9118c51cab837"
+  ],
+  "units/02-maldoc/mixed-malicious-code/data/mix-train.labels": [
+   "028cab583bef048caf2abae930a8fff53d6ea19cf9a4ed171a2b8fed918688b5"
+  ],
+  "units/02-maldoc/mixed-malicious-code/data/mix-train.zip": [
+   "200f586f375dfa145bd09cb0ad062eb6635ab634671e2b8218ea987f7746b6fa"
+  ],
+  "units/04-tor/closed-world-50-points/data/tor1-test.zip": [
+   "6d5d1820fbb0d2660d495950c3a5f92379b676bddfa89558d947130f81217708"
+  ],
+  "units/04-tor/closed-world-50-points/data/tor1-train.labels": [
+   "8d1aa689d6229930e18eb8266ad877fbcc820c0ae029c79d00b4998dcb246a53"
+  ],
+  "units/04-tor/closed-world-50-points/data/tor1-train.zip": [
+   "a51d75fba580268d1671a10f2fe9733d82b2c234bcc029e7f50869c01a8a074d"
+  ],
+  "units/04-tor/open-world-50-points/data/tor2-test.zip": [
+   "b650967f9336a11915009b5e28b0bc6b9d907e3e2abab7c73baff2b45ddd9861"
+  ],
+  "units/04-tor/open-world-50-points/data/tor2-train.labels": [
+   "68f6271787285f3e433a3d0335d0c6bb7179d05035a66bd3a9a84e7a9a96869c"
+  ],
+  "units/04-tor/open-world-50-points/data/tor2-train.zip": [
+   "100636884d10484205a229e1950e9eb0479a5b6a952a21ad463b0aef217a52a2"
+  ],
+  "units/clustering-of-malicious-code/malicious-code-for-android/data/android-test.zip": [
+   "7c3a3b9aa6b040f8dd97feda3deba9f460689d8076bcc3d0e9eded8d9aaa251e"
+  ],
+  "units/clustering-of-malicious-code/malicious-code-for-android/data/android-train.labels": [
+   "6072cfb9355b2a7b55297fa3bae6a8e722f88b7f38821f8e2ca5efc795339a75"
+  ],
+  "units/clustering-of-malicious-code/malicious-code-for-android/data/android-train.zip": [
+   "439978cc45e6253af5912d78ba090b2edb69159266086d7379dee7381fe8b207"
+  ],
+  "units/clustering-of-malicious-code/malicious-code-for-web-servers/data/php-test.zip": [
+   "2cabbcc66d84ca7ca50c342808207036d19073a889a074db890b0578a15ab943"
+  ],
+  "units/clustering-of-malicious-code/malicious-code-for-web-servers/data/php-train.labels": [
+   "014b31f041ba20f230ab6add16036fd3cf1f8b10fc300f02a5b062eab99c9946"
+  ],
+  "units/clustering-of-malicious-code/malicious-code-for-web-servers/data/php-train.zip": [
+   "98244aa0094f6172949c5d7e2243fabbb925ebd1ecc7e100b09c487e3021f36e"
+  ],
+  "units/clustering-of-malicious-code/malicious-code-for-windows/data/win-test.zip": [
+   "cc3f1e3172564371a6a6ad5e92b912d8cb2032187cfd0a0054ba30d30d8a1a73"
+  ],
+  "units/clustering-of-malicious-code/malicious-code-for-windows/data/win-train.labels": [
+   "5d3ea48577957d59dfc6bd22c6add5c5dfc4bee088a72f467dfd0691c191e92f"
+  ],
+  "units/clustering-of-malicious-code/malicious-code-for-windows/data/win-train.zip": [
+   "ef5d23ff2a7d16b6cbd1ea535a1f94e1c6cc2e3782044cfa41b16eb7168a3d08"
+  ],
+  "units/detection-of-unknown-attacks/adversarial-example-detection/data/adv-test.zip": [
+   "ee0b1a3dd9a97d58a75a3dede976f360881e0fa563e2eeeaa794a362d3a48735"
+  ],
+  "units/detection-of-unknown-attacks/adversarial-example-detection/data/adv-train.zip": [
+   "cb9c7fd7c98809e149ec3189ea8fb9e7af1fa568901d6ad81c36a1ff1c3ecd00"
+  ]
+ },
+ "unitTexts": {
+  "hashes": {
+   "units/README.md": "7ea6bec997734173a56c4d3b7cdd598f9ae2d69e275b97a5156b15037e6d7e93",
+   "units/index.json": "f8f3c01fbd1c58d4f85559e06ccb1b5582db384aa480f25c9f667459afc99925",
+   "units/04-tor/unit-intro.md": "2583d0287980169dfcbeb9a73c0de9417939a0a7f39530c68276530d99d6799c",
+   "units/04-tor/open-world-50-points/prompt.md": "ff200da384d667d78afd379926d950ac6a835e7fb43d8d314ad8838bb340aea6",
+   "units/04-tor/open-world-50-points/meta.json": "992e336e1a75929fabd3b62c05a5747fdbf10781a2d9a1a535a9d06e9977ac02",
+   "units/04-tor/closed-world-50-points/prompt.md": "985256d9ad0397beb8ce1d717a4acac989aa5bba0585adca718a1ec5c5a94679",
+   "units/04-tor/closed-world-50-points/meta.json": "33b78be04c16dbed9689e04ff1dfce2d15fdbcc0f3ed8363fabdbe1c7bcaa24e",
+   "units/02-maldoc/unit-intro.md": "b34cd89f4c3b3d1793082cbdd9624e2ea106ff97fe8490529ade35f9f2c32e54",
+   "units/02-maldoc/malicious-code-in-rtf-files/prompt.md": "021b5edbfc38580820a9dbd2ae727a2ff6545b27e4dd08bf0f48ca961974f7d9",
+   "units/02-maldoc/malicious-code-in-rtf-files/meta.json": "6a3fd8c571e5d8fdabf440c533650b608a59b6ab91fad5067ca2f44936f903f4",
+   "units/02-maldoc/malicious-code-in-docx-documents/prompt.md": "a67f09b428f1fd9573bb1c405687b97545bedee64a0b2d6248976ae3523e492b",
+   "units/02-maldoc/malicious-code-in-docx-documents/meta.json": "f959031d74ce5d0d12fef5a648bec78db9414cd9c0bc7f76a6a6f100cb8d4126",
+   "units/02-maldoc/mixed-malicious-code/prompt.md": "d34650824b5e178c815765846b5bae08321fb3b4830406f300fd8eff2db4fcf8",
+   "units/02-maldoc/mixed-malicious-code/meta.json": "46f34bd133f7faed5709d8341f775c7cfdeaa44e22d8887b769734a0e1b070e3",
+   "units/02-maldoc/malicious-code-in-pdf-files/prompt.md": "1dc3e45f3ae68dc06106207d8b78e528e970d75b7b459fa53e3edc9f07cc14a9",
+   "units/02-maldoc/malicious-code-in-pdf-files/meta.json": "4fa514fac545d9c0cd97c8a4ce225a7ad7768aeb8842dd14cbdca952a56b3114",
+   "units/detection-of-unknown-attacks/unit-intro.md": "87aa29f3971797b8e130727d81b742d2b9c64189d9406122562fb554210541f4",
+   "units/detection-of-unknown-attacks/adversarial-example-detection/prompt.md": "9ee2c747c735e8412eafda8a26b0f76a46d29c36c784f2cd673083cdcba70447",
+   "units/detection-of-unknown-attacks/adversarial-example-detection/meta.json": "2c925ad403321a69fbd51bd1a6e3b70aa80d606a5a342b9fab6d4dbac283c5cd",
+   "units/clustering-of-malicious-code/unit-intro.md": "9e5641df55875352f353b5bb4820f37c1ebb63ad27ddd4a18de23be54fba8119",
+   "units/clustering-of-malicious-code/malicious-code-for-android/prompt.md": "0998d611bbfa163ac579fa049a8b484e078717638d63683e6a5eb7a314035849",
+   "units/clustering-of-malicious-code/malicious-code-for-android/meta.json": "7a1f5ec20aaf2ba384587ff6f0428d3978be0af71bfd163bc728f00f3a5d8038",
+   "units/clustering-of-malicious-code/malicious-code-for-windows/prompt.md": "3b44a9ccd2738504efb4ac0d760b1568dced76a8d9c5dcdcf0a08240accb59ea",
+   "units/clustering-of-malicious-code/malicious-code-for-windows/meta.json": "9034eb4e49936940bef0179874fdfc56470fc50b8665b949067bd63a99949030",
+   "units/clustering-of-malicious-code/malicious-code-for-web-servers/prompt.md": "72fb0305488d0f952f8f44cb152c6cb2478a66f45d83a617e146e3c98bab87e8",
+   "units/clustering-of-malicious-code/malicious-code-for-web-servers/meta.json": "ff5a4ec6785079a0249adcfc78e150299643b3bbcc2a7ce041d59b86211163e5",
+   "units/01-spam/unit-intro.md": "85eff155b1e27e04ee0251848cff42d1214bc63b06760cf19fbda813d13df66a",
+   "units/01-spam/spam-detection-in-practice-50-points/prompt.md": "f85948621887cdba58a6911728e34b7bef06679e456a6aaed7db984fb81cced4",
+   "units/01-spam/spam-detection-in-practice-50-points/meta.json": "7ce77ddbdd0d4c69f0e72e9eaecf18b2026e9b014caa3e7fe8e71a5694ab3893",
+   "units/01-spam/spam-detection-with-machine-learning-50-points/prompt.md": "8756d3f9d753e819b0ba931ef40f102c556f1121e75b476c4bbf9022a46086e3",
+   "units/01-spam/spam-detection-with-machine-learning-50-points/meta.json": "7a50a449efd64cf814f897b2d32e446a4fc2e7d296c9994911f1e5989baf8e1e",
+   "units/01-spam/bonus-webspam-detection-30-points/prompt.md": "715a058814936d9bcb00ea1a96ca95a01ae6417502df98c9175e2a6b3ac6b26f",
+   "units/01-spam/bonus-webspam-detection-30-points/meta.json": "c4abcd0a8e4e9060febdbbbc90ad5108ac39b9bd261080ca95e8986065d7fb6e"
+  },
+  "note": "Google checkout after the campaign. prompt.md and unit-intro.md are byte-identical to the main checkout; meta.json/index.json differ only in staging metadata and order. Exception: both Google code1 arms ran with code1 prompt sha256 110382a3... (kept in runs/diagnostics/google-sequential-20261116/code1-prompt-google-used.md); the file was later aligned to main (0998d611...)."
+ }
+}
